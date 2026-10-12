@@ -98,6 +98,8 @@ the key.
 | --- | --- |
 | `pedit link-out.md`, a symlink to a file outside the directory; `pedit link-in.md`, to `notes.md` beside it | `shared file ... is not a regular file`, exit 1, no room created |
 | `pedit linkdir/notes.md`, `linkdir` a symlink to another directory | Shared, through a handle on the resolved directory |
+| `pedit docs`, a directory holding `a.md`, `.hidden.md` and `link.md`, a symlink to a file outside it | Read `"# a\n"` and the link target's `"SECRET OUTSIDE\n"` (up to 8192 bytes each) to judge them text, skipped `.hidden.md`, printed `pedit docs/a.md` and `pedit docs/link.md`, exit 1, no room |
+| `pedit note.md` beside `notes.md` | Listed the directory without opening any file; printed `Did you mean this one? pedit notes.md` |
 | While sharing, `notes.md` replaced with a symlink to a `0600` file outside (SEC-004) | The guest kept the previous text; the file outside was not changed; on Ctrl+C `could not save notes.md: shared file notes.md is not a regular file` |
 | An editor-style save: write `.notes.md.swp`, rename it over `notes.md` | The guest received the new text |
 | A guest edit to `notes.md` with mode `0640`, a second hard link and the extended attribute `user.tag` | New inode, mode `0640`, link count 1; the other link kept the old text; no extended attribute |

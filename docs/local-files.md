@@ -11,7 +11,9 @@ refer to the changes made with this page.
 
 pedit touches the file you name, an `assets/` directory beside it, its own
 `.pedit/` configuration and a small cache; when you join a room, only the copy
-it keeps. It runs a clipboard tool and, only
+it keeps. If what you name is a directory or does not exist, it also looks
+through that directory to suggest a file, and shares none of what it reads
+there. It runs a clipboard tool and, only
 for servers behind Cloudflare Access, `cloudflared`. It never runs anything
 that comes from a document, a guest or the relay, and never updates itself.
 
@@ -47,6 +49,8 @@ By using it you accept that:
 | --- | --- | --- |
 | Reads | `.pedit/config.yaml`, in the current directory or the nearest one above it, up to the Git root (outside a repository, up to `/`) | Used only if you or root own it; otherwise pedit stops and names the file. Windows has no such check. |
 | Reads | The shared file | Must be a regular file, not a symlink, and UTF-8 text. Opened through a handle on its directory taken at start, and never through a symlink that replaces it later. |
+| Reads | When `<file>` is a directory: the names in it, and the first 8 KiB of each regular file whose name does not start with `.`, following symlinks, until six look like text | Only to print up to five names to pick from. No room is made and nothing is sent. |
+| Reads | When `<file>` does not exist: the names in its directory | Names only, to suggest close ones. |
 | Reads | `.pedit/templates/<name>`, only when pedit creates the file | Only inside the project: a template that is a symlink out of it is refused. |
 | Reads | `assets/<hash>.png` (or `.jpg`, `.gif`, `.webp`), when a guest asks for an image | Only images your file referred to at start, that you added while sharing, or that were saved this session. A regular file of up to 10 MiB whose content matches the hash in its name. |
 | Writes | The shared file | Through a new `.pedit-<random>.tmp` beside it, renamed over the file. Not while the file has changes pedit has not taken in yet, nor once the file has become a symlink or is no longer UTF-8. Permissions are kept. |
@@ -119,6 +123,7 @@ certificates and name resolution.
 | --- | --- |
 | Share a symlink to a file, inside or outside its directory | Refused before a room is made |
 | Share a file in a directory reached through a symlink | Shared |
+| Name a directory holding a symlink to a file outside it; name a file that does not exist | Read the start of the link's target to judge it text and printed names only, without making a room; listed the directory's names only |
 | Replace the shared file with a symlink to another file while sharing | Nothing reaches the guests; the final save is refused and reported |
 | An editor saves by writing a new file and renaming it | Taken in and sent to the guests |
 | A guest's edit to a file with a hard link and an extended attribute | New file with the same mode; the hard link keeps the old content; the attribute is gone |
