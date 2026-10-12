@@ -561,6 +561,69 @@ func TestClosesRoomForGuestsOnStop(t *testing.T) {
 	prototest.WaitFor(t, wait, func() bool { return g.Status() == protocol.StatusClosed }, "guest closed")
 }
 
+// sjis is 議事録 in Shift_JIS, which is not UTF-8.
+const sjis = "\x8b\x63\x8e\x96\x98\x5e\n"
+
+func TestRefusesFileThatIsNotUTF8BeforeARoomIsMade(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "memo.txt")
+	if err := os.WriteFile(file, []byte(sjis), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests.Add(1) }))
+	t.Cleanup(server.Close)
+	if _, err := Start(context.Background(), Options{File: file, Server: server.URL}); err == nil || !strings.Contains(err.Error(), "is not UTF-8 text") {
+		t.Fatalf("Start = %v", err)
+	}
+	if n := requests.Load(); n != 0 {
+		t.Errorf("%d requests reached the server", n)
+	}
+	if got := readFile(t, file); got != sjis {
+		t.Fatalf("file changed: %q", got)
+	}
+}
+
+func TestKeepsAFileThatStopsBeingUTF8(t *testing.T) {
+	var mu sync.Mutex
+	var errs []error
+	f := setup(t, "notes\n", setupOpts{watch: true, onError: func(err error) {
+		mu.Lock()
+		errs = append(errs, err)
+		mu.Unlock()
+	}})
+	g := joinAsGuest(t, f.relay, f.session.URL)
+	prototest.WaitFor(t, wait, func() bool { return g.String() == "notes\n" }, "guest to sync")
+
+	// An editor saves the file in another encoding, then someone edits.
+	if err := os.WriteFile(f.file, []byte(sjis), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prototest.WaitFor(t, wait, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(errs) > 0
+	}, "the file to be reported")
+	g.insert(0, "guest: ")
+	time.Sleep(300 * time.Millisecond)
+	if got := readFile(t, f.file); got != sjis {
+		t.Fatalf("saved over a file that is not UTF-8: %q", got)
+	}
+	if got := g.String(); got != "guest: notes\n" {
+		t.Fatalf("guest got %q", got)
+	}
+	mu.Lock()
+	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "not UTF-8") {
+		t.Errorf("errors = %v", errs)
+	}
+	mu.Unlock()
+
+	// Back to UTF-8: the guest's edit is saved on top of it.
+	if err := os.WriteFile(f.file, []byte("notes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prototest.WaitFor(t, wait, func() bool { return readFile(t, f.file) == "guest: notes\n" }, "the guest's edit to be saved")
+}
+
 func TestStopReportsFailedFinalWrite(t *testing.T) {
 	f := setup(t, "a", setupOpts{writeDelay: time.Minute})
 	g := joinAsGuest(t, f.relay, f.session.URL)

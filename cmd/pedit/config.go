@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -36,7 +37,7 @@ func loadConfig(cwd string) (config, error) {
 	c := config{Server: defaultServer, Output: ".", root: cwd}
 	for dir := cwd; ; dir = filepath.Dir(dir) {
 		path := filepath.Join(dir, ".pedit", "config.yaml")
-		data, err := os.ReadFile(path)
+		data, err := readConfig(path)
 		if err == nil {
 			c.root = dir
 			dec := yaml.NewDecoder(bytes.NewReader(data))
@@ -93,15 +94,57 @@ func loadConfig(cwd string) (config, error) {
 	return c, nil
 }
 
+// readConfig reads a configuration file, unless a user other than you or root
+// owns it. pedit looks for one in every directory above the current one, so in
+// a directory anyone can write to, such as /tmp, another user could otherwise
+// choose the server that gets your file and serves the editor that holds its key.
+func readConfig(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if uid, ok := ownerOf(info); ok && !trustedOwner(uid, currentUID()) {
+		return nil, fmt.Errorf("%s belongs to another user (uid %d), so pedit does not use it: it decides where your files are sent. Remove it, or run pedit from a directory you own", path, uid)
+	}
+	return io.ReadAll(f)
+}
+
+// trustedOwner tells whether a file owned by uid may configure pedit for the
+// user me: their own file, or one only root could have written.
+func trustedOwner(uid, me int) bool { return uid == me || uid == 0 }
+
 func (c config) template(name string) ([]byte, error) {
 	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\\") || filepath.IsAbs(name) || filepath.VolumeName(name) != "" {
 		return nil, fmt.Errorf("template must be a filename in .pedit/templates (no subdirectories): %q", name)
 	}
 	clean := name
-	data, err := os.ReadFile(filepath.Join(c.root, ".pedit", "templates", clean))
+	data, err := readInProject(c.root, filepath.Join(".pedit", "templates", clean))
 	if errors.Is(err, os.ErrNotExist) {
 		if content, ok := builtinTemplates[clean]; ok {
 			return []byte(content), nil
+		}
+	}
+	return data, err
+}
+
+// readInProject reads name under the project root, following links only while
+// they stay inside it. Templates come with the repository, and one shipped as
+// a link to, say, ~/.ssh/id_ed25519 must not become a shared file.
+func readInProject(root, name string) ([]byte, error) {
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	data, err := r.ReadFile(name)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		if info, lerr := r.Lstat(name); lerr == nil && info.Mode()&fs.ModeSymlink != 0 {
+			return nil, fmt.Errorf("%s is a link that leads out of the project; pedit reads templates only inside it", name)
 		}
 	}
 	return data, err

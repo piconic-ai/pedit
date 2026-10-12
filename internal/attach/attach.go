@@ -10,6 +10,8 @@ package attach
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -74,12 +76,17 @@ var (
 	errTooLarge = errors.New("attachment too large")
 	errInvalid  = errors.New("attachment does not match its hash")
 	errClosed   = errors.New("the room is closed")
-	errOutside  = errors.New(Dir + " leads outside the shared file's directory")
+	errNoDir    = errors.New("the shared file's directory is not open")
 )
 
 type Options struct {
 	// File is the shared file; attachments go to Dir beside it.
 	File string
+	// Root is File's directory, opened when the session started. Attachments
+	// are read and written only through it, so swapping the directory or Dir
+	// for a link later cannot send them elsewhere. Without it, New opens
+	// File's directory, and Close closes it.
+	Root *os.Root
 	// InitialDocument is the host's local file before peers can edit the room.
 	InitialDocument string
 	// Server is the base URL of the pedit server, and Room the room id.
@@ -109,6 +116,8 @@ type Attachments struct {
 	done      chan struct{}
 	allowedMu sync.RWMutex
 	allowed   map[string]struct{} // locally authorized image hashes
+	root      *os.Root            // File's directory; nil if it could not be opened
+	ownRoot   bool
 
 	// Touched only by the worker goroutine.
 	total      int64
@@ -118,6 +127,8 @@ type Attachments struct {
 	now        func() time.Time
 	timeout    time.Duration
 	retryDelay time.Duration
+	// beforeWrite is a test seam, called between opening Dir and writing in it.
+	beforeWrite func()
 }
 
 func New(opts Options) *Attachments {
@@ -140,6 +151,12 @@ func New(opts Options) *Attachments {
 		now:        time.Now,
 		timeout:    requestTimeout,
 		retryDelay: retryDelay,
+		root:       opts.Root,
+	}
+	if a.root == nil {
+		if root, err := os.OpenRoot(filepath.Dir(opts.File)); err == nil {
+			a.root, a.ownRoot = root, true
+		}
 	}
 	a.AllowLocalDocument(opts.InitialDocument)
 	go a.run()
@@ -216,6 +233,9 @@ func (a *Attachments) Handle(m protocol.Attachment) {
 func (a *Attachments) Close() {
 	a.cancel()
 	<-a.done
+	if a.ownRoot {
+		_ = a.root.Close()
+	}
 }
 
 func (a *Attachments) run() {
@@ -240,9 +260,9 @@ func (a *Attachments) announced(hash, mime string) {
 		a.reject(hash, ReasonType)
 		return
 	}
-	if path, ok := a.stored[hash]; ok {
+	if path, ok := a.stored[hash]; ok && a.root != nil {
 		// Unless someone moved the file away meanwhile.
-		if info, err := os.Stat(filepath.Join(filepath.Dir(a.opts.File), filepath.FromSlash(path))); err == nil && info.Mode().IsRegular() {
+		if info, err := a.root.Stat(filepath.FromSlash(path)); err == nil && info.Mode().IsRegular() {
 			a.send(protocol.Attachment{Kind: protocol.AttachmentStored, Hash: hash, Path: path})
 			return
 		}
@@ -439,30 +459,38 @@ func (a *Attachments) save(hash, ext string, content []byte) (string, bool, erro
 	if err != nil {
 		return "", false, err
 	}
+	defer dir.Close()
 	name := hash + ext
 	rel := Dir + "/" + name
-	path := filepath.Join(dir, name)
-	if info, err := os.Lstat(path); err == nil {
-		if _, ok := readAttachment(path, info, hash); ok {
+	if _, err := dir.Lstat(name); err == nil {
+		if _, ok := readAttachment(dir, name, hash); ok {
 			return rel, false, nil
 		}
-		return "", false, fmt.Errorf("%s is in the way of an attachment", path)
+		return "", false, fmt.Errorf("%s is in the way of an attachment", rel)
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return "", false, err
 	}
 
-	tmp, err := os.CreateTemp(dir, ".pedit-*.tmp")
+	if a.beforeWrite != nil {
+		a.beforeWrite()
+	}
+	var random [16]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		return "", false, err
+	}
+	tmpName := ".pedit-" + hex.EncodeToString(random[:]) + ".tmp"
+	// Private, and further restricted by the caller's umask.
+	tmp, err := dir.OpenFile(tmpName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return "", false, err
 	}
 	_, err = tmp.Write(content)
-	// Keep CreateTemp's private permissions, including the caller's umask.
 	err = errors.Join(err, tmp.Close())
 	if err == nil {
-		err = os.Rename(tmp.Name(), path)
+		err = dir.Rename(tmpName, name)
 	}
 	if err != nil {
-		_ = os.Remove(tmp.Name())
+		_ = dir.Remove(tmpName)
 		return "", false, err
 	}
 	return rel, true, nil
@@ -477,13 +505,9 @@ func (a *Attachments) load(hash string) ([]byte, string, bool) {
 	if err != nil {
 		return nil, "", false
 	}
+	defer dir.Close()
 	for mime, ext := range extensions {
-		path := filepath.Join(dir, hash+ext)
-		info, err := os.Lstat(path)
-		if err != nil {
-			continue
-		}
-		content, ok := readAttachment(path, info, hash)
+		content, ok := readAttachment(dir, hash+ext, hash)
 		if ok && http.DetectContentType(content) == mime {
 			return content, mime, true
 		}
@@ -492,48 +516,42 @@ func (a *Attachments) load(hash string) ([]byte, string, bool) {
 }
 
 // readAttachment reads a regular file (never a symlink) of up to MaxBytes
-// whose content matches hash.
-func readAttachment(path string, info fs.FileInfo, hash string) ([]byte, bool) {
-	if !info.Mode().IsRegular() || info.Size() > MaxBytes {
+// whose content matches hash. The file opened must be the one inspected, so a
+// link swapped in between is not followed.
+func readAttachment(dir *os.Root, name, hash string) ([]byte, bool) {
+	before, err := dir.Lstat(name)
+	if err != nil || !before.Mode().IsRegular() || before.Size() > MaxBytes {
 		return nil, false
 	}
-	content, err := os.ReadFile(path)
-	if err != nil || protocol.ContentHash(content) != hash {
+	f, err := dir.Open(name)
+	if err != nil {
+		return nil, false
+	}
+	defer f.Close()
+	after, err := f.Stat()
+	if err != nil || !os.SameFile(before, after) {
+		return nil, false
+	}
+	content, err := io.ReadAll(io.LimitReader(f, MaxBytes+1))
+	if err != nil || len(content) > MaxBytes || protocol.ContentHash(content) != hash {
 		return nil, false
 	}
 	return content, true
 }
 
-// dir returns Dir beside the shared file, creating it if asked. It refuses a
-// Dir that is not a directory, or that leads outside the file's directory.
-func (a *Attachments) dir(create bool) (string, error) {
-	base := filepath.Dir(a.opts.File)
-	dir := filepath.Join(base, Dir)
-	if _, err := os.Lstat(dir); errors.Is(err, fs.ErrNotExist) {
-		if !create {
-			return "", err
+// dir opens Dir beside the shared file, creating it if asked. Like the
+// directory it is in, it follows a link only while the link stays there, and
+// the handle keeps to the directory it opened even if Dir is swapped later.
+func (a *Attachments) dir(create bool) (*os.Root, error) {
+	if a.root == nil {
+		return nil, errNoDir
+	}
+	dir, err := a.root.OpenRoot(Dir)
+	if create && errors.Is(err, fs.ErrNotExist) {
+		if err := a.root.Mkdir(Dir, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
+			return nil, err
 		}
-		if err := os.Mkdir(dir, 0o755); err != nil {
-			return "", err
-		}
-		return dir, nil
-	} else if err != nil {
-		return "", err
+		dir, err = a.root.OpenRoot(Dir)
 	}
-	realBase, err := filepath.EvalSymlinks(base)
-	if err != nil {
-		return "", err
-	}
-	realDir, err := filepath.EvalSymlinks(dir)
-	if err != nil {
-		return "", err
-	}
-	rel, err := filepath.Rel(realBase, realDir)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", errOutside
-	}
-	if info, err := os.Stat(realDir); err != nil || !info.IsDir() {
-		return "", fmt.Errorf("%s is not a directory", dir)
-	}
-	return dir, nil
+	return dir, err
 }

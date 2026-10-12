@@ -34,7 +34,12 @@ func TestPrivateAttachmentPermissions(t *testing.T) {
 			t.Fatal(err)
 		}
 		unix.Umask(int(mask))
-		a := &Attachments{opts: Options{File: filepath.Join(dir, "notes.md")}}
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer root.Close()
+		a := &Attachments{root: root}
 		rel, _, err := a.save(protocol.ContentHash(png), ".png", png)
 		if err != nil {
 			t.Fatal(err)

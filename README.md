@@ -136,6 +136,11 @@ Edits in the opposite direction follow the same process.
   connections or attachment requests; the token cannot decrypt content.
 - **Your relay, your access rules.** Use the public relay at `edit.piconic.ai`,
   or [self-host](#self-host) to require sign-in with Cloudflare Access.
+- **Only the file you share.** The CLI reads and writes the shared file, images
+  in `assets/` beside it, its own `.pedit/` configuration and a cache, and runs
+  only a clipboard tool and, for Access, `cloudflared`. See
+  [what pedit does on your computer](docs/local-files.md) for every file and
+  what you accept.
 
 You must trust the relay operator to serve the intended browser editor, and
 trust participant devices and browsers. A modified editor could read the key

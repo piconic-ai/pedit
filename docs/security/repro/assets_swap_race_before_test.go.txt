@@ -1,0 +1,67 @@
+package attach
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync/atomic"
+	"testing"
+
+	"github.com/piconic-ai/pedit/internal/protocol"
+)
+
+// Experiment for docs/security/2026-10-12-local-files.md: someone who can
+// write in the shared file's directory swaps assets between a symlink to a
+// directory inside it and one to a directory outside it, while images are
+// saved. It reports how many files land outside. Copy it into internal/attach
+// as a _test.go file; this is the variant for the code before the fix.
+func TestExperimentAssetsSwapRace(t *testing.T) {
+	base := t.TempDir()
+	outside := t.TempDir()
+	file := filepath.Join(base, "notes.md")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a := &Attachments{opts: Options{File: file}}
+	assets := filepath.Join(base, Dir)
+	real := filepath.Join(base, "real-assets")
+	if err := os.Mkdir(real, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("real-assets", assets); err != nil {
+		t.Fatal(err)
+	}
+	var stop atomic.Bool
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; !stop.Load(); i++ {
+			tmp := filepath.Join(base, fmt.Sprintf("swap-%d", i))
+			target := "real-assets"
+			if i%2 == 1 {
+				target = outside
+			}
+			if os.Symlink(target, tmp) == nil {
+				_ = os.Rename(tmp, assets)
+			}
+		}
+	}()
+	saved := 0
+	for i := 0; i < 20000; i++ {
+		content := []byte(fmt.Sprintf("\x89PNG\r\n\x1a\n%d", i))
+		if _, _, err := a.save(protocol.ContentHash(content), ".png", content); err == nil {
+			saved++
+		}
+	}
+	stop.Store(true)
+	<-done
+	entries, _ := os.ReadDir(outside)
+	pngs := 0
+	for _, e := range entries {
+		if filepath.Ext(e.Name()) == ".png" {
+			pngs++
+		}
+	}
+	inside, _ := os.ReadDir(real)
+	t.Logf("files outside: %d (of which final .png: %d); saves that succeeded: %d, files in the real assets: %d", len(entries), pngs, saved, len(inside))
+}

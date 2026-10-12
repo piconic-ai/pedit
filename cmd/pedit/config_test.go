@@ -242,6 +242,40 @@ func TestBuiltinAndProjectTemplates(t *testing.T) {
 	}
 }
 
+func TestTemplatesStayInsideTheProject(t *testing.T) {
+	root := t.TempDir()
+	secret := filepath.Join(t.TempDir(), "id_ed25519")
+	put(t, secret, "PRIVATE KEY")
+	put(t, filepath.Join(root, ".pedit", "templates", "base.md"), "# Minutes\n")
+	links := map[string]string{
+		"default.md":  secret,                                  // a cloned repository can carry this
+		"relative.md": filepath.Join("..", "..", "..", "x.md"), // escapes by climbing
+		"minutes.md":  "base.md",                               // stays inside: fine
+	}
+	for name, target := range links {
+		if err := os.Symlink(target, filepath.Join(root, ".pedit", "templates", name)); err != nil {
+			t.Skip("symlinks unavailable:", err)
+		}
+	}
+	cfg := config{root: root, Output: "."}
+	for _, name := range []string{"default.md", "relative.md"} {
+		data, err := cfg.template(name)
+		if err == nil || strings.Contains(string(data), "PRIVATE") {
+			t.Fatalf("%s: read %q, %v", name, data, err)
+		}
+	}
+	if _, _, err := prepareFile(cfg, "", "", "", func() string { return "time" }); err == nil {
+		t.Fatal("created a file from a template that links out of the project")
+	}
+	if entries, _ := filepath.Glob(filepath.Join(root, "pedit-*")); len(entries) != 0 {
+		t.Fatalf("created %v", entries)
+	}
+	data, err := cfg.template("minutes.md")
+	if err != nil || string(data) != "# Minutes\n" {
+		t.Fatalf("link inside the project: %q, %v", data, err)
+	}
+}
+
 func TestParseArgs(t *testing.T) {
 	for _, tc := range []struct {
 		args                      []string

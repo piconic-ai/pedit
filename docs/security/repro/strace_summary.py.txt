@@ -1,0 +1,56 @@
+"""Summarize an strace -f log into the file and exec operations pedit made.
+
+Noise (TLS roots, shared libraries, /proc, /sys, Go runtime probes) is dropped,
+so what remains is what a user would want to know about.
+"""
+import re, sys
+
+NOISE = re.compile(r'^(/etc/ssl|/usr/share/ca-certificates|/root/\.ccr/ca-bundle|/etc/pki|/proc/|/sys/|/etc/ld\.so|/lib|/usr/lib|/etc/(passwd|group|nsswitch\.conf|resolv\.conf|hosts|host\.conf|gai\.conf|localtime|mime\.types|apache2/mime\.types|httpd/mime\.types|services|protocols)|/usr/share/zoneinfo|/dev/(null|urandom|tty))')
+LINE = re.compile(r'^(\d+)\s+(\w+)\((.*)\)\s+=\s+(.*)$')
+
+def flags_kind(call, args):
+    if call in ('execve',):
+        return 'EXEC'
+    if call in ('mkdir', 'mkdirat'):
+        return 'MKDIR'
+    if call in ('rename', 'renameat', 'renameat2'):
+        return 'RENAME'
+    if call in ('unlink', 'unlinkat', 'rmdir'):
+        return 'DELETE'
+    if call in ('chmod', 'fchmodat', 'fchmodat2'):
+        return 'CHMOD'
+    if call in ('symlink', 'symlinkat', 'link', 'linkat'):
+        return 'LINK'
+    if call in ('openat', 'open', 'creat', 'openat2'):
+        if re.search(r'O_WRONLY|O_RDWR|O_CREAT|O_TRUNC', args):
+            return 'WRITE-OPEN'
+        if 'O_DIRECTORY' in args:
+            return 'OPEN-DIR'
+        return 'READ-OPEN'
+    if call in ('newfstatat', 'statx', 'lstat', 'stat', 'faccessat', 'faccessat2', 'access', 'readlinkat', 'readlink', 'inotify_add_watch', 'getdents64', 'chdir', 'getcwd'):
+        return 'INSPECT'
+    return call.upper()
+
+out = []
+for raw in open(sys.argv[1], encoding='utf-8', errors='replace'):
+    raw = raw.rstrip('\n')
+    m = LINE.match(raw)
+    if not m:
+        continue
+    pid, call, args, result = m.groups()
+    paths = re.findall(r'"((?:[^"\\]|\\.)*)"', args)
+    if not paths:
+        continue
+    if any(NOISE.match(p) for p in paths if p.startswith('/')):
+        continue
+    kind = flags_kind(call, args)
+    if kind == 'INSPECT' and '--all' not in sys.argv:
+        continue
+    out.append(f"{kind:10} {call}({args[:160]}) = {result[:60]}")
+
+seen = set()
+for line in out:
+    if line in seen:
+        continue
+    seen.add(line)
+    print(line)

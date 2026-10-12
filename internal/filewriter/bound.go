@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 // BoundFile keeps the shared directory open for the lifetime of a session.
@@ -36,6 +35,10 @@ func OpenBound(path string) (*BoundFile, error) {
 
 func (f *BoundFile) Close() error { return f.root.Close() }
 
+// Dir is the shared file's directory, as opened when the session started.
+// It stays open until Close.
+func (f *BoundFile) Dir() *os.Root { return f.root }
+
 func (f *BoundFile) Validate() error {
 	info, err := f.root.Lstat(f.name)
 	if errors.Is(err, os.ErrNotExist) {
@@ -52,7 +55,8 @@ func (f *BoundFile) Validate() error {
 
 // Read verifies the opened descriptor against the entry inspected before open.
 // Root prevents a raced link from escaping the anchored directory; SameFile
-// rejects a raced link to another file inside it.
+// rejects a raced link to another file inside it. The content comes back as
+// it is on disk, which may not be UTF-8: callers check before taking it in.
 func (f *BoundFile) Read() (string, bool) {
 	before, err := f.root.Lstat(f.name)
 	if err != nil || !before.Mode().IsRegular() {
@@ -71,7 +75,7 @@ func (f *BoundFile) Read() (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	return strings.ToValidUTF8(string(b), "�"), true
+	return string(b), true
 }
 
 func (f *BoundFile) Write(content string) error {

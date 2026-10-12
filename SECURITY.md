@@ -32,8 +32,9 @@ release and is in scope.
 ## Scope
 
 pedit's trust model is described in
-[privacy and security](README.md#privacy-and-security). Issues that break it
-are in scope, for example:
+[privacy and security](README.md#privacy-and-security), and what the CLI
+reads, writes and runs in [what pedit does on your computer](docs/local-files.md).
+Issues that break it are in scope, for example:
 
 - the room key, plaintext or decrypted attachments reaching the relay, its logs
   or any third party
@@ -53,6 +54,8 @@ The following are expected behavior and out of scope:
 - metadata visible to infrastructure: IP addresses, room IDs, request timing and
   ciphertext sizes
 - requests that Markdown previews or Access avatars make to external hosts
+- a `.pedit/config.yaml` that came with a repository you run pedit in choosing
+  the relay, or the share link being visible in a guest's command line
 - misconfiguration of a self-hosted deployment
 - denial of service through traffic volume against the public relay
 
