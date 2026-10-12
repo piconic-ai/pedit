@@ -274,12 +274,15 @@ func (f *BoundFile) kept(tmpName string) string {
 // read counts as holding expected. Write must not run concurrently with
 // itself; Writer.io serializes it.
 func (f *BoundFile) Write(expected, content string) error {
-	var mode os.FileMode = 0o600
+	// An existing file keeps its permissions. A new one keeps those it is
+	// created with below: 0600, restricted further by the umask.
+	var mode os.FileMode
+	existed := false
 	if info, err := f.root.Lstat(f.name); err == nil {
 		if !info.Mode().IsRegular() {
 			return f.errNotRegular()
 		}
-		mode = info.Mode().Perm()
+		mode, existed = info.Mode().Perm(), true
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -295,7 +298,8 @@ func (f *BoundFile) Write(expected, content string) error {
 		}
 	}()
 	_, err = tmp.WriteString(content)
-	if err == nil {
+	if err == nil && existed {
+		// Never for a new file: chmod ignores the umask.
 		err = tmp.Chmod(mode)
 	}
 	var written os.FileInfo
