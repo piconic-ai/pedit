@@ -214,7 +214,7 @@ pedit: .../memo2.txt is not UTF-8 text. pedit shares UTF-8 only, and would repla
 ### SEC-011 Bidi controls in a joined file name
 
 CWE-451. `sharedFileName` (`internal/session/join.go:342`) refused control
-characters but not bidi controls. A host sharing `invoice‮cod.md` had a
+characters but not bidi controls. A host sharing `invoice<U+202E>cod.md` had a
 guest create a file that prints as `invoicedm.doc`. Fix: `Refuse joined file
 names that reorder how they print`. Test: `TestSharedFileName`. After the fix:
 `pedit: the host did not share a usable file name`.
