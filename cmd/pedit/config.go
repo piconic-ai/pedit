@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -98,10 +99,28 @@ func (c config) template(name string) ([]byte, error) {
 		return nil, fmt.Errorf("template must be a filename in .pedit/templates (no subdirectories): %q", name)
 	}
 	clean := name
-	data, err := os.ReadFile(filepath.Join(c.root, ".pedit", "templates", clean))
+	data, err := readInProject(c.root, filepath.Join(".pedit", "templates", clean))
 	if errors.Is(err, os.ErrNotExist) {
 		if content, ok := builtinTemplates[clean]; ok {
 			return []byte(content), nil
+		}
+	}
+	return data, err
+}
+
+// readInProject reads name under the project root, following links only while
+// they stay inside it. Templates come with the repository, and one shipped as
+// a link to, say, ~/.ssh/id_ed25519 must not become a shared file.
+func readInProject(root, name string) ([]byte, error) {
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	data, err := r.ReadFile(name)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		if info, lerr := r.Lstat(name); lerr == nil && info.Mode()&fs.ModeSymlink != 0 {
+			return nil, fmt.Errorf("%s is a link that leads out of the project; pedit reads templates only inside it", name)
 		}
 	}
 	return data, err
