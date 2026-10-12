@@ -44,6 +44,9 @@ type JoinOptions struct {
 
 	// beforePublishWriter is a test seam; see Session.beforePublishWriter.
 	beforePublishWriter func()
+	// writeHook is a test seam, set on the copy's BoundFile before its first
+	// write; see filewriter.BoundFile.SetTestHook.
+	writeHook func(filewriter.Step)
 }
 
 // ErrRoomClosed means the room could not be joined because nobody hosts it:
@@ -195,6 +198,13 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 	s.Client.Connect()
 
 	fail := func(err error) (*Session, error) {
+		// A first write that met a change scheduled a sync; none may run now.
+		s.mu.Lock()
+		s.stopped = true
+		if s.readTimer != nil {
+			s.readTimer.Stop()
+		}
+		s.mu.Unlock()
 		if s.bound != nil {
 			_ = s.bound.Close()
 		}
@@ -255,6 +265,9 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 	if err != nil {
 		return fail(err)
 	}
+	if opts.writeHook != nil {
+		s.bound.SetTestHook(opts.writeHook)
+	}
 
 	w := filewriter.New(s.file, "", filewriter.Options{
 		Bound:            s.bound,
@@ -278,7 +291,7 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 		if content := s.content.render(); content != "" {
 			w.Schedule(content)
 		} else {
-			created = s.bound.Write("")
+			created = s.bound.Write("", "")
 		}
 	})
 	if created != nil {

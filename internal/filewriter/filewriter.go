@@ -45,8 +45,9 @@ func ReadFile(path string) (content string, ok bool) {
 
 // Writer debounces writes of the latest content to a file. It skips writes when
 // the content equals what is already on disk (as far as it knows), and refuses to
-// clobber a file that someone else changed since its last write: it calls
-// OnExternalChange instead, so the change can be merged first.
+// clobber a file that someone else changed since its last write, also when the
+// change lands while it writes: it calls OnExternalChange instead, so the
+// change can be merged first.
 type Writer struct {
 	path             string
 	bound            *BoundFile
@@ -136,16 +137,34 @@ func (w *Writer) Flush() error {
 		w.onExternalChange()
 		return ErrExternalChange
 	}
-	write := func(content string) error { return WriteAtomic(w.path, content) }
+	var err error
 	if w.bound != nil {
-		write = w.bound.Write
+		// Checks again, at the moment of replacing, against the same content.
+		err = w.bound.Write(w.lastWritten, *pending)
+	} else {
+		err = WriteAtomic(w.path, *pending)
 	}
-	if err := write(*pending); err != nil {
+	if err == nil {
+		w.lastWritten = *pending
+		return nil
+	}
+	// A write that failed late may have left the content in place, such as
+	// when a save it moved aside could not be put back. Merging that content
+	// in again would repeat its edits.
+	var landed landedError
+	if errors.As(err, &landed) {
+		w.lastWritten = *pending
+	} else if onDisk, ok := read(); ok && onDisk == *pending {
+		w.lastWritten = *pending
+	}
+	if err != ErrExternalChange {
+		// It says more, such as where a save is kept.
 		w.onError(err)
-		return err
 	}
-	w.lastWritten = *pending
-	return nil
+	if errors.Is(err, ErrExternalChange) {
+		w.onExternalChange()
+	}
+	return err
 }
 
 // LastWritten returns the content last written to (or read from) the file.

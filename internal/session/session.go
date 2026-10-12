@@ -450,9 +450,10 @@ func (s *Session) syncFromDisk() {
 			return lastWritten
 		}
 		if onDisk == lastWritten {
-			// Put back as it was after being invalid: what came in meanwhile
-			// could not be saved, so save it now.
-			changed = s.invalidOnDisk != ""
+			// The file holds what pedit knows. A write skipped meanwhile (the file
+			// was invalid, or changed and changed back) is saved now; Flush skips it
+			// if nothing differs.
+			changed = true
 			s.invalidOnDisk = ""
 			return lastWritten
 		}

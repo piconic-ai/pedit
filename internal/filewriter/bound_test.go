@@ -35,7 +35,7 @@ func TestBoundFileRejectsReplacementLinkAndAllowsRenameSave(t *testing.T) {
 	if _, ok := f.Read(); ok {
 		t.Fatal("read through a replacement link")
 	}
-	if err := f.Write("should not write"); err == nil {
+	if err := f.Write("original", "should not write"); err == nil {
 		t.Fatal("wrote over a replacement link")
 	}
 	if err := os.Remove(path); err != nil {
@@ -51,7 +51,7 @@ func TestBoundFileRejectsReplacementLinkAndAllowsRenameSave(t *testing.T) {
 	if got, ok := f.Read(); !ok || got != "editor change" {
 		t.Fatalf("rename save: %q, %v", got, ok)
 	}
-	if err := f.Write("final save"); err != nil {
+	if err := f.Write("editor change", "final save"); err != nil {
 		t.Fatal(err)
 	}
 	if got, ok := f.Read(); !ok || got != "final save" {
@@ -102,7 +102,7 @@ func TestBoundFileSavesLongFilename(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer f.Close()
-	if err := f.Write("updated"); err != nil {
+	if err := f.Write("initial", "updated"); err != nil {
 		t.Fatal(err)
 	}
 	if got, ok := f.Read(); !ok || got != "updated" {

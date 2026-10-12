@@ -31,9 +31,13 @@ By using it you accept that:
   receives the encrypted file and serves the editor that reads the key. pedit
   refuses one that another user owns, but not one that came with a repository
   you cloned. Read it as you would a Makefile.
-- **Saving replaces the file.** pedit writes a new file and renames it over
+- **Saving replaces the file.** pedit writes a new file and puts it in place of
   yours. Permissions are kept; hard links to the old file, extended attributes
-  and ACLs are not, and the file then belongs to whoever runs pedit.
+  and ACLs are not, and the file then belongs to whoever runs pedit. On Linux
+  and macOS the new file is swapped with yours, so a save your editor makes
+  while pedit writes is swapped back and merged in. Elsewhere (Windows, network
+  and FUSE file systems) it is renamed over yours after one more check, and a
+  save that lands just after that check can be lost.
 - **When you join with `-d <dir>`, the host names the copy.** It is one new
   file with a plain name, never a path, and never one that already exists, but
   the host chooses the name and its content: `.bashrc` is a plain name.
@@ -53,22 +57,25 @@ By using it you accept that:
 | Reads | When `<file>` does not exist: the names in its directory | Names only, to suggest close ones. |
 | Reads | `.pedit/templates/<name>`, only when pedit creates the file | Only inside the project: a template that is a symlink out of it is refused. |
 | Reads | `assets/<hash>.png` (or `.jpg`, `.gif`, `.webp`), when a guest asks for an image | Only images your file referred to at start, that you added while sharing, or that were saved this session. A regular file of up to 10 MiB whose content matches the hash in its name. |
-| Writes | The shared file | Through a new `.pedit-<random>.tmp` beside it, renamed over the file. Not while the file has changes pedit has not taken in yet, nor once the file has become a symlink or is no longer UTF-8. Permissions are kept. |
+| Writes | The shared file | Through a new `.pedit-<random>.tmp` beside it. On Linux and macOS it is swapped with the file in one step, and the old file, now under the temporary name, is removed only once pedit has read it twice, 5 ms apart, and found what pedit expected; a save that landed meanwhile is swapped back. Elsewhere (Windows, NFS, FUSE) the file is checked once more just before the new one is renamed over it: a save renamed over the file after that check is lost, and one written into the old file after it is lost and reported. A missing file is created only if no file appeared at its name meanwhile (on FAT and exFAT, only after a check). Not while the file has changes pedit has not taken in yet, nor once the file has become a symlink or is no longer UTF-8. Permissions are kept. |
 | Writes | `assets/` and the images guests paste | PNG, JPEG, GIF or WebP, judged by their bytes (SVG is never saved); up to 10 MiB each, 100 MiB and 500 images a session. Named by content hash, never over a different file, never outside the shared file's directory, even if `assets` is swapped for a symlink. Images are created `0600`, `assets/` `0755`, before your umask. |
 | Writes | `.pedit/config.yaml` and `.pedit/templates/default.{md,csv,canvas}` | Only on the first run at a Git repository root, and only files that do not exist yet. |
 | Writes | A new file, with `pedit`, `pedit -t <template>` or `--<type>` | In `output` from the configuration, or `-d`. Created `0644` before your umask, only if no file has that name; the directory is created if needed. |
 | Writes | The update check cache, `pedit/update.json` in your [user cache directory](https://pkg.go.dev/os#UserCacheDir) | Only for release builds writing to a terminal, at most once a day. |
 | Watches | The shared file's directory | Reacts to changes to the shared file's name only. |
 
-While sharing, the only file pedit removes is its own temporary file, when a
-save fails. It never deletes your files.
+While sharing, the only name pedit removes is its own temporary file: the new
+content when a save fails, or your old file once pedit has checked it holds
+what pedit expected. Rarely (saves landing faster than pedit can put them back,
+or an error while it does) a save of yours stays under that
+`.pedit-<random>.tmp` name, and pedit's error names it.
 
 ## Joining from the command line: `pedit '<link>'`
 
 | | What | What keeps it in bounds |
 | --- | --- | --- |
 | Writes | A copy of the shared file, in a new private directory such as `$TMPDIR/pedit-<room>-<random>/` | The directory is `0700` and the copy `0600`. Both are removed when you leave or the host closes the room, with anything else you put in that directory. |
-| Writes | With `-d <dir>`, the copy in `<dir>` | The name comes from the host: a plain name, without `/`, `\`, control characters or characters that reorder how it prints; refused if a file of that name exists. Created `0600` before your umask, and kept when you leave. |
+| Writes | With `-d <dir>`, the copy in `<dir>` | The name comes from the host: a plain name, without `/`, `\`, control characters or characters that reorder how it prints; refused if a file of that name exists or appears while pedit creates it. Created `0600` before your umask, and kept when you leave. |
 | Reads | The copy, when you edit it | The same guards as the host's file: never through a symlink, only UTF-8. |
 
 A joined session saves no images and reads no configuration. Besides the
