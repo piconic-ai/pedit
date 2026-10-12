@@ -1,0 +1,83 @@
+// An experiment guest built on packages/protocol, the way the web editor talks
+// to a host. It does one thing per run and prints what the host answered.
+// Usage: node peer.mjs <packages/protocol dir> <share link> <mode> [arg]
+//   paste <file>      upload <file> as an image and announce it
+//   want <hash>       ask the host to upload the image with this hash
+//   insert <text>     append text to the shared document
+import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { dirname, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+
+const [protocolDir, link, mode, arg] = process.argv.slice(2)
+const u = new URL(link)
+const server = `${u.protocol}//${u.host}`
+const room = u.pathname.replace(/^\/r\//, '')
+const key = u.hash.slice(1)
+
+const require = createRequire(join(protocolDir, 'package.json'))
+function esm(pkg, subpath) {
+  const dir = dirname(require.resolve(`${pkg}/package.json`))
+  const { exports } = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
+  const entry = exports[subpath]
+  return import(pathToFileURL(join(dir, entry.import ?? entry.module ?? entry.default)).href)
+}
+const Y = await esm('yjs', '.')
+const { Awareness } = await esm('y-protocols', './awareness')
+const protocol = await import(pathToFileURL(join(protocolDir, 'src/index.ts')).href)
+
+const doc = new Y.Doc()
+const awareness = new Awareness(doc)
+awareness.setLocalState({ role: 'guest', name: 'peer.mjs', user: { name: 'peer.mjs' } })
+const received = []
+let synced = false
+const client = new protocol.RoomClient({
+  admissionToken: await protocol.deriveAdmissionToken(key),
+  url: `${server.replace(/^http/, 'ws')}/api/rooms/${room}/ws`,
+  key: await protocol.importKey(key),
+  doc,
+  awareness,
+  onAttachment: (a) => received.push(a),
+  onSynced: () => { synced = true },
+})
+client.connect()
+
+async function until(what, cond, tries = 100) {
+  for (let i = 0; i < tries; i++) {
+    const value = cond()
+    if (value) return value
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  return null
+}
+const keys = await protocol.deriveBlobKeys(key)
+const headers = { [protocol.ADMISSION_HEADER]: keys.admission }
+const blobUrl = async (hash) => `${server}/api/rooms/${room}/blobs/${await protocol.blobIdFor(keys, hash)}`
+await until('host', () => [...awareness.getStates().values()].some((s) => s.role === 'host'))
+
+if (mode === 'paste') {
+  const bytes = new Uint8Array(readFileSync(arg))
+  const hash = await protocol.contentHash(bytes)
+  const put = await fetch(await blobUrl(hash), { method: 'PUT', headers, body: await protocol.encryptBlob(keys, bytes) })
+  console.log(`put ${put.status}`)
+  client.sendAttachment({ kind: 'announce', hash, mime: 'image/png' })
+  const reply = await until('reply', () => received.find((a) => a.hash === hash && (a.kind === 'stored' || a.kind === 'rejected')))
+  console.log(reply ? `${reply.kind} ${reply.path ?? reply.reason}` : 'no reply')
+} else if (mode === 'want') {
+  client.sendAttachment({ kind: 'want', hashes: [arg] })
+  const got = await until('announce', () => received.find((a) => a.kind === 'announce' && a.hash === arg), 60)
+  if (!got) console.log('host did not upload it')
+  else {
+    const res = await fetch(await blobUrl(arg), { headers })
+    const bytes = await protocol.decryptBlob(keys, new Uint8Array(await res.arrayBuffer()), arg)
+    console.log(`host uploaded ${bytes.length} bytes: ${new TextDecoder().decode(bytes.slice(8))}`)
+  }
+} else if (mode === 'insert') {
+  await until('sync', () => synced)
+  const text = doc.getText('content')
+  text.insert(text.length, arg)
+  await new Promise((r) => setTimeout(r, 1500))
+  console.log('inserted')
+}
+await client.destroy()
+process.exit(0)
