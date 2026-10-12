@@ -419,6 +419,7 @@ func TestSharedFileName(t *testing.T) {
 	for name, ok := range map[string]bool{
 		"notes.md": true, "議事録.md": true, "": false, ".": false, "..": false,
 		"../x.md": false, `..\x.md`: false, "a/b.md": false, "a\x00.md": false, "a\n.md": false,
+		"invoice\u202ecod.md": false, "a\u2066b.md": false, "a\u200fb.md": false, "👨\u200d👩\u200d👧.md": true,
 	} {
 		if _, got := sharedFileName(map[string]any{"file": name}); got != ok {
 			t.Errorf("%q: ok = %v", name, got)

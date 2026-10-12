@@ -338,7 +338,8 @@ func hostState(aw *awareness.Awareness) (map[string]any, bool) {
 }
 
 // sharedFileName takes the file name the host shares, which comes from the
-// room: only a plain name is accepted, never a path.
+// room: only a plain name is accepted, never a path, and nothing that changes
+// how the name prints. "invoice\u202ecod.md" would show as invoicedm.doc.
 func sharedFileName(host map[string]any) (string, bool) {
 	name, _ := host["file"].(string)
 	if name == "" || name == "." || name == ".." || len(name) > 255 {
@@ -348,7 +349,7 @@ func sharedFileName(host map[string]any) (string, bool) {
 		return "", false
 	}
 	for _, r := range name {
-		if unicode.IsControl(r) {
+		if unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) {
 			return "", false
 		}
 	}
