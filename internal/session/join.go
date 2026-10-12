@@ -40,6 +40,8 @@ type JoinOptions struct {
 	Dial     protocol.Dialer
 	OnStatus func(protocol.Status)
 	OnPeople func([]string)
+	// OnNotice and OnError are as in Options.
+	OnNotice func(Notice)
 	OnError  func(error)
 
 	// beforePublishWriter is a test seam; see Session.beforePublishWriter.
@@ -198,6 +200,9 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 	s.Client.Connect()
 
 	fail := func(err error) (*Session, error) {
+		if s.notices != nil {
+			s.notices.stop()
+		}
 		// A first write that met a change scheduled a sync; none may run now.
 		s.mu.Lock()
 		s.stopped = true
@@ -256,6 +261,7 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 		return fail(errors.New("the host did not share a usable file name"))
 	}
 	s.file = filepath.Join(dir, base)
+	s.notices = newNotices(s.file, opts.OnNotice, onError)
 	if _, err := os.Lstat(s.file); err == nil {
 		return fail(&ErrFileExists{Path: s.file})
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -272,7 +278,8 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 	w := filewriter.New(s.file, "", filewriter.Options{
 		Bound:            s.bound,
 		Delay:            opts.WriteDelay,
-		OnError:          onError,
+		OnError:          s.notices.saveError,
+		OnWritten:        s.notices.written,
 		OnExternalChange: s.scheduleSyncFromDisk,
 	})
 	// Under the client's lock, no remote update can land between taking the
@@ -300,6 +307,7 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 	if err := w.Flush(); err != nil {
 		return fail(fmt.Errorf("cannot write %s: %w", s.file, err))
 	}
+	s.notices.start()
 	if opts.Watch {
 		if err := s.watch(); err != nil {
 			return fail(err)

@@ -13,6 +13,10 @@ import (
 	"time"
 )
 
+// ErrNotRegular means the shared file was replaced by something that is not a
+// regular file, such as a link or a directory, which pedit does not write through.
+var ErrNotRegular = errors.New("not a regular file")
+
 // BoundFile keeps the shared directory open for the lifetime of a session.
 // Renaming a file within it is allowed; replacing it with a link is not.
 type BoundFile struct {
@@ -103,7 +107,7 @@ func (e landedError) Error() string { return e.err.Error() }
 func (e landedError) Unwrap() error { return e.err }
 
 func (f *BoundFile) errNotRegular() error {
-	return fmt.Errorf("shared file %s is not a regular file", f.name)
+	return fmt.Errorf("shared file %s is %w", f.name, ErrNotRegular)
 }
 
 func OpenBound(path string) (*BoundFile, error) {
@@ -123,7 +127,7 @@ func OpenBound(path string) (*BoundFile, error) {
 	}
 	if info, err := root.Lstat(f.name); err == nil && !info.Mode().IsRegular() {
 		_ = root.Close()
-		return nil, fmt.Errorf("shared file %s is not a regular file", path)
+		return nil, fmt.Errorf("shared file %s is %w", path, ErrNotRegular)
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		_ = root.Close()
 		return nil, err

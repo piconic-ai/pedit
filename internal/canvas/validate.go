@@ -30,24 +30,37 @@ type Error struct {
 
 func (e *Error) Error() string { return e.Report("") }
 
+// Lines lists the problems for someone, or a coding agent, to fix the file:
+// one "file:line:column: path: message" line each, which editors and agents
+// can jump to, and a last line counting those not listed, if any.
+func (e *Error) Lines(name string) []string {
+	if name == "" {
+		name = "the file"
+	}
+	var lines []string
+	for _, p := range e.Problems {
+		line := fmt.Sprintf("%s:%d:%d: ", name, p.Line, p.Column)
+		if p.Path != "" {
+			line += p.Path + ": "
+		}
+		lines = append(lines, line+p.Message)
+	}
+	if e.More > 0 {
+		lines = append(lines, fmt.Sprintf("and %d more", e.More))
+	}
+	return lines
+}
+
 // Report explains the problems for someone, or a coding agent, to fix the
-// file: one "file:line:column: path: message" line each, which editors and
-// agents can jump to, then what to do.
+// file: Lines, then what to do.
 func (e *Error) Report(name string) string {
 	if name == "" {
 		name = "the file"
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s is not a valid JSON Canvas (%s):\n", name, Spec)
-	for _, p := range e.Problems {
-		fmt.Fprintf(&b, "  %s:%d:%d: ", name, p.Line, p.Column)
-		if p.Path != "" {
-			b.WriteString(p.Path + ": ")
-		}
-		b.WriteString(p.Message + "\n")
-	}
-	if e.More > 0 {
-		fmt.Fprintf(&b, "  and %d more\n", e.More)
+	for _, line := range e.Lines(name) {
+		b.WriteString("  " + line + "\n")
 	}
 	b.WriteString("Fix the file and run pedit again.")
 	return b.String()

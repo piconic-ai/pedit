@@ -49,8 +49,7 @@ func (c *textContent) merge(base, next string) error {
 }
 
 type canvasContent struct {
-	doc  *crdt.Doc
-	name string
+	doc *crdt.Doc
 
 	mu sync.Mutex
 	// last is the file as last read or written: rendering keeps its layout
@@ -74,7 +73,7 @@ func newCanvasContent(doc *crdt.Doc, file, initial string) (*canvasContent, erro
 		return nil, describeCanvasError(name, err)
 	}
 	canvas.Load(doc, f.Canvas)
-	return &canvasContent{doc: doc, name: name, last: f}, nil
+	return &canvasContent{doc: doc, last: f}, nil
 }
 
 func describeCanvasError(name string, err error) error {
@@ -158,14 +157,16 @@ func describeJSONError(err error) error {
 	return errors.New(b.String())
 }
 
+// parsePair parses both sides of an edit to the file. A side that is not a
+// canvas comes back as a *canvas.Error, which the caller words.
 func (c *canvasContent) parsePair(base, next string) (*canvas.File, *canvas.File, error) {
 	b, err := canvas.Parse([]byte(base))
 	if err != nil {
-		return nil, nil, describeCanvasError(c.name, err)
+		return nil, nil, err
 	}
 	n, err := canvas.Parse([]byte(next))
 	if err != nil {
-		return nil, nil, describeCanvasError(c.name, err)
+		return nil, nil, err
 	}
 	return b, n, nil
 }

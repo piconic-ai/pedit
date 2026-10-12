@@ -57,7 +57,7 @@ By using it you accept that:
 | Reads | When `<file>` does not exist: the names in its directory | Names only, to suggest close ones. |
 | Reads | `.pedit/templates/<name>`, only when pedit creates the file | Only inside the project: a template that is a symlink out of it is refused. |
 | Reads | `assets/<hash>.png` (or `.jpg`, `.gif`, `.webp`), when a guest asks for an image | Only images your file referred to at start, that you added while sharing, or that were saved this session. A regular file of up to 10 MiB whose content matches the hash in its name. |
-| Writes | The shared file | Through a new `.pedit-<random>.tmp` beside it. On Linux and macOS it is swapped with the file in one step, and the old file, now under the temporary name, is removed only once pedit has read it twice, 5 ms apart, and found what pedit expected; a save that landed meanwhile is swapped back. Elsewhere (Windows, NFS, FUSE) the file is checked once more just before the new one is renamed over it: a save renamed over the file after that check is lost, and one written into the old file after it is lost and reported. A missing file is created only if no file appeared at its name meanwhile (on FAT and exFAT, only after a check). Not while the file has changes pedit has not taken in yet, nor once the file has become a symlink or is no longer UTF-8. Permissions are kept; if the file is deleted while sharing, the next save creates it again, `0600` before your umask. |
+| Writes | The shared file | Through a new `.pedit-<random>.tmp` beside it. On Linux and macOS it is swapped with the file in one step, and the old file, now under the temporary name, is removed only once pedit has read it twice, 5 ms apart, and found what pedit expected; a save that landed meanwhile is swapped back. Elsewhere (Windows, NFS, FUSE) the file is checked once more just before the new one is renamed over it: a save renamed over the file after that check is lost, and one written into the old file after it is lost and reported. A missing file is created only if no file appeared at its name meanwhile (on FAT and exFAT, only after a check). Not while the file has changes pedit has not taken in yet, nor once the file has become a symlink or is no longer UTF-8. Permissions are kept; if the file is deleted while sharing, the next save creates it again, `0600` before your umask. A save that fails is tried again every few seconds. |
 | Writes | `assets/` and the images guests paste | PNG, JPEG, GIF or WebP, judged by their bytes (SVG is never saved); up to 10 MiB each, 100 MiB and 500 images a session. Named by content hash, never over a different file, never outside the shared file's directory, even if `assets` is swapped for a symlink. Images are created `0600`, `assets/` `0755`, before your umask. |
 | Writes | `.pedit/config.yaml` and `.pedit/templates/default.{md,csv,canvas}` | Only on the first run at a Git repository root, and only files that do not exist yet. |
 | Writes | A new file, with `pedit`, `pedit -t <template>` or `--<type>` | In `output` from the configuration, or `-d`. Created `0644` before your umask, only if no file has that name; the directory is created if needed. |
@@ -68,7 +68,15 @@ While sharing, the only name pedit removes is its own temporary file: the new
 content when a save fails, or your old file once pedit has checked it holds
 what pedit expected. Rarely (saves landing faster than pedit can put them back,
 or an error while it does) a save of yours stays under that
-`.pedit-<random>.tmp` name, and pedit's error names it.
+`.pedit-<random>.tmp` name, and pedit names it in the terminal.
+
+When saving the file fails, and fails again when tried again, or the file
+changes into something pedit cannot take in (text that is not UTF-8, a canvas
+that does not parse), pedit says so in the terminal, and again once it saves
+again. Until then the file misses the latest edits: fix it before you press
+Ctrl+C. pedit also says when it cannot save an image someone pasted, for
+example because `assets` is a file or a link out of the folder, and when it
+can tell that a save your editor made while pedit wrote the file was lost.
 
 ## Joining from the command line: `pedit '<link>'`
 
@@ -79,7 +87,8 @@ or an error while it does) a save of yours stays under that
 | Reads | The copy, when you edit it | The same guards as the host's file: never through a symlink, only UTF-8. |
 
 A joined session saves no images and reads no configuration. Besides the
-copy, it writes only the update check cache.
+copy, it writes only the update check cache. A save of the copy that fails is
+retried and reported the same way.
 
 ## Programs pedit runs
 

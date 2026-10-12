@@ -52,7 +52,9 @@ type Writer struct {
 	path             string
 	bound            *BoundFile
 	delay            time.Duration
+	retryDelay       time.Duration
 	onError          func(error)
+	onWritten        func()
 	onExternalChange func()
 
 	mu      sync.Mutex // guards timer and pending
@@ -64,9 +66,19 @@ type Writer struct {
 }
 
 type Options struct {
-	Bound            *BoundFile
-	Delay            time.Duration
-	OnError          func(error)
+	Bound *BoundFile
+	Delay time.Duration
+	// RetryDelay is how long content whose write failed waits before it is
+	// written again; five times Delay by default, so a failing disk is not
+	// tried in a tight loop.
+	RetryDelay time.Duration
+	// OnError is called with each write that fails, retries included, and
+	// with what a write that landed reports, such as ErrSaveOverwritten. A
+	// write skipped for ErrExternalChange alone goes only to OnExternalChange.
+	OnError func(error)
+	// OnWritten is called after each write that lands, also one that
+	// returns an error but left the content in the file.
+	OnWritten        func()
 	OnExternalChange func()
 }
 
@@ -75,15 +87,23 @@ func New(path, initial string, opts Options) *Writer {
 		path:             path,
 		bound:            opts.Bound,
 		delay:            opts.Delay,
+		retryDelay:       opts.RetryDelay,
 		onError:          opts.OnError,
+		onWritten:        opts.OnWritten,
 		onExternalChange: opts.OnExternalChange,
 		lastWritten:      initial,
 	}
 	if w.delay == 0 {
 		w.delay = time.Second
 	}
+	if w.retryDelay == 0 {
+		w.retryDelay = 5 * w.delay
+	}
 	if w.onError == nil {
 		w.onError = func(error) {}
+	}
+	if w.onWritten == nil {
+		w.onWritten = func() {}
 	}
 	if w.onExternalChange == nil {
 		w.onExternalChange = func() {}
@@ -96,18 +116,30 @@ func (w *Writer) Schedule(content string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.pending = &content
+	w.arm(w.delay)
+}
+
+// arm (re)starts the timer that writes the pending content. Callers hold w.mu.
+func (w *Writer) arm(delay time.Duration) {
 	if w.timer != nil {
 		w.timer.Stop()
 	}
-	w.timer = time.AfterFunc(w.delay, func() { _ = w.Flush() })
+	w.timer = time.AfterFunc(delay, func() { _ = w.flush(true) })
 }
 
 // ErrExternalChange means the file changed outside pedit since the last write,
 // so the write was skipped to avoid clobbering it.
 var ErrExternalChange = errors.New("file changed outside pedit")
 
-// Flush writes any pending content now and returns once it is written.
-func (w *Writer) Flush() error {
+// Flush writes any pending content now and returns once it is written. A
+// write that fails is up to the caller: Flush leaves no retry behind.
+func (w *Writer) Flush() error { return w.flush(false) }
+
+// flush writes any pending content. With retry, as when the timer fires,
+// content that fails to be written stays pending and is tried again after the
+// retry delay, unless newer content was scheduled meanwhile, the file changed
+// outside pedit, or the file was closed and can never be written again.
+func (w *Writer) flush(retry bool) error {
 	// Take io before the pending content, so flushes land in the order their
 	// content was scheduled.
 	w.io.Lock()
@@ -146,16 +178,31 @@ func (w *Writer) Flush() error {
 	}
 	if err == nil {
 		w.lastWritten = *pending
+		w.onWritten()
 		return nil
 	}
 	// A write that failed late may have left the content in place, such as
 	// when a save it moved aside could not be put back. Merging that content
-	// in again would repeat its edits.
+	// in again would repeat its edits, and writing it again is not needed.
 	var landed landedError
-	if errors.As(err, &landed) {
+	inPlace := errors.As(err, &landed)
+	if !inPlace {
+		onDisk, ok := read()
+		inPlace = ok && onDisk == *pending
+	}
+	switch {
+	case inPlace:
 		w.lastWritten = *pending
-	} else if onDisk, ok := read(); ok && onDisk == *pending {
-		w.lastWritten = *pending
+		w.onWritten()
+	case retry && !errors.Is(err, ErrExternalChange) && !errors.Is(err, os.ErrClosed):
+		// A change outside pedit is merged first, which schedules the
+		// write again; a closed file can never be written.
+		w.mu.Lock()
+		if w.pending == nil {
+			w.pending = pending
+			w.arm(w.retryDelay)
+		}
+		w.mu.Unlock()
 	}
 	if err != ErrExternalChange {
 		// It says more, such as where a save is kept.

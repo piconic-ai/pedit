@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -159,13 +160,8 @@ func TestCanvasIsSharedAsNodesAndEdges(t *testing.T) {
 }
 
 func TestCanvasTakesInEditsToTheFile(t *testing.T) {
-	var mu sync.Mutex
-	var errs []error
-	f := setup(t, board, setupOpts{name: "board.canvas", watch: true, onError: func(err error) {
-		mu.Lock()
-		errs = append(errs, err)
-		mu.Unlock()
-	}})
+	n := newNoticeLog(t)
+	f := setup(t, board, setupOpts{name: "board.canvas", watch: true, onNotice: n.add})
 	g := joinCanvas(t, f.relay, f.session.URL)
 
 	edited := strings.Replace(board, `"text":"Hello"`, `"text":"Hello there"`, 1)
@@ -180,19 +176,14 @@ func TestCanvasTakesInEditsToTheFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	g.change(t, "b2", func(txn *crdt.Transaction, m *crdt.YMap) { m.Set(txn, "color", "1") })
-	prototest.WaitFor(t, wait, func() bool {
-		mu.Lock()
-		defer mu.Unlock()
-		return len(errs) > 0
-	}, "the invalid file to be reported")
+	told := n.waitFor(ChangeHeld)
 	if got := readFile(t, f.file); got != broken {
 		t.Fatalf("the file was saved over while invalid:\n%s", got)
 	}
-	mu.Lock()
-	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "board.canvas changed outside pedit") || !strings.Contains(errs[0].Error(), "ends too early") {
-		t.Errorf("errors = %v", errs)
+	if len(n.all()) != 1 || told.File != f.file || told.Reason != "it is not a valid JSON Canvas (https://jsoncanvas.org/spec/1.0/)" ||
+		len(told.Details) != 1 || !strings.HasPrefix(told.Details[0], "board.canvas:") || !strings.Contains(told.Details[0], "ends too early") {
+		t.Errorf("notices = %+v", n.all())
 	}
-	mu.Unlock()
 
 	// Fixed: the guest's change is saved on top of it.
 	if err := os.WriteFile(f.file, []byte(edited), 0o644); err != nil {
@@ -200,6 +191,10 @@ func TestCanvasTakesInEditsToTheFile(t *testing.T) {
 	}
 	want := strings.Replace(edited, `"height":60}`+"\n", `"height":60,"color":"1"}`+"\n", 1)
 	prototest.WaitFor(t, wait, func() bool { return readFile(t, f.file) == want }, "the guest's change to be saved")
+	n.waitFor(HoldReleased)
+	if got := n.kinds(); !slices.Equal(got, []NoticeKind{ChangeHeld, HoldReleased}) {
+		t.Errorf("kinds = %v", got)
+	}
 }
 
 func TestCanvasAppliesJSONEditedInTheBrowser(t *testing.T) {
