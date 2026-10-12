@@ -123,6 +123,11 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 	if !ok {
 		return nil, fmt.Errorf("cannot read %s", opts.File)
 	}
+	if !utf8.ValidString(initial) {
+		// Before creating a room: once edited, the bytes pedit cannot read
+		// would be saved back as U+FFFD, and the file changed for good.
+		return nil, fmt.Errorf("%s is not UTF-8 text. pedit shares UTF-8 only, and would replace the bytes it cannot read; convert the file first (for example, iconv -f SHIFT_JIS -t UTF-8)", opts.File)
+	}
 	// Before creating a room, so a canvas that is not valid fails right away.
 	doc := crdt.New()
 	var shared content
@@ -451,8 +456,10 @@ func (s *Session) syncFromDisk() {
 			s.invalidOnDisk = ""
 			return lastWritten
 		}
-		var err error
-		s.Client.Do(func() { err = s.content.merge(lastWritten, onDisk) })
+		err := errNotUTF8
+		if utf8.ValidString(onDisk) {
+			s.Client.Do(func() { err = s.content.merge(lastWritten, onDisk) })
+		}
 		if err != nil {
 			// Wait for it to be fixed: saving now would clobber whatever
 			// someone is in the middle of writing.
@@ -474,6 +481,11 @@ func (s *Session) syncFromDisk() {
 		s.Writer.Schedule(s.render())
 	}
 }
+
+// errNotUTF8 means the file on disk is no longer UTF-8 text, such as after an
+// editor saved it in another encoding. Taking it in would lose what pedit
+// cannot read, and saving would then overwrite the file with that loss.
+var errNotUTF8 = errors.New("it is not UTF-8 text")
 
 // render returns the file as the doc has it now, under the client's lock so
 // remote updates cannot change the doc while it is read.

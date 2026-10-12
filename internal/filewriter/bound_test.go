@@ -62,6 +62,22 @@ func TestBoundFileRejectsReplacementLinkAndAllowsRenameSave(t *testing.T) {
 	}
 }
 
+func TestBoundFileReadsBytesAsTheyAre(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "memo.txt")
+	// 議事録 in Shift_JIS: not UTF-8, and must not be taken for U+FFFD.
+	if err := os.WriteFile(path, []byte("\x8b\x63\x8e\x96\x98\x5e\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := OpenBound(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if got, ok := f.Read(); !ok || got != "\x8b\x63\x8e\x96\x98\x5e\n" {
+		t.Fatalf("Read = %q, %v", got, ok)
+	}
+}
+
 func TestBoundFileRejectsInitialLink(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink creation needs privileges on Windows")
