@@ -693,6 +693,26 @@ func TestKeepsAFileThatStopsBeingUTF8(t *testing.T) {
 	}
 }
 
+// Fixed with an edit of the user's own: the fix is merged, not an echo.
+func TestToldWhenAHeldFileIsFixedWithNewText(t *testing.T) {
+	n := newNoticeLog(t)
+	f := setup(t, "notes\n", setupOpts{watch: true, onNotice: n.add})
+	if err := os.WriteFile(f.file, []byte(sjis), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	n.waitFor(ChangeHeld)
+	if err := os.WriteFile(f.file, []byte("notes\nmine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	n.waitFor(HoldReleased)
+	if got := n.kinds(); !slices.Equal(got, []NoticeKind{ChangeHeld, HoldReleased}) {
+		t.Errorf("kinds = %v", got)
+	}
+	if got := readFile(t, f.file); got != "notes\nmine\n" {
+		t.Errorf("file = %q", got)
+	}
+}
+
 // A file that holds what pedit wrote is the echo of its own write, not a
 // change that was fixed.
 func TestTellsNothingWhenTheFileHoldsWhatPeditWrote(t *testing.T) {

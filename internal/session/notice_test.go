@@ -76,7 +76,7 @@ func TestNoticesTellEachConditionOnce(t *testing.T) {
 	n.imageError(notADirectory)
 	n.imageError(fmt.Errorf("%s %w: %w", attach.Dir, attach.ErrLinkedOut, notADirectory))
 	n.imageSaved()
-	n.imageError(notADirectory)
+	n.imageError(fmt.Errorf("%s %w: %w", attach.Dir, attach.ErrLinkedOut, notADirectory))
 
 	// Recovery is told once, when the failure was.
 	n.written()
@@ -90,7 +90,7 @@ func TestNoticesTellEachConditionOnce(t *testing.T) {
 		"save-failed:disk on fire",
 		"image-not-saved:not a directory",
 		"image-not-saved:it links out of the shared file's folder",
-		"image-not-saved:not a directory",
+		"image-not-saved:it links out of the shared file's folder",
 		"save-recovered:",
 	}, ",")
 	if got := f.toldKinds(); got != want {

@@ -44,8 +44,8 @@ func TestNewFilesFollowTheUmask(t *testing.T) {
 			t.Fatalf("%s mode = %o, want %o", path, info.Mode().Perm(), want)
 		}
 	}
-	// Not readFile: it fails the test when the file is missing, which is what
-	// WaitFor polls for.
+	// Not readFile: it fails the test on a missing file, and WaitFor polls while
+	// the file may not exist yet.
 	hasContent := func(path, content string) bool {
 		b, err := os.ReadFile(path)
 		return err == nil && string(b) == content

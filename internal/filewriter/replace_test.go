@@ -735,6 +735,122 @@ func TestWriteDoesNotReplaceAFileCreatedMeanwhile(t *testing.T) {
 	}
 }
 
+// A file that appears at a missing name is not pedit's to replace, even when
+// pedit would take it for the expected one: an empty file holds "", and one
+// pedit cannot read counts as holding anything.
+func TestWriteDoesNotReplaceAnEmptyOrUnreadableFileCreatedMeanwhile(t *testing.T) {
+	tests := []struct {
+		name       string
+		step       Step
+		expected   string
+		unreadable bool
+	}{
+		{"empty, between the two looks at the name", StepTempWritten, "", false},
+		{"empty, just before the file is created", StepBeforeReplace, "", false},
+		{"unreadable, just before the file is created", StepBeforeReplace, "v0", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.unreadable && (runtime.GOOS == "windows" || os.Geteuid() == 0) {
+				t.Skip("mode 0 keeps nobody out on Windows or from root")
+			}
+			r := newRace(t, "v0")
+			if err := os.Remove(r.path); err != nil {
+				t.Fatal(err)
+			}
+			// The descriptor stays open, so a late write through it shows
+			// which file the name holds after Write.
+			var someone *os.File
+			var planted os.FileInfo
+			t.Cleanup(func() {
+				if someone != nil {
+					_ = someone.Close()
+				}
+			})
+			r.at(tt.step, 1, func() {
+				f, err := os.OpenFile(r.path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+				if err != nil {
+					t.Fatal(err)
+				}
+				someone = f
+				if tt.unreadable {
+					if _, err := f.WriteString("v0"); err != nil {
+						t.Fatal(err)
+					}
+					if err := f.Chmod(0); err != nil {
+						t.Fatal(err)
+					}
+				}
+				planted = stat(t, r.path)
+			})
+			err := r.bound.Write(tt.expected, "pedit")
+			if planted == nil {
+				t.Fatal("the file was never created")
+			}
+			if err != ErrExternalChange {
+				t.Fatalf("Write = %v, want ErrExternalChange", err)
+			}
+			if now := stat(t, r.path); !os.SameFile(planted, now) || now.Size() != planted.Size() {
+				t.Fatalf("the name no longer holds the file created meanwhile: size %d, was %d", now.Size(), planted.Size())
+			}
+			if !tt.unreadable {
+				if _, err := someone.WriteString("someone\n"); err != nil {
+					t.Fatal(err)
+				}
+				if got := r.onDisk(); got != "someone\n" {
+					t.Fatalf("file = %q", got)
+				}
+			}
+			r.noLeftovers()
+		})
+	}
+}
+
+// A copy pedit has yet to create takes no file that is there, however empty or
+// open to others: the file would keep its mode and get the document's text.
+func TestWriteCreateOnlyRefusesAnExistingFile(t *testing.T) {
+	r := newRace(t, "")
+	if err := os.Chmod(r.path, 0o666); err != nil {
+		t.Fatal(err)
+	}
+	before := stat(t, r.path)
+	r.bound.CreateOnly()
+	if err := r.bound.Write("", "pedit"); err != ErrExternalChange {
+		t.Fatalf("Write onto a file = %v, want ErrExternalChange", err)
+	}
+	now := stat(t, r.path)
+	if !os.SameFile(before, now) || now.Size() != 0 || r.onDisk() != "" {
+		t.Fatalf("the file was replaced: size %d, content %q", now.Size(), r.onDisk())
+	}
+	if runtime.GOOS != "windows" && now.Mode().Perm() != 0o666 {
+		t.Fatalf("mode = %v", now.Mode().Perm())
+	}
+	r.noLeftovers()
+
+	if err := os.Remove(r.path); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.bound.Write("", "one"); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.onDisk(); got != "one" {
+		t.Fatalf("file = %q", got)
+	}
+	if runtime.GOOS != "windows" {
+		if got := stat(t, r.path).Mode().Perm(); got != 0o600 {
+			t.Fatalf("mode = %v", got)
+		}
+	}
+	// Creating the file ended the restriction: later writes replace it.
+	if err := r.bound.Write("one", "two"); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.onDisk(); got != "two" {
+		t.Fatalf("file = %q", got)
+	}
+	r.noLeftovers()
+}
+
 func TestWriteCreatesAMissingFile(t *testing.T) {
 	tests := []struct {
 		name  string

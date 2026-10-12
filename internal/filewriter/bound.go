@@ -28,6 +28,10 @@ type BoundFile struct {
 	// noExchange is set once the file system turned out unable to exchange;
 	// Write then checks again and renames. Never reset.
 	noExchange atomic.Bool
+	// createOnly is set for a file pedit has yet to create, so that a file
+	// appearing at the name is refused whatever it holds, even if empty or
+	// unreadable. Write clears it once it has created the file.
+	createOnly atomic.Bool
 	hook       atomic.Pointer[func(Step)]
 }
 
@@ -140,6 +144,10 @@ func (f *BoundFile) Close() error { return f.root.Close() }
 // Dir is the shared file's directory, as opened when the session started.
 // It stays open until Close.
 func (f *BoundFile) Dir() *os.Root { return f.root }
+
+// CreateOnly makes Write refuse any file at the name, with ErrExternalChange,
+// until Write has created the file itself.
+func (f *BoundFile) CreateOnly() { f.createOnly.Store(true) }
 
 func (f *BoundFile) Validate() error {
 	info, err := f.root.Lstat(f.name)
@@ -275,8 +283,9 @@ func (f *BoundFile) kept(tmpName string) string {
 // expected. With exchange (Linux, macOS), a save made in between is left in
 // place, and Write returns ErrExternalChange. Elsewhere it checks once more
 // and reports a save written into the file it replaced. A file pedit cannot
-// read counts as holding expected. Write must not run concurrently with
-// itself; Writer.io serializes it.
+// read counts as holding expected. A file that appears at a missing name is
+// never replaced. Write must not run concurrently with itself; Writer.io
+// serializes it.
 func (f *BoundFile) Write(expected, content string) error {
 	// An existing file keeps its permissions. A new one keeps those it is
 	// created with below: 0600, restricted further by the umask.
@@ -285,6 +294,9 @@ func (f *BoundFile) Write(expected, content string) error {
 	if info, err := f.root.Lstat(f.name); err == nil {
 		if !info.Mode().IsRegular() {
 			return f.errNotRegular()
+		}
+		if f.createOnly.Load() {
+			return ErrExternalChange
 		}
 		mode, existed = info.Mode().Perm(), true
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -321,14 +333,20 @@ func (f *BoundFile) Write(expected, content string) error {
 	// replacement.
 	if info, err := f.root.Lstat(f.name); errors.Is(err, os.ErrNotExist) {
 		f.step(StepBeforeReplace)
-		if err := f.create(tmpName); !errors.Is(err, os.ErrExist) {
+		// A file created at the name meanwhile is not pedit's to replace,
+		// even one that holds expected.
+		if err := f.createChecked(tmpName); err != nil {
 			return err
 		}
-		// Someone created it meanwhile: check it like any other save.
+		f.createOnly.Store(false)
+		return nil
 	} else if err != nil {
 		return err
 	} else if !info.Mode().IsRegular() {
 		return f.errNotRegular()
+	} else if !existed {
+		// Missing at the first look: whatever is there now is someone else's.
+		return ErrExternalChange
 	}
 
 	if f.noExchange.Load() {

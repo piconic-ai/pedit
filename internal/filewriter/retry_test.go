@@ -197,10 +197,10 @@ func TestDoesNotRetryOnceClosed(t *testing.T) {
 	w.Schedule("v1")
 	waitUntil(t, "the write to fail", func() bool { errs, _ := r.counts(); return errs == 1 })
 	r.mu.Lock()
-	closed := errors.Is(r.errs[0], os.ErrClosed)
+	first := r.errs[0]
 	r.mu.Unlock()
-	if !closed {
-		t.Fatalf("error = %v, want os.ErrClosed", r.errs[0])
+	if !errors.Is(first, os.ErrClosed) {
+		t.Fatalf("error = %v, want os.ErrClosed", first)
 	}
 	noTimer(t, w)
 	time.Sleep(4 * retryDelay)
@@ -253,11 +253,11 @@ func TestDoesNotRetryAWriteThatLanded(t *testing.T) {
 
 	waitUntil(t, "the lost save to be reported", func() bool { errs, _ := r.counts(); return errs == 1 })
 	r.mu.Lock()
-	lost := errors.Is(r.errs[0], ErrSaveOverwritten)
+	first := r.errs[0]
 	written := r.written
 	r.mu.Unlock()
-	if !lost {
-		t.Fatalf("error = %v, want ErrSaveOverwritten", r.errs[0])
+	if !errors.Is(first, ErrSaveOverwritten) {
+		t.Fatalf("error = %v, want ErrSaveOverwritten", first)
 	}
 	if written != 1 || w.LastWritten() != "pedit" {
 		t.Fatalf("writes = %d, LastWritten = %q", written, w.LastWritten())

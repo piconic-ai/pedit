@@ -158,7 +158,8 @@ func TestBrokenConfigLinkStopsPedit(t *testing.T) {
 }
 
 func TestConfigLinkedToASharedFile(t *testing.T) {
-	// pedit follows a link to the configuration: only a missing target stops it.
+	// pedit follows a link to the configuration. This one leads to a file outside
+	// the project that belongs to the user running pedit, so it is trusted.
 	root := t.TempDir()
 	put(t, filepath.Join(root, ".git"), "")
 	shared := filepath.Join(t.TempDir(), "pedit.yaml")

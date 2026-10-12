@@ -274,6 +274,8 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 	if opts.writeHook != nil {
 		s.bound.SetTestHook(opts.writeHook)
 	}
+	// The copy is new: a file that appears at its name is never replaced.
+	s.bound.CreateOnly()
 
 	w := filewriter.New(s.file, "", filewriter.Options{
 		Bound:            s.bound,

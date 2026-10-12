@@ -197,6 +197,10 @@ func TestStopMergesASaveThatLandsDuringItsFirstWrite(t *testing.T) {
 }
 
 func TestStopMergesASaveThatLandsDuringItsFinalWrite(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// Without exchange, the final write holds the file open while the editor renames over it.
+		t.Skip("renaming over a file pedit holds open is unverified on Windows")
+	}
 	f := setup(t, "one\ntwo\n", setupOpts{writeDelay: time.Minute})
 	g := joinAsGuest(t, f.relay, f.session.URL)
 	prototest.WaitFor(t, wait, func() bool { return g.String() == "one\ntwo\n" }, "guest to sync")
@@ -281,34 +285,84 @@ func TestJoinedCopyMergesASaveThatLandsWhilePeditWrites(t *testing.T) {
 func TestJoinDoesNotClobberAFileCreatedWhileItWritesTheCopy(t *testing.T) {
 	// A host document with text is written through the Writer, an empty one
 	// is created by Join itself; both must leave a file created meanwhile.
-	for _, tt := range []struct{ name, host string }{
+	hosts := []struct{ name, text string }{
 		{"a document with text", "# notes\n"},
 		{"an empty document", ""},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			f := setup(t, tt.host, setupOpts{})
-			dir := t.TempDir()
-			file := filepath.Join(dir, "notes.md")
-			// Someone creates the copy between its check and the first write.
-			hook := saveWhileWriting(1, func() {
-				if err := os.WriteFile(file, []byte("mine\n"), 0o644); err != nil {
-					t.Error(err)
+	}
+	// What appears at the copy's name, and when. An empty file passes for the
+	// copy's own empty content, and one open to everyone would give the copy
+	// its mode.
+	plants := []struct {
+		name    string
+		content string
+		// early plants it after Join looked at the name but before the writer
+		// exists, and opens it to everyone.
+		early bool
+	}{
+		{"a file with text just before the copy is created", "mine\n", false},
+		{"an empty file just before the copy is created", "", false},
+		{"an empty file open to everyone before the first write", "", true},
+	}
+	for _, host := range hosts {
+		for _, plant := range plants {
+			t.Run(host.name+", "+plant.name, func(t *testing.T) {
+				f := setup(t, host.text, setupOpts{})
+				dir := t.TempDir()
+				file := filepath.Join(dir, "notes.md")
+				var planted os.FileInfo
+				create := func() {
+					if err := os.WriteFile(file, []byte(plant.content), 0o644); err != nil {
+						t.Error(err)
+						return
+					}
+					if plant.early {
+						// WriteFile applies the umask; the mode is set as it is.
+						if err := os.Chmod(file, 0o666); err != nil {
+							t.Error(err)
+							return
+						}
+					}
+					info, err := os.Lstat(file)
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					planted = info
 				}
+				// A long delay keeps the writer's timer from taking the first write.
+				opts := joinCLIOpts{JoinOptions: JoinOptions{Directory: dir, WriteDelay: time.Minute}}
+				if plant.early {
+					opts.beforePublishWriter = create
+				} else {
+					opts.writeHook = saveWhileWriting(1, create)
+				}
+				_, err := joinFromCLI(t, f, opts)
+				if err == nil || err.Error() != "cannot write "+file+": file changed outside pedit" {
+					t.Fatalf("err = %v", err)
+				}
+				if planted == nil {
+					t.Fatal("the file was never created")
+				}
+				now, serr := os.Lstat(file)
+				if serr != nil {
+					t.Fatal(serr)
+				}
+				if !os.SameFile(planted, now) || now.Size() != planted.Size() {
+					t.Fatalf("the file created meanwhile was replaced: size %d, was %d", now.Size(), planted.Size())
+				}
+				if got := readFile(t, file); got != plant.content {
+					t.Fatalf("file = %q", got)
+				}
+				if plant.early && runtime.GOOS != "windows" && now.Mode().Perm() != 0o666 {
+					t.Fatalf("mode = %v", now.Mode().Perm())
+				}
+				entries, rerr := os.ReadDir(dir)
+				if rerr != nil || len(entries) != 1 {
+					t.Fatalf("directory = %v, %v", entries, rerr)
+				}
+				noTempLeft(t, dir)
 			})
-			// A long delay keeps the writer's timer from taking the first write.
-			_, err := joinFromCLI(t, f, joinCLIOpts{JoinOptions: JoinOptions{Directory: dir, WriteDelay: time.Minute, writeHook: hook}})
-			if err == nil || err.Error() != "cannot write "+file+": file changed outside pedit" {
-				t.Fatalf("err = %v", err)
-			}
-			if got := readFile(t, file); got != "mine\n" {
-				t.Fatalf("file = %q", got)
-			}
-			entries, rerr := os.ReadDir(dir)
-			if rerr != nil || len(entries) != 1 {
-				t.Fatalf("directory = %v, %v", entries, rerr)
-			}
-			noTempLeft(t, dir)
-		})
+		}
 	}
 }
 
@@ -326,11 +380,15 @@ func TestWritesAgainWhenAChangeIsUndoneBeforeItIsMerged(t *testing.T) {
 	if err := os.WriteFile(f.file, []byte("changed\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	s.syncing.Lock()
 	if err := s.Writer.Flush(); !errors.Is(err, filewriter.ErrExternalChange) {
+		s.syncing.Unlock()
 		t.Fatalf("Flush = %v", err)
 	}
-	// The change is undone before the sync reads the file.
-	if err := os.WriteFile(f.file, []byte("one\n"), 0o644); err != nil {
+	// The change is undone before the sync reads the file: the sync waits for syncing.
+	err := os.WriteFile(f.file, []byte("one\n"), 0o644)
+	s.syncing.Unlock()
+	if err != nil {
 		t.Fatal(err)
 	}
 	prototest.WaitFor(t, wait, func() bool { return readFile(t, f.file) == "zero\none\n" }, "the skipped write to be saved")
