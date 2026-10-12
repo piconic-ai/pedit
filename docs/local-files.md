@@ -47,7 +47,7 @@ By using it you accept that:
 
 | | What | What keeps it in bounds |
 | --- | --- | --- |
-| Reads | `.pedit/config.yaml`, in the current directory or the nearest one above it, up to the Git root (outside a repository, up to `/`) | Used only if you or root own it; otherwise pedit stops and names the file. Windows has no such check. |
+| Reads | `.pedit/config.yaml`, in the current directory or the nearest one above it, up to the Git root (outside a repository, up to `/`) | Used only if you or root own it; otherwise pedit stops and names the file. Windows has no such check. pedit follows a link here; if it, or `.pedit`, is a link whose target does not exist, pedit stops and names it rather than use the default server. |
 | Reads | The shared file | Must be a regular file, not a symlink, and UTF-8 text. Opened through a handle on its directory taken at start, and never through a symlink that replaces it later. |
 | Reads | When `<file>` is a directory: the names in it, and the first 8 KiB of each regular file whose name does not start with `.`, following symlinks, until six look like text | Only to print up to five names to pick from. No room is made and nothing is sent. |
 | Reads | When `<file>` does not exist: the names in its directory | Names only, to suggest close ones. |

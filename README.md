@@ -107,6 +107,8 @@ whiteboard-style diagrams.
 New files get a timestamp and a counter if needed. Existing files are preserved.
 
 Configuration is found from the current directory up to the Git root.
+If `.pedit` or `.pedit/config.yaml` is a link whose target is missing, pedit
+stops instead of using the default server.
 `output` is relative to the project; `-d` is relative to the current directory.
 Without configuration, the public server and built-in defaults work immediately.
 Set `server` in the config instead of `PEDIT_SERVER`.

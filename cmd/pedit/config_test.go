@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -106,6 +107,113 @@ func TestInvalidConfig(t *testing.T) {
 				t.Fatal("accepted invalid config")
 			}
 		})
+	}
+}
+
+func TestBrokenConfigLinkStopsPedit(t *testing.T) {
+	// A link whose target is gone is a configuration pedit cannot read. Using
+	// the default server instead would send the file where the project did not
+	// choose, so every directory the walk visits stops it.
+	for _, tc := range []struct{ name, git, link, cwd string }{
+		{"at the Git root", ".", ".pedit/config.yaml", "."},
+		{"above, in the repository", ".", ".pedit/config.yaml", "sub"},
+		{"above, outside a repository", "", ".pedit/config.yaml", "sub"},
+		{"the .pedit directory", ".", ".pedit", "."},
+		{"the .pedit directory, above", ".", ".pedit", "sub"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			if tc.git != "" {
+				put(t, filepath.Join(root, ".git"), "")
+			}
+			link := filepath.Join(root, filepath.FromSlash(tc.link))
+			if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			target := filepath.Join("..", "shared", "missing")
+			if err := os.Symlink(target, link); err != nil {
+				t.Skip("symlinks unavailable:", err)
+			}
+			cwd := filepath.Join(root, tc.cwd)
+			if err := os.MkdirAll(cwd, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			_, err := loadConfig(cwd)
+			want := link + " is a link whose target does not exist, so pedit cannot read the configuration: it decides where your files are sent. Fix the link, or remove it"
+			if err == nil || err.Error() != want {
+				t.Fatalf("got %v; want %s", err, want)
+			}
+			// A wrapped not-exist error would read as "no configuration here".
+			if errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("%v reads as a missing configuration", err)
+			}
+			if got, err := os.Readlink(link); err != nil || got != target {
+				t.Fatalf("link changed: %q, %v", got, err)
+			}
+			if _, err := os.Lstat(filepath.Join(root, ".pedit", "templates")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("created templates: %v", err)
+			}
+		})
+	}
+}
+
+func TestConfigLinkedToASharedFile(t *testing.T) {
+	// pedit follows a link to the configuration: only a missing target stops it.
+	root := t.TempDir()
+	put(t, filepath.Join(root, ".git"), "")
+	shared := filepath.Join(t.TempDir(), "pedit.yaml")
+	put(t, shared, "server: https://relay.example.com\n")
+	if err := os.MkdirAll(filepath.Join(root, ".pedit"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(shared, filepath.Join(root, ".pedit", "config.yaml")); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	cfg, err := loadConfig(root)
+	if err != nil || cfg.Server != "https://relay.example.com" || cfg.root != root {
+		t.Fatalf("%+v, %v", cfg, err)
+	}
+}
+
+func TestConfigCreatedByAnotherPedit(t *testing.T) {
+	// Two pedits started together at a fresh Git root can both find no
+	// configuration. The one that loses the create reads the winner's file.
+	root := t.TempDir()
+	put(t, filepath.Join(root, ".git"), "")
+	create := createConfig
+	t.Cleanup(func() { createConfig = create })
+	calls := 0
+	createConfig = func(path string) (*os.File, error) {
+		calls++
+		put(t, path, "server: https://relay.example.com\n")
+		return nil, &os.PathError{Op: "open", Path: path, Err: os.ErrExist}
+	}
+	cfg, err := loadConfig(root)
+	if err != nil || cfg.Server != "https://relay.example.com" || cfg.root != root || calls != 1 {
+		t.Fatalf("%+v, %v after %d creates", cfg, err, calls)
+	}
+}
+
+func TestConfigCreationRetriesOnce(t *testing.T) {
+	// A name that reads as missing yet cannot be created must not loop.
+	root := t.TempDir()
+	put(t, filepath.Join(root, ".git"), "")
+	path := filepath.Join(root, ".pedit", "config.yaml")
+	create := createConfig
+	t.Cleanup(func() { createConfig = create })
+	calls := 0
+	createConfig = func(p string) (*os.File, error) {
+		calls++
+		if calls > 2 {
+			t.Fatalf("created %s %d times", p, calls)
+		}
+		return nil, &os.PathError{Op: "open", Path: p, Err: os.ErrExist}
+	}
+	_, err := loadConfig(root)
+	// os.ErrExist reads "file already exists", a real EEXIST "file exists", so
+	// the message is not compared whole.
+	if !errors.Is(err, os.ErrExist) || !strings.Contains(err.Error(), path) || calls != 2 {
+		t.Fatalf("%v after %d creates", err, calls)
 	}
 }
 
