@@ -216,6 +216,7 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 	}
 	s.attachments = attach.New(attach.Options{
 		File:            opts.File,
+		Root:            bound.Dir(),
 		InitialDocument: initial,
 		Server:          server,
 		Room:            room.ID,

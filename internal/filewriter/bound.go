@@ -36,6 +36,10 @@ func OpenBound(path string) (*BoundFile, error) {
 
 func (f *BoundFile) Close() error { return f.root.Close() }
 
+// Dir is the shared file's directory, as opened when the session started.
+// It stays open until Close.
+func (f *BoundFile) Dir() *os.Root { return f.root }
+
 func (f *BoundFile) Validate() error {
 	info, err := f.root.Lstat(f.name)
 	if errors.Is(err, os.ErrNotExist) {

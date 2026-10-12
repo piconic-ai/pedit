@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -392,6 +393,38 @@ func TestNeverWritesOutsideTheFilesDirectory(t *testing.T) {
 		_ = os.WriteFile(filepath.Join(filepath.Dir(h.file), "assets"), nil, 0o644)
 		h.expectRejected(h.announce(png, "image/png"), ReasonUnavailable)
 	})
+}
+
+func TestKeepsToTheDirectoryItOpened(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("an open directory cannot be renamed, and symlinks need privileges on Windows")
+	}
+	h := newHarness(t)
+	base := filepath.Dir(h.file)
+	outside := t.TempDir()
+	if err := os.Mkdir(filepath.Join(base, Dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Someone who can write beside the file swaps assets for a link to
+	// elsewhere, after pedit opened it and before it writes.
+	h.a.beforeWrite = func() {
+		if err := os.Rename(filepath.Join(base, Dir), filepath.Join(base, "moved")); err != nil {
+			t.Error(err)
+		}
+		if err := os.Symlink(outside, filepath.Join(base, Dir)); err != nil {
+			t.Error(err)
+		}
+	}
+	hash := h.announce(png, "image/png")
+	if m := h.next(); m.Kind != protocol.AttachmentStored {
+		t.Fatalf("got %+v", m)
+	}
+	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+		t.Fatalf("wrote %v outside", entries)
+	}
+	if got, err := os.ReadFile(filepath.Join(base, "moved", hash+".png")); err != nil || !bytes.Equal(got, png) {
+		t.Fatalf("not in the directory it opened: %q, %v", got, err)
+	}
 }
 
 func TestUploadsWantedImagesFromDisk(t *testing.T) {
