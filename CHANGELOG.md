@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.1.2](https://github.com/piconic-ai/pedit/compare/v0.1.1...v0.1.2) - 2026-10-13
+
+- Fix four local-file issues: config link crash, lost concurrent saves, silent save failures, umask by @kfly8 in https://github.com/piconic-ai/pedit/pull/119
+
 ## [v0.1.1](https://github.com/piconic-ai/pedit/compare/v0.1.0...v0.1.1) - 2026-10-12
 
 - Record the zone's minimum TLS version, set to 1.2 on Cloudflare by @kfly8 in https://github.com/piconic-ai/pedit/pull/110
