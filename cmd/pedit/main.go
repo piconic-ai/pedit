@@ -122,6 +122,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	var shared bool
+	debug := debugLog(stderr, os.Getenv("PEDIT_DEBUG") != "")
 	scratch := opts.File == ""
 	arg, created, err := prepareFile(cfg, opts.File, opts.Template, opts.Directory, func() string { return time.Now().Format("2006-01-02-150405") })
 	if err != nil {
@@ -194,11 +195,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		OnSaved: func(path string) {
 			out.imageSaved(filepath.Join(filepath.Dir(arg), filepath.FromSlash(path)))
 		},
-		OnError: func(err error) {
-			if os.Getenv("PEDIT_DEBUG") != "" {
-				fmt.Fprintln(stderr, "\nima:", err)
-			}
+		OnNotice: func(n session.Notice) {
+			debug(n.Err)
+			out.notice(arg, true, n)
 		},
+		OnError: debug,
 	})
 	switch {
 	case errors.Is(err, errSignInCancelled):
@@ -237,6 +238,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return code
 }
 
+// debugLog returns where the session sends errors that nobody can act on, or
+// that are told another way, such as in a notice or by Stop. Under
+// PEDIT_DEBUG it prints them on stderr, after a blank line so they do not run
+// into the live status line; otherwise it drops them.
+func debugLog(stderr io.Writer, enabled bool) func(error) {
+	return func(err error) {
+		if enabled && err != nil {
+			fmt.Fprintln(stderr, "\npedit:", err)
+		}
+	}
+}
+
 // runJoin joins the room at opts.Room and mirrors its file to a local copy
 // until Ctrl+C or the host closes the room.
 func runJoin(opts commandArgs, out *ui, stderr io.Writer) int {
@@ -250,6 +263,7 @@ func runJoin(opts commandArgs, out *ui, stderr io.Writer) int {
 	}()
 
 	var ended atomic.Value // the final protocol.Status, once the room ended for us
+	debug := debugLog(stderr, os.Getenv("PEDIT_DEBUG") != "")
 	s, err := session.Join(ctx, session.JoinOptions{
 		URL:       opts.Room,
 		Directory: opts.Directory,
@@ -263,11 +277,11 @@ func runJoin(opts commandArgs, out *ui, stderr io.Writer) int {
 			}
 		},
 		OnPeople: out.setPeople,
-		OnError: func(err error) {
-			if os.Getenv("PEDIT_DEBUG") != "" {
-				fmt.Fprintln(stderr, "\npedit:", err)
-			}
+		OnNotice: func(n session.Notice) {
+			debug(n.Err)
+			out.notice(displayPath(n.File), false, n)
 		},
+		OnError: debug,
 	})
 	switch {
 	case errors.Is(err, context.Canceled):

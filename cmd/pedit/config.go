@@ -33,7 +33,13 @@ var builtinTemplates = map[string]string{
 	"default.canvas": "{\n  \"nodes\": [],\n  \"edges\": []\n}\n",
 }
 
-func loadConfig(cwd string) (config, error) {
+func loadConfig(cwd string) (config, error) { return findConfig(cwd, true) }
+
+// findConfig looks for the configuration from cwd up. When retry is set and
+// another pedit creates the default configuration between our look and our
+// create, it reads that one instead, once: never again, so a name that keeps
+// reading as missing yet cannot be created stops pedit rather than looping.
+func findConfig(cwd string, retry bool) (config, error) {
 	c := config{Server: defaultServer, Output: ".", root: cwd}
 	for dir := cwd; ; dir = filepath.Dir(dir) {
 		path := filepath.Join(dir, ".pedit", "config.yaml")
@@ -63,9 +69,9 @@ func loadConfig(cwd string) (config, error) {
 				if err := os.MkdirAll(filepath.Join(dir, ".pedit", "templates"), 0o755); err != nil {
 					return c, err
 				}
-				f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-				if errors.Is(err, os.ErrExist) {
-					return loadConfig(cwd)
+				f, err := createConfig(path)
+				if errors.Is(err, os.ErrExist) && retry {
+					return findConfig(cwd, false)
 				}
 				if err != nil {
 					return c, err
@@ -94,12 +100,28 @@ func loadConfig(cwd string) (config, error) {
 	return c, nil
 }
 
+// createConfig creates the default configuration, failing if anything has its
+// name. Tests replace it.
+var createConfig = func(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+}
+
 // readConfig reads a configuration file, unless a user other than you or root
 // owns it. pedit looks for one in every directory above the current one, so in
 // a directory anyone can write to, such as /tmp, another user could otherwise
 // choose the server that gets your file and serves the editor that holds its key.
+//
+// It follows links, and reports os.ErrNotExist only when nothing has the name:
+// a link whose target is gone is a configuration pedit cannot read, and falling
+// back to the default server would send the file where the project did not
+// choose.
 func readConfig(path string) ([]byte, error) {
 	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		if err := brokenLink(filepath.Dir(path), path); err != nil {
+			return nil, err
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -112,6 +134,21 @@ func readConfig(path string) ([]byte, error) {
 		return nil, fmt.Errorf("%s belongs to another user (uid %d), so pedit does not use it: it decides where your files are sent. Remove it, or run pedit from a directory you own", path, uid)
 	}
 	return io.ReadAll(f)
+}
+
+// brokenLink reports the first of paths that exists but leads nowhere, such as
+// a link to a file that was removed or a share that is not mounted. The error
+// does not wrap os.ErrNotExist, so the caller stops instead of using defaults.
+func brokenLink(paths ...string) error {
+	for _, p := range paths {
+		if _, err := os.Lstat(p); err != nil {
+			continue
+		}
+		if _, err := os.Stat(p); errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("%s is a link whose target does not exist, so pedit cannot read the configuration: it decides where your files are sent. Fix the link, or remove it", p)
+		}
+	}
+	return nil
 }
 
 // trustedOwner tells whether a file owned by uid may configure pedit for the

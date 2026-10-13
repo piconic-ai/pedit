@@ -357,6 +357,41 @@ func TestReport(t *testing.T) {
 	}
 }
 
+func TestErrorLines(t *testing.T) {
+	e := &Error{
+		Problems: []Problem{
+			{Line: 2, Column: 1, Path: `nodes[0] (id "a")`, Message: `has no "text"; add it as a string`},
+			{Line: 7, Column: 12, Message: "the JSON ends too early"},
+		},
+		More: 3,
+	}
+	want := []string{
+		`board.canvas:2:1: nodes[0] (id "a"): has no "text"; add it as a string`,
+		"board.canvas:7:12: the JSON ends too early",
+		"and 3 more",
+	}
+	if got := e.Lines("board.canvas"); !reflect.DeepEqual(got, want) {
+		t.Errorf("got %q\nwant %q", got, want)
+	}
+	// Report indents the same lines.
+	wantReport := "board.canvas is not a valid JSON Canvas (https://jsoncanvas.org/spec/1.0/):\n" +
+		"  " + strings.Join(want, "\n  ") + "\n" +
+		"Fix the file and run pedit again."
+	if got := e.Report("board.canvas"); got != wantReport {
+		t.Errorf("Report:\n%s\nwant\n%s", got, wantReport)
+	}
+
+	// Without a name, and when nothing is left out.
+	e.More = 0
+	want = []string{
+		`the file:2:1: nodes[0] (id "a"): has no "text"; add it as a string`,
+		"the file:7:12: the JSON ends too early",
+	}
+	if got := e.Lines(""); !reflect.DeepEqual(got, want) {
+		t.Errorf("got %q\nwant %q", got, want)
+	}
+}
+
 func TestDocRoundTrip(t *testing.T) {
 	text := strings.Replace(obsidianFile, `"id":"a1",`, `"id":"a1","plugin":{"k":[1,"two",2.5]},`, 1)
 	text = strings.Replace(text, "{\n", "{\n\t\"version\":\"1\",\n", 1)

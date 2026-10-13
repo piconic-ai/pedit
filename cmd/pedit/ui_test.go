@@ -1,11 +1,13 @@
 package main
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/piconic-ai/pedit/internal/protocol"
+	"github.com/piconic-ai/pedit/internal/session"
 )
 
 func TestUIWithoutTerminal(t *testing.T) {
@@ -262,5 +264,154 @@ func TestUILiveLineWhenOutdated(t *testing.T) {
 		if got := u.liveLine(); got != want {
 			t.Errorf("%s: got %q, want %q", st, got, want)
 		}
+	}
+}
+
+func TestUINotices(t *testing.T) {
+	var out strings.Builder
+	u := newUI(&out, false, false)
+	u.setStatus(protocol.StatusConnected) // not shown before sharing
+	u.sharing("notes.md", "https://pedit.example.com/r/AAAA#key", false, false)
+	u.setPeople([]string{"Alice"})
+	u.notice("notes.md", true, session.Notice{Kind: session.SaveFailed, Reason: "it is no longer a regular file"})
+	u.notice("notes.md", true, session.Notice{Kind: session.SaveRecovered})
+	u.notice("notes.md", true, session.Notice{Kind: session.ChangeHeld, Reason: "it is not UTF-8 text"})
+	u.notice("notes.md", true, session.Notice{Kind: session.HoldReleased})
+	u.notice("docs/notes.md", true, session.Notice{Kind: session.ChangeHeld,
+		Reason: "it is not a valid JSON Canvas (https://jsoncanvas.org/spec/1.0/)",
+		Details: []string{
+			`board.canvas:2:1: nodes[0] (id "a"): has no "height"; add it as a number`,
+			"and 2 more",
+		},
+	})
+	u.notice("notes.md", true, session.Notice{Kind: session.ImageNotSaved, Reason: "it links out of the shared file's folder"})
+	u.notice("docs/notes.md", true, session.Notice{Kind: session.ImageNotSaved, Reason: "not a directory."})
+	u.stopLive()
+
+	want := `
+  notes.md is ready to write together.
+
+  Send this link to the people you want to invite:
+    https://pedit.example.com/r/AAAA#key
+
+  Press Ctrl+C when you are done. Everything is saved to notes.md.
+
+  ● Just you so far
+  ● Alice is here
+  Could not save notes.md: it is no longer a regular file.
+  pedit tries again every few seconds. Fix this before you press Ctrl+C, or the latest edits are not saved.
+  ✓ Saved notes.md again.
+  notes.md changed outside pedit, but it is not UTF-8 text.
+  pedit saves again once it is fixed, and does not save over it until then.
+  Fix it before you press Ctrl+C, or the latest edits are not saved.
+  ✓ notes.md is fixed. Saving goes on.
+  docs/notes.md changed outside pedit, but it is not a valid JSON Canvas (https://jsoncanvas.org/spec/1.0/):
+    board.canvas:2:1: nodes[0] (id "a"): has no "height"; add it as a number
+    and 2 more
+  pedit saves again once it is fixed, and does not save over it until then.
+  Fix it before you press Ctrl+C, or the latest edits are not saved.
+  Could not save an image someone pasted into assets: it links out of the shared file's folder.
+  Could not save an image someone pasted into ` + filepath.Join("docs", "assets") + `: not a directory.
+`
+	if out.String() != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", out.String(), want)
+	}
+	if strings.Contains(out.String(), "\x1b[") {
+		t.Fatal("escape codes outside a terminal")
+	}
+}
+
+func TestUINoticeForAJoinedCopy(t *testing.T) {
+	var out strings.Builder
+	u := newUI(&out, false, false)
+	u.notice("notes.md", false, session.Notice{Kind: session.SaveFailed, Reason: "permission denied"})
+	u.notice("notes.md", false, session.Notice{Kind: session.SaveRecovered})
+	u.notice("notes.md", false, session.Notice{Kind: session.ChangeHeld, Reason: "it is not UTF-8 text"})
+	// Told the same on both.
+	u.notice("notes.md", false, session.Notice{Kind: session.SaveLost})
+	want := `  Could not save notes.md: permission denied.
+  pedit tries again every few seconds. Until then, your copy misses the latest edits.
+  ✓ Saved notes.md again.
+  notes.md changed outside pedit, but it is not UTF-8 text.
+  pedit saves again once it is fixed, and does not save over it until then.
+  A save of notes.md made outside pedit was lost: pedit wrote the file at the same moment.
+  Save it again.
+`
+	if out.String() != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", out.String(), want)
+	}
+	if strings.Contains(out.String(), "Ctrl+C") {
+		t.Fatal("a joined copy is saved when it is left, not lost")
+	}
+}
+
+func TestUINoticeGoesAboveTheLiveLine(t *testing.T) {
+	var out strings.Builder
+	u := newUI(&out, true, false)
+	u.sharing("notes.md", "https://pedit.example.com/r/AAAA#key", false, false)
+	u.setStatus(protocol.StatusConnected)
+	out.Reset()
+
+	u.notice("notes.md", true, session.Notice{Kind: session.SaveFailed, Reason: "permission denied"})
+	want := "\r\x1b[2K" +
+		"  \x1b[33mCould not save notes.md: permission denied.\x1b[0m\n" +
+		"  pedit tries again every few seconds. Fix this before you press Ctrl+C, or the latest edits are not saved.\n" +
+		"\r\x1b[2K  \x1b[32m●\x1b[0m Just you so far"
+	if out.String() != want {
+		t.Fatalf("got %q\nwant %q", out.String(), want)
+	}
+
+	// Once the live line has ended, there is none to put back.
+	u.stopLive()
+	out.Reset()
+	u.notice("notes.md", true, session.Notice{Kind: session.SaveRecovered})
+	if want := "  \x1b[32m✓\x1b[0m Saved notes.md again.\n"; out.String() != want {
+		t.Fatalf("got %q\nwant %q", out.String(), want)
+	}
+}
+
+// Reasons and problems quote file names and contents, which others can write.
+func TestUINoticeKeepsTheTerminalSafe(t *testing.T) {
+	var out strings.Builder
+	u := newUI(&out, false, false)
+	u.notice("notes.md", true, session.Notice{Kind: session.SaveFailed, Reason: "\x1b[2Jdisk\r\n full\u202e."})
+	u.notice("notes.md", true, session.Notice{Kind: session.ChangeHeld, Reason: "\x1b]0;pwned\x07it is odd", Details: []string{"line\x1b[31m one\u2066"}})
+	u.notice("notes.md", true, session.Notice{Kind: session.ImageNotSaved, Reason: "\x1b[0m."})
+	want := `  Could not save notes.md: [2Jdisk full.
+  pedit tries again every few seconds. Fix this before you press Ctrl+C, or the latest edits are not saved.
+  notes.md changed outside pedit, but ]0;pwnedit is odd:
+    line[31m one
+  pedit saves again once it is fixed, and does not save over it until then.
+  Fix it before you press Ctrl+C, or the latest edits are not saved.
+  Could not save an image someone pasted into assets: [0m.
+`
+	if out.String() != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", out.String(), want)
+	}
+	if strings.ContainsAny(out.String(), "\x1b\x07\r\u202e\u2066") {
+		t.Fatalf("control characters reached the terminal: %q", out.String())
+	}
+}
+
+func TestUINoticeOfALostOrKeptSave(t *testing.T) {
+	var out strings.Builder
+	u := newUI(&out, false, false)
+	u.notice("docs/notes.md", true, session.Notice{Kind: session.SaveLost})
+	u.notice("docs/notes.md", true, session.Notice{Kind: session.SaveKept, Kept: ".pedit-0123" + "\x1b[2J" + ".tmp"})
+	want := "  A save of docs/notes.md made outside pedit was lost: pedit wrote the file at the same moment.\n" +
+		"  Save it again.\n" +
+		"  docs/notes.md changed while pedit saved it, and pedit could not put that change back. It is kept in " + filepath.Join("docs", ".pedit-0123[2J.tmp") + ".\n" +
+		"  Compare it with docs/notes.md and copy over what you need.\n"
+	if out.String() != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", out.String(), want)
+	}
+}
+
+func TestUIDoesNotTellWhatItDoesNotKnow(t *testing.T) {
+	var out strings.Builder
+	u := newUI(&out, false, false)
+	u.notice("notes.md", true, session.Notice{Kind: "something-new"})
+	if out.Len() != 0 {
+		t.Fatalf("got %q", out.String())
 	}
 }

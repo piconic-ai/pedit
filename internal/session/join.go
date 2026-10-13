@@ -40,10 +40,15 @@ type JoinOptions struct {
 	Dial     protocol.Dialer
 	OnStatus func(protocol.Status)
 	OnPeople func([]string)
+	// OnNotice and OnError are as in Options.
+	OnNotice func(Notice)
 	OnError  func(error)
 
 	// beforePublishWriter is a test seam; see Session.beforePublishWriter.
 	beforePublishWriter func()
+	// writeHook is a test seam, set on the copy's BoundFile before its first
+	// write; see filewriter.BoundFile.SetTestHook.
+	writeHook func(filewriter.Step)
 }
 
 // ErrRoomClosed means the room could not be joined because nobody hosts it:
@@ -195,6 +200,16 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 	s.Client.Connect()
 
 	fail := func(err error) (*Session, error) {
+		if s.notices != nil {
+			s.notices.stop()
+		}
+		// A first write that met a change scheduled a sync; none may run now.
+		s.mu.Lock()
+		s.stopped = true
+		if s.readTimer != nil {
+			s.readTimer.Stop()
+		}
+		s.mu.Unlock()
 		if s.bound != nil {
 			_ = s.bound.Close()
 		}
@@ -246,6 +261,7 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 		return fail(errors.New("the host did not share a usable file name"))
 	}
 	s.file = filepath.Join(dir, base)
+	s.notices = newNotices(s.file, opts.OnNotice, onError)
 	if _, err := os.Lstat(s.file); err == nil {
 		return fail(&ErrFileExists{Path: s.file})
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -255,11 +271,17 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 	if err != nil {
 		return fail(err)
 	}
+	if opts.writeHook != nil {
+		s.bound.SetTestHook(opts.writeHook)
+	}
+	// The copy is new: a file that appears at its name is never replaced.
+	s.bound.CreateOnly()
 
 	w := filewriter.New(s.file, "", filewriter.Options{
 		Bound:            s.bound,
 		Delay:            opts.WriteDelay,
-		OnError:          onError,
+		OnError:          s.notices.saveError,
+		OnWritten:        s.notices.written,
 		OnExternalChange: s.scheduleSyncFromDisk,
 	})
 	// Under the client's lock, no remote update can land between taking the
@@ -278,7 +300,7 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 		if content := s.content.render(); content != "" {
 			w.Schedule(content)
 		} else {
-			created = s.bound.Write("")
+			created = s.bound.Write("", "")
 		}
 	})
 	if created != nil {
@@ -287,6 +309,7 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 	if err := w.Flush(); err != nil {
 		return fail(fmt.Errorf("cannot write %s: %w", s.file, err))
 	}
+	s.notices.start()
 	if opts.Watch {
 		if err := s.watch(); err != nil {
 			return fail(err)

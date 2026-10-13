@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/piconic-ai/pedit/internal/attach"
+	"github.com/piconic-ai/pedit/internal/filewriter"
 	"github.com/piconic-ai/pedit/internal/protocol"
 	"github.com/piconic-ai/pedit/internal/protocol/prototest"
 	"github.com/reearth/ygo/awareness"
@@ -62,6 +64,8 @@ type fixture struct {
 	server   *httptest.Server
 	requests []string
 	session  *Session
+	// blobs are the room's encrypted images by URL path, served on GET.
+	blobs sync.Map
 }
 
 type setupOpts struct {
@@ -70,8 +74,9 @@ type setupOpts struct {
 	// wrap wraps the host's connections.
 	wrap func(protocol.Conn) protocol.Conn
 	// name is the shared file's name; notes.md by default.
-	name    string
-	onError func(error)
+	name     string
+	onNotice func(Notice)
+	onError  func(error)
 }
 
 func setup(t *testing.T, content string, o setupOpts) *fixture {
@@ -92,6 +97,10 @@ func setup(t *testing.T, content string, o setupOpts) *fixture {
 		mu.Lock()
 		f.requests = append(f.requests, r.Method+" "+r.URL.String())
 		mu.Unlock()
+		if blob, ok := f.blobs.Load(r.URL.Path); ok && r.Method == http.MethodGet {
+			_, _ = w.Write(blob.([]byte))
+			return
+		}
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]string{"id": "AAAAAAAAAAAAAAAAAAAAAA", "hostToken": "host-token"})
 	}))
@@ -104,6 +113,7 @@ func setup(t *testing.T, content string, o setupOpts) *fixture {
 		Server:     f.server.URL + "/",
 		WriteDelay: o.writeDelay,
 		Watch:      o.watch,
+		OnNotice:   o.onNotice,
 		OnError:    o.onError,
 		Dial: func(ctx context.Context, url string, header http.Header) (protocol.Conn, error) {
 			c, err := f.relay.Dial(ctx, url, header)
@@ -197,6 +207,13 @@ func (g *guest) insert(index int, s string) {
 
 func joinAsGuest(t *testing.T, relay *prototest.Relay, shareURL string) *guest {
 	t.Helper()
+	return joinAsGuestHearing(t, relay, shareURL, nil)
+}
+
+// joinAsGuestHearing joins as a guest that is given the attachment messages
+// from the room.
+func joinAsGuestHearing(t *testing.T, relay *prototest.Relay, shareURL string, onAttachment func(protocol.Attachment)) *guest {
+	t.Helper()
 	u, err := url.Parse(shareURL)
 	if err != nil {
 		t.Fatal(err)
@@ -209,7 +226,7 @@ func joinAsGuest(t *testing.T, relay *prototest.Relay, shareURL string) *guest {
 	aw := awareness.New(uint64(doc.ClientID()))
 	aw.SetLocalState(map[string]any{}) // like a JavaScript Awareness starts
 	c, err := protocol.NewClient(protocol.ClientOptions{
-		URL: "ws://guest", Key: key, Doc: doc, Awareness: aw, Dial: relay.Dial,
+		URL: "ws://guest", Key: key, Doc: doc, Awareness: aw, Dial: relay.Dial, OnAttachment: onAttachment,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -226,6 +243,64 @@ func readFile(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+// noticeLog collects the notices a session tells.
+type noticeLog struct {
+	t    *testing.T
+	mu   sync.Mutex
+	list []Notice
+}
+
+func newNoticeLog(t *testing.T) *noticeLog { return &noticeLog{t: t} }
+
+func (l *noticeLog) add(n Notice) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.list = append(l.list, n)
+}
+
+func (l *noticeLog) all() []Notice {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]Notice{}, l.list...)
+}
+
+// kinds lists the kinds told so far, in order.
+func (l *noticeLog) kinds() []NoticeKind {
+	var kinds []NoticeKind
+	for _, n := range l.all() {
+		kinds = append(kinds, n.Kind)
+	}
+	return kinds
+}
+
+// waitFor waits for a notice of kind, and returns the first.
+func (l *noticeLog) waitFor(kind NoticeKind) Notice {
+	l.t.Helper()
+	var found Notice
+	prototest.WaitFor(l.t, wait, func() bool {
+		for _, n := range l.all() {
+			if n.Kind == kind {
+				found = n
+				return true
+			}
+		}
+		return false
+	}, "a notice of "+string(kind))
+	return found
+}
+
+// blockWithDirectory replaces the file with a directory, which pedit cannot
+// save over. Removing the directory unblocks it.
+func blockWithDirectory(t *testing.T, path string) {
+	t.Helper()
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestShareURLKeyNeverReachesServer(t *testing.T) {
@@ -584,13 +659,8 @@ func TestRefusesFileThatIsNotUTF8BeforeARoomIsMade(t *testing.T) {
 }
 
 func TestKeepsAFileThatStopsBeingUTF8(t *testing.T) {
-	var mu sync.Mutex
-	var errs []error
-	f := setup(t, "notes\n", setupOpts{watch: true, onError: func(err error) {
-		mu.Lock()
-		errs = append(errs, err)
-		mu.Unlock()
-	}})
+	n := newNoticeLog(t)
+	f := setup(t, "notes\n", setupOpts{watch: true, onNotice: n.add})
 	g := joinAsGuest(t, f.relay, f.session.URL)
 	prototest.WaitFor(t, wait, func() bool { return g.String() == "notes\n" }, "guest to sync")
 
@@ -598,11 +668,7 @@ func TestKeepsAFileThatStopsBeingUTF8(t *testing.T) {
 	if err := os.WriteFile(f.file, []byte(sjis), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	prototest.WaitFor(t, wait, func() bool {
-		mu.Lock()
-		defer mu.Unlock()
-		return len(errs) > 0
-	}, "the file to be reported")
+	told := n.waitFor(ChangeHeld)
 	g.insert(0, "guest: ")
 	time.Sleep(300 * time.Millisecond)
 	if got := readFile(t, f.file); got != sjis {
@@ -611,17 +677,235 @@ func TestKeepsAFileThatStopsBeingUTF8(t *testing.T) {
 	if got := g.String(); got != "guest: notes\n" {
 		t.Fatalf("guest got %q", got)
 	}
-	mu.Lock()
-	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "not UTF-8") {
-		t.Errorf("errors = %v", errs)
+	// Told once, though pedit looked at the file again when it skipped the save.
+	if told.File != f.file || told.Reason != "it is not UTF-8 text" || told.Details != nil || told.Err == nil || len(n.all()) != 1 {
+		t.Errorf("notices = %+v", n.all())
 	}
-	mu.Unlock()
 
 	// Back to UTF-8: the guest's edit is saved on top of it.
 	if err := os.WriteFile(f.file, []byte("notes\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	prototest.WaitFor(t, wait, func() bool { return readFile(t, f.file) == "guest: notes\n" }, "the guest's edit to be saved")
+	n.waitFor(HoldReleased)
+	if got := n.kinds(); !slices.Equal(got, []NoticeKind{ChangeHeld, HoldReleased}) {
+		t.Errorf("kinds = %v", got)
+	}
+}
+
+// Fixed with an edit of the user's own: the fix is merged, not an echo.
+func TestToldWhenAHeldFileIsFixedWithNewText(t *testing.T) {
+	n := newNoticeLog(t)
+	f := setup(t, "notes\n", setupOpts{watch: true, onNotice: n.add})
+	if err := os.WriteFile(f.file, []byte(sjis), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	n.waitFor(ChangeHeld)
+	if err := os.WriteFile(f.file, []byte("notes\nmine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	n.waitFor(HoldReleased)
+	if got := n.kinds(); !slices.Equal(got, []NoticeKind{ChangeHeld, HoldReleased}) {
+		t.Errorf("kinds = %v", got)
+	}
+	if got := readFile(t, f.file); got != "notes\nmine\n" {
+		t.Errorf("file = %q", got)
+	}
+}
+
+// A file that holds what pedit wrote is the echo of its own write, not a
+// change that was fixed.
+func TestTellsNothingWhenTheFileHoldsWhatPeditWrote(t *testing.T) {
+	n := newNoticeLog(t)
+	f := setup(t, "a", setupOpts{writeDelay: time.Minute, onNotice: n.add})
+	f.session.syncing.Lock()
+	f.session.syncFromDisk()
+	f.session.syncing.Unlock()
+	if got := n.all(); len(got) != 0 {
+		t.Fatalf("notices = %+v", got)
+	}
+}
+
+func TestTellsWhenSavingFailsAndWorksAgain(t *testing.T) {
+	n := newNoticeLog(t)
+	// Saves are tried again every 50ms.
+	f := setup(t, "one\n", setupOpts{writeDelay: 10 * time.Millisecond, onNotice: n.add})
+	g := joinAsGuest(t, f.relay, f.session.URL)
+	prototest.WaitFor(t, wait, func() bool { return g.String() == "one\n" }, "guest to sync")
+
+	blockWithDirectory(t, f.file)
+	g.insert(0, "zero\n")
+	// The first failure may fix itself: only the second is told.
+	failed := n.waitFor(SaveFailed)
+	if failed.File != f.file || failed.Reason != "it is no longer a regular file" || failed.Err == nil {
+		t.Fatalf("notice = %+v", failed)
+	}
+	// Failing again for the same reason is not told again.
+	time.Sleep(250 * time.Millisecond)
+	if got := n.kinds(); !slices.Equal(got, []NoticeKind{SaveFailed}) {
+		t.Fatalf("kinds = %v", got)
+	}
+
+	// Without a new edit, the next try saves.
+	if err := os.Remove(f.file); err != nil {
+		t.Fatal(err)
+	}
+	recovered := n.waitFor(SaveRecovered)
+	if recovered.File != f.file {
+		t.Errorf("notice = %+v", recovered)
+	}
+	if got := readFile(t, f.file); got != "zero\none\n" {
+		t.Fatalf("file = %q", got)
+	}
+	if got := n.kinds(); !slices.Equal(got, []NoticeKind{SaveFailed, SaveRecovered}) {
+		t.Fatalf("kinds = %v", got)
+	}
+}
+
+// Stop returns what goes wrong while it saves, so nothing is told besides.
+func TestStopTellsNothing(t *testing.T) {
+	n := newNoticeLog(t)
+	var mu sync.Mutex
+	var debugged []error
+	f := setup(t, "one\n", setupOpts{writeDelay: time.Minute, onNotice: n.add, onError: func(err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		debugged = append(debugged, err)
+	}})
+	g := joinAsGuest(t, f.relay, f.session.URL)
+	prototest.WaitFor(t, wait, func() bool { return g.String() == "one\n" }, "guest to sync")
+	g.insert(0, "zero\n")
+	prototest.WaitFor(t, wait, func() bool { return f.session.Text.ToString() == "zero\none\n" }, "host to see the edit")
+
+	blockWithDirectory(t, f.file)
+	// Stop saves twice, and both fail: told as one, that would be a notice.
+	err := f.session.Stop()
+	if !errors.Is(err, filewriter.ErrNotRegular) {
+		t.Fatalf("Stop = %v", err)
+	}
+	if got := n.all(); len(got) != 0 {
+		t.Fatalf("notices = %+v", got)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(debugged) != 2 {
+		t.Fatalf("debugged = %v", debugged)
+	}
+}
+
+func TestTellsWhenAnImageCannotBeSaved(t *testing.T) {
+	n := newNoticeLog(t)
+	f := setup(t, "x\n", setupOpts{onNotice: n.add})
+	replies := make(chan protocol.Attachment, 16)
+	g := joinAsGuestHearing(t, f.relay, f.session.URL, func(m protocol.Attachment) { replies <- m })
+	prototest.WaitFor(t, wait, func() bool { return g.String() == "x\n" }, "guest to sync")
+
+	u, _ := url.Parse(f.session.URL)
+	raw, err := protocol.DecodeKey(u.Fragment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, err := protocol.DeriveBlobKeys(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// paste has the guest upload an image and announce it, and returns how the
+	// host answered.
+	paste := func(name string) protocol.Attachment {
+		t.Helper()
+		image := []byte("\x89PNG\r\n\x1a\n " + name)
+		hash := protocol.ContentHash(image)
+		id, err := keys.BlobID(hash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.blobs.Store("/api/rooms/AAAAAAAAAAAAAAAAAAAAAA/blobs/"+id, keys.Encrypt(image))
+		if err := g.SendAttachment(protocol.Attachment{Kind: protocol.AttachmentAnnounce, Hash: hash, Mime: "image/png"}); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case m := <-replies:
+			if m.Hash != hash {
+				t.Fatalf("reply to another image: %+v", m)
+			}
+			return m
+		case <-time.After(wait):
+			t.Fatal("the host did not answer")
+			return protocol.Attachment{}
+		}
+	}
+
+	assets := filepath.Join(filepath.Dir(f.file), attach.Dir)
+	if err := os.WriteFile(assets, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if m := paste("one"); m.Kind != protocol.AttachmentRejected || m.Reason != attach.ReasonUnavailable {
+		t.Fatalf("reply = %+v", m)
+	}
+	told := n.waitFor(ImageNotSaved)
+	// The reason is cut down from the save error: it does not name the
+	// directory, which the error does.
+	if told.File != f.file || told.Reason == "" || strings.Contains(told.Reason, attach.Dir) || told.Err == nil {
+		t.Fatalf("notice = %+v", told)
+	}
+	// The same cause again is not told again.
+	paste("two")
+	if got := n.kinds(); !slices.Equal(got, []NoticeKind{ImageNotSaved}) {
+		t.Fatalf("kinds = %v", got)
+	}
+
+	// Once an image is saved, the next failure is told again.
+	if err := os.Remove(assets); err != nil {
+		t.Fatal(err)
+	}
+	if m := paste("three"); m.Kind != protocol.AttachmentStored {
+		t.Fatalf("reply = %+v", m)
+	}
+	if err := os.RemoveAll(assets); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(assets, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	paste("four")
+	if got := n.kinds(); !slices.Equal(got, []NoticeKind{ImageNotSaved, ImageNotSaved}) {
+		t.Fatalf("kinds = %v", got)
+	}
+}
+
+// A save pedit moved aside and could not put back may be the user's: they are
+// told where it is.
+func TestTellsWhereASaveItCouldNotPutBackIsKept(t *testing.T) {
+	needsExchange(t)
+	n := newNoticeLog(t)
+	f := setup(t, "one\n", setupOpts{onNotice: n.add})
+	g := joinAsGuest(t, f.relay, f.session.URL)
+	prototest.WaitFor(t, wait, func() bool { return g.String() == "one\n" }, "guest to sync")
+
+	// A save lands at each point of the first writes, until the fifth.
+	var saves atomic.Int32
+	f.session.bound.SetTestHook(func(s filewriter.Step) {
+		if (s != filewriter.StepBeforeReplace && s != filewriter.StepExchanged) || saves.Load() >= 5 {
+			return
+		}
+		if err := saveAs(f.file, fmt.Sprintf("one\nsave %d\n", saves.Add(1)), true); err != nil {
+			t.Error(err)
+		}
+	})
+	g.insert(0, "zero\n")
+
+	kept := n.waitFor(SaveKept)
+	if got := n.all(); len(got) != 1 || kept.File != f.file || !strings.HasPrefix(kept.Kept, ".pedit-") || kept.Err == nil {
+		t.Fatalf("notices = %+v", got)
+	}
+	if got := readFile(t, filepath.Join(filepath.Dir(f.file), kept.Kept)); got != "one\nsave 4\n" {
+		t.Fatalf("kept file = %q", got)
+	}
+	// The newest save is merged and saved, which tells nothing more.
+	prototest.WaitFor(t, wait, func() bool { return readFile(t, f.file) == "zero\none\nsave 5\n" }, "the newest save, merged")
+	if got := n.all(); len(got) != 1 {
+		t.Fatalf("notices = %+v", got)
+	}
 }
 
 func TestStopReportsFailedFinalWrite(t *testing.T) {

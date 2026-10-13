@@ -333,3 +333,18 @@ func TestWithSignInLimit(t *testing.T) {
 		}
 	})
 }
+
+func TestDebugLog(t *testing.T) {
+	var out strings.Builder
+	debugLog(&out, true)(errors.New("connection reset"))
+	debugLog(&out, true)(nil)
+	if want := "\npedit: connection reset\n"; out.String() != want {
+		t.Fatalf("got %q, want %q", out.String(), want)
+	}
+
+	out.Reset()
+	debugLog(&out, false)(errors.New("connection reset"))
+	if out.Len() != 0 {
+		t.Fatalf("printed without PEDIT_DEBUG: %q", out.String())
+	}
+}

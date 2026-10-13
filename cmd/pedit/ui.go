@@ -3,11 +3,15 @@ package main
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
+	"github.com/piconic-ai/pedit/internal/attach"
 	"github.com/piconic-ai/pedit/internal/protocol"
+	"github.com/piconic-ai/pedit/internal/session"
 )
 
 // ui is what the person sharing the file reads. They are not necessarily an
@@ -222,17 +226,84 @@ func (u *ui) setPeople(names []string) {
 	u.render()
 }
 
-// imageSaved says that an image someone pasted was written to the host's
-// disk. On a terminal it goes above the live line, which is drawn again.
-func (u *ui) imageSaved(path string) {
+// above prints lines above the live line. On a terminal the live line is
+// cleared first and drawn again below them.
+func (u *ui) above(lines ...string) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	if u.live && u.tty {
 		fmt.Fprint(u.out, "\r\x1b[2K")
 		u.lastLine = ""
 	}
-	fmt.Fprintln(u.out, "  "+u.dim("Saved an image to "+path))
+	for _, line := range lines {
+		if line == "" {
+			fmt.Fprintln(u.out)
+		} else {
+			fmt.Fprintln(u.out, "  "+line)
+		}
+	}
 	u.render()
+}
+
+// imageSaved says that an image someone pasted was written to the host's
+// disk.
+func (u *ui) imageSaved(path string) {
+	u.above(u.dim("Saved an image to " + path))
+}
+
+// notice tells about a condition of the file the user can act on, and what to
+// do about it. file is the shared file, or the copy when host is false. The
+// session decides what is worth saying and when; this only words it, and says
+// nothing about a kind it does not know.
+func (u *ui) notice(file string, host bool, n session.Notice) {
+	reason := strings.TrimRight(printable(n.Reason), ".")
+	switch n.Kind {
+	case session.SaveFailed:
+		next := "pedit tries again every few seconds. Until then, your copy misses the latest edits."
+		if host {
+			next = "pedit tries again every few seconds. Fix this before you press Ctrl+C, or the latest edits are not saved."
+		}
+		u.above(u.yellow("Could not save "+file+": "+reason+"."), next)
+	case session.SaveRecovered:
+		u.above(u.green("✓") + " Saved " + file + " again.")
+	case session.ChangeHeld:
+		head := file + " changed outside pedit, but " + reason
+		if len(n.Details) > 0 {
+			head += ":"
+		} else {
+			head += "."
+		}
+		lines := []string{u.yellow(head)}
+		for _, detail := range n.Details {
+			lines = append(lines, "  "+printable(detail))
+		}
+		lines = append(lines, "pedit saves again once it is fixed, and does not save over it until then.")
+		if host {
+			lines = append(lines, "Fix it before you press Ctrl+C, or the latest edits are not saved.")
+		}
+		u.above(lines...)
+	case session.HoldReleased:
+		u.above(u.green("✓") + " " + file + " is fixed. Saving goes on.")
+	case session.ImageNotSaved:
+		dir := filepath.Join(filepath.Dir(file), attach.Dir)
+		u.above(u.yellow("Could not save an image someone pasted into " + dir + ": " + reason + "."))
+	case session.SaveLost:
+		u.above(u.yellow("A save of "+file+" made outside pedit was lost: pedit wrote the file at the same moment."), "Save it again.")
+	case session.SaveKept:
+		kept := filepath.Join(filepath.Dir(file), printable(n.Kept))
+		u.above(u.yellow(file+" changed while pedit saved it, and pedit could not put that change back. It is kept in "+kept+"."), "Compare it with "+file+" and copy over what you need.")
+	}
+}
+
+// printable drops what could move the cursor or reorder the text. Reasons
+// and problems quote file names and contents, which others can write.
+func printable(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // stopLive ends the live line, leaving its last state on screen.

@@ -8,10 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/piconic-ai/pedit/internal/filewriter"
 	"github.com/piconic-ai/pedit/internal/protocol"
 	"github.com/piconic-ai/pedit/internal/protocol/prototest"
 )
@@ -99,6 +102,82 @@ func TestJoinedCopiesArePrivateInExistingDirectory(t *testing.T) {
 				t.Fatalf("joined copy mode = %v", info.Mode())
 			}
 		})
+	}
+}
+
+func TestJoinTellsWhenItCannotSaveTheCopy(t *testing.T) {
+	f := setup(t, "one\n", setupOpts{})
+	browser := joinAsGuest(t, f.relay, f.session.URL)
+	prototest.WaitFor(t, wait, func() bool { return browser.String() == "one\n" }, "browser to sync")
+	n := newNoticeLog(t)
+	// Saves are tried again every 50ms.
+	g, err := joinFromCLI(t, f, joinCLIOpts{JoinOptions: JoinOptions{WriteDelay: 10 * time.Millisecond, OnNotice: n.add}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	blockWithDirectory(t, g.File())
+	browser.insert(0, "zero\n")
+	failed := n.waitFor(SaveFailed)
+	if failed.File != g.File() || failed.Reason != "it is no longer a regular file" {
+		t.Fatalf("notice = %+v", failed)
+	}
+	if err := os.Remove(g.File()); err != nil {
+		t.Fatal(err)
+	}
+	n.waitFor(SaveRecovered)
+	if got := readFile(t, g.File()); got != "zero\none\n" {
+		t.Fatalf("copy = %q", got)
+	}
+	if got := n.kinds(); !slices.Equal(got, []NoticeKind{SaveFailed, SaveRecovered}) {
+		t.Fatalf("kinds = %v", got)
+	}
+}
+
+// Join returns the failure of its first write as an error, which the caller
+// prints. Telling it as well would print it twice.
+func TestJoinReturnsItsFirstWriteFailureWithoutTellingIt(t *testing.T) {
+	f := setup(t, "# notes\n", setupOpts{})
+	dir := t.TempDir()
+	file := filepath.Join(dir, "notes.md")
+	// Something that is not a file takes the copy's place as it is written.
+	var once sync.Once
+	hook := func(s filewriter.Step) {
+		if s != filewriter.StepTempWritten {
+			return
+		}
+		once.Do(func() {
+			if err := os.Mkdir(file, 0o755); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	n := newNoticeLog(t)
+	var mu sync.Mutex
+	var debugged []error
+	_, err := joinFromCLI(t, f, joinCLIOpts{JoinOptions: JoinOptions{
+		Directory:  dir,
+		WriteDelay: time.Minute,
+		writeHook:  hook,
+		OnNotice:   n.add,
+		OnError: func(err error) {
+			mu.Lock()
+			defer mu.Unlock()
+			debugged = append(debugged, err)
+		},
+	}})
+	if err == nil || !strings.HasPrefix(err.Error(), "cannot write "+file+": ") || !errors.Is(err, filewriter.ErrNotRegular) {
+		t.Fatalf("err = %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if got := n.all(); len(got) != 0 {
+		t.Fatalf("notices = %+v", got)
+	}
+	// Nobody can act on it besides what the error says, so it is only debugged.
+	mu.Lock()
+	defer mu.Unlock()
+	if len(debugged) != 1 || !errors.Is(debugged[0], filewriter.ErrNotRegular) {
+		t.Fatalf("debugged = %v", debugged)
 	}
 }
 

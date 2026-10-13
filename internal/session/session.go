@@ -47,6 +47,12 @@ type Options struct {
 	// OnSaved is called with the path, relative to File, of each image
 	// someone pasted that was saved beside the file.
 	OnSaved func(path string)
+	// OnNotice is called, one at a time, with conditions of the file the
+	// user can act on: a save that failed, or a change pedit cannot take in,
+	// and when each ends. It must not call into the Session.
+	OnNotice func(Notice)
+	// OnError is called with errors nobody can act on, or that clear by
+	// themselves, such as a dropped connection.
 	OnError func(error)
 }
 
@@ -69,6 +75,7 @@ type Session struct {
 	watchDone   chan struct{}
 	stopAlive   func()
 	onError     func(error)
+	notices     *notices
 	// temp is the directory holding a joined copy that is removed on Stop.
 	temp string
 
@@ -190,11 +197,13 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 		content:   shared,
 		awareness: aw,
 		onError:   onError,
+		notices:   newNotices(opts.File, opts.OnNotice, onError),
 	}
 	s.Writer = filewriter.New(opts.File, initial, filewriter.Options{
 		Bound:            bound,
 		Delay:            opts.WriteDelay,
-		OnError:          onError,
+		OnError:          s.notices.saveError,
+		OnWritten:        s.notices.written,
 		OnExternalChange: s.scheduleSyncFromDisk,
 	})
 	header := opts.Header.Clone()
@@ -230,8 +239,14 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 		HTTPClient: opts.HTTPClient,
 		Keys:       blobKeys,
 		Send:       s.Client.SendAttachment,
-		OnSaved:    opts.OnSaved,
-		OnError:    onError,
+		OnSaved: func(path string) {
+			s.notices.imageSaved()
+			if opts.OnSaved != nil {
+				opts.OnSaved(path)
+			}
+		},
+		OnSaveError: s.notices.imageError,
+		OnError:     onError,
 	})
 
 	doc.OnUpdate(func(_ []byte, origin any) {
@@ -243,6 +258,7 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 	aw.OnChange(func(awareness.ChangeEvent) { s.reportPeople(opts.OnPeople) })
 	s.stopAlive = keepAlive(aw)
 	s.Client.Connect()
+	s.notices.start()
 
 	if opts.Watch {
 		if err := s.watch(); err != nil {
@@ -443,6 +459,8 @@ func (s *Session) scheduleSyncFromDisk() {
 // outside pedit, against what we last wrote. The caller must hold s.syncing.
 func (s *Session) syncFromDisk() {
 	changed := false
+	// Told after Rebase, so not under the writer's lock.
+	var notice *Notice
 	// Rebase drops any pending write, which predates the merge.
 	s.Writer.Rebase(func(lastWritten string) string {
 		onDisk, ok := settle(s.bound.Read, 30*time.Millisecond, 10)
@@ -450,9 +468,13 @@ func (s *Session) syncFromDisk() {
 			return lastWritten
 		}
 		if onDisk == lastWritten {
-			// Put back as it was after being invalid: what came in meanwhile
-			// could not be saved, so save it now.
-			changed = s.invalidOnDisk != ""
+			// The file holds what pedit knows. A write skipped meanwhile
+			// (the file was invalid, or changed and changed back) is saved
+			// now; Flush skips it if nothing differs.
+			if s.invalidOnDisk != "" {
+				notice = &Notice{Kind: HoldReleased}
+			}
+			changed = true
 			s.invalidOnDisk = ""
 			return lastWritten
 		}
@@ -465,9 +487,13 @@ func (s *Session) syncFromDisk() {
 			// someone is in the middle of writing.
 			if onDisk != s.invalidOnDisk {
 				s.invalidOnDisk = onDisk
-				s.onError(fmt.Errorf("%s changed outside pedit, but pedit cannot take the change in; it saves again once the file is fixed.\n%w", filepath.Base(s.file), err))
+				n := held(filepath.Base(s.file), err)
+				notice = &n
 			}
 			return lastWritten
+		}
+		if s.invalidOnDisk != "" {
+			notice = &Notice{Kind: HoldReleased}
 		}
 		s.invalidOnDisk = ""
 		changed = true
@@ -476,6 +502,9 @@ func (s *Session) syncFromDisk() {
 		}
 		return onDisk
 	})
+	if notice != nil {
+		s.notices.send(*notice)
+	}
 	if changed {
 		// Remote edits made meanwhile are not on disk yet.
 		s.Writer.Schedule(s.render())
@@ -535,6 +564,8 @@ const finalWriteAttempts = 3
 // error when the final state could not be saved.
 func (s *Session) Stop() error {
 	s.stopOnce.Do(func() {
+		// Stop returns what goes wrong from here.
+		s.notices.stop()
 		s.mu.Lock()
 		s.stopped = true
 		if s.readTimer != nil {

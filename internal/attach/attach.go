@@ -79,6 +79,10 @@ var (
 	errNoDir    = errors.New("the shared file's directory is not open")
 )
 
+// ErrLinkedOut means Dir is a link out of the shared file's directory, which
+// images are never saved through.
+var ErrLinkedOut = errors.New("it links out of the shared file's folder")
+
 type Options struct {
 	// File is the shared file; attachments go to Dir beside it.
 	File string
@@ -102,7 +106,10 @@ type Options struct {
 	// OnSaved is called with the path, relative to File, of each image
 	// written to disk.
 	OnSaved func(path string)
-	OnError func(error)
+	// OnSaveError is called when an image could not be written beside the
+	// file, and the room is told it was not saved. It defaults to OnError.
+	OnSaveError func(error)
+	OnError     func(error)
 }
 
 // Attachments handles the attachment messages of one session, one at a time
@@ -137,6 +144,9 @@ func New(opts Options) *Attachments {
 	}
 	if opts.OnError == nil {
 		opts.OnError = func(error) {}
+	}
+	if opts.OnSaveError == nil {
+		opts.OnSaveError = opts.OnError
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	a := &Attachments{
@@ -294,7 +304,7 @@ func (a *Attachments) announced(hash, mime string) {
 	}
 	path, written, err := a.save(hash, ext, content)
 	if err != nil {
-		a.opts.OnError(err)
+		a.opts.OnSaveError(err)
 		a.reject(hash, ReasonUnavailable)
 		return
 	}
@@ -552,6 +562,12 @@ func (a *Attachments) dir(create bool) (*os.Root, error) {
 			return nil, err
 		}
 		dir, err = a.root.OpenRoot(Dir)
+	}
+	if err != nil {
+		// Root refuses a link out with an error that names no cause someone could fix.
+		if target, lerr := a.root.Readlink(Dir); lerr == nil && !filepath.IsLocal(target) {
+			err = fmt.Errorf("%s %w: %w", Dir, ErrLinkedOut, err)
+		}
 	}
 	return dir, err
 }

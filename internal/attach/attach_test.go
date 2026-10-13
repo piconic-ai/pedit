@@ -3,6 +3,7 @@ package attach
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -63,7 +64,9 @@ type harness struct {
 	busy  int               // PUTs to answer 503 before taking any
 	gets  int
 	saved []string
-	errs  []error
+	// saveErrs are the images that could not be written, errs the rest.
+	saveErrs []error
+	errs     []error
 }
 
 func newHarness(t *testing.T) *harness {
@@ -135,8 +138,9 @@ func newHarness(t *testing.T) *harness {
 			h.sent <- m
 			return nil
 		},
-		OnSaved: func(path string) { h.mu.Lock(); h.saved = append(h.saved, path); h.mu.Unlock() },
-		OnError: func(err error) { h.mu.Lock(); h.errs = append(h.errs, err); h.mu.Unlock() },
+		OnSaved:     func(path string) { h.mu.Lock(); h.saved = append(h.saved, path); h.mu.Unlock() },
+		OnSaveError: func(err error) { h.mu.Lock(); h.saveErrs = append(h.saveErrs, err); h.mu.Unlock() },
+		OnError:     func(err error) { h.mu.Lock(); h.errs = append(h.errs, err); h.mu.Unlock() },
 	})
 	h.a.retryDelay = time.Millisecond
 	t.Cleanup(h.a.Close)
@@ -173,7 +177,7 @@ func (h *harness) next() protocol.Attachment {
 	case <-time.After(3 * time.Second):
 		h.mu.Lock()
 		defer h.mu.Unlock()
-		h.t.Fatalf("nothing sent; errors: %v", h.errs)
+		h.t.Fatalf("nothing sent; save errors: %v, errors: %v", h.saveErrs, h.errs)
 		return protocol.Attachment{}
 	}
 }
@@ -193,6 +197,14 @@ func (h *harness) expectRejected(hash, reason string) {
 	if m.Kind != protocol.AttachmentRejected || m.Hash != hash || m.Reason != reason {
 		h.t.Fatalf("got %+v, want rejected %s", m, reason)
 	}
+}
+
+// saveErrors are the images that could not be written so far, and the other
+// errors.
+func (h *harness) saveErrors() (saveErrs, errs []error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]error{}, h.saveErrs...), append([]error{}, h.errs...)
 }
 
 func (h *harness) assets() []string {
@@ -359,6 +371,43 @@ func TestRejectsWhatItCannotSave(t *testing.T) {
 	})
 }
 
+func TestTellsWhyAnImageCannotBeSaved(t *testing.T) {
+	t.Run("through OnSaveError", func(t *testing.T) {
+		h := newHarness(t)
+		dir := filepath.Join(filepath.Dir(h.file), Dir)
+		_ = os.Mkdir(dir, 0o755)
+		hash := protocol.ContentHash(png)
+		_ = os.WriteFile(filepath.Join(dir, hash+".png"), []byte("mine"), 0o644)
+		h.expectRejected(h.announce(png, "image/png"), ReasonUnavailable)
+		saveErrs, errs := h.saveErrors()
+		if len(saveErrs) != 1 || len(errs) != 0 {
+			t.Fatalf("save errors = %v, errors = %v", saveErrs, errs)
+		}
+	})
+
+	t.Run("not for errors that nobody can fix", func(t *testing.T) {
+		h := newHarness(t)
+		// The blob is not in the room.
+		hash := protocol.ContentHash(png)
+		h.a.Handle(protocol.Attachment{Kind: protocol.AttachmentAnnounce, Hash: hash, Mime: "image/png"})
+		h.expectRejected(hash, ReasonInvalid)
+		if saveErrs, errs := h.saveErrors(); len(saveErrs) != 0 || len(errs) != 0 {
+			t.Fatalf("save errors = %v, errors = %v", saveErrs, errs)
+		}
+	})
+
+	t.Run("OnError by default", func(t *testing.T) {
+		var got []error
+		a := New(Options{File: filepath.Join(t.TempDir(), "notes.md"), OnError: func(err error) { got = append(got, err) }})
+		defer a.Close()
+		want := errors.New("cannot save")
+		a.opts.OnSaveError(want)
+		if len(got) != 1 || got[0] != want {
+			t.Fatalf("errors = %v", got)
+		}
+	})
+}
+
 func TestNeverWritesOutsideTheFilesDirectory(t *testing.T) {
 	t.Run("assets is a symlink to elsewhere", func(t *testing.T) {
 		h := newHarness(t)
@@ -369,6 +418,10 @@ func TestNeverWritesOutsideTheFilesDirectory(t *testing.T) {
 		h.expectRejected(h.announce(png, "image/png"), ReasonUnavailable)
 		if entries, _ := os.ReadDir(outside); len(entries) != 0 {
 			t.Fatalf("wrote %v outside", entries)
+		}
+		// It says why, instead of only that the path escapes.
+		if saveErrs, _ := h.saveErrors(); len(saveErrs) != 1 || !errors.Is(saveErrs[0], ErrLinkedOut) {
+			t.Fatalf("errors = %v, want one that is ErrLinkedOut", saveErrs)
 		}
 	})
 
@@ -392,6 +445,9 @@ func TestNeverWritesOutsideTheFilesDirectory(t *testing.T) {
 		h := newHarness(t)
 		_ = os.WriteFile(filepath.Join(filepath.Dir(h.file), "assets"), nil, 0o644)
 		h.expectRejected(h.announce(png, "image/png"), ReasonUnavailable)
+		if saveErrs, _ := h.saveErrors(); len(saveErrs) != 1 || errors.Is(saveErrs[0], ErrLinkedOut) {
+			t.Fatalf("errors = %v, want one that is not ErrLinkedOut", saveErrs)
+		}
 	})
 }
 
