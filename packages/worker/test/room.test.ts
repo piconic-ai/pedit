@@ -1,13 +1,13 @@
 import { createExecutionContext, evictDurableObject, runInDurableObject } from 'cloudflare:test'
 import { env, exports } from 'cloudflare:workers'
 import { ADMISSION_HEADER, admissionProtocols } from '@pedit/protocol/admission'
+import { MAX_FRAME_BYTES } from '@pedit/protocol/frame'
 import { describe, expect, it, vi } from 'vitest'
 import app, { clientKey, maintenance, overLimit, roomIdFor } from '../src/index.ts'
 import {
   BLOB_OVERHEAD,
   BYTE_RATE,
   limits,
-  MAX_MESSAGE_BYTES,
   MAX_PEERS,
   MAX_UPLOADS,
   MESSAGE_RATE,
@@ -21,6 +21,7 @@ const SERVER_OUTDATED = 4003
 const ROOM_FULL = 4004
 const RELAY_BUSY = 4005
 const RELAY_MAINTENANCE = 4006
+const MESSAGE_TOO_BIG = 1009
 // The tests run with small limits (vitest.config.ts).
 const { guests: GUESTS, blobBytes: BLOB_BYTES } = limits(env)
 
@@ -276,14 +277,19 @@ describe('rooms', () => {
 
   it('closes sockets that send text or oversized frames', async () => {
     const room = await createRoom()
-    await host(room)
+    const h = await host(room)
     const text = await connect(room.id)
     text.ws.send('hello')
     expect((await text.closed).code).toBe(1003)
 
+    // The most a frame may have is relayed; one byte more is not.
+    const fits = await connect(room.id)
+    fits.ws.send(new Uint8Array(MAX_FRAME_BYTES))
+    await until(() => h.received.some((m) => m.byteLength === MAX_FRAME_BYTES))
+
     const big = await connect(room.id)
-    big.ws.send(new Uint8Array(MAX_MESSAGE_BYTES + 1))
-    expect((await big.closed).code).toBe(1009)
+    big.ws.send(new Uint8Array(MAX_FRAME_BYTES + 1))
+    expect((await big.closed).code).toBe(MESSAGE_TOO_BIG)
   })
 
   it('turns guests away once the room has as many as the relay allows', async () => {
@@ -344,8 +350,8 @@ describe('rooms', () => {
     await host(room)
     const guest = await connect(room.id)
     await stopClock(room)
-    const big = new Uint8Array(MAX_MESSAGE_BYTES)
-    for (let i = 0; i <= BYTE_RATE.burst / MAX_MESSAGE_BYTES; i++) guest.ws.send(big)
+    const big = new Uint8Array(MAX_FRAME_BYTES)
+    for (let i = 0; i <= BYTE_RATE.burst / MAX_FRAME_BYTES; i++) guest.ws.send(big)
     expect((await guest.closed).code).toBe(RATE_LIMITED)
   })
 

@@ -25,7 +25,7 @@ const (
 )
 
 // Limits in UTF-8 bytes, the same as the web client's. An edit carries two
-// copies of the canvas and must fit in one relayed frame (1 MiB).
+// copies of the canvas and must fit in one relayed frame (MaxFrameBytes).
 const (
 	MaxCanvasEditBytes = 960 << 10
 	maxCanvasID        = 64

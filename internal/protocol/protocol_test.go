@@ -80,6 +80,21 @@ func TestCipher(t *testing.T) {
 	})
 }
 
+func TestFrameLimit(t *testing.T) {
+	// Pins the limit, which packages/protocol/test/frame.test.ts pins too; the
+	// relay takes it from there.
+	if protocol.MaxFrameBytes != 1<<20 || protocol.MessageTooBig != 1009 {
+		t.Fatalf("MaxFrameBytes = %d, MessageTooBig = %d", protocol.MaxFrameBytes, protocol.MessageTooBig)
+	}
+	c := newCipher(t)
+	for _, n := range []int{0, 1, 1000} {
+		frame := c.Encrypt(protocol.EncodeMessage(protocol.MessageSync, make([]byte, n)))
+		if len(frame) != protocol.FrameBytes(n) {
+			t.Errorf("a payload of %d bytes is a frame of %d, FrameBytes says %d", n, len(frame), protocol.FrameBytes(n))
+		}
+	}
+}
+
 func TestMessage(t *testing.T) {
 	sync := protocol.EncodeMessage(protocol.MessageSync, []byte{9, 8, 7})
 	if !bytes.Equal(sync, []byte{0, 9, 8, 7}) {

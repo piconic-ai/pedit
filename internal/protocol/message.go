@@ -43,6 +43,28 @@ const RelayBusy = 4005
 // whoever was editing decides whether to pick the session up again.
 const RelayMaintenance = 4006
 
+// MessageTooBig is the WebSocket close code (the standard 1009) the relay
+// sends a connection whose frame is over MaxFrameBytes. Clients must not
+// reconnect on it: they would send the same frame again.
+const MessageTooBig = 1009
+
+// MaxFrameBytes is the most bytes one frame may have on the wire: one
+// WebSocket message, encrypted. The relay closes a connection that sends a
+// larger one with MessageTooBig, and Client never sends one. Keep it equal to
+// MAX_FRAME_BYTES in packages/protocol, which the relay uses.
+const MaxFrameBytes = 1 << 20
+
+// FrameOverhead is what a frame adds to its payload: the message type byte,
+// and AES-GCM's IV and tag.
+const FrameOverhead = 1 + ivBytes + tagBytes // 29
+
+// FrameBytes is the size on the wire of a frame carrying payload bytes.
+func FrameBytes(payload int) int { return payload + FrameOverhead }
+
+// ErrFrameTooLarge means a frame the Client had to send is over
+// MaxFrameBytes: the document grew too large to share.
+var ErrFrameTooLarge = errors.New("frame too large for the relay")
+
 // ErrUnknownMessageType marks a message type this version does not know, from
 // a newer peer. Clients skip such messages instead of reporting them.
 var ErrUnknownMessageType = errors.New("unknown message type")

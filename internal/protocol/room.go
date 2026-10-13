@@ -19,8 +19,9 @@ import (
 // StatusMaintenance: the relay closed, and Resume picks the session up again
 // once it is back. So are
 // StatusClientOutdated and StatusServerOutdated: the server speaks an older or
-// newer protocol version. StatusBusy is not: the relay turned us away for now,
-// and the Client tries again later than after a drop.
+// newer protocol version. So is StatusTooLarge: a frame we had to send was over
+// MaxFrameBytes, the most the relay takes. StatusBusy is not: the relay turned
+// us away for now, and the Client tries again later than after a drop.
 type Status string
 
 // errDestroyed ends the connection loop when the Client was destroyed mid-dial.
@@ -37,6 +38,8 @@ const (
 
 	StatusClientOutdated Status = "client-outdated"
 	StatusServerOutdated Status = "server-outdated"
+
+	StatusTooLarge Status = "too-large"
 )
 
 // finalStatus maps the close codes that end a Client for good to its status.
@@ -46,12 +49,23 @@ var finalStatus = map[int]Status{
 	RelayMaintenance: StatusMaintenance,
 	ClientOutdated:   StatusClientOutdated,
 	ServerOutdated:   StatusServerOutdated,
+	MessageTooBig:    StatusTooLarge,
+}
+
+// finalOf maps what ended a connection to the status that ends the Client for
+// good, if any.
+func finalOf(err error) (Status, bool) {
+	if errors.Is(err, ErrFrameTooLarge) {
+		return StatusTooLarge, true
+	}
+	st, ok := finalStatus[closeCode(err)]
+	return st, ok
 }
 
 // Final reports whether a Client stays in s for good and no longer reconnects.
 func (s Status) Final() bool {
 	switch s {
-	case StatusClosed, StatusFull, StatusMaintenance, StatusClientOutdated, StatusServerOutdated:
+	case StatusClosed, StatusFull, StatusMaintenance, StatusClientOutdated, StatusServerOutdated, StatusTooLarge:
 		return true
 	}
 	return false
@@ -253,7 +267,7 @@ func (c *Client) run(done chan struct{}) {
 			return
 		}
 		c.dropRemoteAwareness()
-		if st, ok := finalStatus[closeCode(err)]; ok {
+		if st, ok := finalOf(err); ok {
 			c.setStatus(st)
 			return
 		}
@@ -287,14 +301,19 @@ func (c *Client) serve(conn Conn) error {
 	}
 	c.out = out
 	c.mu.Unlock()
-	c.setStatus(StatusConnected)
 
-	c.send(MessageSync, ysync.EncodeSyncStep1(c.doc))
-	step2 := encoding.NewEncoder()
-	step2.WriteVarUint(ysync.MsgSyncStep2)
-	step2.WriteVarBytes(c.doc.EncodeStateAsUpdate())
-	c.send(MessageSync, step2.Bytes())
-	c.sendAwareness([]uint64{c.aw.ClientID()})
+	// The whole state goes to the room on connecting. When it does not fit a
+	// frame, send nothing: a SyncStep1 alone would have every peer answer
+	// with a state as large, which they could not send either.
+	step2 := syncStep2(c.doc)
+	if FrameBytes(len(step2)) > MaxFrameBytes {
+		out.fail(ErrFrameTooLarge)
+	} else {
+		c.setStatus(StatusConnected)
+		c.send(MessageSync, ysync.EncodeSyncStep1(c.doc))
+		c.send(MessageSync, step2)
+		c.sendAwareness([]uint64{c.aw.ClientID()})
+	}
 
 	for {
 		data, err := conn.Read(c.ctx)
@@ -306,6 +325,9 @@ func (c *Client) serve(conn Conn) error {
 			c.mu.Unlock()
 			out.stop()
 			_ = conn.Close()
+			if failed := out.failure(); failed != nil {
+				return failed
+			}
 			return err
 		}
 		if err := c.receive(data); err != nil {
@@ -386,6 +408,18 @@ func (c *Client) markSynced() {
 	}
 }
 
+// StateFrameBytes is the size on the wire of the frame that carries doc's
+// whole state, which a Client sends on connecting and, as a diff, in answer
+// to a peer's SyncStep1. A doc whose state is over MaxFrameBytes cannot be shared.
+func StateFrameBytes(doc *crdt.Doc) int { return FrameBytes(len(syncStep2(doc))) }
+
+func syncStep2(doc *crdt.Doc) []byte {
+	enc := encoding.NewEncoder()
+	enc.WriteVarUint(ysync.MsgSyncStep2)
+	enc.WriteVarBytes(doc.EncodeStateAsUpdate())
+	return enc.Bytes()
+}
+
 func (c *Client) handleDocUpdate(update []byte, origin any) {
 	if origin == c {
 		return
@@ -455,6 +489,12 @@ func (c *Client) send(t MessageType, payload []byte) {
 	if out == nil {
 		return
 	}
+	if FrameBytes(len(payload)) > MaxFrameBytes {
+		// The relay would close us with MessageTooBig, and the same frame
+		// would go again on every reconnect: give the connection up instead.
+		out.fail(ErrFrameTooLarge)
+		return
+	}
 	out.push(c.cipher.Encrypt(EncodeMessage(t, payload)))
 }
 
@@ -483,6 +523,7 @@ type outbox struct {
 	mu     sync.Mutex
 	queue  [][]byte
 	closed bool
+	failed error // why this side gave the connection up
 	wake   chan struct{}
 	done   chan struct{}
 }
@@ -511,14 +552,39 @@ func (o *outbox) signal() {
 	}
 }
 
+// fail gives the connection up: queued frames are dropped, and the loop
+// closes the connection, which ends the read loop. It never blocks: send
+// calls it from inside doc transactions.
+func (o *outbox) fail(err error) {
+	o.mu.Lock()
+	if o.failed == nil {
+		o.failed = err
+	}
+	o.closed = true
+	o.queue = nil
+	o.mu.Unlock()
+	o.signal()
+}
+
+// failure is why this side gave the connection up, if it did.
+func (o *outbox) failure() error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.failed
+}
+
 func (o *outbox) loop() {
 	defer close(o.done)
 	for {
 		o.mu.Lock()
 		queue := o.queue
 		o.queue = nil
-		closed := o.closed
+		closed, failed := o.closed, o.failed
 		o.mu.Unlock()
+		if failed != nil {
+			_ = o.conn.Close()
+			return
+		}
 		for _, frame := range queue {
 			if err := o.conn.Write(context.Background(), frame); err != nil {
 				o.mu.Lock()

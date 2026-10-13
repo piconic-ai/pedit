@@ -8,11 +8,13 @@ import {
 } from '@pedit/protocol/admission'
 import {
   CLIENT_OUTDATED,
+  MESSAGE_TOO_BIG,
   RELAY_MAINTENANCE,
   ROOM_CLOSED,
   ROOM_FULL,
   SERVER_OUTDATED,
 } from '@pedit/protocol/close'
+import { MAX_FRAME_BYTES } from '@pedit/protocol/frame'
 
 // Shared browser code brings DOM's SubtleCrypto into this program. Augment it
 // with the documented Workers extension also present in our generated types.
@@ -24,7 +26,6 @@ declare global {
 
 /** Connections one room takes at most, hosts included. */
 export const MAX_PEERS = 32
-export const MAX_MESSAGE_BYTES = 1024 * 1024
 /** Set by the Worker (never by clients) on the host's upgrade request. */
 export const HOST_HEADER = 'X-Pedit-Host'
 
@@ -40,14 +41,14 @@ export const MAX_UPLOADS = 4
  * second on fast displays, besides typing and cursors. Bytes are counted
  * loosely: every
  * peer answers a newcomer with the whole document (one message of at most
- * MAX_MESSAGE_BYTES), so a full room reconnecting at once must fit.
+ * MAX_FRAME_BYTES), so a full room reconnecting at once must fit.
  *
  * A guest over it is closed, and its client reconnects and resyncs, which
  * loses nothing. A host over it ends the session, as any host leaving does,
  * so the limits stay far above what editing needs.
  */
 export const MESSAGE_RATE = { burst: 1000, perSecond: 200 }
-export const BYTE_RATE = { burst: MAX_PEERS * MAX_MESSAGE_BYTES, perSecond: 1024 * 1024 }
+export const BYTE_RATE = { burst: MAX_PEERS * MAX_FRAME_BYTES, perSecond: 1024 * 1024 }
 /** Close code for a connection over its rate: a policy violation. */
 export const RATE_LIMITED = 1008
 
@@ -199,8 +200,8 @@ export class Room extends DurableObject<Env> {
       ws.close(1003, 'binary frames only')
       return
     }
-    if (message.byteLength > MAX_MESSAGE_BYTES) {
-      ws.close(1009, 'message too big')
+    if (message.byteLength > MAX_FRAME_BYTES) {
+      ws.close(MESSAGE_TOO_BIG, 'message too big')
       return
     }
     // Setting the var redeploys the Worker, which normally restarts rooms and

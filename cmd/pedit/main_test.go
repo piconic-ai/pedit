@@ -158,6 +158,7 @@ func TestFinishJoin(t *testing.T) {
 		{name: "temporary, pedit outdated", temporary: true, ended: protocol.StatusClientOutdated, code: 1, stdout: []string{"The temporary copy was removed.", "This pedit is too old"}},
 		{name: "server outdated", ended: protocol.StatusServerOutdated, code: 1, stdout: []string{"✓ Saved notes.md", "The server is older than this pedit", "Ask whoever runs the server"}, not: []string{"To upgrade"}},
 		{name: "maintenance", ended: protocol.StatusMaintenance, code: 1, stdout: []string{"✓ Saved notes.md", "The relay was closed for maintenance. Run pedit again once it is back."}, not: []string{"host closed", "To upgrade"}},
+		{name: "too large", ended: protocol.StatusTooLarge, code: 1, stdout: []string{"✓ Saved notes.md", "pedit left the room: the shared file grew too large to share. pedit shares files up to about 1 MiB for now.", "Your latest changes may not have reached the others."}, not: []string{"host closed"}},
 		{name: "temporary not removed", temporary: true, stopErr: errors.New("busy"), code: 1, not: []string{"removed"}, stderr: "could not remove the temporary copy notes.md: busy"},
 	}
 	for _, tt := range tests {

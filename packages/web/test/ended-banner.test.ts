@@ -63,6 +63,15 @@ describe('EndedBanner', () => {
     expect(reconnect.textContent).toBe('Reconnect')
   })
 
+  it('says the document grew too large to share, with the text to copy', () => {
+    const { status, banner, copy, reconnect } = mount()
+    status.set('too-large')
+    expect(banner.hidden).toBe(false)
+    expect(banner.textContent).toMatch(/too large to share.*about 1 MiB/)
+    expect(copy.hidden).toBe(false)
+    expect(reconnect.textContent).toBe('Reconnect')
+  })
+
   it('copies the whole text and says so', async () => {
     const writeText = vi.fn(async () => {})
     const { copy } = mount({ clipboard: { writeText } })

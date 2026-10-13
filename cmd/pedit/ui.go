@@ -199,6 +199,18 @@ func (u *ui) maintenance() {
 	u.print(u.yellow("The relay was closed for maintenance. Run pedit again once it is back."), "")
 }
 
+// tooLarge says why the session ended on its own: the shared file grew past
+// what the relay takes. file is the shared file, for the host.
+func (u *ui) tooLarge(host bool, file string) {
+	limit := "pedit shares files up to " + session.SizeLimit + " for now."
+	if host {
+		u.print(u.yellow("The room was closed: "+file+" grew too large to share. "+limit), "")
+		return
+	}
+	u.print(u.yellow("pedit left the room: the shared file grew too large to share. "+limit),
+		"Your latest changes may not have reached the others.", "")
+}
+
 // installURL explains every way to install, and so to update, pedit.
 const installURL = "https://github.com/piconic-ai/pedit#install"
 
@@ -381,6 +393,8 @@ func (u *ui) liveLine() string {
 		return u.yellow("○") + " This pedit is out of date."
 	case protocol.StatusServerOutdated:
 		return u.yellow("○") + " The server is out of date."
+	case protocol.StatusTooLarge:
+		return u.yellow("○") + " The file grew too large to share."
 	default:
 		return u.yellow("○") + " Connecting…"
 	}

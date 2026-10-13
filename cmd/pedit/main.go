@@ -233,6 +233,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case protocol.StatusClientOutdated, protocol.StatusServerOutdated:
 		out.outdated(st, selfUpgradeCommand())
 		code = max(code, 1)
+	case protocol.StatusTooLarge:
+		out.tooLarge(true, arg)
+		code = max(code, 1)
 	}
 	notifyUpdate(out, latest)
 	return code
@@ -306,6 +309,10 @@ func runJoin(opts commandArgs, out *ui, stderr io.Writer) int {
 		os.Exit(130)
 	}()
 	st, _ := ended.Load().(protocol.Status)
+	if st == protocol.StatusTooLarge {
+		// The edits that did not fit reached nobody else: keep the copy that has them.
+		s.KeepCopy()
+	}
 	return finishJoin(out, stderr, file, s.Temporary(), st, s.Stop, selfUpgradeCommand)
 }
 
@@ -324,6 +331,10 @@ func finishJoin(out *ui, stderr io.Writer, file string, temporary bool, ended pr
 	}
 	if ended == protocol.StatusClientOutdated || ended == protocol.StatusServerOutdated {
 		out.outdated(ended, upgrade())
+		code = max(code, 1)
+	}
+	if ended == protocol.StatusTooLarge {
+		out.tooLarge(false, file)
 		code = max(code, 1)
 	}
 	return code

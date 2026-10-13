@@ -94,6 +94,8 @@ describe('Header', () => {
     expect(el.textContent).toBe('Outdated')
     status.set('server-outdated')
     expect(el.textContent).toBe('Server outdated')
+    status.set('too-large')
+    expect(el.textContent).toBe('Too large')
   })
 
   it('lists participants with the host and you marked, and their colours', () => {

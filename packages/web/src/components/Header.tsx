@@ -22,6 +22,7 @@ const STATUS_LABELS: Record<RoomStatus, string> = {
   'server-outdated': 'Server outdated',
   disconnected: 'Offline',
   busy: 'Busy, retrying…',
+  'too-large': 'Too large',
 }
 
 export interface HeaderProps {

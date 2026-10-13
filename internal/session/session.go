@@ -135,6 +135,12 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 		// would be saved back as U+FFFD, and the file changed for good.
 		return nil, fmt.Errorf("%s is not UTF-8 text. pedit shares UTF-8 only, and would replace the bytes it cannot read; convert the file first (for example, iconv -f SHIFT_JIS -t UTF-8)", opts.File)
 	}
+	// Before creating a room: on connecting, the room gets the whole state in
+	// one frame, which the relay caps. Text takes at least its own size there,
+	// so a file over the limit is turned away before it is loaded.
+	if !isCanvas(opts.File) && protocol.FrameBytes(len(initial)) > protocol.MaxFrameBytes {
+		return nil, &TooLargeError{File: opts.File, Size: len(initial)}
+	}
 	// Before creating a room, so a canvas that is not valid fails right away.
 	doc := crdt.New()
 	var shared content
@@ -148,6 +154,13 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 	} else {
 		c := newTextContent(doc, initial)
 		shared, text = c, c.text
+	}
+	if frame := protocol.StateFrameBytes(doc); frame > protocol.MaxFrameBytes {
+		e := &TooLargeError{File: opts.File, Size: len(initial)}
+		if _, ok := shared.(*canvasContent); ok {
+			e.Shared = frame
+		}
+		return nil, e
 	}
 
 	server := strings.TrimRight(opts.Server, "/")

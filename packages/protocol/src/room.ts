@@ -14,12 +14,14 @@ import { type CanvasMessage, decodeCanvas, encodeCanvas, UnknownCanvasKindError 
 import { decrypt, encrypt } from './cipher.ts'
 import {
   CLIENT_OUTDATED,
+  MESSAGE_TOO_BIG,
   RELAY_BUSY,
   RELAY_MAINTENANCE,
   ROOM_CLOSED,
   ROOM_FULL,
   SERVER_OUTDATED,
 } from './close.ts'
+import { frameBytes, MAX_FRAME_BYTES } from './frame.ts'
 import {
   decodeMessage,
   encodeMessage,
@@ -32,8 +34,10 @@ import {
  * `closed` is final: the host ended the session. So is `full`: the room had no
  * place for us. So is `maintenance`: the relay closed, and whether to come
  * back is up to the person. So are `client-outdated` and `server-outdated`:
- * the server speaks an older or newer protocol version. `busy` is not: the relay turned
- * us away for now, and the client tries again later than after a drop.
+ * the server speaks an older or newer protocol version. So is `too-large`: a
+ * frame we had to send was over MAX_FRAME_BYTES, the most the relay takes.
+ * `busy` is not: the relay turned us away for now, and the client tries again
+ * later than after a drop.
  */
 export type RoomStatus =
   | 'connecting'
@@ -45,6 +49,7 @@ export type RoomStatus =
   | 'maintenance'
   | 'client-outdated'
   | 'server-outdated'
+  | 'too-large'
 
 /** Whether a client stays in this status for good and no longer reconnects. */
 export function isFinalStatus(status: RoomStatus): boolean {
@@ -53,7 +58,8 @@ export function isFinalStatus(status: RoomStatus): boolean {
     status === 'full' ||
     status === 'maintenance' ||
     status === 'client-outdated' ||
-    status === 'server-outdated'
+    status === 'server-outdated' ||
+    status === 'too-large'
   )
 }
 
@@ -64,6 +70,7 @@ const FINAL_CLOSE: ReadonlyMap<number, RoomStatus> = new Map([
   [RELAY_MAINTENANCE, 'maintenance'],
   [CLIENT_OUTDATED, 'client-outdated'],
   [SERVER_OUTDATED, 'server-outdated'],
+  [MESSAGE_TOO_BIG, 'too-large'],
 ])
 
 /** The subset of the WebSocket API used by RoomClient (browser and Node.js 22+ globals both fit). */
@@ -145,9 +152,19 @@ export class RoomClient {
     socket.onopen = () => {
       if (this.socket !== socket) return
       this.attempts = 0
+      // The whole state goes to the room on connecting. When it does not fit a
+      // frame, send nothing: a SyncStep1 alone would have every peer answer
+      // with a state as large.
+      const step2 = encoding.createEncoder()
+      syncProtocol.writeSyncStep2(step2, this.doc)
+      const state = encoding.toUint8Array(step2)
+      if (frameBytes(state.length) > MAX_FRAME_BYTES) {
+        this.tooLarge(socket)
+        return
+      }
       this.setStatus('connected')
       this.sendSync((encoder) => syncProtocol.writeSyncStep1(encoder, this.doc))
-      this.sendSync((encoder) => syncProtocol.writeSyncStep2(encoder, this.doc))
+      this.send(MessageType.Sync, state)
       this.sendAwareness([this.doc.clientID])
     }
     socket.onmessage = (ev) => {
@@ -300,6 +317,12 @@ export class RoomClient {
   private send(type: MessageType, payload: Uint8Array): void {
     const socket = this.socket
     if (!socket || socket.readyState !== OPEN) return
+    if (frameBytes(payload.length) > MAX_FRAME_BYTES) {
+      // The relay would close us with MESSAGE_TOO_BIG, and the same frame
+      // would go again on every reconnect: leave for good instead.
+      this.tooLarge(socket)
+      return
+    }
     const plaintext = encodeMessage(type, payload)
     this.sendChain = this.sendChain
       .then(async () => {
@@ -307,6 +330,20 @@ export class RoomClient {
         if (socket.readyState === OPEN) socket.send(data)
       })
       .catch((error) => this.opts.onError?.(error))
+  }
+
+  /** Leaves the room for good: a frame we had to send does not fit. */
+  private tooLarge(socket: SocketLike): void {
+    if (this.socket !== socket) return
+    this.socket = null // onclose then ignores this socket: no reconnect
+    socket.close()
+    // Told once the change that caused it is done: this runs inside Yjs
+    // transactions and editor updates, which must not be re-entered.
+    queueMicrotask(() => {
+      if (this.destroyed) return
+      this.dropRemoteAwareness()
+      this.setStatus('too-large')
+    })
   }
 
   private scheduleReconnect(atLeastMs = 0): void {

@@ -7,7 +7,10 @@ import (
 	"errors"
 )
 
-const ivBytes = 12
+const (
+	ivBytes  = 12
+	tagBytes = 16 // AES-GCM's tag, aead.Overhead()
+)
 
 // Cipher encrypts frames with AES-GCM as `iv || ciphertext`, the same layout
 // the web client uses.

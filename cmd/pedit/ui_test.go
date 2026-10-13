@@ -267,6 +267,28 @@ func TestUILiveLineWhenOutdated(t *testing.T) {
 	}
 }
 
+func TestUILiveLineWhenTooLarge(t *testing.T) {
+	u := newUI(&strings.Builder{}, false, false)
+	u.setStatus(protocol.StatusTooLarge)
+	if got, want := u.liveLine(), "○ The file grew too large to share."; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestUITooLarge(t *testing.T) {
+	var host, guest strings.Builder
+	newUI(&host, false, false).tooLarge(true, "notes.md")
+	if want := "  The room was closed: notes.md grew too large to share. pedit shares files up to about 1 MiB for now.\n\n"; host.String() != want {
+		t.Errorf("host: got %q, want %q", host.String(), want)
+	}
+	newUI(&guest, false, false).tooLarge(false, "notes.md")
+	want := "  pedit left the room: the shared file grew too large to share. pedit shares files up to about 1 MiB for now.\n" +
+		"  Your latest changes may not have reached the others.\n\n"
+	if guest.String() != want {
+		t.Errorf("guest: got %q, want %q", guest.String(), want)
+	}
+}
+
 func TestUINotices(t *testing.T) {
 	var out strings.Builder
 	u := newUI(&out, false, false)

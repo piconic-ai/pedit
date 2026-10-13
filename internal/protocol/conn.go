@@ -37,9 +37,9 @@ func closeCode(err error) int {
 	return -1
 }
 
-// Frames are ciphertext of a whole document at worst; cap them so a hostile
-// peer cannot make us buffer without bound.
-const maxFrameBytes = 64 << 20
+// The relay passes nothing over MaxFrameBytes; cap reads well above it so a
+// hostile relay cannot make us buffer without bound.
+const readLimit = 64 << 20
 
 // DialWebSocket is the default Dialer.
 func DialWebSocket(ctx context.Context, url string, header http.Header) (Conn, error) {
@@ -54,7 +54,7 @@ func DialWebSocket(ctx context.Context, url string, header http.Header) (Conn, e
 	if err != nil {
 		return nil, err
 	}
-	c.SetReadLimit(maxFrameBytes)
+	c.SetReadLimit(readLimit)
 	return &wsConn{c: c}, nil
 }
 

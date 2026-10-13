@@ -1,4 +1,4 @@
-import { RELAY_BUSY, ROOM_CLOSED, ROOM_FULL } from './close.ts'
+import { MESSAGE_TOO_BIG, RELAY_BUSY, ROOM_CLOSED, ROOM_FULL } from './close.ts'
 import type { SocketLike } from './room.ts'
 
 export interface RelayOptions {
@@ -14,6 +14,8 @@ export interface RelayOptions {
   refuse?: number
   /** Turn away this many sockets with RELAY_BUSY before letting any in. */
   busy?: number
+  /** Close a socket that sends a larger frame with MESSAGE_TOO_BIG, as the Room does at MAX_FRAME_BYTES. */
+  maxFrame?: number
 }
 
 /** An in-memory stand-in for the Worker: relays every frame to all other sockets. */
@@ -82,6 +84,10 @@ export class FakeSocket implements SocketLike {
     readonly isHost: boolean,
   ) {}
   send(data: Uint8Array) {
+    if (this.relay.opts.maxFrame !== undefined && data.length > this.relay.opts.maxFrame) {
+      this.close(MESSAGE_TOO_BIG)
+      return
+    }
     this.relay.frames.push(data)
     for (const peer of this.relay.sockets) {
       if (peer !== this && peer.readyState === 1) {
