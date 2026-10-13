@@ -573,36 +573,110 @@ func TestWriteKeepsASaveItCannotPutBack(t *testing.T) {
 
 func TestWriteKeepsASaveItCannotCheckAfterPuttingItBack(t *testing.T) {
 	requireExchange(t)
-	r := newRace(t, "v0")
-	r.at(StepBeforeReplace, 1, func() { editorSave(t, r.path, renameSave, "editor") })
 	// The second exchange puts the editor's save back and pedit's file is under
-	// the temporary name; it vanishes before pedit can look at it.
-	var gone string
-	r.at(StepExchanged, 2, func() {
-		left := r.leftovers()
-		if len(left) != 1 {
-			t.Fatalf("leftovers = %v", left)
-		}
-		gone = left[0]
-		if err := os.Remove(filepath.Join(filepath.Dir(r.path), gone)); err != nil {
-			t.Fatal(err)
-		}
-	})
-	err := r.flush("pedit")
-	var kept *KeptError
-	if !errors.As(err, &kept) || kept.Name != gone || !errors.Is(err, ErrExternalChange) || !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("Flush = %#v, want a KeptError for %s that matches ErrExternalChange and os.ErrNotExist", err, gone)
+	// the temporary name; it vanishes before pedit can look at it, or before it
+	// can look at it again.
+	for _, tt := range []struct {
+		name string
+		step Step
+		n    int
+	}{
+		{"right after the exchange", StepExchanged, 2},
+		{"while rechecking", StepRechecking, 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newRace(t, "v0")
+			r.at(StepBeforeReplace, 1, func() { editorSave(t, r.path, renameSave, "editor") })
+			var gone string
+			r.at(tt.step, tt.n, func() {
+				left := r.leftovers()
+				if len(left) != 1 {
+					t.Fatalf("leftovers = %v", left)
+				}
+				gone = left[0]
+				if err := os.Remove(filepath.Join(filepath.Dir(r.path), gone)); err != nil {
+					t.Fatal(err)
+				}
+			})
+			err := r.flush("pedit")
+			var kept *KeptError
+			if !errors.As(err, &kept) || kept.Name != gone || !errors.Is(err, ErrExternalChange) || !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("Flush = %#v, want a KeptError for %s that matches ErrExternalChange and os.ErrNotExist", err, gone)
+			}
+			want := "file changed outside pedit: cannot check what pedit moved aside from a.md; it is kept in " + filepath.Join(filepath.Dir(r.path), gone) + ": "
+			if !strings.HasPrefix(err.Error(), want) {
+				t.Fatalf("error = %q, want it to start with %q", err, want)
+			}
+			if len(r.errs) != 1 || r.changed != 1 {
+				t.Fatalf("errors = %v, external changes = %d", r.errs, r.changed)
+			}
+			// The editor's save is back in place, and pedit's content never landed.
+			if r.onDisk() != "editor" || r.w.LastWritten() != "v0" {
+				t.Fatalf("file %q, LastWritten %q", r.onDisk(), r.w.LastWritten())
+			}
+		})
 	}
-	want := "file changed outside pedit: cannot check what pedit moved aside from a.md; it is kept in " + filepath.Join(filepath.Dir(r.path), gone) + ": "
-	if !strings.HasPrefix(err.Error(), want) {
-		t.Fatalf("error = %q, want it to start with %q", err, want)
-	}
-	if len(r.errs) != 1 || r.changed != 1 {
-		t.Fatalf("errors = %v, external changes = %d", r.errs, r.changed)
-	}
-	// The editor's save is back in place, and pedit's content never landed.
-	if r.onDisk() != "editor" || r.w.LastWritten() != "v0" {
-		t.Fatalf("file %q, LastWritten %q", r.onDisk(), r.w.LastWritten())
+}
+
+// pedit's new file sits under the shared name from the first exchange until
+// restore swaps it away, and an editor may open it there. Opening changes the
+// file only if it truncates content, so restore's first look can find the file
+// as pedit wrote it, and the editor's write comes after. Only a second look
+// sees it, and restore must then put the file back under the name instead of
+// removing it.
+func TestWriteKeepsALateWriteIntoTheFileItPutsBack(t *testing.T) {
+	requireExchange(t)
+	for _, tt := range []struct {
+		name    string
+		pending string
+		flags   int
+	}{
+		{"empty content, opened with O_TRUNC", "", os.O_WRONLY | os.O_TRUNC},
+		{"content, opened without truncating", "pedit", os.O_WRONLY},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newRace(t, "v0")
+			var editor *os.File
+			wrote := false
+			save := func() {
+				wrote = true
+				if err := editor.Truncate(0); err != nil {
+					t.Error(err)
+				}
+				if _, err := editor.WriteAt([]byte("latest save"), 0); err != nil {
+					t.Error(err)
+				}
+				if err := editor.Close(); err != nil {
+					t.Error(err)
+				}
+			}
+			// A save lands before the exchange, so restore has to put it back.
+			r.at(StepBeforeReplace, 1, func() { editorSave(t, r.path, renameSave, "first save") })
+			// The editor opens the name, which holds pedit's file for now.
+			r.at(StepExchanged, 1, func() {
+				f, err := os.OpenFile(r.path, tt.flags, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				editor = f
+				t.Cleanup(func() { _ = f.Close() })
+			})
+			// Only restore can reach StepRechecking here: the first save sent the
+			// main path to restore instead of its own recheck.
+			r.at(StepRechecking, 1, save)
+			err := r.flush(tt.pending)
+			if editor == nil {
+				t.Fatal("the editor never opened the file")
+			}
+			if !wrote {
+				// restore never looked again. The editor writes after it anyway.
+				save()
+			}
+			if !errors.Is(err, ErrExternalChange) {
+				t.Fatalf("Flush = %v, want ErrExternalChange", err)
+			}
+			r.kept(t, err, "v0", "latest save", nil)
+		})
 	}
 }
 

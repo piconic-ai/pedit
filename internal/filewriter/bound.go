@@ -54,7 +54,9 @@ const (
 	// StepExchanged is after the first exchange and after each restore
 	// exchange.
 	StepExchanged
-	// StepRechecking is after the pause that precedes the second read.
+	// StepRechecking is after the pause that precedes the second read. restore
+	// reaches it too, where it reads again the file it moved aside, since an
+	// editor may have opened that file while it sat under the name.
 	StepRechecking
 )
 
@@ -74,9 +76,9 @@ func (f *BoundFile) step(s Step) {
 	}
 }
 
-// lateWriteDelay is how long Write waits before it reads the replaced file
-// once more: an editor whose open() found the old file just before the write
-// may truncate and write it a moment later.
+// lateWriteDelay is how long Write and restore wait before they read once more
+// a file they moved aside: an editor whose open() found it under the name just
+// before may truncate and write it a moment later.
 var lateWriteDelay = 5 * time.Millisecond
 
 // maxRestores bounds how often Write swaps back saves that keep landing.
@@ -394,7 +396,15 @@ func (f *BoundFile) Write(expected, content string) error {
 // displaced what it moved aside. If the file changed again meanwhile, the
 // newest save is the one that stays. keep reports whether a save is left
 // under tmpName.
+//
+// The file pedit placed sat under the name until now, and an editor may have
+// opened it there. So when it comes back unchanged, restore waits and reads it
+// once more, as Write does, before it lets Write drop it: a write that lands
+// in it late is a save, and goes back under the name.
 func (f *BoundFile) restore(tmpName string, placed, displaced entry) (keep bool, err error) {
+	cannotCheck := func(err error) (bool, error) {
+		return true, &KeptError{Name: tmpName, Err: fmt.Errorf("%w: cannot check what pedit moved aside from %s; it is kept in %s: %w", ErrExternalChange, f.name, f.kept(tmpName), err)}
+	}
 	for range maxRestores {
 		if err := f.calls.exchange(f.root, tmpName, f.name); err != nil {
 			return true, &KeptError{Name: tmpName, Err: fmt.Errorf("%w: cannot put back a save of %s; it is kept in %s: %w", ErrExternalChange, f.name, f.kept(tmpName), err)}
@@ -402,13 +412,22 @@ func (f *BoundFile) restore(tmpName string, placed, displaced entry) (keep bool,
 		f.step(StepExchanged)
 		out, err := f.inspect(tmpName)
 		if err != nil {
-			return true, &KeptError{Name: tmpName, Err: fmt.Errorf("%w: cannot check what pedit moved aside from %s; it is kept in %s: %w", ErrExternalChange, f.name, f.kept(tmpName), err)}
+			return cannotCheck(err)
 		}
 		if out.same(placed) {
-			if !displaced.regular() {
-				return false, f.errNotRegular()
+			time.Sleep(lateWriteDelay)
+			f.step(StepRechecking)
+			late, err := f.inspect(tmpName)
+			if err != nil {
+				return cannotCheck(err)
 			}
-			return false, ErrExternalChange
+			if late.same(out) {
+				if !displaced.regular() {
+					return false, f.errNotRegular()
+				}
+				return false, ErrExternalChange
+			}
+			out = late
 		}
 		// Another save landed meanwhile; swap again so the newest stays.
 		placed, displaced = displaced, out
