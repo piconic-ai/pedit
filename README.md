@@ -113,6 +113,16 @@ Set `server` in the config instead of `PEDIT_SERVER`.
 
 ## Privacy and security
 
+In a browser, the editor's code comes from the relay, so you trust whoever
+runs it and Cloudflare, which hosts it: a modified editor could read the key
+and plaintext. The command line runs no code from the relay. Join with
+`pedit '<link>'`, installed from Homebrew, `go install` or a release archive
+you verify (not `install.sh`, which the relay serves), or
+[self-host](#self-host) the relay and editor. See
+[security design](docs/security-design.md) for the encryption and what it does
+not protect against, and [the public relay](docs/public-relay.md) for what
+`edit.piconic.ai` logs and keeps.
+
 ![The browser encrypts Text. Cloudflare relays Encrypted Text to pedit CLI, which decrypts it and saves Text to local notes.md. The URL path identifies the room; its fragment contains the shared key, which is never sent to the server.](docs/assets/encryption-sequence.svg)
 
 This is a simplified illustration: pedit encrypts document updates rather than
@@ -142,15 +152,18 @@ Edits in the opposite direction follow the same process.
   [what pedit does on your computer](docs/local-files.md) for every file and
   what you accept.
 
-You must trust the relay operator to serve the intended browser editor, and
-trust participant devices and browsers. A modified editor could read the key
-and plaintext. Infrastructure can see IP addresses, room IDs, request timing
-and ciphertext sizes; infrastructure and Access logs have separate retention
-settings and are not erased when a room closes.
+You must also trust participant devices and browsers. Infrastructure can see
+IP addresses, room IDs, request timing and ciphertext sizes; infrastructure and
+Access logs have separate retention settings and are not erased when a room
+closes.
 
 Markdown previews can request external images, videos and embeds. With Access,
 avatars may load from an identity provider or Gravatar using an email hash.
 Those providers can see the requests.
+
+Besides the relay, the CLI itself connects only to `api.github.com`, to check
+for a newer release, and keeps the answer for a day; it never downloads or
+installs one.
 
 To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
@@ -161,9 +174,11 @@ The public relay at `edit.piconic.ai` is shared, so it has limits:
 | | Public relay |
 | --- | --- |
 | People in a room | The host and 4 guests |
-| Images | 5 MB each, 50 MB per session |
+| Images | 5 MiB each, 50 MiB per session |
 | New rooms | 20 a minute from one network |
+| Connections | 60 a minute from one network |
 | Session length | No limit while the host is connected |
+| File size | About 1 MiB, on any relay |
 
 Self-host when you need more, or when you want to limit who can join editing
 sessions. Cloudflare Access lets you allow specific email addresses or identity

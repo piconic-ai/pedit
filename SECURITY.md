@@ -32,8 +32,9 @@ release and is in scope.
 ## Scope
 
 pedit's trust model is described in
-[privacy and security](README.md#privacy-and-security), and what the CLI
-reads, writes and runs in [what pedit does on your computer](docs/local-files.md).
+[privacy and security](README.md#privacy-and-security) and
+[security design](docs/security-design.md), and what the CLI reads, writes
+and runs in [what pedit does on your computer](docs/local-files.md).
 Issues that break it are in scope, for example:
 
 - the room key, plaintext or decrypted attachments reaching the relay, its logs
