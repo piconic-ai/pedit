@@ -2,6 +2,31 @@
 
 https://github.com/user-attachments/assets/14bec9ab-8c14-495c-8faf-9cdd98d8fd5b
 
+**What it looks like.** You share a file; Alice and Bob edit it in their
+browsers. This is Alice's view:
+
+<table>
+  <tr>
+    <td><a href="docs/assets/screenshots/markdown.png"><picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/markdown-dark.png">
+      <img src="docs/assets/screenshots/markdown.png" width="240" alt="The Markdown editor: the source on the left with Bob's cursor and selection, the rendered preview on the right">
+    </picture></a></td>
+    <td><a href="docs/assets/screenshots/csv.png"><picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/csv-dark.png">
+      <img src="docs/assets/screenshots/csv.png" width="240" alt="A CSV file as a table, with Alice's selected cell and Bob's selected cell outlined in their colors">
+    </picture></a></td>
+    <td><a href="docs/assets/screenshots/canvas.png"><picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/canvas-dark.png">
+      <img src="docs/assets/screenshots/canvas.png" width="240" alt="A canvas file as a board of nodes, edges and a group, with the node Bob has selected outlined">
+    </picture></a></td>
+  </tr>
+  <tr>
+    <td>Markdown, with a live preview and Bob's cursor</td>
+    <td>CSV as a table, with Bob's selected cell</td>
+    <td>Canvas as a board, with Bob's selected node</td>
+  </tr>
+</table>
+
 `pedit` is a CLI that lets people edit your local files together in their
 browsers. Edits are saved back to your file:
 
@@ -12,6 +37,10 @@ browsers. Edits are saved back to your file:
 
   Send this link to the people you want to invite:
     https://edit.piconic.ai/r/<room-id>#<key>
+
+  Press Ctrl+C when you are done. Everything is saved to notes.md.
+
+  ● Alice and Bob are here
 ```
 
 No install or account needed for collaborators on the public server.
