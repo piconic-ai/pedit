@@ -418,8 +418,14 @@ function slowPut(room: Room, id: string, size: number) {
     headers: { [ADMISSION_HEADER]: room.admission },
   })
   return {
-    // Give the request time to reach the room and claim the id.
-    started: () => new Promise((r) => setTimeout(r, 50)),
+    // The request has reached the room and claimed the id. Looked at from
+    // inside: any probe from outside would take an upload slot itself.
+    started: () =>
+      vi.waitFor(() =>
+        runInDurableObject(env.ROOM.get(env.ROOM.idFromName(room.id)), (instance: RoomObject) =>
+          expect([...instance['uploading']].some((key) => key.endsWith(`/${id}`))).toBe(true),
+        ),
+      ),
     finish: async () => {
       const writer = writable.getWriter()
       await writer.write(new Uint8Array(size))
