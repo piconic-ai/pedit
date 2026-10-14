@@ -199,14 +199,17 @@ func (u *ui) maintenance() {
 	u.print(u.yellow("The relay was closed for maintenance. Run pedit again once it is back."), "")
 }
 
-// tooLarge says why the session ended on its own: the shared file grew past
-// what the relay takes. file is the shared file, for the host.
+// tooLarge says why the session ended on its own: the shared document grew
+// past what the relay takes. For the host it names file, the shared file, and
+// the next step: a new room starts from the file as saved, or is refused with
+// the real size.
 func (u *ui) tooLarge(host bool, file string) {
-	limit := "pedit shares files up to " + session.SizeLimit + " for now."
 	if host {
-		u.print(u.yellow("The room was closed: "+file+" grew too large to share. "+limit), "")
+		u.print(u.yellow("The room was closed: "+file+" and its edits grew past what pedit can share ("+session.SizeLimit+" for now)."),
+			"Run pedit again to start a new room.", "")
 		return
 	}
+	limit := "pedit shares files up to " + session.SizeLimit + " for now."
 	u.print(u.yellow("pedit left the room: the shared file grew too large to share. "+limit),
 		"Your latest changes may not have reached the others.", "")
 }

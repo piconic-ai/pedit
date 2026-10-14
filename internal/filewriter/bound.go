@@ -165,6 +165,15 @@ func (f *BoundFile) Validate() error {
 	return nil
 }
 
+// Size is the size of the file at the name, when it is a regular file.
+func (f *BoundFile) Size() (int64, bool) {
+	info, err := f.root.Lstat(f.name)
+	if err != nil || !info.Mode().IsRegular() {
+		return 0, false
+	}
+	return info.Size(), true
+}
+
 // entry is what a name held when it was looked at.
 type entry struct {
 	info os.FileInfo

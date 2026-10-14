@@ -8,6 +8,7 @@ import {
   encrypt,
   generateKey,
   importKey,
+  isFinalStatus,
   MAX_FRAME_BYTES,
   MessageType,
   RELAY_MAINTENANCE,
@@ -333,14 +334,18 @@ describe('RoomClient', () => {
   it('stops for good when an edit does not fit, after the edit', async () => {
     const relay = new Relay({ hosted: true })
     const key = await importKey(generateKey())
-    const host = await join(relay, key, 'x', undefined, { Authorization: 'Bearer t' })
+    const host = await join(relay, key, 'x', { role: 'host' }, { Authorization: 'Bearer t' })
     await vi.waitFor(() => expect(host.status).toBe('connected'))
     const guest = await join(relay, key)
     await vi.waitFor(() => expect(text(guest)).toBe('x'))
+    // So there is a remote state to drop.
+    await vi.waitFor(() => expect(guest.awareness.getStates().has(host.doc.clientID)).toBe(true))
     guest.doc.transact(() => guest.doc.getText('content').insert(0, 'y'.repeat(MAX_FRAME_BYTES)))
     // Told once the edit is done: the editor is still updating inside it.
     expect(guest.status).toBe('connected')
     await vi.waitFor(() => expect(guest.status).toBe('too-large'))
+    expect(isFinalStatus(guest.status)).toBe(true)
+    expect([...guest.awareness.getStates().keys()]).toEqual([guest.doc.clientID])
     await new Promise((r) => setTimeout(r, 100))
     expect(guest.status).toBe('too-large')
     expect(host.status).toBe('connected')

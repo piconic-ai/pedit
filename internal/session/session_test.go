@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -649,6 +650,29 @@ func TestRefusesAFileTooLargeBeforeARoomIsMade(t *testing.T) {
 	}
 	if got := readFile(t, file); got != content {
 		t.Fatal("file changed")
+	}
+}
+
+func TestRefusesALargeFileForItsSizeBeforeUTF8(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "data.csv")
+	// Not UTF-8, and over the limit: the size decides, without scanning it.
+	content := append([]byte{0xff}, bytes.Repeat([]byte("a"), protocol.MaxFrameBytes)...)
+	if err := os.WriteFile(file, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests.Add(1) }))
+	t.Cleanup(server.Close)
+	_, err := Start(context.Background(), Options{File: file, Server: server.URL})
+	var tooLarge *TooLargeError
+	if !errors.As(err, &tooLarge) {
+		t.Fatalf("Start = %v", err)
+	}
+	if strings.Contains(err.Error(), "not UTF-8") {
+		t.Errorf("error = %q: the file was scanned before its size was checked", err.Error())
+	}
+	if n := requests.Load(); n != 0 {
+		t.Errorf("%d requests reached the server", n)
 	}
 }
 

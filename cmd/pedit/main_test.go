@@ -145,6 +145,7 @@ func TestFinishJoin(t *testing.T) {
 		ended     protocol.Status
 		stopErr   error
 		code      int
+		kept      bool
 		stdout    []string
 		not       []string
 		stderr    string
@@ -159,14 +160,19 @@ func TestFinishJoin(t *testing.T) {
 		{name: "server outdated", ended: protocol.StatusServerOutdated, code: 1, stdout: []string{"✓ Saved notes.md", "The server is older than this pedit", "Ask whoever runs the server"}, not: []string{"To upgrade"}},
 		{name: "maintenance", ended: protocol.StatusMaintenance, code: 1, stdout: []string{"✓ Saved notes.md", "The relay was closed for maintenance. Run pedit again once it is back."}, not: []string{"host closed", "To upgrade"}},
 		{name: "too large", ended: protocol.StatusTooLarge, code: 1, stdout: []string{"✓ Saved notes.md", "pedit left the room: the shared file grew too large to share. pedit shares files up to about 1 MiB for now.", "Your latest changes may not have reached the others."}, not: []string{"host closed"}},
+		{name: "temporary, too large", temporary: true, ended: protocol.StatusTooLarge, code: 1, kept: true, stdout: []string{"✓ Saved notes.md", "pedit left the room: the shared file grew too large to share.", "Your latest changes may not have reached the others."}, not: []string{"removed"}},
 		{name: "temporary not removed", temporary: true, stopErr: errors.New("busy"), code: 1, not: []string{"removed"}, stderr: "could not remove the temporary copy notes.md: busy"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var stdout, stderr strings.Builder
-			code := finishJoin(newUI(&stdout, false, false), &stderr, "notes.md", tt.temporary, tt.ended, func() error { return tt.stopErr }, func() string { return "brew upgrade piconic-ai/tap/pedit" })
+			var kept bool
+			code := finishJoin(newUI(&stdout, false, false), &stderr, "notes.md", tt.temporary, tt.ended, func() error { return tt.stopErr }, func() { kept = true }, func() string { return "brew upgrade piconic-ai/tap/pedit" })
 			if code != tt.code {
 				t.Errorf("code = %d", code)
+			}
+			if kept != tt.kept {
+				t.Errorf("kept = %v, want %v", kept, tt.kept)
 			}
 			for _, want := range tt.stdout {
 				if !strings.Contains(stdout.String(), want) {
@@ -180,6 +186,52 @@ func TestFinishJoin(t *testing.T) {
 			}
 			if !strings.Contains(stderr.String(), tt.stderr) {
 				t.Errorf("stderr = %q", stderr.String())
+			}
+		})
+	}
+}
+
+func TestHostEnded(t *testing.T) {
+	tests := []struct {
+		name   string
+		ended  protocol.Status
+		code   int
+		stdout []string
+		not    []string
+		asked  bool
+	}{
+		{name: "stopped by the user", code: 0},
+		{name: "maintenance", ended: protocol.StatusMaintenance, code: 1, stdout: []string{"The relay was closed for maintenance"}, not: []string{"To upgrade"}},
+		{name: "pedit outdated", ended: protocol.StatusClientOutdated, code: 1, stdout: []string{"To upgrade, run: brew upgrade piconic-ai/tap/pedit"}, asked: true},
+		{name: "server outdated", ended: protocol.StatusServerOutdated, code: 1, stdout: []string{"The server is older than this pedit"}, not: []string{"To upgrade"}, asked: true},
+		{name: "too large", ended: protocol.StatusTooLarge, code: 1, stdout: []string{"The room was closed: notes.md and its edits grew past what pedit can share", "Run pedit again to start a new room."}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stdout strings.Builder
+			var asked bool
+			code := hostEnded(newUI(&stdout, false, false), "notes.md", tt.ended, func() string {
+				asked = true
+				return "brew upgrade piconic-ai/tap/pedit"
+			})
+			if code != tt.code {
+				t.Errorf("code = %d, want %d", code, tt.code)
+			}
+			if tt.stdout == nil && stdout.Len() != 0 {
+				t.Errorf("stdout = %q, want none", stdout.String())
+			}
+			for _, want := range tt.stdout {
+				if !strings.Contains(stdout.String(), want) {
+					t.Errorf("missing %q in %q", want, stdout.String())
+				}
+			}
+			for _, unwanted := range tt.not {
+				if strings.Contains(stdout.String(), unwanted) {
+					t.Errorf("unexpected %q in %q", unwanted, stdout.String())
+				}
+			}
+			if asked != tt.asked {
+				t.Errorf("asked how to upgrade = %v, want %v", asked, tt.asked)
 			}
 		})
 	}

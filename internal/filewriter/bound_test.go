@@ -78,6 +78,34 @@ func TestBoundFileReadsBytesAsTheyAre(t *testing.T) {
 	}
 }
 
+func TestBoundFileSize(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "memo.txt")
+	if err := os.WriteFile(path, []byte("12345"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := OpenBound(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if size, ok := f.Size(); !ok || size != 5 {
+		t.Errorf("Size = %d, %v, want 5, true", size, ok)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if size, ok := f.Size(); ok {
+		t.Errorf("Size of a missing file = %d, true", size)
+	}
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if size, ok := f.Size(); ok {
+		t.Errorf("Size of a directory = %d, true", size)
+	}
+}
+
 func TestBoundFileRejectsInitialLink(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink creation needs privileges on Windows")

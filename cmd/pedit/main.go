@@ -226,19 +226,28 @@ func run(args []string, stdout, stderr io.Writer) int {
 		os.Exit(130)
 	}()
 	code := finish(out, stderr, arg, scratch, s.Stop)
-	switch st, _ := ended.Load().(protocol.Status); st {
-	case protocol.StatusMaintenance:
-		out.maintenance()
-		code = max(code, 1)
-	case protocol.StatusClientOutdated, protocol.StatusServerOutdated:
-		out.outdated(st, selfUpgradeCommand())
-		code = max(code, 1)
-	case protocol.StatusTooLarge:
-		out.tooLarge(true, arg)
-		code = max(code, 1)
-	}
+	st, _ := ended.Load().(protocol.Status)
+	code = max(code, hostEnded(out, arg, st, selfUpgradeCommand))
 	notifyUpdate(out, latest)
 	return code
+}
+
+// hostEnded says why a shared session ended on its own: st is the final
+// status the client reached, or "" when the user stopped it. It returns the
+// least exit code that calls for.
+func hostEnded(out *ui, arg string, st protocol.Status, upgrade func() string) int {
+	switch st {
+	case protocol.StatusMaintenance:
+		out.maintenance()
+		return 1
+	case protocol.StatusClientOutdated, protocol.StatusServerOutdated:
+		out.outdated(st, upgrade())
+		return 1
+	case protocol.StatusTooLarge:
+		out.tooLarge(true, arg)
+		return 1
+	}
+	return 0
 }
 
 // debugLog returns where the session sends errors that nobody can act on, or
@@ -309,20 +318,22 @@ func runJoin(opts commandArgs, out *ui, stderr io.Writer) int {
 		os.Exit(130)
 	}()
 	st, _ := ended.Load().(protocol.Status)
-	if st == protocol.StatusTooLarge {
-		// The edits that did not fit reached nobody else: keep the copy that has them.
-		s.KeepCopy()
-	}
-	return finishJoin(out, stderr, file, s.Temporary(), st, s.Stop, selfUpgradeCommand)
+	return finishJoin(out, stderr, file, s.Temporary(), st, s.Stop, s.KeepCopy, selfUpgradeCommand)
 }
 
 // finishJoin leaves the room, saving the copy or removing a temporary one,
 // and says why when the session ended on its own: ended is the final status
-// the client reached, or "" when the user left.
-func finishJoin(out *ui, stderr io.Writer, file string, temporary bool, ended protocol.Status, stop func() error, upgrade func() string) int {
+// the client reached, or "" when the user left. keep makes stop keep a
+// temporary copy.
+func finishJoin(out *ui, stderr io.Writer, file string, temporary bool, ended protocol.Status, stop func() error, keep func(), upgrade func() string) int {
 	out.stopLive()
 	if ended == protocol.StatusClosed {
 		out.hostLeft()
+	}
+	if ended == protocol.StatusTooLarge && temporary {
+		// The edits that did not fit reached nobody else: keep the copy that has them.
+		keep()
+		temporary = false
 	}
 	code := leaveJoined(out, stderr, file, temporary, stop)
 	if ended == protocol.StatusMaintenance {

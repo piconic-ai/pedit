@@ -278,8 +278,10 @@ func TestUILiveLineWhenTooLarge(t *testing.T) {
 func TestUITooLarge(t *testing.T) {
 	var host, guest strings.Builder
 	newUI(&host, false, false).tooLarge(true, "notes.md")
-	if want := "  The room was closed: notes.md grew too large to share. pedit shares files up to about 1 MiB for now.\n\n"; host.String() != want {
-		t.Errorf("host: got %q, want %q", host.String(), want)
+	hostWant := "  The room was closed: notes.md and its edits grew past what pedit can share (about 1 MiB for now).\n" +
+		"  Run pedit again to start a new room.\n\n"
+	if host.String() != hostWant {
+		t.Errorf("host: got %q, want %q", host.String(), hostWant)
 	}
 	newUI(&guest, false, false).tooLarge(false, "notes.md")
 	want := "  pedit left the room: the shared file grew too large to share. pedit shares files up to about 1 MiB for now.\n" +
