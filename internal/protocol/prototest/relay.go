@@ -20,12 +20,18 @@ import (
 //
 // With Refuse set it turns every connection away with that close code, as the
 // Room does on a protocol version mismatch.
+//
+// With MaxFrame set, a connection that writes a larger frame is closed with
+// MessageTooBig and the frame is not relayed, as the Room does at
+// protocol.MaxFrameBytes.
 type Relay struct {
 	Hosted bool
 	Guests int
 	Refuse int
 	// Busy turns away this many connections with RelayBusy before letting any in.
 	Busy int
+	// MaxFrame is the most bytes a frame may have; 0 for no limit.
+	MaxFrame int
 
 	mu      sync.Mutex
 	conns   map[*Conn]bool
@@ -170,6 +176,11 @@ func (c *Conn) Write(_ context.Context, data []byte) error {
 	defer r.mu.Unlock()
 	if !r.conns[c] {
 		return errors.New("connection closed")
+	}
+	if r.MaxFrame > 0 && len(data) > r.MaxFrame {
+		r.left(c)
+		c.closeWith(protocol.MessageTooBig)
+		return errors.New("message too big")
 	}
 	r.frames = append(r.frames, append([]byte{}, data...))
 	for peer := range r.conns {

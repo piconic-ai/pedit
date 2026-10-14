@@ -21,8 +21,10 @@
     "run_worker_first": ["/api/*"]
   },
   // Keep invocation logs in Workers Logs (Cloudflare dashboard → `edit` Worker →
-  // Observability). Only paths and status codes are logged; the key lives in
-  // the URL fragment and never reaches the Worker.
+  // Observability): one for each request, with its path, status and `cf`
+  // properties, and one for each event in a Room, WebSocket messages included
+  // (docs/public-relay.md). The key lives in the URL fragment and never
+  // reaches the Worker.
   "observability": { "enabled": true },
   "durable_objects": {
     "bindings": [{ "name": "ROOM", "class_name": "Room" }]

@@ -8,6 +8,8 @@ import {
   encrypt,
   generateKey,
   importKey,
+  isFinalStatus,
+  MAX_FRAME_BYTES,
   MessageType,
   RELAY_MAINTENANCE,
   RoomClient,
@@ -304,4 +306,60 @@ describe('RoomClient', () => {
       expect(relay.urls).toHaveLength(1)
     },
   )
+
+  it('stops for good when its state does not fit a frame', async () => {
+    const relay = new Relay()
+    const seen: string[] = []
+    const doc = new Y.Doc()
+    doc.getText('content').insert(0, 'x'.repeat(MAX_FRAME_BYTES))
+    const client = new RoomClient({
+      admissionToken: 'A'.repeat(43),
+      url: 'ws://test',
+      key: await importKey(generateKey()),
+      doc,
+      awareness: new Awareness(doc),
+      createSocket: relay.create,
+      minBackoffMs: 1,
+      onStatus: (s) => seen.push(s),
+    })
+    clients.push(client)
+    client.connect()
+    await vi.waitFor(() => expect(client.status).toBe('too-large'))
+    await new Promise((r) => setTimeout(r, 100))
+    expect(seen).toEqual(['connecting', 'too-large'])
+    expect(relay.urls).toHaveLength(1)
+    expect(relay.frames).toHaveLength(0)
+  })
+
+  it('stops for good when an edit does not fit, after the edit', async () => {
+    const relay = new Relay({ hosted: true })
+    const key = await importKey(generateKey())
+    const host = await join(relay, key, 'x', { role: 'host' }, { Authorization: 'Bearer t' })
+    await vi.waitFor(() => expect(host.status).toBe('connected'))
+    const guest = await join(relay, key)
+    await vi.waitFor(() => expect(text(guest)).toBe('x'))
+    // So there is a remote state to drop.
+    await vi.waitFor(() => expect(guest.awareness.getStates().has(host.doc.clientID)).toBe(true))
+    guest.doc.transact(() => guest.doc.getText('content').insert(0, 'y'.repeat(MAX_FRAME_BYTES)))
+    // Told once the edit is done: the editor is still updating inside it.
+    expect(guest.status).toBe('connected')
+    await vi.waitFor(() => expect(guest.status).toBe('too-large'))
+    expect(isFinalStatus(guest.status)).toBe(true)
+    expect([...guest.awareness.getStates().keys()]).toEqual([guest.doc.clientID])
+    await new Promise((r) => setTimeout(r, 100))
+    expect(guest.status).toBe('too-large')
+    expect(host.status).toBe('connected')
+    expect(text(host)).toBe('x')
+    expect(relay.frames.every((f) => f.length <= MAX_FRAME_BYTES)).toBe(true)
+    expect(relay.urls).toHaveLength(2)
+  })
+
+  it('stops for good when the relay says a frame is too big', async () => {
+    const relay = new Relay({ maxFrame: 100 })
+    const client = await join(relay, await importKey(generateKey()), 'x'.repeat(200))
+    await vi.waitFor(() => expect(client.status).toBe('too-large'))
+    await new Promise((r) => setTimeout(r, 100))
+    expect(client.status).toBe('too-large')
+    expect(relay.urls).toHaveLength(1)
+  })
 })

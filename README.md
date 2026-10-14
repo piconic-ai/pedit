@@ -2,6 +2,31 @@
 
 https://github.com/user-attachments/assets/14bec9ab-8c14-495c-8faf-9cdd98d8fd5b
 
+**What it looks like.** Carol shares a file with `pedit`; Alice and Bob edit
+it in their browsers. This is Alice's view:
+
+<table>
+  <tr>
+    <td><a href="docs/assets/screenshots/markdown.png"><picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/markdown-dark.png">
+      <img src="docs/assets/screenshots/markdown.png" width="240" alt="The Markdown editor: the source on the left with Bob's cursor and selection, the rendered preview on the right">
+    </picture></a></td>
+    <td><a href="docs/assets/screenshots/csv.png"><picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/csv-dark.png">
+      <img src="docs/assets/screenshots/csv.png" width="240" alt="A CSV file as a table, with Alice's selected cell and Bob's selected cell outlined in their colors">
+    </picture></a></td>
+    <td><a href="docs/assets/screenshots/canvas.png"><picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/canvas-dark.png">
+      <img src="docs/assets/screenshots/canvas.png" width="240" alt="A canvas file as a board of nodes, edges and a group, with the node Bob has selected outlined">
+    </picture></a></td>
+  </tr>
+  <tr>
+    <td>Markdown, with a live preview and Bob's cursor</td>
+    <td>CSV as a table, with Bob's selected cell</td>
+    <td>Canvas as a board, with Bob's selected node</td>
+  </tr>
+</table>
+
 `pedit` is a CLI that lets people edit your local files together in their
 browsers. Edits are saved back to your file:
 
@@ -12,6 +37,10 @@ browsers. Edits are saved back to your file:
 
   Send this link to the people you want to invite:
     https://edit.piconic.ai/r/<room-id>#<key>
+
+  Press Ctrl+C when you are done. Everything is saved to notes.md.
+
+  ● Alice and Bob are here
 ```
 
 No install or account needed for collaborators on the public server.
@@ -55,6 +84,9 @@ macOS / Linux:
 ```sh
 curl -fsSL https://edit.piconic.ai/install.sh | sh
 ```
+
+`install.sh` is served by the relay. To install from GitHub instead, use one
+of the methods below.
 
 Homebrew (macOS / Linux):
 
@@ -113,6 +145,16 @@ Set `server` in the config instead of `PEDIT_SERVER`.
 
 ## Privacy and security
 
+In a browser, the editor's code comes from the relay, so you trust whoever
+runs it and Cloudflare, which hosts it: a modified editor could read the key
+and plaintext. The command line runs no code from the relay: guests can join
+with `pedit '<link>'` instead of a browser, using a pedit installed from
+Homebrew, `go install` or a release archive you verify, not from `install.sh`,
+which the relay serves. Or [self-host](#self-host) the relay and editor. See
+[security design](docs/security-design.md) for the encryption and what it does
+not protect against, and [the public relay](docs/public-relay.md) for what
+`edit.piconic.ai` logs and keeps.
+
 ![The browser encrypts Text. Cloudflare relays Encrypted Text to pedit CLI, which decrypts it and saves Text to local notes.md. The URL path identifies the room; its fragment contains the shared key, which is never sent to the server.](docs/assets/encryption-sequence.svg)
 
 This is a simplified illustration: pedit encrypts document updates rather than
@@ -122,9 +164,9 @@ Edits in the opposite direction follow the same process.
 - **End-to-end encryption.** Document updates and pasted images are encrypted
   on your devices. The relay receives ciphertext; the key stays in the link's
   `#fragment` and is never sent to the server.
-- **Local files, temporary sessions.** The relay does not store document text.
-  The relay attempts to delete encrypted images when the host leaves; a
-  one-day bucket lifecycle rule handles failed deletions. Removal is not immediate.
+- **Local files, temporary sessions.** The relay does not store document text,
+  and attempts to delete encrypted images when the host leaves
+  ([what the public relay keeps](docs/public-relay.md#what-it-keeps)).
 - **Private local copies.** On Unix, new CLI join copies and saved attachments
   use owner-only permissions, further restricted by your umask. Updates retain
   an existing document's permissions; existing files are not retroactively made private.
@@ -142,15 +184,18 @@ Edits in the opposite direction follow the same process.
   [what pedit does on your computer](docs/local-files.md) for every file and
   what you accept.
 
-You must trust the relay operator to serve the intended browser editor, and
-trust participant devices and browsers. A modified editor could read the key
-and plaintext. Infrastructure can see IP addresses, room IDs, request timing
-and ciphertext sizes; infrastructure and Access logs have separate retention
-settings and are not erased when a room closes.
+You must also trust participant devices and browsers. Infrastructure can see
+IP addresses, room IDs, request timing and ciphertext sizes; infrastructure and
+Access logs have separate retention settings and are not erased when a room
+closes.
 
 Markdown previews can request external images, videos and embeds. With Access,
 avatars may load from an identity provider or Gravatar using an email hash.
 Those providers can see the requests.
+
+Besides the relay, the CLI itself connects only to `api.github.com`, to check
+for a newer release, and keeps the answer for a day; it never downloads or
+installs one.
 
 To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
@@ -161,9 +206,11 @@ The public relay at `edit.piconic.ai` is shared, so it has limits:
 | | Public relay |
 | --- | --- |
 | People in a room | The host and 4 guests |
-| Images | 5 MB each, 50 MB per session |
+| Images | 5 MiB each, 50 MiB per session |
 | New rooms | 20 a minute from one network |
+| Connections | 60 a minute from one network |
 | Session length | No limit while the host is connected |
+| File size | About 1 MiB, on any relay ([details](docs/public-relay.md#limits)) |
 
 Self-host when you need more, or when you want to limit who can join editing
 sessions. Cloudflare Access lets you allow specific email addresses or identity

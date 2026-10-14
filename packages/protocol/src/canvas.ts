@@ -23,7 +23,7 @@ export type CanvasMessage =
 
 const KIND = { edit: 0, applied: 1, rejected: 2 } as const
 
-/** An edit carries two copies of the canvas and must fit in one relayed frame (1 MiB). */
+/** An edit carries two copies of the canvas and must fit in one relayed frame (MAX_FRAME_BYTES). */
 export const MAX_CANVAS_EDIT_BYTES = 960 * 1024
 const MAX_ID = 64
 const MAX_REASON = 16 * 1024

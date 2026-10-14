@@ -54,6 +54,7 @@ export function whyNoImages(
   if (status === 'maintenance') return 'The relay is closed for maintenance.'
   if (status === 'client-outdated') return 'This page is out of date. Reload it first.'
   if (status === 'server-outdated') return 'The server is older than this page.'
+  if (status === 'too-large') return 'The document is too large to share.'
   if (status !== 'connected' || !hostHere) return 'Connecting to the host. Try again in a moment.'
   if (!host) return "The host's pedit is too old to save images."
   return null

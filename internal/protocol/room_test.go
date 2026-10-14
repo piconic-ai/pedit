@@ -418,3 +418,73 @@ func TestStopsForGoodOnProtocolVersionMismatch(t *testing.T) {
 		}
 	}
 }
+
+func TestStateFrameBytesIsWhatIsSent(t *testing.T) {
+	relay := prototest.NewRelay(false)
+	p := join(t, relay, protocol.GenerateKey(), joinOpts{init: strings.Repeat("z", 5000)})
+	prototest.WaitFor(t, wait, func() bool { return len(relay.Frames()) >= 2 }, "the handshake")
+	// The frames are SyncStep1, then the whole state.
+	if got, want := len(relay.Frames()[1]), protocol.StateFrameBytes(p.doc); got != want {
+		t.Fatalf("the state went as a frame of %d bytes, StateFrameBytes says %d", got, want)
+	}
+}
+
+func TestStopsForGoodWhenTheStateDoesNotFit(t *testing.T) {
+	relay := prototest.NewRelay(false)
+	var mu sync.Mutex
+	var statuses []protocol.Status
+	p := join(t, relay, protocol.GenerateKey(), joinOpts{
+		init: strings.Repeat("x", protocol.MaxFrameBytes),
+		onStatus: func(s protocol.Status) {
+			mu.Lock()
+			statuses = append(statuses, s)
+			mu.Unlock()
+		},
+	})
+	prototest.WaitFor(t, wait, func() bool { return p.Status() == protocol.StatusTooLarge }, "too large")
+	time.Sleep(200 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	want := []protocol.Status{protocol.StatusConnecting, protocol.StatusTooLarge}
+	if !reflect.DeepEqual(statuses, want) || len(relay.URLs()) != 1 || len(relay.Frames()) != 0 {
+		t.Fatalf("statuses=%v dials=%d frames=%d", statuses, len(relay.URLs()), len(relay.Frames()))
+	}
+	if !protocol.StatusTooLarge.Final() {
+		t.Fatal("StatusTooLarge should be final")
+	}
+}
+
+func TestStopsForGoodWhenAnEditDoesNotFit(t *testing.T) {
+	relay := prototest.NewRelay(true)
+	key := protocol.GenerateKey()
+	host := join(t, relay, key, joinOpts{init: "x", header: hostHeader()})
+	prototest.WaitFor(t, wait, func() bool { return host.Status() == protocol.StatusConnected }, "host connected")
+	guest := join(t, relay, key, joinOpts{})
+	prototest.WaitFor(t, wait, func() bool { return guest.String() == "x" }, "guest to sync")
+	guest.insert(0, strings.Repeat("y", protocol.MaxFrameBytes))
+	prototest.WaitFor(t, wait, func() bool { return guest.Status() == protocol.StatusTooLarge }, "guest too large")
+	time.Sleep(200 * time.Millisecond)
+	if guest.Status() != protocol.StatusTooLarge || len(relay.URLs()) != 2 {
+		t.Fatalf("status=%v dials=%d", guest.Status(), len(relay.URLs()))
+	}
+	// The edit reached nobody, and the others stay in the room.
+	if host.Status() != protocol.StatusConnected || host.String() != "x" {
+		t.Fatalf("host status=%v text=%d bytes", host.Status(), len(host.String()))
+	}
+	for _, f := range relay.Frames() {
+		if len(f) > protocol.MaxFrameBytes {
+			t.Fatalf("a frame of %d bytes went to the relay", len(f))
+		}
+	}
+}
+
+func TestStopsForGoodWhenTheRelaySaysAFrameIsTooBig(t *testing.T) {
+	relay := prototest.NewRelay(false)
+	relay.MaxFrame = 100
+	p := join(t, relay, protocol.GenerateKey(), joinOpts{init: strings.Repeat("x", 200)})
+	prototest.WaitFor(t, wait, func() bool { return p.Status() == protocol.StatusTooLarge }, "too large")
+	time.Sleep(200 * time.Millisecond)
+	if p.Status() != protocol.StatusTooLarge || len(relay.URLs()) != 1 {
+		t.Fatalf("status=%v dials=%d", p.Status(), len(relay.URLs()))
+	}
+}

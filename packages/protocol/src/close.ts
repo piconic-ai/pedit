@@ -37,3 +37,10 @@ export const RELAY_BUSY = 4005
  * whether to pick the session up again once the relay is back.
  */
 export const RELAY_MAINTENANCE = 4006
+
+/**
+ * WebSocket close code (the standard 1009) the relay sends a connection
+ * whose frame is over MAX_FRAME_BYTES. Clients must not reconnect on it:
+ * they would send the same frame again.
+ */
+export const MESSAGE_TOO_BIG = 1009

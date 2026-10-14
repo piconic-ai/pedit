@@ -308,6 +308,26 @@ func TestJoinWithoutDirectoryUsesATemporaryCopyAndRemovesIt(t *testing.T) {
 	}
 }
 
+func TestKeepCopyKeepsATemporaryCopy(t *testing.T) {
+	f := setup(t, "# notes\n", setupOpts{})
+	g, err := joinFromCLI(t, f, joinCLIOpts{temporary: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Dir(g.File())
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	g.KeepCopy()
+	if g.Temporary() {
+		t.Fatal("copy should stay")
+	}
+	if err := g.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFile(t, g.File()); got != "# notes\n" {
+		t.Fatalf("copy = %q", got)
+	}
+}
+
 func TestJoinWithDirectoryKeepsTheCopy(t *testing.T) {
 	f := setup(t, "keep\n", setupOpts{})
 	g, err := joinFromCLI(t, f, joinCLIOpts{})
@@ -411,6 +431,7 @@ func TestJoinSaysWhyTheServerTurnedItAway(t *testing.T) {
 		protocol.ClientOutdated:   ErrClientOutdated,
 		protocol.ServerOutdated:   ErrServerOutdated,
 		protocol.RelayMaintenance: ErrRelayMaintenance,
+		protocol.MessageTooBig:    ErrTooLarge,
 	} {
 		relay := prototest.NewRelay(false)
 		relay.Refuse = code

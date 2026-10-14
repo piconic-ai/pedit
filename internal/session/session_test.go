@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -623,6 +625,122 @@ func TestNoLoopBetweenWriteBackAndWatch(t *testing.T) {
 	defer mu.Unlock()
 	if len(origins) != 1 {
 		t.Fatalf("updates = %v", origins)
+	}
+}
+
+func TestRefusesAFileTooLargeBeforeARoomIsMade(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "data.csv")
+	content := strings.Repeat("a", protocol.MaxFrameBytes+1)
+	if err := os.WriteFile(file, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests.Add(1) }))
+	t.Cleanup(server.Close)
+	_, err := Start(context.Background(), Options{File: file, Server: server.URL})
+	var tooLarge *TooLargeError
+	if !errors.As(err, &tooLarge) {
+		t.Fatalf("Start = %v", err)
+	}
+	if want := file + " is 1.1 MiB; pedit shares files up to about 1 MiB for now"; err.Error() != want {
+		t.Fatalf("error = %q, want %q", err.Error(), want)
+	}
+	if n := requests.Load(); n != 0 {
+		t.Errorf("%d requests reached the server", n)
+	}
+	if got := readFile(t, file); got != content {
+		t.Fatal("file changed")
+	}
+}
+
+func TestRefusesALargeFileForItsSizeBeforeUTF8(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "data.csv")
+	// Not UTF-8, and over the limit: the size decides, without scanning it.
+	content := append([]byte{0xff}, bytes.Repeat([]byte("a"), protocol.MaxFrameBytes)...)
+	if err := os.WriteFile(file, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests.Add(1) }))
+	t.Cleanup(server.Close)
+	_, err := Start(context.Background(), Options{File: file, Server: server.URL})
+	var tooLarge *TooLargeError
+	if !errors.As(err, &tooLarge) {
+		t.Fatalf("Start = %v", err)
+	}
+	if strings.Contains(err.Error(), "not UTF-8") {
+		t.Errorf("error = %q: the file was scanned before its size was checked", err.Error())
+	}
+	if n := requests.Load(); n != 0 {
+		t.Errorf("%d requests reached the server", n)
+	}
+}
+
+func TestRefusesACanvasTooLargeToShare(t *testing.T) {
+	var b strings.Builder
+	b.WriteString(`{"nodes":[`)
+	for i := range 7000 {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		fmt.Fprintf(&b, `{"id":"n%06d","type":"text","text":"hello %d","x":%d,"y":%d,"width":250,"height":60}`, i, i, i*10, i*3)
+	}
+	b.WriteString(`],"edges":[]}`)
+	// The file fits a frame; the canvas shared as nodes and edges does not.
+	if b.Len() >= protocol.MaxFrameBytes {
+		t.Fatalf("the canvas file is %d bytes: not a case for its shared form", b.Len())
+	}
+	file := filepath.Join(t.TempDir(), "x.canvas")
+	if err := os.WriteFile(file, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests.Add(1) }))
+	t.Cleanup(server.Close)
+	_, err := Start(context.Background(), Options{File: file, Server: server.URL})
+	var tooLarge *TooLargeError
+	if !errors.As(err, &tooLarge) || tooLarge.Shared <= protocol.MaxFrameBytes {
+		t.Fatalf("Start = %v", err)
+	}
+	want := regexp.MustCompile(`is 0\.\d MiB, 1\.\d MiB once shared as a board; pedit shares up to about 1 MiB for now`)
+	if !want.MatchString(err.Error()) {
+		t.Fatalf("error = %q", err.Error())
+	}
+	if n := requests.Load(); n != 0 {
+		t.Errorf("%d requests reached the server", n)
+	}
+}
+
+func TestSharesAFileUnderTheLimit(t *testing.T) {
+	content := strings.Repeat("a", 1_000_000)
+	f := setup(t, content, setupOpts{})
+	g := joinAsGuest(t, f.relay, f.session.URL)
+	prototest.WaitFor(t, wait, func() bool { return g.String() == content }, "guest to get the file")
+	for _, frame := range f.relay.Frames() {
+		if len(frame) > protocol.MaxFrameBytes {
+			t.Fatalf("a frame of %d bytes went to the relay", len(frame))
+		}
+	}
+}
+
+func TestEndsTheSessionWhenTheFileGrowsTooLarge(t *testing.T) {
+	f := setup(t, "small\n", setupOpts{watch: true})
+	g := joinAsGuest(t, f.relay, f.session.URL)
+	prototest.WaitFor(t, wait, func() bool { return g.String() == "small\n" }, "guest to sync")
+	grown := "small\n" + strings.Repeat("row,1\n", protocol.MaxFrameBytes/6+1)
+	if err := os.WriteFile(f.file, []byte(grown), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prototest.WaitFor(t, wait, func() bool { return f.session.Client.Status() == protocol.StatusTooLarge }, "the host to give up")
+	if err := f.session.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFile(t, f.file); got != grown {
+		t.Fatalf("the file was not kept: %d bytes", len(got))
+	}
+	prototest.WaitFor(t, wait, func() bool { return g.Status() == protocol.StatusClosed }, "guest closed")
+	if got := g.String(); got != "small\n" {
+		t.Fatalf("guest text = %d bytes", len(got))
 	}
 }
 

@@ -69,6 +69,9 @@ var ErrClientOutdated = errors.New("this pedit is too old for the server; update
 // this pedit; whoever runs it has to update it.
 var ErrServerOutdated = errors.New("the server is older than this pedit; ask whoever runs it to update it")
 
+// ErrTooLarge means the room's file grew too large to share.
+var ErrTooLarge = errors.New("the shared file is too large to share; pedit shares files up to " + SizeLimit + " for now")
+
 // endedErr says why a Client ended in the final status st.
 func endedErr(st protocol.Status) error {
 	switch st {
@@ -80,6 +83,8 @@ func endedErr(st protocol.Status) error {
 		return ErrClientOutdated
 	case protocol.StatusServerOutdated:
 		return ErrServerOutdated
+	case protocol.StatusTooLarge:
+		return ErrTooLarge
 	}
 	return ErrRoomClosed
 }
@@ -324,6 +329,10 @@ func (s *Session) File() string { return s.file }
 
 // Temporary reports whether the copy is removed when the session stops.
 func (s *Session) Temporary() bool { return s.temp != "" }
+
+// KeepCopy makes Stop keep a temporary copy, as a copy placed in a
+// directory is kept. Call it before Stop.
+func (s *Session) KeepCopy() { s.temp = "" }
 
 // removeTemp removes the temporary directory of a copy, if there is one.
 func removeTemp(dir string) error {
