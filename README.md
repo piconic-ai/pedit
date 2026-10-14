@@ -77,7 +77,15 @@ go install github.com/piconic-ai/pedit/cmd/pedit@latest
 Binaries: [GitHub Releases](https://github.com/piconic-ai/pedit/releases) (macOS / Linux / Windows · amd64 / arm64).
 Each archive carries a build provenance attestation; check that it was built
 by this repository's release workflow with
-`gh attestation verify <archive> --repo piconic-ai/pedit`.
+
+```sh
+gh attestation verify <archive> --repo piconic-ai/pedit \
+  --signer-workflow piconic-ai/pedit/.github/workflows/release-build.yml
+```
+
+(releases up to v0.1.2 were signed by `tagpr.yml` instead). The archives are
+reproducible: `scripts/build-cli-release.sh` run on the same tag with the Go
+version from `go.mod` on `ubuntu-24.04` gives the same `checksums.txt`.
 
 ## Configuration and templates
 
