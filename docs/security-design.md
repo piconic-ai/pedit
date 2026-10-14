@@ -54,12 +54,19 @@ To run no code from the relay:
 
 ## What the relay sees and can do
 
-It sees IP addresses, room IDs, the admission and host tokens, request
-headers such as `User-Agent` and `Origin` (which tell a browser from the CLI),
-when connections open and close, the size and time of every frame (and so when,
-and roughly how much, each person types), which connection sent it and which
-connection is the host, and the IDs, number and sizes of encrypted images (the
-same image shared twice in a room has the same ID).
+It sees:
+
+- IP addresses
+- room IDs
+- the admission and host tokens
+- request headers such as `User-Agent` and `Origin`, which tell a browser from
+  the CLI
+- when connections open and close
+- the size and time of every frame, and so when, and roughly how much, each
+  person types
+- which connection sent each frame, and which connection is the host
+- the IDs, number and sizes of encrypted images (the same image shared twice in
+  a room has the same ID)
 
 It can drop, delay, replay or reorder frames, close connections and refuse
 service. Document updates are Yjs updates, which can be applied in any order

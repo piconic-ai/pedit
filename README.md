@@ -2,8 +2,8 @@
 
 https://github.com/user-attachments/assets/14bec9ab-8c14-495c-8faf-9cdd98d8fd5b
 
-**What it looks like.** You share a file; Alice and Bob edit it in their
-browsers. This is Alice's view:
+**What it looks like.** Carol shares a file with `pedit`; Alice and Bob edit
+it in their browsers. This is Alice's view:
 
 <table>
   <tr>
@@ -85,6 +85,9 @@ macOS / Linux:
 curl -fsSL https://edit.piconic.ai/install.sh | sh
 ```
 
+`install.sh` is served by the relay. To install from GitHub instead, use one
+of the methods below.
+
 Homebrew (macOS / Linux):
 
 ```sh
@@ -144,10 +147,10 @@ Set `server` in the config instead of `PEDIT_SERVER`.
 
 In a browser, the editor's code comes from the relay, so you trust whoever
 runs it and Cloudflare, which hosts it: a modified editor could read the key
-and plaintext. The command line runs no code from the relay. Join with
-`pedit '<link>'`, installed from Homebrew, `go install` or a release archive
-you verify (not `install.sh`, which the relay serves), or
-[self-host](#self-host) the relay and editor. See
+and plaintext. The command line runs no code from the relay: guests can join
+with `pedit '<link>'` instead of a browser, using a pedit installed from
+Homebrew, `go install` or a release archive you verify, not from `install.sh`,
+which the relay serves. Or [self-host](#self-host) the relay and editor. See
 [security design](docs/security-design.md) for the encryption and what it does
 not protect against, and [the public relay](docs/public-relay.md) for what
 `edit.piconic.ai` logs and keeps.
@@ -207,7 +210,7 @@ The public relay at `edit.piconic.ai` is shared, so it has limits:
 | New rooms | 20 a minute from one network |
 | Connections | 60 a minute from one network |
 | Session length | No limit while the host is connected |
-| File size | About 1 MiB, on any relay |
+| File size | About 1 MiB, on any relay ([details](docs/public-relay.md#limits)) |
 
 Self-host when you need more, or when you want to limit who can join editing
 sessions. Cloudflare Access lets you allow specific email addresses or identity

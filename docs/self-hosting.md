@@ -142,10 +142,12 @@ Cloudflare dashboard → your Worker → Settings → Variables and Secrets):
 | `BLOB_QUOTA_COUNT` | All images of a session, in number | `500` |
 
 Whatever the limits, a connection that sends far more than editing needs is
-closed, and its client reconnects; a room takes at most four image uploads at
-once.
+closed: a guest's client reconnects, and a host's disconnect ends the session,
+as any host leaving does. A room takes at most four image uploads at once.
 Files over about 1 MiB are not supported: the relay passes messages of at most
-1 MiB, and a newcomer gets the whole file state in one.
+1 MiB, and a newcomer gets the whole shared document in one. See
+[the public relay](public-relay.md#limits) for how canvases and long sessions
+count against it.
 The public relay at `edit.piconic.ai` sets lower limits in
 `packages/worker/wrangler.jsonc`.
 

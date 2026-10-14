@@ -127,12 +127,19 @@ approximate ([Cloudflare](https://developers.cloudflare.com/workers/runtime-apis
 The new-room limit counts `POST /api/rooms` requests. The relay derives a
 room's ID from its host token without remembering which tokens it issued, so a
 client can make its own and skip that limit; every client is still held to the
-connection limit. A guest over the message limits is disconnected and
+connection limit. A guest over the rate limits is disconnected and
 reconnects; a host over them ends the session.
 
-**Files over about 1 MiB are not supported.** The relay closes a connection
-that sends a message over 1 MiB, and a newcomer receives the whole file state
-in one message. This holds on self-hosted relays too.
+**Files over about 1 MiB are not supported.** A newcomer receives the whole
+shared document in one message, and the relay closes a connection that sends a
+message over 1 MiB. pedit refuses to share a larger file. A client whose edit
+would need a larger message does not send it: it leaves the room for good, and
+if it is the host, the session ends. The limit is on the shared document, not
+the file. A canvas takes up to about 1.7 times its JSON size, and the host's
+copy grows as people edit, so a long session on a file under 1 MiB can still
+reach the limit. A document that grows past the limit during a session keeps
+syncing until someone joins or the host reconnects, and that ends the session.
+This holds on self-hosted relays too.
 
 ## The CLI's other network request
 
