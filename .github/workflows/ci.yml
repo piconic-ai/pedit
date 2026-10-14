@@ -69,6 +69,13 @@ jobs:
           test "$(./pedit --version)" = v0.0.0-test
           unzip -l pedit_v0.0.0-test_windows_arm64.zip | grep -q pedit.exe
 
+      - name: CLI release archives are reproducible
+        # A second build (new binaries, new file times, another umask) must
+        # give the same bytes, so a release can be rebuilt and compared.
+        run: |
+          (umask 077 && bash scripts/build-cli-release.sh v0.0.0-test "$RUNNER_TEMP/pedit-release-again")
+          diff "$RUNNER_TEMP/pedit-release/checksums.txt" "$RUNNER_TEMP/pedit-release-again/checksums.txt"
+
       - name: Install script
         run: bash scripts/test-install.sh v0.0.0-test "$RUNNER_TEMP/pedit-release"
 

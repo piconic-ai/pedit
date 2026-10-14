@@ -106,6 +106,16 @@ signer() {
   esac
 }
 
+# signer_workflow VERSION: the workflow file that signed that release. Up to
+# v0.1.2 the archives were built in tagpr.yml itself; later releases are built
+# by the reusable release-build.yml, which then is the signer.
+signer_workflow() {
+  case $1 in
+    v0.0.[0-9] | v0.0.1[0-3] | v0.1.[0-2]) echo tagpr.yml ;;
+    *) echo release-build.yml ;;
+  esac
+}
+
 verify_provenance() {
   # Optional: gh fetches attestations from the GitHub API, which needs a sign-in.
   # --active: without it, any other stored account with an expired token fails.
@@ -117,7 +127,7 @@ verify_provenance() {
   signed_by=$(signer "$version")
   if ! gh attestation verify "$1" \
     --repo "$signed_by" \
-    --signer-workflow "$signed_by/.github/workflows/tagpr.yml" \
+    --signer-workflow "$signed_by/.github/workflows/$(signer_workflow "$version")" \
     --deny-self-hosted-runners >/dev/null 2>"$tmp/gh.err"; then
     step_end FAILED
     cat "$tmp/gh.err" >&2

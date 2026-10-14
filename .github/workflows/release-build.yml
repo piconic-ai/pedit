@@ -1,0 +1,62 @@
+name: release-build
+
+# Builds the CLI release archives for a tag and signs their build provenance.
+# tagpr.yml calls this once tagpr has tagged; publishing the archives to the
+# Release is left to the caller.
+#
+# The build lives in its own reusable workflow so that the provenance names
+# this file as the signer: `gh attestation verify --signer-workflow
+# piconic-ai/pedit/.github/workflows/release-build.yml` then proves an archive
+# came out of these steps alone, run from the tag. The job gets no write access
+# to the repository (contents: read); the archives leave it only as a workflow
+# artifact, which the caller uploads to the Release.
+#
+# The input is only the tag, and the environment is pinned (runner image,
+# Go version from go.mod, action SHAs), so scripts/build-cli-release.sh gives
+# the same bytes when the tag is rebuilt here.
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+        description: Release tag to build (e.g. v0.1.0)
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      # Build provenance: id-token signs it through Sigstore, attestations and
+      # artifact-metadata store it on GitHub for `gh attestation verify`.
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    env:
+      TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Build release archives and checksums
+        run: bash scripts/build-cli-release.sh "$TAG" "$RUNNER_TEMP/pedit-release"
+      - name: Attest build provenance of the archives
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/pedit-release/pedit_*
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pedit-release
+          path: ${{ runner.temp }}/pedit-release/
+          if-no-files-found: error
+          retention-days: 1
