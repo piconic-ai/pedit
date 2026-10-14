@@ -164,9 +164,9 @@ Edits in the opposite direction follow the same process.
 - **End-to-end encryption.** Document updates and pasted images are encrypted
   on your devices. The relay receives ciphertext; the key stays in the link's
   `#fragment` and is never sent to the server.
-- **Local files, temporary sessions.** The relay does not store document text.
-  The relay attempts to delete encrypted images when the host leaves; a
-  one-day bucket lifecycle rule handles failed deletions. Removal is not immediate.
+- **Local files, temporary sessions.** The relay does not store document text,
+  and attempts to delete encrypted images when the host leaves
+  ([what the public relay keeps](docs/public-relay.md#what-it-keeps)).
 - **Private local copies.** On Unix, new CLI join copies and saved attachments
   use owner-only permissions, further restricted by your umask. Updates retain
   an existing document's permissions; existing files are not retroactively made private.

@@ -44,8 +44,9 @@ To run no code from the relay:
 - **Admission token.** HKDF-SHA256 of the room key, info `pedit admission v1`.
   Clients send it to the relay to connect to the room and to read or write its
   images. The host's first connection registers it; the relay keeps only
-  its SHA-256, and deletes that when the host leaves. The token cannot decrypt
-  anything. See [room admission](contributing/room-admission.md).
+  its SHA-256, and deletes that when the host leaves (with
+  [one case not yet confirmed](public-relay.md#what-it-keeps)). The token
+  cannot decrypt anything. See [room admission](contributing/room-admission.md).
 - **Host token.** Not derived from the key. The relay makes it when a client
   creates a room (`POST /api/rooms`) and derives the room ID from it, so it can
   tell which connection is the host and end the room when the host leaves. It
