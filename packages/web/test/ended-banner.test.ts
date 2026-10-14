@@ -42,6 +42,22 @@ describe('EndedBanner', () => {
     expect(onReconnect).toHaveBeenCalled()
   })
 
+  it('says the room reached the relay time limit, with Copy and no Reconnect', () => {
+    const timeLimit = new Store<number | undefined>(86400)
+    const { status, banner, copy, reconnect } = mount({ timeLimit })
+    status.set('expired')
+    expect(banner.hidden).toBe(false)
+    expect(banner.textContent).toMatch(/reached its 24-hour limit on the relay.*new link/)
+    expect(copy.hidden).toBe(false)
+    expect(reconnect.hidden).toBe(true)
+  })
+
+  it('names no number when the relay did not say its time limit', () => {
+    const { status, banner } = mount()
+    status.set('expired')
+    expect(banner.textContent).toMatch(/reached its time limit on the relay/)
+  })
+
   it('says why a full room let nobody in, with nothing to copy', () => {
     const { status, banner, copy, reconnect } = mount()
     status.set('full')

@@ -24,7 +24,8 @@ type Dialer func(ctx context.Context, url string, header http.Header) (Conn, err
 
 // CloseError reports that the connection was closed with a close code.
 type CloseError struct {
-	Code int
+	Code   int
+	Reason string
 }
 
 func (e *CloseError) Error() string { return fmt.Sprintf("websocket closed: %d", e.Code) }
@@ -35,6 +36,15 @@ func closeCode(err error) int {
 		return ce.Code
 	}
 	return -1
+}
+
+// closeReason is the reason a close frame carried, if err is one.
+func closeReason(err error) string {
+	var ce *CloseError
+	if errors.As(err, &ce) {
+		return ce.Reason
+	}
+	return ""
 }
 
 // The relay passes nothing over MaxFrameBytes; cap reads well above it so a
@@ -67,7 +77,9 @@ func (w *wsConn) Read(ctx context.Context) ([]byte, error) {
 		typ, data, err := w.c.Read(ctx)
 		if err != nil {
 			if code := websocket.CloseStatus(err); code != -1 {
-				return nil, &CloseError{Code: int(code)}
+				var ce websocket.CloseError
+				errors.As(err, &ce)
+				return nil, &CloseError{Code: int(code), Reason: ce.Reason}
 			}
 			return nil, err
 		}

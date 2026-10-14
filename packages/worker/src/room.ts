@@ -8,9 +8,11 @@ import {
 } from '@pedit/protocol/admission'
 import {
   CLIENT_OUTDATED,
+  expiredReason,
   MESSAGE_TOO_BIG,
   RELAY_MAINTENANCE,
   ROOM_CLOSED,
+  ROOM_EXPIRED,
   ROOM_FULL,
   SERVER_OUTDATED,
 } from '@pedit/protocol/close'
@@ -53,6 +55,15 @@ export const BYTE_RATE = { burst: MAX_PEERS * MAX_FRAME_BYTES, perSecond: 1024 *
 export const RATE_LIMITED = 1008
 
 /**
+ * How often a room with a host checks that its host is still there. Each check
+ * is one Durable Object request, billed like 20 WebSocket messages; an idle
+ * room already sends hundreds of awareness messages an hour. It bounds how long
+ * a room whose host vanished without a close (a deploy drops every connection
+ * with no hook) keeps its data.
+ */
+export const ALARM_INTERVAL_MS = 60 * 60 * 1000
+
+/**
  * What a room allows. The defaults suit a self-hosted relay; the public relay
  * sets lower ones as Worker vars (wrangler.jsonc), and the tests set their own
  * (vitest.config.ts).
@@ -65,6 +76,8 @@ export interface Limits {
   /** All attachments of a session together, encrypted, and their number. */
   quotaBytes: number
   quotaCount: number
+  /** How long a room lasts, from its host's first connection. */
+  roomSeconds: number
 }
 
 export const DEFAULT_LIMITS: Limits = {
@@ -72,6 +85,10 @@ export const DEFAULT_LIMITS: Limits = {
   blobBytes: 10 * 1024 * 1024,
   quotaBytes: 100 * 1024 * 1024,
   quotaCount: 500,
+  // Unlimited: the limit protects a shared demo relay. A self-hosted relay
+  // serves its operator's own team, who may keep a session open for days, and
+  // the operator can set ROOM_MAX_SECONDS.
+  roomSeconds: Number.POSITIVE_INFINITY,
 }
 
 /** Worker vars that lower or raise the limits; unset or invalid ones keep the default. */
@@ -80,6 +97,7 @@ export interface LimitVars {
   BLOB_MAX_BYTES?: string
   BLOB_QUOTA_BYTES?: string
   BLOB_QUOTA_COUNT?: string
+  ROOM_MAX_SECONDS?: string
 }
 
 export function limits(env: LimitVars): Limits {
@@ -92,6 +110,7 @@ export function limits(env: LimitVars): Limits {
     blobBytes: positive(env.BLOB_MAX_BYTES, DEFAULT_LIMITS.blobBytes),
     quotaBytes: positive(env.BLOB_QUOTA_BYTES, DEFAULT_LIMITS.quotaBytes),
     quotaCount: positive(env.BLOB_QUOTA_COUNT, DEFAULT_LIMITS.quotaCount),
+    roomSeconds: positive(env.ROOM_MAX_SECONDS, DEFAULT_LIMITS.roomSeconds),
   }
 }
 
@@ -110,6 +129,9 @@ const HOST_TAG = 'host'
 const BLOB_PATH = /\/blobs\/([A-Za-z0-9_-]{22})$/
 const USAGE_KEY = 'blobUsage'
 const ADMISSION_KEY = 'admissionHash'
+// When the host first connected, in ms since the epoch. Never deleted: once
+// the room is over it is the tombstone that stops its ID being used again.
+const OPENED_KEY = 'openedAt'
 
 interface Usage {
   bytes: number
@@ -124,6 +146,11 @@ interface Usage {
  * while there is no host, and everyone is disconnected with ROOM_CLOSED as soon
  * as the host leaves, so nothing lingers (and nothing keeps waking the room up)
  * after a session ends.
+ *
+ * A room also ends at most ROOM_MAX_SECONDS after its host first connected
+ * (`openedAt`, kept after the room ends so that its ID cannot be reused), with
+ * ROOM_EXPIRED for everyone. An hourly alarm cleans up a room whose host
+ * vanished without a close, as on a deploy.
  *
  * Attachments are the one thing a room keeps: encrypted blobs in R2, only while
  * the host is connected, deleted when the host leaves. The room counts their
@@ -144,6 +171,8 @@ export class Room extends DurableObject<Env> {
   // reservation belonged to the session that ended. In memory only: nothing
   // is in flight while the room hibernates.
   private generation = 0
+  // Host connections between the start of fetch and the accept or refusal.
+  private hostHandshakes = 0
 
   override async fetch(request: Request): Promise<Response> {
     const blob = BLOB_PATH.exec(new URL(request.url).pathname)?.[1]
@@ -165,18 +194,44 @@ export class Room extends DurableObject<Env> {
     const token = readAdmissionProtocol(protocols)
     if (!token) return new Response('room admission required; update your client', { status: 403 })
     const isHost = request.headers.get(HOST_HEADER) === '1'
+    // The hash below is an await during which an alarm may run. Counting the
+    // host handshakes in flight keeps that alarm from cleaning up a session
+    // whose host is just reconnecting.
+    if (isHost) this.hostHandshakes++
+    try {
+      return await this.admit(token, isHost)
+    } finally {
+      if (isHost) this.hostHandshakes--
+    }
+  }
+
+  private async admit(token: string, isHost: boolean): Promise<Response> {
+    const digest = await sha256(token)
+    // Nothing below awaits before the socket is accepted, so an alarm cannot
+    // expire the room between these checks and the accept. An expired room
+    // refuses everyone before admission, so it never registers a verifier again.
+    // Clients released before ROOM_EXPIRED existed treat 4007 as an ordinary
+    // drop and keep reconnecting (with backoff) to an expired room; accepted,
+    // since the time limit is final for every current client.
+    if (this.expired()) {
+      if (this.sessionOpen()) await this.expire()
+      return refuse(ROOM_EXPIRED, expiredReason(limits(this.env).roomSeconds))
+    }
     if (!isHost && this.hosts().length === 0) return refuse(ROOM_CLOSED, 'room is closed')
     // Authenticate before taking a peer slot. Only the authenticated host may
     // register the verifier; a guest cannot claim an unopened room's token.
-    if (!(await this.authorize(token, isHost)))
+    if (!this.authorize(digest, isHost))
       return new Response('invalid room admission', { status: 403 })
     const peers = this.ctx.getWebSockets().length
     const guests = peers - this.hosts().length
     if (peers >= MAX_PEERS || (!isHost && guests >= limits(this.env).guests)) {
       return refuse(ROOM_FULL, 'room is full')
     }
+    // The clock starts at the host's first connection and never again.
+    if (isHost && this.openedAt() === undefined) this.ctx.storage.kv.put(OPENED_KEY, Date.now())
     const { 0: client, 1: server } = new WebSocketPair()
     this.ctx.acceptWebSocket(server, isHost ? [HOST_TAG] : [])
+    if (isHost) await this.ctx.storage.setAlarm(this.nextAlarm())
     return new Response(null, {
       status: 101,
       webSocket: client,
@@ -184,8 +239,8 @@ export class Room extends DurableObject<Env> {
     })
   }
 
-  private async authorize(token: string, register = false): Promise<boolean> {
-    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token))
+  // Takes the digest of the admission token, hashed before this runs.
+  private authorize(digest: ArrayBuffer, register = false): boolean {
     // Persist the verifier across hibernation. Read after hashing so concurrent
     // host handshakes cannot each install a different token.
     const expected = this.ctx.storage.kv.get<ArrayBuffer>(ADMISSION_KEY)
@@ -195,6 +250,58 @@ export class Room extends DurableObject<Env> {
     return true
   }
 
+  private openedAt(): number | undefined {
+    return this.ctx.storage.kv.get<number>(OPENED_KEY)
+  }
+
+  // The room's deadline, or Infinity without a limit or before its host came.
+  private deadline(): number {
+    const opened = this.openedAt()
+    if (opened === undefined) return Number.POSITIVE_INFINITY
+    return opened + limits(this.env).roomSeconds * 1000
+  }
+
+  // Date.now() rather than the `now` seam: the tests stop that one at 0.
+  private expired(): boolean {
+    return Date.now() >= this.deadline()
+  }
+
+  // The hourly check, or the deadline if that comes sooner.
+  private nextAlarm(): number {
+    return Math.min(this.deadline(), Date.now() + ALARM_INTERVAL_MS)
+  }
+
+  // Whether there is anything of a session left to clean up.
+  private sessionOpen(): boolean {
+    return (
+      this.ctx.storage.kv.get(ADMISSION_KEY) !== undefined || this.ctx.getWebSockets().length > 0
+    )
+  }
+
+  /**
+   * Alarms are at-least-once and may come late, so this does only what is
+   * still needed and can run twice.
+   */
+  override async alarm(): Promise<void> {
+    if (this.expired()) {
+      await this.expire()
+      return
+    }
+    if (this.hosts().length === 0) {
+      // A host is reconnecting right now (after a deploy): let it finish, and
+      // look again at the next interval if it does not get in.
+      if (this.hostHandshakes > 0) {
+        await this.ctx.storage.setAlarm(this.nextAlarm())
+        return
+      }
+      // The host left without a close we saw (a deploy), or normally, when
+      // there is nothing left to do. Not armed again until a host connects.
+      if (this.sessionOpen()) await this.endSession(ROOM_CLOSED, 'the host left')
+      return
+    }
+    await this.ctx.storage.setAlarm(this.nextAlarm())
+  }
+
   override async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     if (typeof message === 'string') {
       ws.close(1003, 'binary frames only')
@@ -202,6 +309,12 @@ export class Room extends DurableObject<Env> {
     }
     if (message.byteLength > MAX_FRAME_BYTES) {
       ws.close(MESSAGE_TOO_BIG, 'message too big')
+      return
+    }
+    // Before maintenance: expiry is permanent, so reporting maintenance would
+    // only invite a Resume. This backs up a late or lost alarm.
+    if (this.expired()) {
+      await this.expire()
       return
     }
     // Setting the var redeploys the Worker, which normally restarts rooms and
@@ -264,8 +377,20 @@ export class Room extends DurableObject<Env> {
 
   private async closeIfHostLeft(ws: WebSocket): Promise<void> {
     if (!this.ctx.getTags(ws).includes(HOST_TAG) || this.hosts(ws).length > 0) return
+    await this.endSession(ROOM_CLOSED, 'the host left', ws)
+  }
+
+  // The room reached its time limit: everyone goes, with the session's data.
+  // Its `openedAt` stays, so the room ID is never opened again.
+  private async expire(): Promise<void> {
+    await this.endSession(ROOM_EXPIRED, expiredReason(limits(this.env).roomSeconds))
+  }
+
+  // Everything before the first await runs synchronously, which the
+  // generation and cleaning invariants rely on.
+  private async endSession(code: number, reason: string, except?: WebSocket): Promise<void> {
     for (const peer of this.ctx.getWebSockets()) {
-      if (peer !== ws) safeClose(peer, ROOM_CLOSED, 'the host left')
+      if (peer !== except) safeClose(peer, code, reason)
     }
     // End the session at once: its quota and uploads no longer count.
     this.generation++
@@ -285,8 +410,10 @@ export class Room extends DurableObject<Env> {
       cleaning = this.cleaning
       await cleaning
     } while (cleaning !== this.cleaning)
+    if (this.expired()) return new Response('room has expired', { status: 410 })
     if (this.hosts().length === 0) return new Response('room is closed', { status: 410 })
-    if (!(await this.authorize(token)))
+    // Hashed first, so the verifier is read after any await.
+    if (!this.authorize(await sha256(token)))
       return new Response('invalid room admission', { status: 403 })
     const key = this.blobPrefix() + id
     if (request.method === 'GET') {
@@ -395,6 +522,10 @@ export class Room extends DurableObject<Env> {
   private setUsage(usage: Usage): void {
     this.ctx.storage.kv.put(USAGE_KEY, usage)
   }
+}
+
+function sha256(token: string): Promise<ArrayBuffer> {
+  return crypto.subtle.digest('SHA-256', new TextEncoder().encode(token))
 }
 
 interface Allowance {

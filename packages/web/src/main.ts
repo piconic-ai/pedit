@@ -222,6 +222,8 @@ async function joinRoom(
   const roomStatus = new Store<RoomStatus>('connecting')
   const fileName = new Store<string | null>(null)
   const people = new Store<readonly Participant[]>([])
+  // The relay's time limit in seconds, once it has closed an expired room.
+  const timeLimit = new Store<number | undefined>(undefined)
   // Set once the host says it shares a canvas as nodes and edges, not text.
   let canvasRoom = false
   // The room closes as soon as the host leaves (or was never there).
@@ -231,6 +233,7 @@ async function joinRoom(
   const { header, banner, main, source } = parts
   render(banner, 'EndedBanner', {
     status: roomStatus,
+    timeLimit,
     text: () => (canvasRoom ? toJSON(readCanvas(doc)) : text.toString()),
     onReconnect: () => location.reload(),
   })
@@ -421,6 +424,7 @@ async function joinRoom(
     doc,
     awareness,
     onStatus: (s) => {
+      if (s === 'expired') timeLimit.set(client?.timeLimitSeconds)
       setStatus(s)
       renderPeople()
       if (s === 'connected') {

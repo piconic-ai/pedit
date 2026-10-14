@@ -227,7 +227,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}()
 	code := finish(out, stderr, arg, scratch, s.Stop)
 	st, _ := ended.Load().(protocol.Status)
-	code = max(code, hostEnded(out, arg, st, selfUpgradeCommand))
+	code = max(code, hostEnded(out, arg, st, s.Client.TimeLimit(), selfUpgradeCommand))
 	notifyUpdate(out, latest)
 	return code
 }
@@ -235,7 +235,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 // hostEnded says why a shared session ended on its own: st is the final
 // status the client reached, or "" when the user stopped it. It returns the
 // least exit code that calls for.
-func hostEnded(out *ui, arg string, st protocol.Status, upgrade func() string) int {
+func hostEnded(out *ui, arg string, st protocol.Status, limit time.Duration, upgrade func() string) int {
 	switch st {
 	case protocol.StatusMaintenance:
 		out.maintenance()
@@ -245,6 +245,9 @@ func hostEnded(out *ui, arg string, st protocol.Status, upgrade func() string) i
 		return 1
 	case protocol.StatusTooLarge:
 		out.tooLarge(true, arg)
+		return 1
+	case protocol.StatusExpired:
+		out.expired(true, limit)
 		return 1
 	}
 	return 0
@@ -318,14 +321,14 @@ func runJoin(opts commandArgs, out *ui, stderr io.Writer) int {
 		os.Exit(130)
 	}()
 	st, _ := ended.Load().(protocol.Status)
-	return finishJoin(out, stderr, file, s.Temporary(), st, s.Stop, s.KeepCopy, selfUpgradeCommand)
+	return finishJoin(out, stderr, file, s.Temporary(), st, s.Client.TimeLimit(), s.Stop, s.KeepCopy, selfUpgradeCommand)
 }
 
 // finishJoin leaves the room, saving the copy or removing a temporary one,
 // and says why when the session ended on its own: ended is the final status
 // the client reached, or "" when the user left. keep makes stop keep a
 // temporary copy.
-func finishJoin(out *ui, stderr io.Writer, file string, temporary bool, ended protocol.Status, stop func() error, keep func(), upgrade func() string) int {
+func finishJoin(out *ui, stderr io.Writer, file string, temporary bool, ended protocol.Status, limit time.Duration, stop func() error, keep func(), upgrade func() string) int {
 	out.stopLive()
 	if ended == protocol.StatusClosed {
 		out.hostLeft()
@@ -347,6 +350,9 @@ func finishJoin(out *ui, stderr io.Writer, file string, temporary bool, ended pr
 	if ended == protocol.StatusTooLarge {
 		out.tooLarge(false, file)
 		code = max(code, 1)
+	}
+	if ended == protocol.StatusExpired {
+		out.expired(false, limit)
 	}
 	return code
 }

@@ -41,6 +41,10 @@ or a blob request.
 Admission precedes peer-slot allocation and R2/quota operations. A guest
 connecting to a closed room with a syntactically valid admission protocol
 still receives close code 4001, without obtaining a hibernating peer slot.
+A room past its time limit refuses every connection with 4007 (the code
+sent to sockets open at the deadline) before admission, so it never
+registers a verifier again. Clients released before 4007 existed treat it as
+an ordinary drop and reconnect with backoff; every current client stops.
 The verifier survives hibernation and is removed with the quota when the
 last host leaves. Document updates retain their existing encryption and
 wire format. A capability does not confer the host role and does not enable

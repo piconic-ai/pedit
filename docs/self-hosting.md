@@ -140,6 +140,7 @@ Cloudflare dashboard → your Worker → Settings → Variables and Secrets):
 | `BLOB_MAX_BYTES` | One image, in bytes | `10485760` |
 | `BLOB_QUOTA_BYTES` | All images of a session, in bytes | `104857600` |
 | `BLOB_QUOTA_COUNT` | All images of a session, in number | `500` |
+| `ROOM_MAX_SECONDS` | How long a room lasts, in seconds from its host's first connection | *(unset: no limit)* |
 
 Whatever the limits, a connection that sends far more than editing needs is
 closed: a guest's client reconnects, and a host's disconnect ends the session,

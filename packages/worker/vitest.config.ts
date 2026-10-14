@@ -12,6 +12,8 @@ export default defineConfig({
           BLOB_MAX_BYTES: '95',
           BLOB_QUOTA_BYTES: '100',
           BLOB_QUOTA_COUNT: '5',
+          // Two hours, so the hourly check is sooner than the deadline.
+          ROOM_MAX_SECONDS: '7200',
         },
       },
     }),

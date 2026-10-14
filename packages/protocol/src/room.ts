@@ -15,9 +15,11 @@ import { decrypt, encrypt } from './cipher.ts'
 import {
   CLIENT_OUTDATED,
   MESSAGE_TOO_BIG,
+  parseExpiredReason,
   RELAY_BUSY,
   RELAY_MAINTENANCE,
   ROOM_CLOSED,
+  ROOM_EXPIRED,
   ROOM_FULL,
   SERVER_OUTDATED,
 } from './close.ts'
@@ -36,6 +38,7 @@ import {
  * back is up to the person. So are `client-outdated` and `server-outdated`:
  * the server speaks an older or newer protocol version. So is `too-large`: a
  * frame we had to send was over MAX_FRAME_BYTES, the most the relay takes.
+ * So is `expired`: the room reached the relay's time limit.
  * `busy` is not: the relay turned us away for now, and the client tries again
  * later than after a drop.
  */
@@ -50,6 +53,7 @@ export type RoomStatus =
   | 'client-outdated'
   | 'server-outdated'
   | 'too-large'
+  | 'expired'
 
 /** Whether a client stays in this status for good and no longer reconnects. */
 export function isFinalStatus(status: RoomStatus): boolean {
@@ -59,7 +63,8 @@ export function isFinalStatus(status: RoomStatus): boolean {
     status === 'maintenance' ||
     status === 'client-outdated' ||
     status === 'server-outdated' ||
-    status === 'too-large'
+    status === 'too-large' ||
+    status === 'expired'
   )
 }
 
@@ -71,6 +76,7 @@ const FINAL_CLOSE: ReadonlyMap<number, RoomStatus> = new Map([
   [CLIENT_OUTDATED, 'client-outdated'],
   [SERVER_OUTDATED, 'server-outdated'],
   [MESSAGE_TOO_BIG, 'too-large'],
+  [ROOM_EXPIRED, 'expired'],
 ])
 
 /** The subset of the WebSocket API used by RoomClient (browser and Node.js 22+ globals both fit). */
@@ -79,7 +85,7 @@ export interface SocketLike {
   readonly readyState: number
   onopen: ((ev: unknown) => void) | null
   onmessage: ((ev: { data: unknown }) => void) | null
-  onclose: ((ev: { code?: number }) => void) | null
+  onclose: ((ev: { code?: number; reason?: string }) => void) | null
   onerror: ((ev: unknown) => void) | null
   send(data: Uint8Array): void
   close(code?: number, reason?: string): void
@@ -119,6 +125,8 @@ export class RoomClient {
   readonly doc: Y.Doc
   readonly awareness: awarenessProtocol.Awareness
   status: RoomStatus = 'disconnected'
+  /** The relay's time limit in seconds, when it said so on closing an expired room. */
+  timeLimitSeconds: number | undefined
 
   private readonly opts: RoomClientOptions
   private socket: SocketLike | null = null
@@ -181,6 +189,7 @@ export class RoomClient {
       this.dropRemoteAwareness()
       const final = ev.code === undefined ? undefined : FINAL_CLOSE.get(ev.code)
       if (final && !this.destroyed) {
+        if (final === 'expired') this.timeLimitSeconds = parseExpiredReason(ev.reason)
         this.setStatus(final)
         return
       }

@@ -20,7 +20,8 @@ import (
 // once it is back. So are
 // StatusClientOutdated and StatusServerOutdated: the server speaks an older or
 // newer protocol version. So is StatusTooLarge: a frame we had to send was over
-// MaxFrameBytes, the most the relay takes. StatusBusy is not: the relay turned
+// MaxFrameBytes, the most the relay takes. So is StatusExpired: the room
+// reached the relay's time limit. StatusBusy is not: the relay turned
 // us away for now, and the Client tries again later than after a drop.
 type Status string
 
@@ -40,6 +41,7 @@ const (
 	StatusServerOutdated Status = "server-outdated"
 
 	StatusTooLarge Status = "too-large"
+	StatusExpired  Status = "expired"
 )
 
 // finalStatus maps the close codes that end a Client for good to its status.
@@ -50,6 +52,7 @@ var finalStatus = map[int]Status{
 	ClientOutdated:   StatusClientOutdated,
 	ServerOutdated:   StatusServerOutdated,
 	MessageTooBig:    StatusTooLarge,
+	RoomExpired:      StatusExpired,
 }
 
 // finalOf maps what ended a connection to the status that ends the Client for
@@ -65,7 +68,7 @@ func finalOf(err error) (Status, bool) {
 // Final reports whether a Client stays in s for good and no longer reconnects.
 func (s Status) Final() bool {
 	switch s {
-	case StatusClosed, StatusFull, StatusMaintenance, StatusClientOutdated, StatusServerOutdated, StatusTooLarge:
+	case StatusClosed, StatusFull, StatusMaintenance, StatusClientOutdated, StatusServerOutdated, StatusTooLarge, StatusExpired:
 		return true
 	}
 	return false
@@ -121,6 +124,7 @@ type Client struct {
 	started   bool
 	destroyed bool
 	synced    bool
+	timeLimit time.Duration
 	unsubs    []func()
 
 	ctx    context.Context
@@ -178,6 +182,21 @@ func (c *Client) Status() Status {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.status
+}
+
+// TimeLimit is the relay's time limit for a room, as it said on closing an
+// expired one, or 0 when it did not say.
+func (c *Client) TimeLimit() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.timeLimit
+}
+
+func (c *Client) setTimeLimit(reason string) {
+	seconds, _ := ParseExpiredReason(reason)
+	c.mu.Lock()
+	c.timeLimit = time.Duration(seconds) * time.Second
+	c.mu.Unlock()
 }
 
 // Connect starts connecting (and reconnecting) in the background.
@@ -268,6 +287,9 @@ func (c *Client) run(done chan struct{}) {
 		}
 		c.dropRemoteAwareness()
 		if st, ok := finalOf(err); ok {
+			if st == StatusExpired {
+				c.setTimeLimit(closeReason(err))
+			}
 			c.setStatus(st)
 			return
 		}

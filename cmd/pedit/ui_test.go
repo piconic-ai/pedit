@@ -439,3 +439,40 @@ func TestUIDoesNotTellWhatItDoesNotKnow(t *testing.T) {
 		t.Fatalf("got %q", out.String())
 	}
 }
+
+func TestUILiveLineWhenExpired(t *testing.T) {
+	u := newUI(&strings.Builder{}, false, false)
+	u.setStatus(protocol.StatusExpired)
+	if got, want := u.liveLine(), "○ The room reached its time limit."; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestTimeLimitText(t *testing.T) {
+	for d, want := range map[time.Duration]string{
+		24 * time.Hour:   "24-hour limit",
+		90 * time.Minute: "90-minute limit",
+		45 * time.Second: "45-second limit",
+		0:                "time limit",
+	} {
+		if got := timeLimitText(d); got != want {
+			t.Errorf("%v: got %q, want %q", d, got, want)
+		}
+	}
+}
+
+func TestUIExpired(t *testing.T) {
+	var host, guest strings.Builder
+	newUI(&host, false, false).expired(true, 24*time.Hour)
+	hostWant := "  The room reached its 24-hour limit on the relay and was closed.\n" +
+		"  Run pedit again to start a new room.\n\n"
+	if host.String() != hostWant {
+		t.Errorf("host: got %q, want %q", host.String(), hostWant)
+	}
+	newUI(&guest, false, false).expired(false, 24*time.Hour)
+	guestWant := "  The room reached its 24-hour limit on the relay and was closed.\n" +
+		"  Ask the host to run pedit again for a new link.\n\n"
+	if guest.String() != guestWant {
+		t.Errorf("guest: got %q, want %q", guest.String(), guestWant)
+	}
+}

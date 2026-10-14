@@ -6,12 +6,14 @@ import {
   type CanvasMessage,
   CLIENT_OUTDATED,
   encrypt,
+  expiredReason,
   generateKey,
   importKey,
   isFinalStatus,
   MAX_FRAME_BYTES,
   MessageType,
   RELAY_MAINTENANCE,
+  ROOM_EXPIRED,
   RoomClient,
   SERVER_OUTDATED,
 } from '../src/index.ts'
@@ -295,6 +297,7 @@ describe('RoomClient', () => {
     [CLIENT_OUTDATED, 'client-outdated'],
     [SERVER_OUTDATED, 'server-outdated'],
     [RELAY_MAINTENANCE, 'maintenance'],
+    [ROOM_EXPIRED, 'expired'],
   ] as const)(
     'stops for good when the server turns it away for its version or maintenance (%i)',
     async (code, status) => {
@@ -306,6 +309,40 @@ describe('RoomClient', () => {
       expect(relay.urls).toHaveLength(1)
     },
   )
+
+  it('knows the time limit a relay names when it turns an expired room away', async () => {
+    const relay = new Relay({ refuse: ROOM_EXPIRED, refuseReason: expiredReason(86400) })
+    const client = await join(relay, await importKey(generateKey()))
+    await vi.waitFor(() => expect(client.status).toBe('expired'))
+    expect(client.timeLimitSeconds).toBe(86400)
+  })
+
+  it('does not know the time limit when the relay names none', async () => {
+    const relay = new Relay({ refuse: ROOM_EXPIRED })
+    const client = await join(relay, await importKey(generateKey()))
+    await vi.waitFor(() => expect(client.status).toBe('expired'))
+    expect(client.timeLimitSeconds).toBeUndefined()
+  })
+
+  it('stops for good when the room expires under host and guest', async () => {
+    const relay = new Relay({ hosted: true })
+    const key = await importKey(generateKey())
+    const host = await join(relay, key, 'x', undefined, { Authorization: 'Bearer t' })
+    await vi.waitFor(() => expect(host.status).toBe('connected'))
+    const guest = await join(relay, key)
+    await vi.waitFor(() => expect(text(guest)).toBe('x'))
+    relay.closeAll(ROOM_EXPIRED, expiredReason(86400))
+    await vi.waitFor(() => {
+      expect(host.status).toBe('expired')
+      expect(guest.status).toBe('expired')
+    })
+    await new Promise((r) => setTimeout(r, 1500))
+    expect(host.status).toBe('expired')
+    expect(guest.status).toBe('expired')
+    expect(relay.urls).toHaveLength(2)
+    expect(guest.timeLimitSeconds).toBe(86400)
+    expect(isFinalStatus('expired')).toBe(true)
+  })
 
   it('stops for good when its state does not fit a frame', async () => {
     const relay = new Relay()

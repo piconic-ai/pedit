@@ -40,7 +40,7 @@ is disconnected, so keep this table in sync with them:
 | Deploy / Preview command | `pnpm run deploy:production` | `pnpm run preview` |
 | Root directory | `/` | `/` |
 | Build watch paths | include `*`, exclude *(empty)* | include `*`, exclude *(empty)* |
-| Build token | `edit build token` | *(shared)* |
+| Build token | `edit build token` (needs Workers R2 Storage edit, which Cloudflare's generated token has) | *(shared)* |
 | Build variables | *(none)* | *(none)* |
 
 > [!WARNING]
@@ -98,7 +98,7 @@ either turns away new customers or closes:
 | --- | --- | --- | --- |
 | *(unset)* | as usual | as usual | as usual |
 | `no-new-rooms` | 503, saying the relay takes no new rooms and pointing to self-hosting | as usual | as usual |
-| `closed` | 503, saying the relay is closed for maintenance | closed with `4006` | 503 |
+| `closed` | 503, saying the relay is closed for maintenance | closed with `4006` (a reconnect to a room past its 24-hour limit gets `4006` here, and `4007` once maintenance ends; an open room past it is closed with `4007`) | 503 |
 
 Use `no-new-rooms` to stop growth while sessions in progress finish, and
 `closed` to stop everything.
@@ -132,7 +132,17 @@ the rule to end it.
 Pasted images are stored in R2 as ciphertext while their room's host is
 connected, and the room deletes them when the host leaves. Each deployment
 needs its bucket, with a lifecycle rule that expires anything a failed
-deletion leaves behind:
+deletion leaves behind.
+
+Production's deploy (`pnpm run deploy:production`,
+`packages/scripts/deploy-production.mjs`) publishes the Worker, then adds the
+`expire-rooms` rule to `edit-blobs` if it is missing, keeping the bucket's
+other rules, such as Cloudflare's default multipart-abort rule. If it cannot
+check or add the rule, for example because the build token lacks Workers R2
+Storage (edit), the build log shows a warning and the deploy still succeeds;
+add the rule by hand. Previews and the lab do not run that script. Add the rule
+to a new bucket once (`lifecycle add` does not check for an existing rule of
+the same name):
 
 ```sh
 for bucket in edit-blobs edit-blobs-preview edit-lab-blobs; do
@@ -140,6 +150,9 @@ for bucket in edit-blobs edit-blobs-preview edit-lab-blobs; do
   pnpm --dir packages --filter @pedit/worker exec wrangler r2 bucket lifecycle add "$bucket" expire-rooms rooms/ --expire-days 1
 done
 ```
+
+To check a bucket's rules:
+`pnpm --dir packages --filter @pedit/worker exec wrangler r2 bucket lifecycle list edit-blobs`.
 
 `edit-blobs` is production's, `edit-blobs-preview` is shared by every Preview,
 and `edit-lab-blobs` is the lab's.

@@ -72,6 +72,9 @@ var ErrServerOutdated = errors.New("the server is older than this pedit; ask who
 // ErrTooLarge means the room's file grew too large to share.
 var ErrTooLarge = errors.New("the shared file is too large to share; pedit shares files up to " + SizeLimit + " for now")
 
+// ErrRoomExpired means the room reached its relay's time limit and has ended for good.
+var ErrRoomExpired = errors.New("the room has ended: it reached its time limit on the relay; ask the host to run pedit again for a new link")
+
 // endedErr says why a Client ended in the final status st.
 func endedErr(st protocol.Status) error {
 	switch st {
@@ -85,6 +88,8 @@ func endedErr(st protocol.Status) error {
 		return ErrServerOutdated
 	case protocol.StatusTooLarge:
 		return ErrTooLarge
+	case protocol.StatusExpired:
+		return ErrRoomExpired
 	}
 	return ErrRoomClosed
 }
