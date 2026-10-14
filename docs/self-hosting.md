@@ -158,3 +158,41 @@ seconds) to raise them, for example for a class that starts pedit together, or
 remove a binding to drop that limit. Their `namespace_id` must not be used by
 another Worker in the same Cloudflare account. The limits are counted per
 Cloudflare location and are approximate.
+
+## Running outside Cloudflare with celld
+
+[celld](https://celld.dev) runs Workers and Durable Objects on your own
+machines, keeping their state in an S3-compatible, Google Cloud Storage or
+Azure Blob Storage bucket. `packages/celld.jsonc` runs the relay on it. celld
+refuses configuration keys it does not support, so that file carries only the
+Durable Object, the R2 binding and the web assets; `wrangler.json` stays the
+Cloudflare configuration.
+
+To try it on one machine, install celld and put
+[esbuild](https://esbuild.github.io) on `PATH`, then run from `packages/`:
+
+```sh
+pnpm run celld:dev
+```
+
+The relay listens on `http://127.0.0.1:9876`; pass `--port` to `celld dev` for
+another port. Point the CLI at it with `server:` in `.pedit/config.yaml`.
+Local state is kept in `packages/.celld/`.
+
+For a fleet, deploy with `celld deploy ./celld.jsonc --bucket <bucket>` and
+run `celld --bucket <bucket>` on each machine; see the celld documentation for
+the bucket requirements and the node options. Compared with Cloudflare:
+
+- There are no rate limit bindings, so new rooms and connections are not
+  limited per network. Limit them at your proxy if the relay is public.
+- celld does not terminate TLS. Put a proxy in front of it that keeps the
+  `Host` header (see above), and keep celld's peer listener on a private
+  network.
+- Attachments are stored in the fleet bucket next to celld's own state. A
+  lifecycle rule for them must be limited to their prefix; do not apply
+  `scripts/r2-lifecycle.json` to the whole bucket.
+- Set `MAINTENANCE` and the room limits as `vars` in `celld.jsonc` and deploy
+  again.
+- When a Durable Object moves to another node, celld closes its WebSockets
+  with code 1012 and the clients reconnect. The host's connection closing this
+  way may end the room. A single node has been tried; a fleet has not.

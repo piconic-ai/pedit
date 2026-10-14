@@ -1,0 +1,24 @@
+// Runs the relay with celld (https://celld.dev), self-hosted Durable Objects,
+// instead of Cloudflare: `pnpm run celld:dev`, or `celld deploy ./celld.jsonc`
+// and `celld --bucket ...` for a fleet. See docs/self-hosting.md.
+//
+// celld refuses config keys it does not support, so this file carries only
+// the bindings the relay needs; wrangler.json stays the Cloudflare config.
+// `main` and `assets.directory` must stay inside this directory.
+{
+  "name": "pedit",
+  "main": "./worker/src/index.ts",
+  "compatibility_date": "2026-08-20",
+  "assets": {
+    "directory": "./web/dist",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "ROOM", "class_name": "Room" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }],
+  // celld keeps R2 objects in the fleet bucket, next to its own state, so a
+  // lifecycle rule for blobs has to be limited to their prefix.
+  "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "pedit-blobs" }]
+}

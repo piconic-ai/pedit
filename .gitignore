@@ -7,3 +7,4 @@ dist/
 .playwright-mcp/
 .env
 __pycache__/
+.celld/
