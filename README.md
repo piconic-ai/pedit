@@ -217,7 +217,7 @@ The public relay at `edit.piconic.ai` is shared, so it has limits:
 | Images | 5 MiB each, 50 MiB per session |
 | New rooms | 20 a minute from one network |
 | Connections | 60 a minute from one network |
-| Session length | No limit while the host is connected |
+| Session length | 24 hours |
 | File size | About 1 MiB, on any relay ([details](docs/public-relay.md#limits)) |
 
 Self-host when you need more, or when you want to limit who can join editing

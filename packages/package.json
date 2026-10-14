@@ -15,8 +15,8 @@
   "scripts": {
     "build": "pnpm -r build",
     "deploy": "node scripts/deploy-self-host.mjs",
-    "deploy:production": "pnpm --filter @pedit/worker run deploy",
-    "test:deploy": "node --test scripts/deploy-self-host.test.mjs",
+    "deploy:production": "node scripts/deploy-production.mjs",
+    "test:deploy": "node --test scripts/deploy-self-host.test.mjs scripts/deploy-production.test.mjs",
     "deploy:lab": "pnpm --filter @pedit/worker run deploy:lab",
     "preview": "pnpm --filter @pedit/worker run preview",
     "typecheck": "pnpm -r typecheck",

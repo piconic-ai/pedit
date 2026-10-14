@@ -107,7 +107,7 @@ test('button configuration publishes the isolated server without production doma
     assert.ok(!path.startsWith('../'))
   }
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
-  assert.equal(pkg.scripts['deploy:production'], 'pnpm --filter @pedit/worker run deploy')
+  assert.equal(pkg.scripts['deploy:production'], 'node scripts/deploy-production.mjs')
 })
 
 test('every deployment counts its rate limits apart', () => {
@@ -136,4 +136,16 @@ test('every deployment counts its rate limits apart', () => {
       seen.set(id, deployment)
     }
   }
+})
+
+test('the public relay ends rooms after 24 hours; self-hosted relays keep the default', () => {
+  const workerPackage = new URL('../worker/package.json', import.meta.url)
+  const { unstable_readConfig: readConfig } = createRequire(workerPackage)('wrangler')
+  const maintainer = fileURLToPath(new URL('../worker/wrangler.jsonc', import.meta.url))
+  const selfHost = fileURLToPath(new URL('../wrangler.json', import.meta.url))
+  const production = readConfig({ config: maintainer })
+  assert.equal(production.vars.ROOM_MAX_SECONDS, '86400')
+  assert.equal(production.previews.vars.ROOM_MAX_SECONDS, '86400')
+  assert.equal(readConfig({ config: maintainer, env: 'lab' }).vars.ROOM_MAX_SECONDS, undefined)
+  assert.equal(readConfig({ config: selfHost }).vars.ROOM_MAX_SECONDS, undefined)
 })

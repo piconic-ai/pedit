@@ -161,13 +161,15 @@ func TestFinishJoin(t *testing.T) {
 		{name: "maintenance", ended: protocol.StatusMaintenance, code: 1, stdout: []string{"✓ Saved notes.md", "The relay was closed for maintenance. Run pedit again once it is back."}, not: []string{"host closed", "To upgrade"}},
 		{name: "too large", ended: protocol.StatusTooLarge, code: 1, stdout: []string{"✓ Saved notes.md", "pedit left the room: the shared file grew too large to share. pedit shares files up to about 1 MiB for now.", "Your latest changes may not have reached the others."}, not: []string{"host closed"}},
 		{name: "temporary, too large", temporary: true, ended: protocol.StatusTooLarge, code: 1, kept: true, stdout: []string{"✓ Saved notes.md", "pedit left the room: the shared file grew too large to share.", "Your latest changes may not have reached the others."}, not: []string{"removed"}},
+		{name: "expired", ended: protocol.StatusExpired, code: 0, stdout: []string{"✓ Saved notes.md", "The room reached its 24-hour limit on the relay and was closed.", "Ask the host to run pedit again for a new link."}, not: []string{"host closed"}},
+		{name: "temporary, expired", temporary: true, ended: protocol.StatusExpired, code: 0, stdout: []string{"The temporary copy was removed.", "The room reached its 24-hour limit on the relay and was closed."}, not: []string{"host closed"}},
 		{name: "temporary not removed", temporary: true, stopErr: errors.New("busy"), code: 1, not: []string{"removed"}, stderr: "could not remove the temporary copy notes.md: busy"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var stdout, stderr strings.Builder
 			var kept bool
-			code := finishJoin(newUI(&stdout, false, false), &stderr, "notes.md", tt.temporary, tt.ended, func() error { return tt.stopErr }, func() { kept = true }, func() string { return "brew upgrade piconic-ai/tap/pedit" })
+			code := finishJoin(newUI(&stdout, false, false), &stderr, "notes.md", tt.temporary, tt.ended, 24*time.Hour, func() error { return tt.stopErr }, func() { kept = true }, func() string { return "brew upgrade piconic-ai/tap/pedit" })
 			if code != tt.code {
 				t.Errorf("code = %d", code)
 			}
@@ -199,18 +201,21 @@ func TestHostEnded(t *testing.T) {
 		stdout []string
 		not    []string
 		asked  bool
+		limit  time.Duration
 	}{
 		{name: "stopped by the user", code: 0},
 		{name: "maintenance", ended: protocol.StatusMaintenance, code: 1, stdout: []string{"The relay was closed for maintenance"}, not: []string{"To upgrade"}},
 		{name: "pedit outdated", ended: protocol.StatusClientOutdated, code: 1, stdout: []string{"To upgrade, run: brew upgrade piconic-ai/tap/pedit"}, asked: true},
 		{name: "server outdated", ended: protocol.StatusServerOutdated, code: 1, stdout: []string{"The server is older than this pedit"}, not: []string{"To upgrade"}, asked: true},
+		{name: "expired", ended: protocol.StatusExpired, limit: 24 * time.Hour, code: 1, stdout: []string{"The room reached its 24-hour limit on the relay and was closed.", "Run pedit again to start a new room."}},
+		{name: "expired, limit unknown", ended: protocol.StatusExpired, code: 1, stdout: []string{"The room reached its time limit on the relay and was closed."}},
 		{name: "too large", ended: protocol.StatusTooLarge, code: 1, stdout: []string{"The room was closed: notes.md and its edits grew past what pedit can share", "Run pedit again to start a new room."}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var stdout strings.Builder
 			var asked bool
-			code := hostEnded(newUI(&stdout, false, false), "notes.md", tt.ended, func() string {
+			code := hostEnded(newUI(&stdout, false, false), "notes.md", tt.ended, tt.limit, func() string {
 				asked = true
 				return "brew upgrade piconic-ai/tap/pedit"
 			})

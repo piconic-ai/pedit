@@ -12,6 +12,8 @@ export interface RelayOptions {
   guests?: number
   /** Turn every socket away with this close code, as the Room does on a protocol version mismatch. */
   refuse?: number
+  /** The close reason that goes with `refuse`. */
+  refuseReason?: string
   /** Turn away this many sockets with RELAY_BUSY before letting any in. */
   busy?: number
   /** Close a socket that sends a larger frame with MESSAGE_TOO_BIG, as the Room does at MAX_FRAME_BYTES. */
@@ -41,7 +43,7 @@ export class Relay {
         return
       }
       if (this.opts.refuse !== undefined) {
-        socket.close(this.opts.refuse)
+        socket.close(this.opts.refuse, this.opts.refuseReason)
         return
       }
       if (this.opts.hosted && !socket.isHost && !this.hasHost()) {
@@ -61,6 +63,14 @@ export class Relay {
 
   hasHost(except?: FakeSocket): boolean {
     return [...this.sockets].some((s) => s.isHost && s !== except && s.readyState !== 3)
+  }
+
+  /** Closes every socket with this code, as the Room does at its time limit. */
+  closeAll(code: number, reason?: string): void {
+    const sockets = [...this.sockets]
+    // Gone first, so the host closing does not close the others with ROOM_CLOSED.
+    this.sockets.clear()
+    for (const socket of sockets) socket.close(code, reason)
   }
 
   /** Called by a socket as it closes. */
@@ -96,10 +106,10 @@ export class FakeSocket implements SocketLike {
       }
     }
   }
-  close(code?: number) {
+  close(code?: number, reason?: string) {
     if (this.readyState === 3) return
     this.readyState = 3
     this.relay.left(this)
-    queueMicrotask(() => this.onclose?.({ code }))
+    queueMicrotask(() => this.onclose?.({ code, reason }))
   }
 }

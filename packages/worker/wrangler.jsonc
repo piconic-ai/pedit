@@ -35,7 +35,8 @@
   // for deletion (see docs/contributing/deployment.md and docs/self-hosting.md).
   "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "edit-blobs" }],
   // The public relay is a demo: the host and 4 guests per room, images up to
-  // 5 MiB each and 50 MiB per session. Self-hosted relays (packages/wrangler.json
+  // 5 MiB each and 50 MiB per session, and rooms that end 24 hours after their
+  // host first connected. Self-hosted relays (packages/wrangler.json
   // and the lab) keep the defaults in Limits (packages/worker/src/room.ts).
   // MAINTENANCE (no-new-rooms or closed) is set in the dashboard when the relay
   // has to stop (docs/contributing/deployment.md); keep_vars keeps it across
@@ -44,7 +45,8 @@
   "vars": {
     "ROOM_GUESTS": "4",
     "BLOB_MAX_BYTES": "5242880",
-    "BLOB_QUOTA_BYTES": "52428800"
+    "BLOB_QUOTA_BYTES": "52428800",
+    "ROOM_MAX_SECONDS": "86400"
   },
   // Per client IP (an IPv6 /64) and Cloudflare location; see docs/self-hosting.md.
   "ratelimits": [
@@ -71,7 +73,8 @@
     "vars": {
       "ROOM_GUESTS": "4",
       "BLOB_MAX_BYTES": "5242880",
-      "BLOB_QUOTA_BYTES": "52428800"
+      "BLOB_QUOTA_BYTES": "52428800",
+      "ROOM_MAX_SECONDS": "86400"
     },
     "ratelimits": [
       {

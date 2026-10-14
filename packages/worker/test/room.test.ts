@@ -1,10 +1,17 @@
-import { createExecutionContext, evictDurableObject, runInDurableObject } from 'cloudflare:test'
+import {
+  createExecutionContext,
+  evictDurableObject,
+  runDurableObjectAlarm,
+  runInDurableObject,
+} from 'cloudflare:test'
 import { env, exports } from 'cloudflare:workers'
 import { ADMISSION_HEADER, admissionProtocols } from '@pedit/protocol/admission'
+import { expiredReason } from '@pedit/protocol/close'
 import { MAX_FRAME_BYTES } from '@pedit/protocol/frame'
 import { describe, expect, it, vi } from 'vitest'
 import app, { clientKey, maintenance, overLimit, roomIdFor } from '../src/index.ts'
 import {
+  ALARM_INTERVAL_MS,
   BLOB_OVERHEAD,
   BYTE_RATE,
   limits,
@@ -21,9 +28,11 @@ const SERVER_OUTDATED = 4003
 const ROOM_FULL = 4004
 const RELAY_BUSY = 4005
 const RELAY_MAINTENANCE = 4006
+const ROOM_EXPIRED = 4007
 const MESSAGE_TOO_BIG = 1009
 // The tests run with small limits (vitest.config.ts).
-const { guests: GUESTS, blobBytes: BLOB_BYTES } = limits(env)
+const { guests: GUESTS, blobBytes: BLOB_BYTES, roomSeconds } = limits(env)
+const LIFETIME_MS = roomSeconds * 1000
 
 interface Room {
   id: string
@@ -325,7 +334,12 @@ describe('rooms', () => {
       blobBytes: 10 * 1024 * 1024,
       quotaBytes: 100 * 1024 * 1024,
       quotaCount: 500,
+      roomSeconds: Number.POSITIVE_INFINITY,
     })
+    expect(limits({ ROOM_MAX_SECONDS: '86400' }).roomSeconds).toBe(86400)
+    for (const bad of ['0', '-1', '1.5', 'many', '']) {
+      expect(limits({ ROOM_MAX_SECONDS: bad }).roomSeconds).toBe(Number.POSITIVE_INFINITY)
+    }
     expect(limits({ ROOM_GUESTS: '100' }).guests).toBe(MAX_PEERS - 1)
     for (const bad of ['0', '-1', '1.5', 'many']) {
       expect(limits({ ROOM_GUESTS: bad, BLOB_MAX_BYTES: bad }).guests).toBe(MAX_PEERS - 1)
@@ -404,8 +418,14 @@ function slowPut(room: Room, id: string, size: number) {
     headers: { [ADMISSION_HEADER]: room.admission },
   })
   return {
-    // Give the request time to reach the room and claim the id.
-    started: () => new Promise((r) => setTimeout(r, 50)),
+    // The request has reached the room and claimed the id. Looked at from
+    // inside: any probe from outside would take an upload slot itself.
+    started: () =>
+      vi.waitFor(() =>
+        runInDurableObject(env.ROOM.get(env.ROOM.idFromName(room.id)), (instance: RoomObject) =>
+          expect([...instance['uploading']].some((key) => key.endsWith(`/${id}`))).toBe(true),
+        ),
+      ),
     finish: async () => {
       const writer = writable.getWriter()
       await writer.write(new Uint8Array(size))
@@ -741,5 +761,288 @@ describe('maintenance', () => {
       new Request(blobUrl(room, blobId(1)), { headers: { [ADMISSION_HEADER]: room.admission } }),
     )
     expect(blob.status).toBe(503)
+  })
+})
+
+describe('room lifetime', () => {
+  const stubOf = (room: Room) => env.ROOM.get(env.ROOM.idFromName(room.id))
+
+  // As if the host had first connected `ms` ago.
+  const backdate = (room: Room, ms = LIFETIME_MS + 1) =>
+    runInDurableObject(stubOf(room), (_: RoomObject, state) => {
+      state.storage.kv.put('openedAt', Date.now() - ms)
+    })
+
+  const state = (room: Room) =>
+    runInDurableObject(stubOf(room), async (_: RoomObject, st) => ({
+      opened: st.storage.kv.get<number>('openedAt'),
+      admission: st.storage.kv.get('admissionHash'),
+      usage: st.storage.kv.get('blobUsage'),
+      alarm: await st.storage.getAlarm(),
+    }))
+
+  // The room as deployed with other vars.
+  const withVars = (room: Room, vars: Record<string, string | undefined>) =>
+    runInDurableObject(stubOf(room), (instance: RoomObject) => {
+      instance['env'] = { ...instance['env'], ...vars } as Env
+    })
+
+  const ranAlarm = (room: Room) => runDurableObjectAlarm(stubOf(room))
+
+  it('starts the clock at the first host connection only, and arms an hourly alarm', async () => {
+    const room = await createRoom()
+    expect((await state(room)).opened).toBeUndefined()
+    const before = Date.now()
+    const first = await host(room)
+    const s = await state(room)
+    expect(s.opened).toBeGreaterThanOrEqual(before)
+    expect(s.alarm).toBeGreaterThanOrEqual(before + ALARM_INTERVAL_MS)
+    expect(s.alarm).toBeLessThan(Date.now() + ALARM_INTERVAL_MS + 1000)
+    await new Promise((r) => setTimeout(r, 20))
+    await host(room)
+    first.ws.close(1000, 'bye')
+    await first.closed
+    await host(room)
+    expect((await state(room)).opened).toBe(s.opened)
+  })
+
+  it('moves the alarm to the deadline once that is sooner than an hour', async () => {
+    const room = await createRoom()
+    const h = await host(room)
+    h.ws.close(1000, 'bye')
+    await h.closed
+    await backdate(room, LIFETIME_MS - 60_000)
+    await host(room)
+    const s = await state(room)
+    expect(s.alarm).toBeLessThanOrEqual(s.opened! + LIFETIME_MS)
+    expect(s.alarm).toBeGreaterThan(Date.now())
+    expect(s.alarm).toBeLessThan(Date.now() + 61_000)
+  })
+
+  it('ends the room at the deadline with the host still connected', async () => {
+    const room = await createRoom()
+    const h = await host(room)
+    const guest = await connect(room.id)
+    await putBlob(room, blobId(1), new Uint8Array([1]))
+    expect(await roomBlobs(room)).toHaveLength(1)
+    await backdate(room)
+    expect(await ranAlarm(room)).toBe(true)
+    const [hc, gc] = await Promise.all([h.closed, guest.closed])
+    expect([hc.code, gc.code]).toEqual([ROOM_EXPIRED, ROOM_EXPIRED])
+    expect(hc.reason).toBe(expiredReason(roomSeconds))
+    expect(await roomBlobs(room)).toEqual([])
+    const s = await state(room)
+    expect(s.opened).toBeDefined()
+    expect([s.admission, s.usage, s.alarm]).toEqual([undefined, undefined, null])
+  })
+
+  it('never reopens an expired room, for the host or a guest', async () => {
+    const room = await createRoom()
+    const h = await host(room)
+    await backdate(room)
+    await ranAlarm(room)
+    await h.closed
+    const opened = (await state(room)).opened
+    const again = await host(room)
+    expect((await again.closed).code).toBe(ROOM_EXPIRED)
+    const guest = await connect(room.id)
+    expect((await guest.closed).code).toBe(ROOM_EXPIRED)
+    const s = await state(room)
+    expect(s.opened).toBe(opened)
+    expect(s.admission).toBeUndefined()
+    expect(s.alarm).toBeNull()
+  })
+
+  it('refuses a host who comes back after the deadline without an alarm having run', async () => {
+    const room = await createRoom()
+    const h = await host(room)
+    h.ws.close(1000, 'bye')
+    await h.closed
+    await backdate(room)
+    const again = await host(room)
+    expect((await again.closed).code).toBe(ROOM_EXPIRED)
+    expect((await state(room)).admission).toBeUndefined()
+  })
+
+  it('checks again later when the host is still there before the deadline', async () => {
+    const room = await createRoom()
+    const h = await host(room)
+    await backdate(room, 1000)
+    expect(await ranAlarm(room)).toBe(true)
+    expect(h.ws.readyState).toBe(WebSocket.OPEN)
+    const s = await state(room)
+    expect(s.alarm).toBeGreaterThan(Date.now())
+  })
+
+  it('cleans up a room whose host was cut off without a close, as on a deploy', async () => {
+    const room = await createRoom()
+    await host(room)
+    await putBlob(room, blobId(1), new Uint8Array([1]))
+    // The admission and usage stay when the sockets go without webSocketClose.
+    await runInDurableObject(stubOf(room), (_: RoomObject, st) => {
+      expect(st.storage.kv.get('admissionHash')).toBeDefined()
+    })
+    await evictDurableObject(stubOf(room), { webSockets: 'close' })
+    // Whatever eviction ran, leave a host-less room with everything still in place.
+    await runInDurableObject(stubOf(room), (_: RoomObject, st) => {
+      st.storage.kv.put('blobUsage', { bytes: 1, count: 1 })
+    })
+    await env.BLOBS.put(`rooms/${env.ROOM.idFromName(room.id).toString()}/${blobId(2)}`, 'x')
+    await ranAlarm(room)
+    const s = await state(room)
+    expect([s.admission, s.usage]).toEqual([undefined, undefined])
+    expect(s.opened).toBeDefined()
+    expect(s.alarm).toBeNull()
+    expect(await roomBlobs(room)).toEqual([])
+    // A guest finds it closed; the next host starts afresh.
+    expect((await (await connect(room.id)).closed).code).toBe(ROOM_CLOSED)
+    await host(room)
+    expect((await putBlob(room, blobId(1), new Uint8Array(90))).status).toBe(201)
+  })
+
+  it('leaves a session alone when the alarm runs during a host handshake', async () => {
+    const room = await createRoom()
+    await host(room)
+    await putBlob(room, blobId(1), new Uint8Array([1]))
+    await evictDurableObject(stubOf(room), { webSockets: 'close' })
+    const alarm = await runInDurableObject(stubOf(room), async (instance: RoomObject, st) => {
+      // The host's reconnect has started; the alarm comes while it hashes its token.
+      const reconnect = instance.fetch(
+        new Request(`https://pedit.test/api/rooms/${room.id}/ws`, {
+          headers: {
+            Upgrade: 'websocket',
+            'Sec-WebSocket-Protocol': admissionProtocols(admissions.get(room.id)!).join(', '),
+            'X-Pedit-Host': '1',
+          },
+        }),
+      )
+      await instance.alarm()
+      const during = {
+        admission: st.storage.kv.get('admissionHash') !== undefined,
+        alarm: await st.storage.getAlarm(),
+      }
+      expect((await reconnect).status).toBe(101)
+      return during
+    })
+    expect(alarm.admission).toBe(true)
+    expect(alarm.alarm).toBeGreaterThan(Date.now())
+    expect(await roomBlobs(room)).toHaveLength(1)
+  })
+
+  it('does nothing when the alarm comes after the host left normally', async () => {
+    const room = await createRoom()
+    const h = await host(room)
+    h.ws.close(1000, 'bye')
+    await h.closed
+    // The room's close handler ends the session; wait until it has.
+    await vi.waitFor(async () => expect((await state(room)).admission).toBeUndefined())
+    const before = await state(room)
+    expect(await ranAlarm(room)).toBe(true)
+    const after = await state(room)
+    expect(after).toEqual({ ...before, alarm: null })
+  })
+
+  it('checks hourly and never ends a room without a limit, but still cleans up', async () => {
+    const room = await createRoom()
+    const h = await host(room)
+    await withVars(room, { ROOM_MAX_SECONDS: undefined })
+    await backdate(room, 10 * 365 * 24 * 3600 * 1000)
+    expect(await ranAlarm(room)).toBe(true)
+    expect(h.ws.readyState).toBe(WebSocket.OPEN)
+    const s = await state(room)
+    expect(s.alarm).toBeGreaterThan(Date.now() + ALARM_INTERVAL_MS - 5000)
+    // A host that is gone still has its session cleaned up.
+    h.ws.close(1000, 'bye')
+    await h.closed
+    await runInDurableObject(stubOf(room), (_: RoomObject, st) => {
+      st.storage.kv.put('admissionHash', new Uint8Array(32).buffer)
+    })
+    await ranAlarm(room)
+    expect((await state(room)).admission).toBeUndefined()
+  })
+
+  it('drops an upload that is in flight when the room expires', async () => {
+    const room = await createRoom()
+    const h = await host(room)
+    const upload = slowPut(room, blobId(1), 90)
+    await upload.started()
+    await backdate(room)
+    await ranAlarm(room)
+    expect((await h.closed).code).toBe(ROOM_EXPIRED)
+    expect((await upload.finish()).status).toBe(410)
+    expect(await roomBlobs(room)).toEqual([])
+  })
+
+  it('ends a room at the next message when its alarm is late', async () => {
+    const room = await createRoom()
+    const h = await host(room)
+    const guest = await connect(room.id)
+    await backdate(room)
+    guest.ws.send(new Uint8Array(1))
+    expect((await guest.closed).code).toBe(ROOM_EXPIRED)
+    expect((await h.closed).code).toBe(ROOM_EXPIRED)
+    expect(h.received).toHaveLength(0)
+  })
+
+  it('serves no blobs of a room past its deadline', async () => {
+    const room = await createRoom()
+    await host(room)
+    await putBlob(room, blobId(1), new Uint8Array([1]))
+    await backdate(room)
+    expect((await getBlob(room, blobId(1))).status).toBe(410)
+    expect((await putBlob(room, blobId(2), new Uint8Array([2]))).status).toBe(410)
+  })
+
+  it('reports maintenance at the Worker, but expiry before it inside the room', async () => {
+    const room = await createRoom()
+    const h = await host(room)
+    await backdate(room)
+    await withVars(room, { MAINTENANCE: 'closed' })
+    h.ws.send(new Uint8Array(1))
+    expect((await h.closed).code).toBe(ROOM_EXPIRED)
+
+    const other = await createRoom()
+    await host(other)
+    await backdate(other)
+    const res = await app.fetch(
+      new Request(`https://pedit.test/api/rooms/${other.id}/ws`, {
+        headers: {
+          Upgrade: 'websocket',
+          'Sec-WebSocket-Protocol': admissionProtocols(other.admission).join(', '),
+        },
+      }),
+      { ...env, MAINTENANCE: 'closed' },
+      createExecutionContext(),
+    )
+    const ws = res.webSocket as WebSocket
+    const closed = new Promise<CloseEvent>((resolve) => ws.addEventListener('close', resolve))
+    ws.accept()
+    expect((await closed).code).toBe(RELAY_MAINTENANCE)
+  })
+
+  it('cleans up under maintenance too', async () => {
+    const room = await createRoom()
+    const h = await host(room)
+    await withVars(room, { MAINTENANCE: 'closed' })
+    await runInDurableObject(stubOf(room), (instance: RoomObject) => {
+      for (const ws of instance['ctx'].getWebSockets()) ws.close(1000, 'gone')
+    })
+    await h.closed
+    await runInDurableObject(stubOf(room), (_: RoomObject, st) => {
+      st.storage.kv.put('admissionHash', new Uint8Array(32).buffer)
+    })
+    await ranAlarm(room)
+    expect((await state(room)).admission).toBeUndefined()
+  })
+
+  it('can run its alarm twice', async () => {
+    const room = await createRoom()
+    await host(room)
+    await backdate(room)
+    const run = () => runInDurableObject(stubOf(room), (instance: RoomObject) => instance.alarm())
+    await run()
+    const once = await state(room)
+    await run()
+    expect(await state(room)).toEqual(once)
   })
 })

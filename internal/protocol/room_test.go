@@ -488,3 +488,37 @@ func TestStopsForGoodWhenTheRelaySaysAFrameIsTooBig(t *testing.T) {
 		t.Fatalf("status=%v dials=%d", p.Status(), len(relay.URLs()))
 	}
 }
+
+func TestStopsForGoodWhenTheRoomExpires(t *testing.T) {
+	relay := prototest.NewRelay(true)
+	key := protocol.GenerateKey()
+	host := join(t, relay, key, joinOpts{init: "x", header: hostHeader()})
+	prototest.WaitFor(t, wait, func() bool { return host.Status() == protocol.StatusConnected }, "host connected")
+	guest := join(t, relay, key, joinOpts{})
+	prototest.WaitFor(t, wait, func() bool { return guest.String() == "x" }, "guest to sync")
+	relay.CloseAll(protocol.RoomExpired, protocol.ExpiredReason(86400))
+	prototest.WaitFor(t, wait, func() bool {
+		return host.Status() == protocol.StatusExpired && guest.Status() == protocol.StatusExpired
+	}, "both expired")
+	time.Sleep(100 * time.Millisecond)
+	if len(relay.URLs()) != 2 {
+		t.Fatalf("redialed: %d dials", len(relay.URLs()))
+	}
+	if host.TimeLimit() != 24*time.Hour || guest.TimeLimit() != 24*time.Hour {
+		t.Fatalf("limits = %v, %v", host.TimeLimit(), guest.TimeLimit())
+	}
+	if !protocol.StatusExpired.Final() {
+		t.Fatal("StatusExpired should be final")
+	}
+}
+
+func TestExpiredWithoutAReasonHasNoTimeLimit(t *testing.T) {
+	relay := prototest.NewRelay(false)
+	relay.Refuse = protocol.RoomExpired
+	p := join(t, relay, protocol.GenerateKey(), joinOpts{})
+	prototest.WaitFor(t, wait, func() bool { return p.Status() == protocol.StatusExpired }, "expired")
+	time.Sleep(100 * time.Millisecond)
+	if p.TimeLimit() != 0 || len(relay.URLs()) != 1 {
+		t.Fatalf("limit=%v dials=%d", p.TimeLimit(), len(relay.URLs()))
+	}
+}

@@ -214,6 +214,29 @@ func (u *ui) tooLarge(host bool, file string) {
 		"Your latest changes may not have reached the others.", "")
 }
 
+// timeLimitText names a relay's room time limit, or just "time limit" when the
+// relay did not say.
+func timeLimitText(d time.Duration) string {
+	switch {
+	case d <= 0:
+		return "time limit"
+	case d%time.Hour == 0:
+		return fmt.Sprintf("%d-hour limit", d/time.Hour)
+	case d%time.Minute == 0:
+		return fmt.Sprintf("%d-minute limit", d/time.Minute)
+	}
+	return fmt.Sprintf("%d-second limit", d/time.Second)
+}
+
+// expired says that the room reached the relay's time limit and ended for good.
+func (u *ui) expired(host bool, limit time.Duration) {
+	then := "Ask the host to run pedit again for a new link."
+	if host {
+		then = "Run pedit again to start a new room."
+	}
+	u.print(u.yellow("The room reached its "+timeLimitText(limit)+" on the relay and was closed."), then, "")
+}
+
 // installURL explains every way to install, and so to update, pedit.
 const installURL = "https://github.com/piconic-ai/pedit#install"
 
@@ -398,6 +421,8 @@ func (u *ui) liveLine() string {
 		return u.yellow("○") + " The server is out of date."
 	case protocol.StatusTooLarge:
 		return u.yellow("○") + " The file grew too large to share."
+	case protocol.StatusExpired:
+		return u.yellow("○") + " The room reached its time limit."
 	default:
 		return u.yellow("○") + " Connecting…"
 	}

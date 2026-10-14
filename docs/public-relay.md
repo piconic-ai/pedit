@@ -20,18 +20,18 @@ It runs the latest release, deployed from this repository
   that fails is logged and not tried again; a bucket rule expires leftovers
   one day after upload, and R2 removes them typically within a further day
   ([R2](https://developers.cloudflare.com/r2/buckets/object-lifecycles/)).
-  The rule is set on the bucket by hand; the release deploy does not set it.
+  The release deploy adds the rule to the bucket if it is missing.
 - **Per room**: the SHA-256 of the admission token, and the number and total
-  size of stored images. Deleted when the host leaves; the Durable Object's
-  storage keeps 30 days of history for point-in-time recovery
+  size of stored images, deleted when the host leaves; and the time the host
+  first connected, kept after the room ends so that its ID cannot be used
+  again. The Durable Object's storage keeps 30 days of history for
+  point-in-time recovery
   ([Cloudflare](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/#pitr-point-in-time-recovery-api)).
 
-One case is not yet confirmed. A relay update drops every room's connections;
-a host whose `pedit` is still running reconnects. Whether a room whose host
-does not come back still deletes its images and per-room data is not yet
-confirmed. If it does not, its images are left to the bucket rule above, and
-there is no confirmed limit on how long its per-room data stays.
-<!-- TODO(operator): a deploy restarts every Durable Object and drops its WebSockets. Check whether a room whose host does not come back still deletes its images and per-room data (cleanup runs only in webSocketClose and webSocketError). If it does, drop this paragraph and the "one case not yet confirmed" link in docs/security-design.md. If not, reword both as a known gap, or add a cleanup path to the Room. -->
+A relay update drops every room's connections without the room seeing anyone
+leave. A host whose `pedit` is still running reconnects, and the session goes
+on. A room whose host does not come back deletes its images and per-room data
+within about an hour, when its hourly check finds no host.
 
 ## Logs
 
@@ -129,7 +129,7 @@ To report a vulnerability instead, see [SECURITY.md](../SECURITY.md).
 | WebSocket connections | 60 a minute from one network |
 | One message | 1 MiB |
 | Messages from one connection | Bursts of 1,000 messages and 32 MiB, then 200 messages and 1 MiB a second |
-| Session length | No limit while the host is connected |
+| Session length | 24 hours from the host's first connection |
 
 The values are `vars` and `ratelimits` in `packages/worker/wrangler.jsonc` and
 the constants in `packages/worker/src/room.ts`. A network is one IP address,
@@ -139,7 +139,12 @@ The new-room limit counts `POST /api/rooms` requests. The relay derives a
 room's ID from its host token without remembering which tokens it issued, so a
 client can make its own and skip that limit; every client is still held to the
 connection limit. A guest over the rate limits is disconnected and
-reconnects; a host over them ends the session.
+reconnects; a host over them ends the session. A room ends 24 hours after its
+host first connected, even if the host is still connected or has reconnected
+since: everyone is disconnected and its link stops working. Running pedit
+again starts a new room with a new link. A pedit released before this limit
+existed is not told the room ended: it keeps trying to reconnect, with backoff,
+and is refused each time until it is stopped.
 
 **Files over about 1 MiB are not supported.** A newcomer receives the whole
 shared document in one message, and the relay closes a connection that sends a

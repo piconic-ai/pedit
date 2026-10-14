@@ -43,6 +43,13 @@ const RelayBusy = 4005
 // whoever was editing decides whether to pick the session up again.
 const RelayMaintenance = 4006
 
+// RoomExpired is the WebSocket close code sent to everyone in a room that
+// reached the relay's time limit, counted from its host's first connection,
+// and to anyone who connects to it afterwards (the reason names the limit,
+// see ExpiredReason). Clients must not reconnect on
+// it: the room ID is never reopened; the host starts a new room.
+const RoomExpired = 4007
+
 // MessageTooBig is the WebSocket close code (the standard 1009) the relay
 // sends a connection whose frame is over MaxFrameBytes. Clients must not
 // reconnect on it: they would send the same frame again.

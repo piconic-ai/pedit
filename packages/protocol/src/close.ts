@@ -39,6 +39,28 @@ export const RELAY_BUSY = 4005
 export const RELAY_MAINTENANCE = 4006
 
 /**
+ * WebSocket close code sent to everyone in a room that reached the relay's
+ * time limit, counted from its host's first connection, and to anyone who
+ * connects to it afterwards. Clients must not reconnect on it: the room ID is
+ * never reopened; the host starts a new room.
+ */
+export const ROOM_EXPIRED = 4007
+
+const EXPIRED = /^the room reached its time limit of (\d{1,10}) seconds$/
+
+/** The close reason that tells clients how long the relay lets a room last. */
+export function expiredReason(seconds: number): string {
+  return `the room reached its time limit of ${seconds} seconds`
+}
+
+/** The limit in seconds a ROOM_EXPIRED reason names, or undefined if it names none. */
+export function parseExpiredReason(reason: string | undefined): number | undefined {
+  const match = EXPIRED.exec(reason ?? '')
+  const seconds = match ? Number(match[1]) : 0
+  return seconds > 0 ? seconds : undefined
+}
+
+/**
  * WebSocket close code (the standard 1009) the relay sends a connection
  * whose frame is over MAX_FRAME_BYTES. Clients must not reconnect on it:
  * they would send the same frame again.

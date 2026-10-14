@@ -96,6 +96,8 @@ describe('Header', () => {
     expect(el.textContent).toBe('Server outdated')
     status.set('too-large')
     expect(el.textContent).toBe('Too large')
+    status.set('expired')
+    expect(el.textContent).toBe('Time limit')
   })
 
   it('lists participants with the host and you marked, and their colours', () => {

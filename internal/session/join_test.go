@@ -432,6 +432,7 @@ func TestJoinSaysWhyTheServerTurnedItAway(t *testing.T) {
 		protocol.ServerOutdated:   ErrServerOutdated,
 		protocol.RelayMaintenance: ErrRelayMaintenance,
 		protocol.MessageTooBig:    ErrTooLarge,
+		protocol.RoomExpired:      ErrRoomExpired,
 	} {
 		relay := prototest.NewRelay(false)
 		relay.Refuse = code

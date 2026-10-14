@@ -28,6 +28,8 @@ type Relay struct {
 	Hosted bool
 	Guests int
 	Refuse int
+	// RefuseReason is the close reason that goes with Refuse.
+	RefuseReason string
 	// Busy turns away this many connections with RelayBusy before letting any in.
 	Busy int
 	// MaxFrame is the most bytes a frame may have; 0 for no limit.
@@ -55,7 +57,7 @@ func (r *Relay) Dial(_ context.Context, url string, header http.Header) (protoco
 		return nil, &protocol.CloseError{Code: protocol.RelayBusy}
 	}
 	if r.Refuse != 0 {
-		return nil, &protocol.CloseError{Code: r.Refuse}
+		return nil, &protocol.CloseError{Code: r.Refuse, Reason: r.RefuseReason}
 	}
 	c := &Conn{relay: r, isHost: header.Get("Authorization") != "", wake: make(chan struct{}, 1)}
 	if r.Hosted && !c.isHost && !r.hasHost() {
@@ -95,6 +97,17 @@ func (r *Relay) Frames() [][]byte {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([][]byte{}, r.frames...)
+}
+
+// CloseAll closes every connection with code and reason, as the Room does at
+// its time limit.
+func (r *Relay) CloseAll(code int, reason string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for c := range r.conns {
+		delete(r.conns, c)
+		c.closeWithReason(code, reason)
+	}
 }
 
 // DropAll cuts every connection, as a network failure would.
@@ -209,10 +222,12 @@ func (c *Conn) deliver(data []byte) {
 	c.signal()
 }
 
-func (c *Conn) closeWith(code int) {
+func (c *Conn) closeWith(code int) { c.closeWithReason(code, "") }
+
+func (c *Conn) closeWithReason(code int, reason string) {
 	c.mu.Lock()
 	if c.closed == nil {
-		c.closed = &protocol.CloseError{Code: code}
+		c.closed = &protocol.CloseError{Code: code, Reason: reason}
 	}
 	c.mu.Unlock()
 	c.signal()
