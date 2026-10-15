@@ -109,7 +109,11 @@ players and any image sources a self-hosted relay allows. A script injected
 through a bug could not send the key to another host in an image, fetch or
 WebSocket. It could still send it through the relay itself, to a room it
 creates, navigate the page away, or use channels CSP does not cover, such as
-WebRTC, so the policy narrows that risk rather than closing it. A link
+WebRTC, so the policy narrows that risk rather than closing it. The relay
+answers plain HTTP only with a redirect to HTTPS, which the browser follows
+with the fragment, and tells browsers to use HTTPS from then on
+(`Strict-Transport-Security`): an editor page sent over plain HTTP could be
+rewritten on the way to read the key. A link
 preview or link scanner fetches the URL without the fragment, but the service
 that runs it has the whole link. The editor asks for a name before it
 connects, so a scanner that only loads the page does not join. The whole link,
