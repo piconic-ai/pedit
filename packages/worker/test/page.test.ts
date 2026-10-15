@@ -103,13 +103,38 @@ describe('pages', () => {
     expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff')
   })
 
-  it('never lets the asset server answer 304', async () => {
+  it('never lets the asset server answer 304 for a page', async () => {
     const a = assets(HTML)
     await call('https://pedit.test/', {}, a, {
-      headers: { 'If-None-Match': '"e"', 'If-Modified-Since': 'Tue, 01 Jan 2030 00:00:00 GMT' },
+      headers: {
+        'Sec-Fetch-Mode': 'navigate',
+        'If-None-Match': '"e"',
+        'If-Modified-Since': 'Tue, 01 Jan 2030 00:00:00 GMT',
+      },
+    })
+    await call('https://pedit.test/r/x', {}, a, {
+      headers: { Accept: 'text/html', 'If-None-Match': '"e"' },
     })
     expect(a.seen[0]?.headers.get('If-None-Match')).toBeNull()
     expect(a.seen[0]?.headers.get('If-Modified-Since')).toBeNull()
+    expect(a.seen[1]?.headers.get('If-None-Match')).toBeNull()
+  })
+
+  it('lets built files revalidate', async () => {
+    const a = assets('x()', 'text/javascript')
+    await call('https://pedit.test/assets/i.js', {}, a, {
+      headers: { Accept: '*/*', 'Sec-Fetch-Mode': 'cors', 'If-None-Match': '"e"' },
+    })
+    expect(a.seen[0]?.headers.get('If-None-Match')).toBe('"e"')
+  })
+
+  it('protects the fallback page under /assets/ too', async () => {
+    // The assets answer a navigation to a missing file with index.html.
+    const res = await call('https://pedit.test/assets/missing.js', {}, assets(HTML), {
+      headers: { 'Sec-Fetch-Mode': 'navigate' },
+    })
+    expect(res.headers.get('Content-Security-Policy')).toContain("default-src 'none'")
+    expect(await res.text()).toContain('pedit-media-sources')
   })
 
   it('keeps /api/* away from the assets', async () => {

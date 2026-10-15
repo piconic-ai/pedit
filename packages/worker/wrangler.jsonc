@@ -13,15 +13,15 @@
   // Custom domain — requires piconic.ai to be on Cloudflare DNS.
   // Cloudflare auto-provisions the CNAME and TLS certificate.
   "routes": [{ "pattern": "edit.piconic.ai", "custom_domain": true }],
-  // The web editor (built by @pedit/web) is served by Workers Assets. /api/* and
-  // every page (HTML, including the fallback to index.html) go through the Worker
-  // script first, which adds the Content-Security-Policy (src/page.ts); built files
-  // under /assets/ and the two public files skip it.
+  // The web editor (built by @pedit/web) is served by Workers Assets. Every request
+  // goes through the Worker script first, which adds the Content-Security-Policy to
+  // HTML (src/page.ts). No path skips it: under a skipped path, a missing file would
+  // fall back to index.html without the policy.
   "assets": {
     "directory": "../web/dist",
     "not_found_handling": "single-page-application",
     "binding": "ASSETS",
-    "run_worker_first": ["/*", "!/assets/*", "!/THIRD_PARTY_LICENSES.txt", "!/install.sh"]
+    "run_worker_first": true
   },
   // Keep invocation logs in Workers Logs (Cloudflare dashboard → `edit` Worker →
   // Observability): one for each request, with its path, status and `cf`

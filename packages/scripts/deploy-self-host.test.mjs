@@ -160,12 +160,9 @@ test('every deployment sends pages through the Worker for the CSP, and leaves me
   const self = readConfig({ config: selfHost })
   for (const config of [production, lab, self]) {
     assert.equal(config.assets.binding, 'ASSETS')
-    assert.deepEqual(config.assets.run_worker_first, [
-      '/*',
-      '!/assets/*',
-      '!/THIRD_PARTY_LICENSES.txt',
-      '!/install.sh',
-    ])
+    // Not a list with exclusions: a missing file under an excluded path would fall
+    // back to index.html straight from the assets, without the policy.
+    assert.equal(config.assets.run_worker_first, true)
     assert.equal(config.vars.MEDIA_SOURCES, undefined)
   }
   assert.equal(production.previews.vars.MEDIA_SOURCES, undefined)

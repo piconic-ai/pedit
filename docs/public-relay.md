@@ -36,7 +36,7 @@ within about an hour, when its hourly check finds no host.
 ## Logs
 
 Workers Logs is on (`observability` in `packages/worker/wrangler.jsonc`). Each
-request that reaches the Worker (page loads, `/` and `/r/<room>`, which it
+request that reaches the Worker (every page and file of the editor, which it
 serves to add security headers, and `/api/*`: creating a room, WebSocket
 connections, image uploads and downloads) gets an invocation log, and so does
 each event in a room's Durable Object, including every WebSocket message it

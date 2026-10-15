@@ -24,16 +24,29 @@ export function mediaSourcesFrom(value: string | undefined): string[] {
   return parsed ?? []
 }
 
+// A navigation, or a request that takes HTML: what may come back is a page.
+function wantsPage(request: Request): boolean {
+  return (
+    request.headers.get('Sec-Fetch-Mode') === 'navigate' ||
+    (request.headers.get('Accept') ?? '').includes('text/html')
+  )
+}
+
 /** Serves an asset; HTML responses get the CSP, the media meta and the companion headers. */
 export async function servePage(
   request: Request,
   env: { ASSETS: Fetcher; MEDIA_SOURCES?: string },
 ): Promise<Response> {
-  // No 304: a cached page would keep an old policy after a var change or deploy.
-  const headers = new Headers(request.headers)
-  headers.delete('If-None-Match')
-  headers.delete('If-Modified-Since')
-  const asset = await env.ASSETS.fetch(new Request(request, { headers }))
+  // No 304 for a page: a cached one would keep an old policy after a var change or
+  // deploy. Built files keep their revalidation.
+  let forAssets = request
+  if (wantsPage(request)) {
+    const headers = new Headers(request.headers)
+    headers.delete('If-None-Match')
+    headers.delete('If-Modified-Since')
+    forAssets = new Request(request, { headers })
+  }
+  const asset = await env.ASSETS.fetch(forAssets)
   const out = new Headers(asset.headers)
   out.set('X-Content-Type-Options', 'nosniff')
   out.set('Referrer-Policy', 'no-referrer')
