@@ -4,6 +4,8 @@
 
 - Add a Content-Security-Policy to the editor, set by the Worker by @kfly8 in https://github.com/piconic-ai/pedit/pull/131
 
+**Self-hosted relays:** the Markdown preview no longer loads external images and videos by default. To allow them, set `MEDIA_SOURCES` (for example `https:`); see [docs/self-hosting.md](docs/self-hosting.md).
+
 ## [v0.1.4](https://github.com/piconic-ai/pedit/compare/v0.1.3...v0.1.4) - 2026-10-15
 
 - Build pedit with a supported Go release by @kfly8 in https://github.com/piconic-ai/pedit/pull/126
