@@ -1,5 +1,19 @@
 # Changelog
 
+## [v0.1.6](https://github.com/piconic-ai/pedit/compare/v0.1.5...v0.1.6) - 2026-10-15
+
+- Note the MEDIA_SOURCES change for self-hosted relays in the v0.1.5 changelog by @kfly8 in https://github.com/piconic-ai/pedit/pull/133
+- Redirect plain HTTP to HTTPS and send HSTS by @kfly8 in https://github.com/piconic-ai/pedit/pull/135
+- Run OpenSSF Scorecard and add badges to the README by @kfly8 in https://github.com/piconic-ai/pedit/pull/137
+- Add Go fuzz tests for what peers can send, and a weekly fuzz job by @kfly8 in https://github.com/piconic-ai/pedit/pull/138
+- Harden CI: least-privilege tokens, CodeQL and Dependabot by @kfly8 in https://github.com/piconic-ai/pedit/pull/139
+- Attach the build provenance to each Release as files by @kfly8 in https://github.com/piconic-ai/pedit/pull/140
+- Raise the sharp override to 0.35.5 for GHSA-wq5f-xc86-pv6w by @kfly8 in https://github.com/piconic-ai/pedit/pull/144
+- Bump the go-minor-and-patch group across 1 directory with 3 updates by @dependabot[bot] in https://github.com/piconic-ai/pedit/pull/141
+- Bump the actions group across 1 directory with 3 updates by @dependabot[bot] in https://github.com/piconic-ai/pedit/pull/142
+- Show the settings popover as open in its tests, for jsdom 30.1.2 by @kfly8 in https://github.com/piconic-ai/pedit/pull/145
+- Bump the npm-minor-and-patch group across 1 directory with 15 updates by @dependabot[bot] in https://github.com/piconic-ai/pedit/pull/143
+
 ## [v0.1.5](https://github.com/piconic-ai/pedit/compare/v0.1.4...v0.1.5) - 2026-10-15
 
 - Add a Content-Security-Policy to the editor, set by the Worker by @kfly8 in https://github.com/piconic-ai/pedit/pull/131
