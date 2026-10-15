@@ -197,7 +197,8 @@ IP addresses, room IDs, request timing and ciphertext sizes; infrastructure and
 Access logs have separate retention settings and are not erased when a room
 closes.
 
-Markdown previews can request external images, videos and embeds. With Access,
+Markdown previews can load YouTube and Vimeo players, and external images and videos
+where the relay allows them (the public relay does not). With Access,
 avatars may load from an identity provider or Gravatar using an email hash.
 Those providers can see the requests.
 

@@ -16,6 +16,7 @@
     ".": "./src/index.ts",
     "./admission": "./src/admission.ts",
     "./close": "./src/close.ts",
+    "./csp": "./src/csp.ts",
     "./frame": "./src/frame.ts",
     "./testing": "./src/testing.ts"
   }

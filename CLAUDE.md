@@ -13,7 +13,7 @@ The service and its CLI are both named `pedit`; it is served at edit.piconic.ai.
 ## Layout
 - cmd/pedit, internal/: the `pedit` command (Go, single binary). internal/protocol mirrors packages/protocol on top of reearth/ygo; keep the wire format in sync
 - packages/protocol: encryption, message format and room client for the web (pnpm workspace)
-- packages/worker: Hono + Durable Objects (WebSocket Hibernation API) + R2 for encrypted attachments. Also serves the web assets.
+- packages/worker: Hono + Durable Objects (WebSocket Hibernation API) + R2 for encrypted attachments. Also serves the web assets, adding the Content-Security-Policy to HTML (`src/page.ts`).
 - packages/web: editor built on CodeMirror 6 + y-codemirror.next. UI components are BarefootJS (`src/components/*.tsx`, client-side rendering only: the server never sees content). Write new UI as components with signals; do not use BarefootJS's ready-made UI components, keep pedit's own CSS. The exception is xyflow for the canvas board: `src/components/xyflow/` is the registry copy from `bf add xyflow`, kept as upstream has it apart from changes marked `pedit:`. State from outside (room status, Yjs) reaches components as a `Store` (`src/store.ts`): a signal made once outside the components (in main.ts or a class like `TableView`), which components just read with `store.get()` in their JSX. Components never subscribe per instance. Publish a new value only when it changed, so every cell or row reading it does not re-run. Where behaviour is heavy (the table, the context menu, the Split divider), a class keeps the state and publishes it as stores, and a component draws it and hands its events back (`TableView` + `TableGrid.tsx`).
 
 ## Stack

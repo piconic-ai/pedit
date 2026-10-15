@@ -36,7 +36,8 @@ within about an hour, when its hourly check finds no host.
 ## Logs
 
 Workers Logs is on (`observability` in `packages/worker/wrangler.jsonc`). Each
-request that reaches the Worker (`/api/*`: creating a room, WebSocket
+request that reaches the Worker (every page and file of the editor, which it
+serves to add security headers, and `/api/*`: creating a room, WebSocket
 connections, image uploads and downloads) gets an invocation log, and so does
 each event in a room's Durable Object, including every WebSocket message it
 relays, so the logs hold the time of every relayed frame. Cloudflare documents
@@ -77,11 +78,16 @@ the browser evicts them (they are sent with
 `Cache-Control: private, max-age=3600`), so whoever later uses that browser
 profile can decrypt them.
 
-The Markdown preview loads images and videos from wherever the document links
-them, and shows a YouTube (`youtube-nocookie.com`) or Vimeo player for a
-YouTube or Vimeo link on a line of its own; those players run their own
-scripts and can set their own cookies. Images and videos get no `Referer`;
-the players get only the origin.
+The Markdown preview does not load images or videos from other sites: an
+external image shows as a placeholder saying this relay does not load external
+images, so a document cannot make your browser contact a host its author
+picked. Images pasted in the session are decrypted in your browser and shown
+from memory. A YouTube (`youtube-nocookie.com`) or Vimeo link on a line of its
+own still shows that site's player; those players run their own scripts, can
+set their own cookies, and get only the origin as `Referer`. The page's
+Content-Security-Policy enforces this: the browser refuses any other image,
+video, frame or connection. A self-hosted relay can allow external images and
+videos with `MEDIA_SOURCES` ([self-hosting](self-hosting.md#room-limits)).
 
 ## What Cloudflare sees
 

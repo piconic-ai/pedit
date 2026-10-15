@@ -149,3 +149,21 @@ test('the public relay ends rooms after 24 hours; self-hosted relays keep the de
   assert.equal(readConfig({ config: maintainer, env: 'lab' }).vars.ROOM_MAX_SECONDS, undefined)
   assert.equal(readConfig({ config: selfHost }).vars.ROOM_MAX_SECONDS, undefined)
 })
+
+test('every deployment sends pages through the Worker for the CSP, and leaves media sources strict', () => {
+  const workerPackage = new URL('../worker/package.json', import.meta.url)
+  const { unstable_readConfig: readConfig } = createRequire(workerPackage)('wrangler')
+  const maintainer = fileURLToPath(new URL('../worker/wrangler.jsonc', import.meta.url))
+  const selfHost = fileURLToPath(new URL('../wrangler.json', import.meta.url))
+  const production = readConfig({ config: maintainer })
+  const lab = readConfig({ config: maintainer, env: 'lab' })
+  const self = readConfig({ config: selfHost })
+  for (const config of [production, lab, self]) {
+    assert.equal(config.assets.binding, 'ASSETS')
+    // Not a list with exclusions: a missing file under an excluded path would fall
+    // back to index.html straight from the assets, without the policy.
+    assert.equal(config.assets.run_worker_first, true)
+    assert.equal(config.vars.MEDIA_SOURCES, undefined)
+  }
+  assert.equal(production.previews.vars.MEDIA_SOURCES, undefined)
+})

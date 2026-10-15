@@ -8,7 +8,8 @@
   "assets": {
     "directory": "web/dist",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"]
+    "binding": "ASSETS",
+    "run_worker_first": true
   },
   "durable_objects": {
     "bindings": [{ "name": "ROOM", "class_name": "Room" }]

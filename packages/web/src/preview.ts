@@ -1,3 +1,4 @@
+import { allowsMedia, MEDIA_META, parseMediaSources } from '@pedit/protocol/csp'
 import DOMPurify from 'dompurify'
 import MarkdownIt from 'markdown-it'
 import { parseDocument } from 'yaml'
@@ -62,6 +63,32 @@ function lineAttr(line: unknown): string {
   return typeof line === 'number' ? ` data-line="${line}"` : ''
 }
 
+let pageSources: string[] | undefined
+
+/**
+ * The media sources this relay lets the page load (img-src and media-src), as the
+ * Worker wrote them into the page. Without the tag, or with a bad value, nothing
+ * external is allowed, like the policy itself.
+ */
+export function pageMediaSources(doc?: Document): string[] {
+  if (!doc && pageSources) return pageSources
+  const d = doc ?? document
+  const content = d.querySelector(`meta[name="${MEDIA_META}"]`)?.getAttribute('content') ?? ''
+  const sources = parseMediaSources(content) ?? []
+  if (!doc) pageSources = sources
+  return sources
+}
+
+// Set for the duration of one render, like images.
+let media: readonly string[] = []
+
+const allowed = (url: URL) => allowsMedia(media, url, new URL(location.href))
+
+function blockedHtml(url: URL, src: string, alt: string): string {
+  const kind = isVideoFile(url) ? 'video' : 'image'
+  return `<span class="missing-image blocked-media blocked-${kind}" title="${escape(src)}">${escape(alt || src)}<span class="blocked-reason">: this relay does not load external ${kind}s</span></span>`
+}
+
 function videoHtml(src: string, label: string, line?: unknown): string {
   const aria = label ? ` aria-label="${escape(label)}"` : ''
   return `<video${lineAttr(line)} src="${escape(src)}"${aria} controls preload="metadata" playsinline></video>`
@@ -90,6 +117,8 @@ md.core.ruler.after('linkify', 'embeds', (state) => {
     if (text?.type !== 'text' || linkClose?.type !== 'link_close' || rest.length > 0) continue
     const embed = embedFor(String(linkOpen.attrGet('href') ?? ''))
     if (!embed) continue
+    // A video file the relay would not load stays an ordinary link.
+    if (embed.kind === 'video' && !allowed(new URL(embed.src))) continue
     const token = new state.Token('embed', '', 0)
     token.meta = { embed, line: open.map?.[0] }
     inline.children = [token]
@@ -135,6 +164,7 @@ md.renderer.rules.image = (tokens, idx, options, env, self) => {
     }
     return `<span class="missing-image" title="${escape(src)}">${escape(alt || src)}</span>`
   }
+  if (!allowed(url)) return blockedHtml(url, src, alt)
   if (isVideoFile(url)) return videoHtml(url.href, alt)
   token.attrSet('loading', 'lazy')
   token.attrSet('referrerpolicy', 'no-referrer')
@@ -185,7 +215,8 @@ purify.addHook('afterSanitizeAttributes', (node) => {
       {
         const src = el.getAttribute('src') ?? ''
         const ours = node.nodeName === 'IMG' && images?.owns(src)
-        if (!httpUrl(src) && !ours) el.remove()
+        const url = httpUrl(src)
+        if ((!url && !ours) || (url && !allowed(url))) el.remove()
       }
       break
   }
@@ -207,12 +238,18 @@ export function sanitize(html: string): DocumentFragment {
  * Renders Markdown to sanitised nodes, ready for {@link patch}. `resolver`
  * finds the images added during the session.
  */
-export function render(source: string, resolver?: ImageResolver): DocumentFragment {
+export function render(
+  source: string,
+  resolver?: ImageResolver,
+  sources: readonly string[] = pageMediaSources(),
+): DocumentFragment {
   images = resolver
+  media = sources
   try {
     return sanitize(md.render(source))
   } finally {
     images = undefined
+    media = []
   }
 }
 
