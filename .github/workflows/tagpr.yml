@@ -22,10 +22,9 @@ on:
   push:
     branches: ["main"]
 
+# Read-only by default; each job asks for the writes it needs.
 permissions:
-  contents: write
-  pull-requests: write
-  issues: read
+  contents: read
 
 concurrency:
   group: release-tagpr
@@ -34,6 +33,11 @@ concurrency:
 jobs:
   tagpr:
     runs-on: ubuntu-latest
+    # Pushes the release PR branch and the tag, opens and labels the release PR.
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: read
     outputs:
       tag: ${{ steps.tagpr.outputs.tag }}
     steps:

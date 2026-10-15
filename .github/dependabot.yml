@@ -1,0 +1,28 @@
+# Weekly update PRs for the three dependency sets. Minor and patch updates of
+# each come as one grouped PR, so CI and review run once per set; majors and
+# security updates still come on their own.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /packages
+    schedule:
+      interval: weekly
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      go-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
