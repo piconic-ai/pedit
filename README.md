@@ -1,5 +1,10 @@
 # pedit — Pair edit your local files.
 
+[![CI](https://github.com/piconic-ai/pedit/actions/workflows/ci.yml/badge.svg)](https://github.com/piconic-ai/pedit/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/piconic-ai/pedit)](https://github.com/piconic-ai/pedit/releases/latest)
+[![License: MIT](https://img.shields.io/github/license/piconic-ai/pedit)](LICENSE)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/piconic-ai/pedit/badge)](https://scorecard.dev/viewer/?uri=github.com/piconic-ai/pedit)
+
 https://github.com/user-attachments/assets/14bec9ab-8c14-495c-8faf-9cdd98d8fd5b
 
 **What it looks like.** Carol shares a file with `pedit`; Alice and Bob edit
