@@ -104,6 +104,27 @@ function offeredProtocol(request: Request): string | undefined {
 
 const app = new Hono<{ Bindings: Bindings }>()
 
+// Loopback stays on plain HTTP, for wrangler dev.
+function isLoopback(hostname: string): boolean {
+  return (
+    hostname === 'localhost' ||
+    hostname.endsWith('.localhost') ||
+    hostname === '[::1]' ||
+    hostname.startsWith('127.')
+  )
+}
+
+// A page served over plain HTTP could be rewritten on the way to read the key in
+// its fragment, so plain HTTP only ever gets a redirect. The browser keeps the
+// fragment across it. 308 keeps the method of anything but a GET or HEAD.
+app.use('*', async (c, next) => {
+  const url = new URL(c.req.url)
+  if (url.protocol !== 'http:' || isLoopback(url.hostname)) return next()
+  url.protocol = 'https:'
+  const status = c.req.method === 'GET' || c.req.method === 'HEAD' ? 301 : 308
+  return c.redirect(url.href, status)
+})
+
 app.post('/api/rooms', async (c) => {
   const level = maintenance(c.env)
   if (level !== 'none') {

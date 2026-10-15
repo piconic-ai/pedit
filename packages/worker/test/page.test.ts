@@ -161,3 +161,36 @@ describe('pages', () => {
     )
   })
 })
+
+describe('plain HTTP', () => {
+  it('redirects a page to HTTPS, keeping the path and query', async () => {
+    const a = assets(HTML)
+    const res = await call('http://pedit.test/r/AAAAAAAAAAAAAAAAAAAAAA?x=1', {}, a)
+    expect(res.status).toBe(301)
+    expect(res.headers.get('Location')).toBe('https://pedit.test/r/AAAAAAAAAAAAAAAAAAAAAA?x=1')
+    expect(a.seen).toHaveLength(0)
+  })
+
+  it('redirects the API too, keeping the method', async () => {
+    const created = await call('http://pedit.test/api/rooms', {}, assets(HTML), { method: 'POST' })
+    expect(created.status).toBe(308)
+    expect(created.headers.get('Location')).toBe('https://pedit.test/api/rooms')
+    const socket = await call('http://pedit.test/api/rooms/AAAAAAAAAAAAAAAAAAAAAA/ws')
+    expect(socket.status).toBe(301)
+  })
+
+  it('leaves loopback alone, for wrangler dev', async () => {
+    for (const host of ['localhost:8787', '127.0.0.1:8787', '[::1]:8787', 'pedit.localhost']) {
+      const res = await call(`http://${host}/`)
+      expect(res.status).toBe(200)
+      expect(res.headers.get('Strict-Transport-Security')).toBeNull()
+    }
+  })
+
+  it('tells browsers to stay on HTTPS, for this host only', async () => {
+    for (const path of ['/', '/assets/i.js']) {
+      const res = await call(`https://pedit.test${path}`)
+      expect(res.headers.get('Strict-Transport-Security')).toBe('max-age=31536000')
+    }
+  })
+})

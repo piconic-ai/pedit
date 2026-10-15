@@ -50,6 +50,11 @@ export async function servePage(
   const out = new Headers(asset.headers)
   out.set('X-Content-Type-Options', 'nosniff')
   out.set('Referrer-Policy', 'no-referrer')
+  // Browsers that saw the relay over HTTPS once never try plain HTTP again
+  // (see the redirect in index.ts). Only this host, not the rest of the domain.
+  if (new URL(request.url).protocol === 'https:') {
+    out.set('Strict-Transport-Security', 'max-age=31536000')
+  }
   if (!(out.get('Content-Type') ?? '').startsWith('text/html')) {
     return new Response(asset.body, {
       status: asset.status,
