@@ -111,7 +111,7 @@ count rate limits; Workers Logs may still record it with the request (see
 ## Reporting abuse
 
 Send the room link, or just the room ID (the 22 characters after `/r/`), to
-**[abuse contact: to be added]** <!-- TODO(operator): abuse contact -->.
+[abuse@piconic.ai](mailto:abuse@piconic.ai).
 Leave out the `#` and what follows unless you want the operator to see the
 content: the full link also lets them edit. The operator can block a room by
 its ID without seeing its content, which is encrypted.
