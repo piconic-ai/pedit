@@ -17,6 +17,9 @@ function mount(options: Parameters<typeof fakeSettings>[0] = {}) {
   document.body.append(container)
   mounted.push(container)
   render(container, 'Settings', { model: fake.model })
+  // jsdom has no showPopover(), and since 30.1.2 it does not focus inside a
+  // closed popover, as browsers don't. Show the panel as an open one would be.
+  container.querySelector<HTMLElement>('[popover]')?.style.setProperty('display', 'block')
   const q = <T extends Element = HTMLElement>(sel: string) => {
     const el = container.querySelector<T>(sel)
     if (!el) throw new Error(`no ${sel}`)
