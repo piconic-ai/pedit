@@ -622,6 +622,13 @@ describe('blobs', () => {
   })
 })
 
+// The emulated rate limits count in windows aligned to the wall clock's
+// minutes, so a test that fills one must not straddle a minute boundary.
+async function withinOneWindow() {
+  const left = 60_000 - (Date.now() % 60_000)
+  if (left < 10_000) await new Promise((r) => setTimeout(r, left + 50))
+}
+
 describe('rate limits', () => {
   it('counts a client by its address, and IPv6 by its /64', () => {
     const key = (ip?: string) =>
@@ -640,7 +647,8 @@ describe('rate limits', () => {
     expect(await overLimit(undefined, new Request('https://pedit.test'), 'test')).toBe(false)
   })
 
-  it('turns away a network that creates too many rooms', async () => {
+  it('turns away a network that creates too many rooms', { timeout: 20_000 }, async () => {
+    await withinOneWindow()
     const ip = nextAddress()
     for (let i = 0; i < 20; i++) expect((await postRoom(ip)).status).toBe(201)
     const res = await postRoom(ip)
@@ -651,13 +659,15 @@ describe('rate limits', () => {
     expect((await postRoom()).status).toBe(201)
   })
 
-  it('counts an IPv6 network as one', async () => {
+  it('counts an IPv6 network as one', { timeout: 20_000 }, async () => {
+    await withinOneWindow()
     for (let i = 0; i < 20; i++) expect((await postRoom(`2001:db8:5::${i + 1}`)).status).toBe(201)
     expect((await postRoom('2001:db8:5::ffff')).status).toBe(429)
     expect((await postRoom('2001:db8:6::1')).status).toBe(201)
   })
 
   it('tells a network that connects too often to come back later', async () => {
+    await withinOneWindow()
     const room = await createRoom()
     await host(room)
     const ip = nextAddress()
