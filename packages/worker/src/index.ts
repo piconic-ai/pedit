@@ -110,7 +110,8 @@ function isLoopback(hostname: string): boolean {
     hostname === 'localhost' ||
     hostname.endsWith('.localhost') ||
     hostname === '[::1]' ||
-    hostname.startsWith('127.')
+    // An IPv4 literal in 127.0.0.0/8, not a DNS name that happens to start with 127.
+    /^127(\.\d{1,3}){3}$/.test(hostname)
   )
 }
 

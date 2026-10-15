@@ -179,8 +179,20 @@ describe('plain HTTP', () => {
     expect(socket.status).toBe(301)
   })
 
+  it('redirects a DNS name that only starts with 127.', async () => {
+    const res = await call('http://127.relay.example/')
+    expect(res.status).toBe(301)
+    expect(res.headers.get('Location')).toBe('https://127.relay.example/')
+  })
+
   it('leaves loopback alone, for wrangler dev', async () => {
-    for (const host of ['localhost:8787', '127.0.0.1:8787', '[::1]:8787', 'pedit.localhost']) {
+    for (const host of [
+      'localhost:8787',
+      '127.0.0.1:8787',
+      '127.1.2.3',
+      '[::1]:8787',
+      'pedit.localhost',
+    ]) {
       const res = await call(`http://${host}/`)
       expect(res.status).toBe(200)
       expect(res.headers.get('Strict-Transport-Security')).toBeNull()
