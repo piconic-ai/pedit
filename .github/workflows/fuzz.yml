@@ -1,0 +1,59 @@
+name: Fuzz
+
+# Runs each Go fuzz test for a few minutes. Plain `go test` (CI) only replays
+# the seeds and the inputs saved under testdata/fuzz; this job searches for
+# new ones. A failure uploads the input that broke it: add that file under
+# the package's testdata/fuzz/<FuzzName>/ with the fix, so it stays a test.
+
+on:
+  schedule:
+    - cron: "41 4 * * 2"
+  workflow_dispatch:
+    inputs:
+      fuzztime:
+        description: How long to fuzz each target (Go duration)
+        default: 5m
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { pkg: ./internal/protocol, name: FuzzReceive }
+          - { pkg: ./internal/protocol, name: FuzzDecodeMessage }
+          - { pkg: ./internal/protocol, name: FuzzDecrypt }
+          - { pkg: ./internal/protocol, name: FuzzBlobDecrypt }
+          - { pkg: ./internal/protocol, name: FuzzDecodeKey }
+          - { pkg: ./internal/protocol, name: FuzzDecodeAttachment }
+          - { pkg: ./internal/protocol, name: FuzzDecodeCanvas }
+          - { pkg: ./internal/protocol, name: FuzzParseExpiredReason }
+          - { pkg: ./internal/canvas, name: FuzzParse }
+          - { pkg: ./internal/merge, name: FuzzExternalEdit }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Fuzz ${{ matrix.target.name }}
+        env:
+          PKG: ${{ matrix.target.pkg }}
+          NAME: ${{ matrix.target.name }}
+          FUZZTIME: ${{ inputs.fuzztime || '5m' }}
+        run: go test "$PKG" -run "^${NAME}\$" -fuzz "^${NAME}\$" -fuzztime "$FUZZTIME"
+
+      - name: Keep the failing input
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-${{ matrix.target.name }}
+          path: ${{ matrix.target.pkg }}/testdata/fuzz/${{ matrix.target.name }}/
+          if-no-files-found: ignore
