@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.1.4](https://github.com/piconic-ai/pedit/compare/v0.1.3...v0.1.4) - 2026-10-15
+
+- Build pedit with a supported Go release by @kfly8 in https://github.com/piconic-ai/pedit/pull/126
+- End public-relay rooms after 24 hours, and clean up rooms whose host is gone by @kfly8 in https://github.com/piconic-ai/pedit/pull/128
+- Name the public relay's abuse contact by @kfly8 in https://github.com/piconic-ai/pedit/pull/129
+
 ## [v0.1.3](https://github.com/piconic-ai/pedit/compare/v0.1.2...v0.1.3) - 2026-10-14
 
 - Refuse files too large to share, and document the security design and the public relay by @kfly8 in https://github.com/piconic-ai/pedit/pull/123
