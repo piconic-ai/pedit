@@ -51,9 +51,23 @@ jobs:
       - name: Build release archives and checksums
         run: bash scripts/build-cli-release.sh "$TAG" "$RUNNER_TEMP/pedit-release"
       - name: Attest build provenance of the archives
+        id: attest
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: ${{ runner.temp }}/pedit-release/pedit_*
+      # The same provenance, as Release files, so it can be checked without the
+      # GitHub API: the Sigstore bundle (gh attestation verify --bundle, cosign)
+      # and its DSSE envelope as in-toto JSON Lines (slsa-verifier). Their
+      # names carry no OS or architecture, so installers that pick an archive
+      # by platform pass them over; checksums.txt still lists only archives.
+      - name: Add the provenance to the release files
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/pedit-release"
+          cp "$BUNDLE" "$out/pedit_${TAG}.sigstore.json"
+          jq -ce .dsseEnvelope "$BUNDLE" >"$out/pedit_${TAG}.intoto.jsonl"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: pedit-release
