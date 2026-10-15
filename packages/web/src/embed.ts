@@ -1,11 +1,10 @@
+import { FRAME_PREFIXES } from '@pedit/protocol/csp'
+
 /** A video the preview shows in place of a bare URL or an image. */
 export type Embed = { kind: 'frame'; src: string; title: string } | { kind: 'video'; src: string }
 
 /** Players the preview may frame; the sanitiser drops any other iframe. */
-export const FRAME_PREFIXES = [
-  'https://www.youtube-nocookie.com/embed/',
-  'https://player.vimeo.com/video/',
-] as const
+export { FRAME_PREFIXES }
 
 const VIDEO_FILE = /\.(mp4|m4v|mov|webm|ogv)$/i
 const YOUTUBE_ID = /^[\w-]{11}$/

@@ -125,6 +125,16 @@ describe('index.html boot script', () => {
   })
 })
 
+describe('index.html inline scripts', () => {
+  // The Worker hashes them for the CSP with this same pattern (worker/src/page.ts).
+  it('are all attribute-free, so the Worker finds every one', () => {
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const found = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)]
+    expect(found).toHaveLength(doc.querySelectorAll('script:not([src])').length)
+    expect(found).toHaveLength(1)
+  })
+})
+
 describe('index.html viewport', () => {
   const meta = new DOMParser()
     .parseFromString(html, 'text/html')

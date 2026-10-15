@@ -1,3 +1,5 @@
+import { AVATAR_HOSTS } from '@pedit/protocol/csp'
+
 /**
  * Who the collaborator is, when pedit runs behind Cloudflare Access.
  *
@@ -45,19 +47,13 @@ export async function fetchIdentity(fetcher: typeof fetch = fetch): Promise<Iden
  * link, so an arbitrary URL would let a peer make every browser in the room
  * fetch a tracking image.
  */
-const AVATAR_HOSTS = new Set([
-  'gravatar.com',
-  'www.gravatar.com',
-  'secure.gravatar.com',
-  'avatars.githubusercontent.com',
-  'lh3.googleusercontent.com',
-])
+const avatarHosts = new Set<string>(AVATAR_HOSTS)
 
 export function safeAvatar(url: unknown): string | undefined {
   if (typeof url !== 'string') return undefined
   try {
     const u = new URL(url)
-    return u.protocol === 'https:' && AVATAR_HOSTS.has(u.hostname) ? u.href : undefined
+    return u.protocol === 'https:' && avatarHosts.has(u.hostname) ? u.href : undefined
   } catch {
     return undefined
   }

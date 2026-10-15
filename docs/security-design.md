@@ -102,7 +102,14 @@ AES-GCM rejects a frame made or altered without the key.
 Requests never carry the fragment, so the key is not sent to the relay or in
 `Referer` ([MDN](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Referer),
 [MDN](https://developer.mozilla.org/en-US/docs/Web/URI/Reference/Fragment)).
-The editor also sets `<meta name="referrer" content="no-referrer">`. A link
+The editor also sets `<meta name="referrer" content="no-referrer">`. The Worker also sends a
+Content-Security-Policy with the editor: scripts only from the relay, and
+network requests only to the relay, the avatar hosts, the YouTube and Vimeo
+players and any image sources a self-hosted relay allows. A script injected
+through a bug could not send the key to another host in an image, fetch or
+WebSocket. It could still send it through the relay itself, to a room it
+creates, navigate the page away, or use channels CSP does not cover, such as
+WebRTC, so the policy narrows that risk rather than closing it. A link
 preview or link scanner fetches the URL without the fragment, but the service
 that runs it has the whole link. The editor asks for a name before it
 connects, so a scanner that only loads the page does not join. The whole link,

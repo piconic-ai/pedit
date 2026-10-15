@@ -1,9 +1,11 @@
 import { checkProtocolVersion } from '@pedit/protocol/admission'
 import { RELAY_BUSY, RELAY_MAINTENANCE } from '@pedit/protocol/close'
 import { Hono } from 'hono'
+import { mediaSourcesFrom, scriptHashes, servePage } from './page.ts'
 import { HOST_HEADER, maintenance, refuse } from './room.ts'
 
 export { maintenance, Room } from './room.ts'
+export { mediaSourcesFrom, scriptHashes, servePage }
 
 // Room ids are 128+ bits, base64url without padding.
 const ROOM_ID = /^[A-Za-z0-9_-]{22}$/
@@ -85,6 +87,8 @@ type Bindings = Omit<Env, 'ROOM_CREATION_LIMIT' | 'CONNECTION_LIMIT'> & {
   ROOM_CREATION_LIMIT?: RateLimit
   CONNECTION_LIMIT?: RateLimit
   MAINTENANCE?: string
+  // Where the Markdown preview may load images and videos from (docs/self-hosting.md).
+  MEDIA_SOURCES?: string
 }
 
 const UNDER_MAINTENANCE =
@@ -153,5 +157,11 @@ app.all('/api/rooms/:id/blobs/:blobId', async (c) => {
   const room = c.env.ROOM.get(c.env.ROOM.idFromName(id))
   return room.fetch(c.req.raw)
 })
+
+// Everything but /api/* is a page or a static file: Workers Assets serves it, and the
+// Worker adds the security headers to HTML (wrangler.jsonc run_worker_first).
+app.notFound((c) =>
+  c.req.path.startsWith('/api/') ? c.text('404 Not Found', 404) : servePage(c.req.raw, c.env),
+)
 
 export default app

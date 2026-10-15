@@ -921,6 +921,9 @@ main.editor[data-resizing] iframe {
 .preview .missing-image::after {
   content: "]";
 }
+.preview .blocked-video::before {
+  content: "[video: ";
+}
 .preview .loading-image {
   color: var(--muted);
   font-style: italic;

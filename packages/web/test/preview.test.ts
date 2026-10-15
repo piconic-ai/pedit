@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
 import type { ImageResolver } from '../src/attachments.ts'
-import { patch, render, sanitize } from '../src/preview.ts'
+import { pageMediaSources, patch, render, sanitize } from '../src/preview.ts'
 
 function html(source: string): string {
   const div = document.createElement('div')
@@ -9,9 +9,9 @@ function html(source: string): string {
   return div.innerHTML
 }
 
-function dom(source: string): HTMLElement {
+function dom(source: string, sources?: readonly string[]): HTMLElement {
   const div = document.createElement('div')
-  div.append(render(source))
+  div.append(render(source, undefined, sources))
   return div
 }
 
@@ -27,7 +27,16 @@ describe('sanitize', () => {
     const out = div.innerHTML
     expect(out).not.toMatch(/script|onclick|onerror|onload|javascript:|<style/i)
     expect(div.querySelector('p')?.textContent).toBe('hi')
-    expect(div.querySelector('img')?.getAttribute('src')).toBe('https://x.test/a.png')
+    // Outside render() no external source is allowed, like the strict policy.
+    expect(div.querySelector('img')).toBeNull()
+  })
+
+  it('drops external media that no source allows', () => {
+    const div = document.createElement('div')
+    div.append(
+      sanitize('<img src="https://x.test/a.png"><video src="https://x.test/a.mp4"></video>'),
+    )
+    expect(div.innerHTML).toBe('')
   })
 
   it('drops iframes that are not a known player', () => {
@@ -104,7 +113,9 @@ describe('render', () => {
   })
 
   it('renders absolute images and falls back to the alt text for relative ones', () => {
-    const out = dom('![cat](https://example.com/cat.png) ![dog](images/dog.png) ![](../x.png)')
+    const out = dom('![cat](https://example.com/cat.png) ![dog](images/dog.png) ![](../x.png)', [
+      'https:',
+    ])
     const img = out.querySelector('img')
     expect(img?.getAttribute('src')).toBe('https://example.com/cat.png')
     expect(img?.getAttribute('alt')).toBe('cat')
@@ -143,7 +154,9 @@ describe('render', () => {
   })
 
   it('plays video files from images and bare URLs', () => {
-    const out = dom('![demo](https://example.com/demo.mp4)\n\nhttps://example.com/other.webm')
+    const out = dom('![demo](https://example.com/demo.mp4)\n\nhttps://example.com/other.webm', [
+      'https:',
+    ])
     const videos = [...out.querySelectorAll('video')]
     expect(videos.map((v) => v.getAttribute('src'))).toEqual([
       'https://example.com/demo.mp4',
@@ -151,6 +164,51 @@ describe('render', () => {
     ])
     expect(videos[0]?.hasAttribute('controls')).toBe(true)
     expect(videos[0]?.getAttribute('aria-label')).toBe('demo')
+  })
+
+  describe('under the strict default (no external media)', () => {
+    it('shows an external image as a placeholder', () => {
+      const out = dom('![cat](https://example.com/cat.png)')
+      expect(out.querySelector('img')).toBeNull()
+      const blocked = out.querySelector('.blocked-media.blocked-image')
+      expect(blocked?.textContent).toBe('cat: this relay does not load external images')
+      expect(blocked?.getAttribute('title')).toBe('https://example.com/cat.png')
+    })
+
+    it('shows an external video as a placeholder', () => {
+      const out = dom('![demo](https://example.com/demo.mp4)')
+      expect(out.querySelector('video')).toBeNull()
+      expect(out.querySelector('.blocked-video')?.textContent).toBe(
+        'demo: this relay does not load external videos',
+      )
+    })
+
+    it('leaves a bare video URL as a link', () => {
+      const out = dom('https://example.com/other.webm')
+      expect(out.querySelector('video')).toBeNull()
+      expect(out.querySelector('a')?.getAttribute('target')).toBe('_blank')
+    })
+
+    it('still shows players and pasted images', () => {
+      expect(
+        dom('https://www.youtube.com/watch?v=dQw4w9WgXcQ').querySelector('iframe'),
+      ).not.toBeNull()
+      const url = 'blob:http://localhost/1234'
+      const div = document.createElement('div')
+      div.append(render('![a](assets/a.png)', { lookup: () => ({ url }), owns: (u) => u === url }))
+      expect(div.querySelector('img')?.getAttribute('src')).toBe(url)
+    })
+  })
+
+  it('loads only what the allowed sources match', () => {
+    const out = dom(
+      '![a](https://img.example.com/pics/a.png) ![b](https://img.example.com/other.png) ![c](http://192.168.1.1/x.png)',
+      ['https://img.example.com/pics/'],
+    )
+    expect([...out.querySelectorAll('img')].map((i) => i.getAttribute('src'))).toEqual([
+      'https://img.example.com/pics/a.png',
+    ])
+    expect(out.querySelectorAll('.blocked-image')).toHaveLength(2)
   })
 
   it('embeds bare YouTube and Vimeo URLs', () => {
@@ -240,5 +298,23 @@ describe('patch', () => {
     expect(container.innerHTML).toBe(html('z\n\na\n\nb\n'))
     patch(container, render(''))
     expect(container.innerHTML).toBe('')
+  })
+})
+
+describe('pageMediaSources', () => {
+  const page = (head: string) =>
+    new DOMParser().parseFromString(`<head>${head}</head>`, 'text/html')
+
+  it('reads the list the Worker wrote into the page', () => {
+    expect(pageMediaSources(page('<meta name="pedit-media-sources" content="https:">'))).toEqual([
+      'https:',
+    ])
+  })
+
+  it('allows nothing without the tag or with a bad value', () => {
+    expect(pageMediaSources(page(''))).toEqual([])
+    expect(
+      pageMediaSources(page('<meta name="pedit-media-sources" content="\'unsafe-inline\'">')),
+    ).toEqual([])
   })
 })
