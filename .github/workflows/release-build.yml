@@ -56,18 +56,20 @@ jobs:
         with:
           subject-path: ${{ runner.temp }}/pedit-release/pedit_*
       # The same provenance, as Release files, so it can be checked without the
-      # GitHub API: the Sigstore bundle (gh attestation verify --bundle, cosign)
-      # and its DSSE envelope as in-toto JSON Lines (slsa-verifier). Their
-      # names carry no OS or architecture, so installers that pick an archive
-      # by platform pass them over; checksums.txt still lists only archives.
+      # GitHub API (gh attestation verify <archive> --bundle <file>). Both files
+      # hold the whole Sigstore bundle, certificate and transparency-log entry
+      # included, on one line: .sigstore.json and .intoto.jsonl are the names
+      # tools look for a signature and for provenance under. The names carry no
+      # OS or architecture, so installers that pick an archive by platform pass
+      # them over; checksums.txt still lists only archives.
       - name: Add the provenance to the release files
         env:
           BUNDLE: ${{ steps.attest.outputs.bundle-path }}
         run: |
           set -euo pipefail
           out="$RUNNER_TEMP/pedit-release"
-          cp "$BUNDLE" "$out/pedit_${TAG}.sigstore.json"
-          jq -ce .dsseEnvelope "$BUNDLE" >"$out/pedit_${TAG}.intoto.jsonl"
+          jq -ce 'select(.dsseEnvelope and .verificationMaterial)' "$BUNDLE" >"$out/pedit_${TAG}.sigstore.json"
+          cp "$out/pedit_${TAG}.sigstore.json" "$out/pedit_${TAG}.intoto.jsonl"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: pedit-release
