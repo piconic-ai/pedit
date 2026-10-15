@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.1.5](https://github.com/piconic-ai/pedit/compare/v0.1.4...v0.1.5) - 2026-10-15
+
+- Add a Content-Security-Policy to the editor, set by the Worker by @kfly8 in https://github.com/piconic-ai/pedit/pull/131
+
 ## [v0.1.4](https://github.com/piconic-ai/pedit/compare/v0.1.3...v0.1.4) - 2026-10-15
 
 - Build pedit with a supported Go release by @kfly8 in https://github.com/piconic-ai/pedit/pull/126
