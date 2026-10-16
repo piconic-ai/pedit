@@ -406,7 +406,7 @@ func (a *Attachments) fetch(hash string) ([]byte, error) {
 	case res.StatusCode == http.StatusGone:
 		return nil, errClosed
 	case res.StatusCode != http.StatusOK:
-		return nil, fmt.Errorf("failed to fetch an attachment: %s", res.Status)
+		return nil, fmt.Errorf("failed to fetch an attachment: %d %s", res.StatusCode, http.StatusText(res.StatusCode))
 	}
 	data, err := io.ReadAll(io.LimitReader(res.Body, MaxBytes+blobOverhead+1))
 	if err != nil {

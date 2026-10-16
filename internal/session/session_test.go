@@ -337,6 +337,28 @@ func TestShareURLKeyNeverReachesServer(t *testing.T) {
 	}
 }
 
+// TestRoomErrorLeavesOutTheReasonPhrase: the reason phrase on the status
+// line is the server's, and Go passes it on as it came, escapes and all.
+func TestRoomErrorLeavesOutTheReasonPhrase(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "notes.md")
+	_ = os.WriteFile(file, []byte("x"), 0o644)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		conn, buf, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer conn.Close()
+		_, _ = buf.WriteString("HTTP/1.1 503 \x1b]52;c;ZXZpbA==\x07\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+		_ = buf.Flush()
+	}))
+	defer server.Close()
+	_, err := Start(context.Background(), Options{File: file, Server: server.URL})
+	if err == nil || !strings.Contains(err.Error(), "503 Service Unavailable") || strings.ContainsAny(err.Error(), "\x1b\x07") {
+		t.Fatalf("err = %q", err)
+	}
+}
+
 func TestExplainsWhyRoomCannotBeCreated(t *testing.T) {
 	tests := []struct {
 		name   string

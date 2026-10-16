@@ -200,3 +200,21 @@ func TestShellQuote(t *testing.T) {
 		}
 	}
 }
+
+// TestCheckFileNeverPrintsEscapesFromFileNames: a name someone else chose,
+// as in a cloned repository, could carry an escape sequence for the terminal.
+func TestCheckFileNeverPrintsEscapesFromFileNames(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows file names cannot hold control characters")
+	}
+	planted := "a\x1b]52;c;ZXZpbA==\x07.md"
+	inDir(t, map[string]os.FileMode{"docs/b.md": 0o644, "docs/" + planted: 0o644})
+	for _, arg := range []string{"docs", "docs/a.md"} {
+		if got := checkFile(arg); strings.ContainsAny(got, "\x1b\x07") {
+			t.Errorf("checkFile(%q) = %q", arg, got)
+		}
+	}
+	if got := checkFile("docs"); !strings.Contains(got, "    pedit docs/b.md") {
+		t.Errorf("got:\n%s", got)
+	}
+}

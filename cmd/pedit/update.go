@@ -81,7 +81,7 @@ func (c updateChecker) latest(ctx context.Context) (release, error) {
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		return release{}, fmt.Errorf("%s: %s", c.api, res.Status)
+		return release{}, fmt.Errorf("%s: %d %s", c.api, res.StatusCode, http.StatusText(res.StatusCode))
 	}
 	var r release
 	if err := json.NewDecoder(res.Body).Decode(&r); err != nil {

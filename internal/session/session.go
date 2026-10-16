@@ -357,9 +357,10 @@ func createRoom(ctx context.Context, client *http.Client, server string, header 
 	}
 	if res.StatusCode < 200 || res.StatusCode > 299 {
 		if msg := serverMessage(res); msg != "" {
-			return nil, fmt.Errorf("failed to create a room on %s: %s: %s", server, res.Status, msg)
+			return nil, fmt.Errorf("failed to create a room on %s: %d %s: %s", server, res.StatusCode, http.StatusText(res.StatusCode), msg)
 		}
-		return nil, fmt.Errorf("failed to create a room on %s: %s", server, res.Status)
+		// Not res.Status: its reason phrase is the server's, printed as it came.
+		return nil, fmt.Errorf("failed to create a room on %s: %d %s", server, res.StatusCode, http.StatusText(res.StatusCode))
 	}
 	var r room
 	if err := json.NewDecoder(res.Body).Decode(&r); err != nil || r.ID == "" {
