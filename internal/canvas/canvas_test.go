@@ -3,6 +3,7 @@ package canvas
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"os"
 	"reflect"
 	"strings"
@@ -561,5 +562,59 @@ func TestConcurrentEditsStayValid(t *testing.T) {
 	}
 	if x := n[0]["x"]; x != int64(1) && x != int64(2) {
 		t.Errorf("x = %v, want one of the two moves", x)
+	}
+}
+
+// TestReadDropsWhatJSONCannotHold: a peer can put any value in the document,
+// such as NaN or a Y.XmlElement. They become nil, so the host neither fails
+// to write the file nor panics when an edit moves the item.
+func TestReadDropsWhatJSONCannotHold(t *testing.T) {
+	f := mustParse(t, obsidianFile)
+	host := crdt.New()
+	Load(host, f.Canvas)
+	peer := crdt.New()
+	if err := crdt.ApplyUpdateV1(peer, host.EncodeStateAsUpdate(), nil); err != nil {
+		t.Fatal(err)
+	}
+	sv := peer.StateVector()
+	extra, nodes := peer.GetMap(ExtraKey), peer.GetArray(NodesKey)
+	a1, b2 := nodes.Get(0).(*crdt.YMap), nodes.Get(1).(*crdt.YMap)
+	peer.Transact(func(txn *crdt.Transaction) {
+		extra.Set(txn, "nan", math.NaN())
+		a1.Set(txn, "x", math.Inf(1))
+		b2.Set(txn, "plugin", crdt.NewYXmlElement("p"))
+	})
+	if err := crdt.ApplyUpdateV1(host, crdt.EncodeStateAsUpdateV1(peer, sv), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	c := Read(host)
+	if v, ok := c.Extra["nan"]; !ok || v != nil {
+		t.Errorf("extra nan = %#v, want nil", v)
+	}
+	if got := ids(c.Nodes); !reflect.DeepEqual(got, []string{"b2", "c3", "g4"}) {
+		t.Errorf("nodes = %v, want a1 with an infinite x skipped", got)
+	}
+	if v, ok := c.Nodes[0]["plugin"]; !ok || v != nil {
+		t.Errorf("plugin = %#v, want nil", v)
+	}
+	if _, err := Parse(Render(c, f)); err != nil {
+		t.Errorf("rendered canvas does not parse: %v", err)
+	}
+
+	// Bringing b2 to the front rebuilds it with its plugin value.
+	next := c
+	next.Nodes = append([]map[string]any{c.Nodes[1], c.Nodes[0]}, c.Nodes[2:]...)
+	Apply(host, c, next, nil)
+	if got := ids(Read(host).Nodes); !reflect.DeepEqual(got, []string{"c3", "b2", "g4"}) {
+		t.Errorf("nodes after the move = %v", got)
+	}
+}
+
+func TestNumberRejectsWhatJSONCannotHold(t *testing.T) {
+	for _, v := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
+		if _, ok := number(v); ok {
+			t.Errorf("number(%v) ok", v)
+		}
 	}
 }

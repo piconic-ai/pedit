@@ -3,6 +3,7 @@ package canvas
 import (
 	"bytes"
 	"encoding/json"
+	"math"
 	"slices"
 	"sort"
 	"strings"
@@ -235,8 +236,11 @@ func (w *writer) value(v any, raw string, was any, hadRaw bool, depth int) {
 		enc.SetIndent(w.pad(depth), w.l.indent)
 	}
 	if err := enc.Encode(v); err != nil {
-		// Decoded JSON and document values always encode.
-		panic(err)
+		// Decoded JSON and what plain returns always encode. Should
+		// anything else get here, the file holds null rather than the host
+		// stopping the room for everyone.
+		w.WriteString("null")
+		return
 	}
 	w.Write(bytes.TrimRight(b.Bytes(), "\n"))
 }
@@ -288,7 +292,7 @@ func number(v any) (float64, bool) {
 	case int64:
 		return float64(n), true
 	case float64:
-		return n, true
+		return n, !math.IsNaN(n) && !math.IsInf(n, 0)
 	}
 	return 0, false
 }
