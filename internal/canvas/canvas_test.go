@@ -284,6 +284,7 @@ func TestProblems(t *testing.T) {
 		{"x as string", strings.Replace(node(""), `"x":0`, `"x":"0"`, 1), `"0"`, `nodes[0] (id "a")`, `"x" must be a number, not a string`},
 		{"no height", strings.Replace(node(""), `,"height":1`, ``, 1), `{"id"`, `nodes[0] (id "a")`, `has no "height"`},
 		{"text node without text", strings.Replace(node(""), `"text":"",`, ``, 1), `{"id"`, `nodes[0] (id "a")`, `has no "text"`},
+		{"url on a text node not a string", node(`,"url":{"__bfMarkup":"<b>"}`), `{"__bfMarkup"`, `nodes[0] (id "a")`, `"url" must be a string, not an object`},
 		{"bad background style", strings.Replace(node(`,"backgroundStyle":"tile"`), `"type":"text","text":""`, `"type":"group"`, 1), `"tile"`, `nodes[0] (id "a")`, `"backgroundStyle" is "tile"; it must be one of "cover", "ratio", "repeat"`},
 		{"duplicate id", "{\"nodes\":[\n" + group + ",\n" + group + "]}", `"a"`, `nodes[1] (id "a")`, `id "a" is used more than once`},
 		{"edge to nowhere", "{\"nodes\":[],\"edges\":[\n{\"id\":\"e\",\"fromNode\":\"a\",\"toNode\":\"b\"}]}", `"a"`, `edges[0] (id "e")`, `"fromNode" is "a", which is not the id of any node`},

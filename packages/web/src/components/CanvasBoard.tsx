@@ -29,6 +29,12 @@ const statusText = (status: JsonStatus | undefined) => {
 /** Only web links open from a link node; anything else is shown, not followed. */
 const webUrl = (url: string | undefined) => (url && /^https?:\/\//i.test(url) ? url : undefined)
 
+/**
+ * A field as the text a card shows. read() lets only strings through, but a
+ * slot renders an object it is given as markup, so nothing else gets near one.
+ */
+const textOf = (v: unknown) => (typeof v === 'string' ? v : '')
+
 /** A node's colour: a preset "1" to "6" goes to CSS, a hex colour is set as it is. */
 const presetOf = (color: string | undefined) => (color && /^[1-6]$/.test(color) ? color : undefined)
 const hexOf = (color: string | undefined) =>
@@ -50,13 +56,13 @@ export function CanvasCard(props: NodeBase) {
     if (!n) return ''
     switch (n.type) {
       case 'text':
-        return n.text ?? ''
+        return textOf(n.text)
       case 'file':
-        return `${n.file ?? ''}${n.subpath ?? ''}`
+        return textOf(n.file) + textOf(n.subpath)
       case 'group':
-        return n.label ?? ''
+        return textOf(n.label)
       default:
-        return n.type
+        return textOf(n.type)
     }
   }
   // Others on this node; their colour is a hex colour, from participants().
@@ -102,7 +108,7 @@ export function CanvasCard(props: NodeBase) {
         target="_blank"
         rel="noopener noreferrer"
       >
-        {node()?.url ?? ''}
+        {textOf(node()?.url)}
       </a>
     </div>
   )

@@ -18,6 +18,13 @@ export type End = 'none' | 'arrow'
 export const SIDES: readonly Side[] = ['top', 'right', 'bottom', 'left']
 const ENDS: readonly string[] = ['none', 'arrow']
 const BACKGROUND_STYLES: readonly string[] = ['cover', 'ratio', 'repeat']
+// The string fields of a node, and the one each type requires.
+const STRING_FIELDS = ['text', 'file', 'subpath', 'url', 'label', 'background', 'color'] as const
+const REQUIRED = new Map([
+  ['text', 'text'],
+  ['file', 'file'],
+  ['link', 'url'],
+])
 
 export interface CanvasNode {
   id: string
@@ -79,22 +86,15 @@ function isNode(v: Values, ids: Set<string>): boolean {
   if (typeof v.id !== 'string' || v.id === '' || ids.has(v.id)) return false
   if (typeof v.type !== 'string') return false
   if (![v.x, v.y, v.width, v.height].every(isNumber)) return false
-  if (!optionalString(v, 'color')) return false
-  switch (v.type) {
-    case 'text':
-      return typeof v.text === 'string'
-    case 'file':
-      return typeof v.file === 'string' && optionalString(v, 'subpath')
-    case 'link':
-      return typeof v.url === 'string'
-    case 'group':
-      return (
-        optionalString(v, 'label') &&
-        optionalString(v, 'background') &&
-        optionalString(v, 'backgroundStyle', BACKGROUND_STYLES)
-      )
-  }
-  return true
+  // The fields the spec defines are strings on every node, whatever its type:
+  // a peer can set any of them, and the card shows them as text.
+  const required = REQUIRED.get(v.type)
+  if (required && v[required] === undefined) return false
+  const styles = v.type === 'group' ? BACKGROUND_STYLES : undefined
+  return (
+    STRING_FIELDS.every((key) => optionalString(v, key)) &&
+    optionalString(v, 'backgroundStyle', styles)
+  )
 }
 
 /** Likewise for an edge, by checkEdge's rules. */

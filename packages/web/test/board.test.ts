@@ -100,6 +100,16 @@ describe('BoardView', () => {
     expect(view.empty.get()).toBe(false)
   })
 
+  it('never draws a field someone set to an object as markup', async () => {
+    const doc = docOf([node('a'), node('b', { x: 200 })])
+    const view = setup(doc)
+    await tick()
+    remote(doc, () => mapOf(doc, 'a').set('url', { __bfMarkup: '<b id="injected">x</b>' }))
+    await tick()
+    expect(view.element.querySelector('#injected')).toBeNull()
+    expect(texts(view)).toEqual(['b'])
+  })
+
   it('follows changes others make, and skips what a file cannot hold', async () => {
     const doc = docOf(
       [node('a'), node('b', { x: 200 })],
