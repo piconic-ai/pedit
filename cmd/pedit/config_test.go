@@ -439,3 +439,31 @@ func TestParseArgs(t *testing.T) {
 		}
 	}
 }
+
+// TestOwnConfigIsUsed: the owner check passes your own file, on every system.
+func TestOwnConfigIsUsed(t *testing.T) {
+	root := t.TempDir()
+	put(t, filepath.Join(root, ".pedit", "config.yaml"), "server: https://relay.example.com\n")
+	cfg, err := loadConfig(root)
+	if err != nil || cfg.Server != "https://relay.example.com" {
+		t.Fatalf("%+v, %v", cfg, err)
+	}
+}
+
+func TestTrustedSID(t *testing.T) {
+	const me = "S-1-5-21-1-2-3-1001"
+	for _, c := range []struct {
+		owner string
+		want  bool
+	}{
+		{me, true},
+		{"S-1-5-18", true},     // SYSTEM
+		{"S-1-5-32-544", true}, // Administrators
+		{"S-1-5-21-1-2-3-1002", false},
+		{"S-1-5-11", false}, // Authenticated Users, who may create C:\.pedit
+	} {
+		if got := trustedSID(c.owner, me); got != c.want {
+			t.Errorf("trustedSID(%q) = %v", c.owner, got)
+		}
+	}
+}

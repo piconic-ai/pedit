@@ -35,15 +35,6 @@ func TestConfigOwnedByAnotherUserIsRefused(t *testing.T) {
 	}
 }
 
-func TestOwnConfigIsUsed(t *testing.T) {
-	root := t.TempDir()
-	put(t, filepath.Join(root, ".pedit", "config.yaml"), "server: https://relay.example.com\n")
-	cfg, err := loadConfig(root)
-	if err != nil || cfg.Server != "https://relay.example.com" {
-		t.Fatalf("%+v, %v", cfg, err)
-	}
-}
-
 func TestTrustedOwner(t *testing.T) {
 	for _, c := range []struct {
 		uid, me int
