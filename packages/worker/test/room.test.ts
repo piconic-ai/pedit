@@ -442,6 +442,31 @@ async function roomBlobs(room: Room): Promise<string[]> {
 }
 
 describe('blobs', () => {
+  it('never takes a request to a blob path as a host connection', async () => {
+    const room = await createRoom()
+    // %41 is A: the Worker's route decodes it, so the id looks valid there.
+    const id = `%41${'A'.repeat(21)}`
+    const res = await exports.default.fetch(blobUrl(room, id), {
+      headers: {
+        Upgrade: 'websocket',
+        'Sec-WebSocket-Protocol': admissionProtocols('B'.repeat(43)).join(', '),
+        'X-Pedit-Host': '1',
+      },
+    })
+    expect(res.status).not.toBe(101)
+    res.webSocket?.close()
+    // The room still has no admission verifier, so its real host gets in.
+    await host(room)
+  })
+
+  it('serves a blob whose id has percent-encoded characters', async () => {
+    const room = await createRoom()
+    await host(room)
+    expect((await putBlob(room, `%41${'A'.repeat(21)}`, new Uint8Array([7]))).status).toBe(201)
+    const res = await getBlob(room, 'A'.repeat(22))
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array([7]))
+  })
+
   it('rejects missing and wrong admission without consuming blob quota', async () => {
     const room = await createRoom()
     await host(room)

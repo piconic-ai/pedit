@@ -175,8 +175,11 @@ export class Room extends DurableObject<Env> {
   private hostHandshakes = 0
 
   override async fetch(request: Request): Promise<Response> {
-    const blob = BLOB_PATH.exec(new URL(request.url).pathname)?.[1]
+    const path = new URL(request.url).pathname
+    const blob = BLOB_PATH.exec(path)?.[1]
     if (blob) return this.blob(request, blob)
+    // Only a connection goes on: a blob path the pattern missed is not one.
+    if (path.includes('/blobs/')) return new Response('invalid blob id', { status: 400 })
 
     if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
       return new Response('expected a WebSocket upgrade', { status: 426 })
