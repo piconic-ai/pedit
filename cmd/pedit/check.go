@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -45,6 +46,7 @@ func checkFile(arg string) string {
 
 func missing(arg, dir string, names []string) string {
 	lines := []string{"pedit: " + arg + " does not exist.", ""}
+	names = slices.DeleteFunc(names, unprintable)
 	if len(names) > 0 {
 		if len(names) == 1 {
 			lines = append(lines, "  Did you mean this one?")
@@ -90,7 +92,7 @@ func textFiles(dir string, limit int) []string {
 	}
 	var names []string
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), ".") {
+		if strings.HasPrefix(e.Name(), ".") || unprintable(e.Name()) {
 			continue
 		}
 		if st, err := os.Stat(filepath.Join(dir, e.Name())); err == nil && st.Mode().IsRegular() && isText(filepath.Join(dir, e.Name())) {
@@ -102,6 +104,11 @@ func textFiles(dir string, limit int) []string {
 	}
 	return names
 }
+
+// unprintable tells a file name that would put control characters on the
+// terminal, such as an escape sequence planted in a cloned repository. Such
+// a name is never suggested.
+func unprintable(name string) bool { return printable(name) != name }
 
 // isText guesses from the start of the file: UTF-8 without NUL bytes.
 func isText(path string) bool {

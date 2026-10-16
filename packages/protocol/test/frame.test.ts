@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  decodeFrame,
   encodeCanvas,
+  encodeFrame,
   encodeMessage,
   encrypt,
   frameBytes,
@@ -10,6 +12,8 @@ import {
   MAX_FRAME_BYTES,
   MESSAGE_TOO_BIG,
   MessageType,
+  ReplayGuard,
+  SENDER_BYTES,
 } from '../src/index.ts'
 
 describe('frame', () => {
@@ -22,7 +26,8 @@ describe('frame', () => {
   it('knows the size of an encrypted message on the wire', async () => {
     const key = await importKey(generateKey())
     for (const n of [0, 1, 1000]) {
-      const frame = await encrypt(key, encodeMessage(MessageType.Sync, new Uint8Array(n)))
+      const message = encodeMessage(MessageType.Sync, new Uint8Array(n))
+      const frame = await encrypt(key, encodeFrame(new Uint8Array(SENDER_BYTES), 1, message))
       expect(frame.length).toBe(frameBytes(n))
     }
   })
@@ -31,5 +36,30 @@ describe('frame', () => {
     const half = 'x'.repeat(MAX_CANVAS_EDIT_BYTES / 2)
     const payload = encodeCanvas({ kind: 'edit', id: 'e'.repeat(64), base: half, next: half })
     expect(frameBytes(payload.length)).toBeLessThanOrEqual(MAX_FRAME_BYTES)
+  })
+
+  it('puts the sender and counter before the message, as internal/protocol does', () => {
+    const sender = new Uint8Array(SENDER_BYTES).fill(7)
+    const data = encodeFrame(sender, 2 ** 40 + 5, new Uint8Array([MessageType.Sync, 9]))
+    expect(Array.from(data.subarray(SENDER_BYTES, SENDER_BYTES + 8))).toEqual([
+      0, 0, 1, 0, 0, 0, 0, 5,
+    ])
+    const frame = decodeFrame(data)
+    expect(frame.sender).toEqual(sender)
+    expect(frame.counter).toBe(2n ** 40n + 5n)
+    expect(Array.from(frame.message)).toEqual([MessageType.Sync, 9])
+    expect(() => decodeFrame(data.subarray(0, SENDER_BYTES + 7))).toThrow()
+  })
+
+  it('takes each frame from a sender once, never our own', () => {
+    const of = (n: number) => new Uint8Array(SENDER_BYTES).fill(n)
+    const guard = new ReplayGuard(of(9))
+    expect(guard.accept(of(1), 1n)).toBe(true)
+    expect(guard.accept(of(1), 1n)).toBe(false)
+    expect(guard.accept(of(1), 3n)).toBe(true) // one lost on the way is fine
+    expect(guard.accept(of(1), 2n)).toBe(false)
+    expect(guard.accept(of(2), 1n)).toBe(true)
+    expect(guard.accept(of(1), 0n)).toBe(false)
+    expect(guard.accept(of(9), 100n)).toBe(false)
   })
 })

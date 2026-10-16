@@ -78,8 +78,11 @@ describe('read', () => {
           { id: 'f', type: 'group', x: 0, y: 0, width: 1, height: 1, label: 'kept' },
           { id: 'g', type: 'future', x: 0, y: 0, width: 1, height: 1 },
           node('h', { color: 3 }),
-          // Checked by type, as Go does: a text node's label is not.
+          // A field the spec defines is a string whatever the type, as in Go.
           node('i', { label: 7 }),
+          node('j', { url: { __bfMarkup: '<style>body{display:none}</style>' } }),
+          { id: 'k', type: 'constructor', x: 0, y: 0, width: 1, height: 1 },
+          node('l', { backgroundStyle: 'tile' }),
         ],
         edges: [
           { id: 'e1', fromNode: 'a', toNode: 'f' },
@@ -90,7 +93,7 @@ describe('read', () => {
         ],
       }),
     )
-    expect(ids(canvas.nodes)).toEqual(['a', 'f', 'g', 'i'])
+    expect(ids(canvas.nodes)).toEqual(['a', 'f', 'g', 'k', 'l'])
     expect(ids(canvas.edges)).toEqual(['e1', 'e4'])
   })
 

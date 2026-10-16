@@ -173,11 +173,19 @@ app.get('/api/rooms/:id/ws', async (c) => {
 app.all('/api/rooms/:id/blobs/:blobId', async (c) => {
   if (maintenance(c.env) === 'closed') return c.text(CLOSED_FOR_MAINTENANCE, 503)
   const id = c.req.param('id')
-  if (!ROOM_ID.test(id) || !BLOB_ID.test(c.req.param('blobId'))) {
+  const blobId = c.req.param('blobId')
+  if (!ROOM_ID.test(id) || !BLOB_ID.test(blobId)) {
     return c.text('invalid room or blob id', 400)
   }
+  if (c.req.header('Upgrade')) return c.text('attachments are not WebSockets', 400)
+  // The Room picks blob or WebSocket handling by path, so it gets the path
+  // the ids were checked in: the client's may be percent-encoded. A role
+  // header from outside is never passed on.
+  const headers = new Headers(c.req.raw.headers)
+  headers.delete(HOST_HEADER)
+  const url = new URL(`/api/rooms/${id}/blobs/${blobId}`, c.req.url)
   const room = c.env.ROOM.get(c.env.ROOM.idFromName(id))
-  return room.fetch(c.req.raw)
+  return room.fetch(new Request(url, { method: c.req.method, headers, body: c.req.raw.body }))
 })
 
 // Everything but /api/* is a page or a static file: Workers Assets serves it, and the

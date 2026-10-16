@@ -134,7 +134,7 @@ describe('rooms', () => {
     ).toBe(403)
     const valid = await upgrade(room.id)
     expect(valid.status).toBe(101)
-    expect(valid.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v1')
+    expect(valid.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v2')
     valid.webSocket?.accept()
     valid.webSocket?.close()
   })
@@ -155,12 +155,13 @@ describe('rooms', () => {
     const room = await createRoom()
     await host(room)
     const admission = admissionProtocols(admissions.get(room.id)!)[1]
-    const old = await upgrade(room.id, { 'Sec-WebSocket-Protocol': `pedit-v0, ${admission}` })
+    // pedit-v1 is a pedit from before frames were numbered.
+    const old = await upgrade(room.id, { 'Sec-WebSocket-Protocol': `pedit-v1, ${admission}` })
     expect(old.status).toBe(101)
-    expect(old.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v0')
+    expect(old.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v1')
     // A wrong admission makes no difference: the version is checked first.
     const newer = await connect(room.id, {
-      'Sec-WebSocket-Protocol': `pedit-v2, pedit-admission.${'B'.repeat(43)}`,
+      'Sec-WebSocket-Protocol': `pedit-v3, pedit-admission.${'B'.repeat(43)}`,
     })
     expect((await newer.closed).code).toBe(SERVER_OUTDATED)
     const ws = old.webSocket!
@@ -442,6 +443,31 @@ async function roomBlobs(room: Room): Promise<string[]> {
 }
 
 describe('blobs', () => {
+  it('never takes a request to a blob path as a host connection', async () => {
+    const room = await createRoom()
+    // %41 is A: the Worker's route decodes it, so the id looks valid there.
+    const id = `%41${'A'.repeat(21)}`
+    const res = await exports.default.fetch(blobUrl(room, id), {
+      headers: {
+        Upgrade: 'websocket',
+        'Sec-WebSocket-Protocol': admissionProtocols('B'.repeat(43)).join(', '),
+        'X-Pedit-Host': '1',
+      },
+    })
+    expect(res.status).not.toBe(101)
+    res.webSocket?.close()
+    // The room still has no admission verifier, so its real host gets in.
+    await host(room)
+  })
+
+  it('serves a blob whose id has percent-encoded characters', async () => {
+    const room = await createRoom()
+    await host(room)
+    expect((await putBlob(room, `%41${'A'.repeat(21)}`, new Uint8Array([7]))).status).toBe(201)
+    const res = await getBlob(room, 'A'.repeat(22))
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array([7]))
+  })
+
   it('rejects missing and wrong admission without consuming blob quota', async () => {
     const room = await createRoom()
     await host(room)
@@ -680,7 +706,7 @@ describe('rate limits', () => {
     expect(turnedAway.map((r) => r.status)).toEqual(Array(60).fill(403))
     const res = await upgrade(room.id, { 'CF-Connecting-IP': ip })
     expect(res.status).toBe(101)
-    expect(res.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v1')
+    expect(res.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v2')
     const ws = res.webSocket as WebSocket
     const closed = new Promise<CloseEvent>((resolve) => ws.addEventListener('close', resolve))
     ws.accept()
@@ -762,7 +788,7 @@ describe('maintenance', () => {
       }),
     )
     expect(upgraded.status).toBe(101)
-    expect(upgraded.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v1')
+    expect(upgraded.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v2')
     const ws = upgraded.webSocket as WebSocket
     const closed = new Promise<CloseEvent>((resolve) => ws.addEventListener('close', resolve))
     ws.accept()

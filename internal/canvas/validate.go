@@ -264,20 +264,18 @@ func checkNode(values map[string]any, ids map[string]bool) []issue {
 		_, more := checkString(values, key, required, allowed)
 		issues = append(issues, more...)
 	}
+	// The fields the spec defines are strings on every node, whatever its
+	// type: a peer can set any of them, and the page shows them as text.
 	// Types the spec does not define are kept and drawn as a plain box.
-	switch typ {
-	case "text":
-		add("text", true, nil)
-	case "file":
-		add("file", true, nil)
-		add("subpath", false, nil)
-	case "link":
-		add("url", true, nil)
-	case "group":
-		add("label", false, nil)
-		add("background", false, nil)
-		add("backgroundStyle", false, backgroundStyles)
+	required := map[string]string{"text": "text", "file": "file", "link": "url"}[typ]
+	for _, key := range []string{"text", "file", "subpath", "url", "label", "background"} {
+		add(key, key == required, nil)
 	}
+	var styles []string
+	if typ == "group" {
+		styles = backgroundStyles
+	}
+	add("backgroundStyle", false, styles)
 	add("color", false, nil)
 	return issues
 }

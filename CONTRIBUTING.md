@@ -50,9 +50,13 @@ go run ./cmd/pedit /tmp/pedit-dev-notes.md
 The wire format (AES-GCM frames, message types, y-protocols sync and awareness)
 is shared by both implementations: change them together.
 
-- A frame is `iv || AES-GCM(room key, type || payload)`. Types: `0` sync, `1`
-  awareness, `2` attachment, `3` canvas. Clients skip types they do not know,
-  so newer peers can add more.
+- A frame is `iv || AES-GCM(room key, sender || counter || type || payload)`.
+  `sender` is 16 random bytes each client picks when it starts, and `counter`
+  a big-endian uint64 it raises by one for every frame it sends, across
+  reconnects. Receivers drop a frame whose counter is not above the last one
+  from its sender, and their own: the relay could send any frame again.
+  Types: `0` sync, `1` awareness, `2` attachment, `3` canvas. Clients skip
+  types they do not know, so newer peers can add more.
 - Clients offer the protocol version as the WebSocket subprotocol `pedit-v<N>`
   (`PROTOCOL_VERSION` in `packages/protocol`, `ProtocolVersion` in
   `internal/protocol`). The Room turns another version away with close code

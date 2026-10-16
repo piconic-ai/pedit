@@ -126,12 +126,12 @@ func readConfig(path string) ([]byte, error) {
 		return nil, err
 	}
 	defer f.Close()
-	info, err := f.Stat()
+	owner, trusted, err := fileOwner(f)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s: cannot tell who owns it, so pedit does not use it: %w", path, err)
 	}
-	if uid, ok := ownerOf(info); ok && !trustedOwner(uid, currentUID()) {
-		return nil, fmt.Errorf("%s belongs to another user (uid %d), so pedit does not use it: it decides where your files are sent. Remove it, or run pedit from a directory you own", path, uid)
+	if !trusted {
+		return nil, fmt.Errorf("%s belongs to another user (%s), so pedit does not use it: it decides where your files are sent. Remove it, or run pedit from a directory you own", path, owner)
 	}
 	return io.ReadAll(f)
 }
@@ -154,6 +154,13 @@ func brokenLink(paths ...string) error {
 // trustedOwner tells whether a file owned by uid may configure pedit for the
 // user me: their own file, or one only root could have written.
 func trustedOwner(uid, me int) bool { return uid == me || uid == 0 }
+
+// trustedSID is trustedOwner for Windows, by SID: the user's own file, or one
+// written by SYSTEM or an administrator, whose files the Administrators group
+// owns.
+func trustedSID(owner, me string) bool {
+	return owner == me || owner == "S-1-5-18" || owner == "S-1-5-32-544"
+}
 
 func (c config) template(name string) ([]byte, error) {
 	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\\") || filepath.IsAbs(name) || filepath.VolumeName(name) != "" {

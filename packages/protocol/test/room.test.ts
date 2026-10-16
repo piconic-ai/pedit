@@ -5,6 +5,9 @@ import {
   type Attachment,
   type CanvasMessage,
   CLIENT_OUTDATED,
+  encodeCanvas,
+  encodeFrame,
+  encodeMessage,
   encrypt,
   expiredReason,
   generateKey,
@@ -13,8 +16,10 @@ import {
   MAX_FRAME_BYTES,
   MessageType,
   RELAY_MAINTENANCE,
+  ReplayedFrameError,
   ROOM_EXPIRED,
   RoomClient,
+  SENDER_BYTES,
   SERVER_OUTDATED,
 } from '../src/index.ts'
 import { Relay } from '../src/testing.ts'
@@ -207,12 +212,67 @@ describe('RoomClient', () => {
     const newer = relay.create('ws://test')
     await vi.waitFor(() => expect(newer.readyState).toBe(1))
     // A message type, then an attachment kind, that b does not know.
-    newer.send(await encrypt(key, new Uint8Array([9, 1, 2, 3])))
-    newer.send(await encrypt(key, new Uint8Array([MessageType.Attachment, 9, 1, 2, 3])))
+    const sender = new Uint8Array(SENDER_BYTES).fill(1)
+    newer.send(await encrypt(key, encodeFrame(sender, 1, new Uint8Array([9, 1, 2, 3]))))
+    newer.send(
+      await encrypt(
+        key,
+        encodeFrame(sender, 2, new Uint8Array([MessageType.Attachment, 9, 1, 2, 3])),
+      ),
+    )
     await join(relay, key, 'after')
     await vi.waitFor(() => expect(text(b)).toBe('after'))
     expect(errors).toEqual([])
     newer.close()
+  })
+
+  it('takes each frame once, as the relay could send one again', async () => {
+    const relay = new Relay()
+    const key = await importKey(generateKey())
+    const errors: unknown[] = []
+    const got: string[] = []
+    const doc = new Y.Doc()
+    const b = new RoomClient({
+      admissionToken: 'A'.repeat(43),
+      url: 'ws://test',
+      key,
+      doc,
+      awareness: new Awareness(doc),
+      createSocket: relay.create,
+      onCanvas: (m) => got.push(m.id),
+      onError: (e) => errors.push(e),
+    })
+    clients.push(b)
+    b.connect()
+    await vi.waitFor(() => expect(b.status).toBe('connected'))
+    const peer = relay.create('ws://test')
+    await vi.waitFor(() => expect(peer.readyState).toBe(1))
+    const frame = (sender: number, counter: number, id: string) =>
+      encrypt(
+        key,
+        encodeFrame(
+          new Uint8Array(SENDER_BYTES).fill(sender),
+          counter,
+          encodeMessage(
+            MessageType.Canvas,
+            encodeCanvas({ kind: 'edit', id, base: '{}', next: '{}' }),
+          ),
+        ),
+      )
+    const first = await frame(1, 1, 'first')
+    for (const data of [
+      first,
+      await frame(1, 2, 'second'),
+      first,
+      await frame(1, 2, 'same counter'),
+      await frame(2, 1, 'other sender'),
+    ]) {
+      peer.send(data)
+    }
+    await vi.waitFor(() => expect(got).toEqual(['first', 'second', 'other sender']))
+    expect(errors).toHaveLength(2)
+    for (const e of errors) expect(e).toBeInstanceOf(ReplayedFrameError)
+    peer.close()
   })
 
   it('reconnects after the socket drops', async () => {
@@ -229,7 +289,7 @@ describe('RoomClient', () => {
     const relay = new Relay()
     await join(relay, await importKey(generateKey()), '', undefined, { Authorization: 'Bearer t' })
     expect(relay.headers).toEqual([{ Authorization: 'Bearer t' }])
-    expect(relay.protocols).toEqual([['pedit-v1', `pedit-admission.${'A'.repeat(43)}`]])
+    expect(relay.protocols).toEqual([['pedit-v2', `pedit-admission.${'A'.repeat(43)}`]])
     expect(relay.urls).toEqual(['ws://test'])
   })
 

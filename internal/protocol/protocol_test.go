@@ -88,7 +88,7 @@ func TestFrameLimit(t *testing.T) {
 	}
 	c := newCipher(t)
 	for _, n := range []int{0, 1, 1000} {
-		frame := c.Encrypt(protocol.EncodeMessage(protocol.MessageSync, make([]byte, n)))
+		frame := c.Encrypt(protocol.EncodeFrame(protocol.Sender{}, 1, protocol.EncodeMessage(protocol.MessageSync, make([]byte, n))))
 		if len(frame) != protocol.FrameBytes(n) {
 			t.Errorf("a payload of %d bytes is a frame of %d, FrameBytes says %d", n, len(frame), protocol.FrameBytes(n))
 		}

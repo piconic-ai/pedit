@@ -2,8 +2,10 @@ package canvas
 
 import (
 	"encoding/json"
+	"math"
 
 	"github.com/reearth/ygo/crdt"
+	"github.com/reearth/ygo/encoding"
 )
 
 // The shared types a canvas room keeps its content in. packages/web reads the
@@ -108,9 +110,16 @@ func readItems(a *crdt.YArray) []map[string]any {
 
 // plain turns a document value into decoded JSON: shared types into their
 // content, and every number type into int64 when whole, float64 otherwise.
-// Yjs sends 1.5 as a float32 and whole numbers as integers.
+// Yjs sends 1.5 as a float32 and whole numbers as integers. Any peer can put
+// anything in the document, so what JSON cannot hold becomes nil: NaN and
+// infinities, binary, subdocuments and the other shared types. Passing those
+// on would make Render fail, and Apply panic on an attached type.
 func plain(v any) any {
 	switch v := v.(type) {
+	case nil, bool, string, int64:
+		return v
+	case encoding.BigInt:
+		return int64(v)
 	case *crdt.YText:
 		return v.ToString()
 	case *crdt.YMap, *crdt.YArray:
@@ -158,11 +167,15 @@ func plain(v any) any {
 	case uint64:
 		return int64(v)
 	}
-	return v
+	return nil
 }
 
-// whole makes a float that holds a whole number an int64, as Parse would read it.
+// whole makes a float that holds a whole number an int64, as Parse would read
+// it, and one that JSON cannot hold nil.
 func whole(f float64) any {
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return nil
+	}
 	if f == float64(int64(f)) && f >= -1<<53 && f <= 1<<53 {
 		return int64(f)
 	}

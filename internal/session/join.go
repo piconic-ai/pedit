@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/piconic-ai/pedit/internal/filewriter"
 	"github.com/piconic-ai/pedit/internal/protocol"
@@ -377,6 +378,13 @@ func hostState(aw *awareness.Awareness) (map[string]any, bool) {
 // sharedFileName takes the file name the host shares, which comes from the
 // room: only a plain name is accepted, never a path, and nothing that changes
 // how the name prints. "invoice\u202ecod.md" would show as invoicedm.doc.
+// The path of the copy is put on the clipboard to paste after an editor's
+// name in a shell, so it must stay one plain argument there: in sh, cmd and
+// PowerShell alike. Of ASCII, only letters, digits and "._-+,@=" are kept,
+// and anything else becomes "_", so a name cannot add a word, quote, option,
+// expansion or operator: "notes -c '!sh' x.md" is saved as
+// notes_-c___sh__x.md. Other characters are kept, but for the spaces, and
+// the quotes and dashes PowerShell reads like ASCII ones.
 func sharedFileName(host map[string]any) (string, bool) {
 	name, _ := host["file"].(string)
 	if name == "" || name == "." || name == ".." || len(name) > 255 {
@@ -390,7 +398,22 @@ func sharedFileName(host map[string]any) (string, bool) {
 			return "", false
 		}
 	}
-	return name, true
+	return strings.Map(func(r rune) rune {
+		if plainInShells(r) {
+			return r
+		}
+		return '_'
+	}, name), true
+}
+
+// plainInShells tells a character that means nothing but itself in sh, cmd
+// and PowerShell, outside quotes.
+func plainInShells(r rune) bool {
+	if r < utf8.RuneSelf {
+		return 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || '0' <= r && r <= '9' || strings.ContainsRune("._-+,@=", r)
+	}
+	// PowerShell takes these dashes and quotes for "-", ' and ".
+	return !unicode.IsSpace(r) && !unicode.Is(unicode.Zs, r) && (r < '\u2013' || r > '\u201e' || r == '\u2016' || r == '\u2017')
 }
 
 // parseShareURL returns the room's WebSocket URL, its ID and the key from a

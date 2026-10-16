@@ -17,10 +17,10 @@ key as the capability.
 WebSocket clients offer two subprotocols:
 
 ```text
-Sec-WebSocket-Protocol: pedit-v1, pedit-admission.<token>
+Sec-WebSocket-Protocol: pedit-v2, pedit-admission.<token>
 ```
 
-The server selects only `pedit-v1`, never echoes the capability, and rejects
+The server selects only `pedit-v2`, never echoes the capability, and rejects
 missing, malformed, or multiple admission tokens. Browsers use the standard
 WebSocket protocols argument; the Go client uses its handshake options.
 Blob GET and PUT requests send `X-Pedit-Admission: <token>`. The capability

@@ -5,7 +5,7 @@ export const ADMISSION_HEADER = 'X-Pedit-Admission'
  * The wire format version. Bump it only for changes older peers cannot skip;
  * adding a message type or kind does not need a bump.
  */
-export const PROTOCOL_VERSION = 1
+export const PROTOCOL_VERSION = 2
 export const SOCKET_PROTOCOL = `pedit-v${PROTOCOL_VERSION}`
 const VERSION_PROTOCOL = /^pedit-v(0|[1-9][0-9]{0,8})$/
 export const ADMISSION_PROTOCOL_PREFIX = 'pedit-admission.'
