@@ -33,7 +33,7 @@ const webUrl = (url: string | undefined) => (url && /^https?:\/\//i.test(url) ? 
  * A field as the text a card shows. read() lets only strings through, but a
  * slot renders an object it is given as markup, so nothing else gets near one.
  */
-const textOf = (v: unknown) => (typeof v === 'string' ? v : '')
+const shownText = (v: unknown) => (typeof v === 'string' ? v : '')
 
 /** A node's colour: a preset "1" to "6" goes to CSS, a hex colour is set as it is. */
 const presetOf = (color: string | undefined) => (color && /^[1-6]$/.test(color) ? color : undefined)
@@ -56,13 +56,13 @@ export function CanvasCard(props: NodeBase) {
     if (!n) return ''
     switch (n.type) {
       case 'text':
-        return textOf(n.text)
+        return shownText(n.text)
       case 'file':
-        return textOf(n.file) + textOf(n.subpath)
+        return shownText(n.file) + shownText(n.subpath)
       case 'group':
-        return textOf(n.label)
+        return shownText(n.label)
       default:
-        return textOf(n.type)
+        return shownText(n.type)
     }
   }
   // Others on this node; their colour is a hex colour, from participants().
@@ -108,7 +108,7 @@ export function CanvasCard(props: NodeBase) {
         target="_blank"
         rel="noopener noreferrer"
       >
-        {textOf(node()?.url)}
+        {shownText(node()?.url)}
       </a>
     </div>
   )
