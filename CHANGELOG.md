@@ -1,5 +1,14 @@
 # Changelog
 
+## [v0.1.7](https://github.com/piconic-ai/pedit/compare/v0.1.6...v0.1.7) - 2026-10-16
+
+- Keep a peer from crashing the host with canvas values JSON cannot hold by @kfly8 in https://github.com/piconic-ai/pedit/pull/146
+- Keep the blob route from admitting anyone as the room's host by @kfly8 in https://github.com/piconic-ai/pedit/pull/147
+- Check who owns the configuration file on Windows too by @kfly8 in https://github.com/piconic-ai/pedit/pull/149
+- Check a canvas node's string fields whatever its type by @kfly8 in https://github.com/piconic-ai/pedit/pull/150
+- Keep names and replies from others out of the terminal and the shell by @kfly8 in https://github.com/piconic-ai/pedit/pull/151
+- Number frames so the relay cannot replay them by @kfly8 in https://github.com/piconic-ai/pedit/pull/152
+
 ## [v0.1.6](https://github.com/piconic-ai/pedit/compare/v0.1.5...v0.1.6) - 2026-10-15
 
 - Note the MEDIA_SOURCES change for self-hosted relays in the v0.1.5 changelog by @kfly8 in https://github.com/piconic-ai/pedit/pull/133
