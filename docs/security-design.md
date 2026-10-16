@@ -36,7 +36,9 @@ To run no code from the relay:
   the raw link key, not passed through HKDF (`packages/protocol/src/key.ts`,
   `internal/protocol/cipher.go`). Each frame gets a random 96-bit IV and is
   sent as `iv || ciphertext`, the 128-bit tag at the end, with no additional
-  authenticated data.
+  authenticated data. Inside, before the message, are the sender's random
+  16-byte ID and the number of the frame, counted by each sender
+  (`packages/protocol/src/frame.ts`, `internal/protocol/message.go`).
 - **Attachment keys.** HKDF-SHA256 of the room key, empty salt. Info
   `pedit blob enc v1` gives the AES-256-GCM key for image bodies, and
   `pedit blob id v1` the HMAC-SHA256 key that names each stored image from its
@@ -69,14 +71,20 @@ It sees:
 - the IDs, number and sizes of encrypted images (the same image shared twice in
   a room has the same ID)
 
-It can drop, delay, replay or reorder frames, close connections and refuse
-service. Document updates are Yjs updates, which can be applied in any order
-and more than once
+It can drop, delay or reorder frames, close connections and refuse service.
+Document updates are Yjs updates, which can be applied in any order
 ([Yjs](https://github.com/yjs/yjs/blob/main/README.md#document-updates)), so
-replaying or reordering them does not change the document. Canvas edits typed
-as JSON in the browser are not Yjs updates: the host applies each one once by
-its ID but remembers only the last 256 IDs, so an edit frame that the relay
-replays after 256 later edits is applied again.
+reordering them does not change the document. It can also send a frame
+again, but peers drop it: each frame carries its sender's ID and number, and
+a peer takes a frame only when its number is above the last one it had from
+that sender, and never its own back. A new key is made for every room and the
+host stays for the room's whole life, so the host never applies a frame
+twice, which matters for canvas edits typed as JSON in the browser: they are
+not Yjs updates, and applying one twice is not the same as once. A peer that
+joins later has not seen earlier frames, so the relay can send it frames from
+before it joined. It gets nothing new from them: the Yjs updates are already
+in the document it syncs, and an old cursor or name expires after 30 seconds
+like any other.
 
 It cannot read frames or images, and cannot make frames that peers accept:
 AES-GCM rejects a frame made or altered without the key.

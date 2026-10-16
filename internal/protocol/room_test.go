@@ -1,9 +1,11 @@
 package protocol_test
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -36,6 +38,7 @@ type joinOpts struct {
 	header       http.Header
 	onError      func(error)
 	onAttachment func(protocol.Attachment)
+	onCanvas     func(protocol.CanvasMessage)
 	onSynced     func()
 	busyBackoff  time.Duration
 	onStatus     func(protocol.Status)
@@ -69,6 +72,7 @@ func join(t *testing.T, relay *prototest.Relay, key string, o joinOpts) *peer {
 		OnStatus:     o.onStatus,
 		OnError:      o.onError,
 		OnAttachment: o.onAttachment,
+		OnCanvas:     o.onCanvas,
 		OnSynced:     o.onSynced,
 	})
 	if err != nil {
@@ -250,11 +254,11 @@ func TestSkipsMessagesFromNewerPeers(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
-	for _, m := range [][]byte{
+	for i, m := range [][]byte{
 		protocol.EncodeMessage(9, []byte{1, 2, 3}),
 		protocol.EncodeMessage(protocol.MessageAttachment, []byte{9, 1, 2, 3}),
 	} {
-		if err := conn.Write(t.Context(), c.Encrypt(m)); err != nil {
+		if err := conn.Write(t.Context(), c.Encrypt(protocol.EncodeFrame(protocol.Sender{1}, uint64(i+1), m))); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -264,6 +268,72 @@ func TestSkipsMessagesFromNewerPeers(t *testing.T) {
 	defer mu.Unlock()
 	if len(errs) > 0 {
 		t.Fatalf("errors: %v", errs)
+	}
+}
+
+// TestDropsReplayedFrames: the relay can send any frame it relayed again, or
+// back to the peer that sent it. A canvas edit applied twice is not the
+// same as once, so peers take each frame once.
+func TestDropsReplayedFrames(t *testing.T) {
+	relay := prototest.NewRelay(false)
+	key := protocol.GenerateKey()
+	var mu sync.Mutex
+	var edits []string
+	var errs []error
+	b := join(t, relay, key, joinOpts{
+		onCanvas: func(m protocol.CanvasMessage) {
+			mu.Lock()
+			defer mu.Unlock()
+			edits = append(edits, m.ID)
+		},
+		onError: func(err error) {
+			mu.Lock()
+			defer mu.Unlock()
+			errs = append(errs, err)
+		},
+	})
+	prototest.WaitFor(t, wait, func() bool { return b.Status() == protocol.StatusConnected }, "b connected")
+
+	raw, _ := protocol.DecodeKey(key)
+	c, _ := protocol.NewCipher(raw)
+	conn, err := relay.Dial(t.Context(), "ws://test", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	edit := func(id string) []byte {
+		payload, err := protocol.EncodeCanvas(protocol.CanvasMessage{Kind: protocol.CanvasEdit, ID: id, Base: "{}", Next: "{}"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return protocol.EncodeMessage(protocol.MessageCanvas, payload)
+	}
+	first := c.Encrypt(protocol.EncodeFrame(protocol.Sender{1}, 1, edit("first")))
+	for _, frame := range [][]byte{
+		first,
+		c.Encrypt(protocol.EncodeFrame(protocol.Sender{1}, 2, edit("second"))),
+		first, // sent again
+		c.Encrypt(protocol.EncodeFrame(protocol.Sender{1}, 2, edit("same counter"))),
+		c.Encrypt(protocol.EncodeFrame(protocol.Sender{2}, 1, edit("other sender"))),
+	} {
+		if err := conn.Write(t.Context(), frame); err != nil {
+			t.Fatal(err)
+		}
+	}
+	prototest.WaitFor(t, wait, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(edits) == 3 && len(errs) == 2
+	}, "the new frames, and the replays refused")
+	mu.Lock()
+	defer mu.Unlock()
+	if !slices.Equal(edits, []string{"first", "second", "other sender"}) {
+		t.Errorf("edits = %v", edits)
+	}
+	for _, err := range errs {
+		if !errors.Is(err, protocol.ErrReplayedFrame) {
+			t.Errorf("err = %v", err)
+		}
 	}
 }
 

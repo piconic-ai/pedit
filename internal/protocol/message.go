@@ -1,8 +1,11 @@
 package protocol
 
 import (
+	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"sync"
 )
 
 type MessageType byte
@@ -61,9 +64,9 @@ const MessageTooBig = 1009
 // MAX_FRAME_BYTES in packages/protocol, which the relay uses.
 const MaxFrameBytes = 1 << 20
 
-// FrameOverhead is what a frame adds to its payload: the message type byte,
-// and AES-GCM's IV and tag.
-const FrameOverhead = 1 + ivBytes + tagBytes // 29
+// FrameOverhead is what a frame adds to its payload: the sender and counter
+// (EncodeFrame), the message type byte, and AES-GCM's IV and tag.
+const FrameOverhead = frameHeaderBytes + 1 + ivBytes + tagBytes // 53
 
 // FrameBytes is the size on the wire of a frame carrying payload bytes.
 func FrameBytes(payload int) int { return payload + FrameOverhead }
@@ -94,4 +97,74 @@ func DecodeMessage(data []byte) (MessageType, []byte, error) {
 		return t, data[1:], nil
 	}
 	return 0, nil, fmt.Errorf("%w: %d", ErrUnknownMessageType, data[0])
+}
+
+// A frame encrypts `sender || counter || message`. The relay could otherwise
+// send a frame again, and a canvas edit applied twice is not the same as once
+// (Yjs updates and awareness are). Each client picks a random sender when it
+// starts and counts the frames it sends from 1, across reconnects; receivers
+// drop a frame whose counter is not above the last one from its sender. The
+// room key is new for every room and the host stays for its whole life, so
+// the host never applies a frame twice. Keep in sync with packages/protocol.
+const (
+	SenderBytes      = 16
+	frameHeaderBytes = SenderBytes + 8
+)
+
+// Sender is the random id a client puts on every frame it sends.
+type Sender [SenderBytes]byte
+
+func newSender() Sender {
+	var s Sender
+	_, _ = rand.Read(s[:]) // never fails
+	return s
+}
+
+// ErrReplayedFrame marks a frame received before, or one of our own: only the
+// relay can send those.
+var ErrReplayedFrame = errors.New("frame received twice")
+
+// EncodeFrame puts the sender and its counter before a message (EncodeMessage):
+// what a frame encrypts.
+func EncodeFrame(from Sender, counter uint64, message []byte) []byte {
+	out := make([]byte, frameHeaderBytes+len(message))
+	copy(out, from[:])
+	binary.BigEndian.PutUint64(out[SenderBytes:], counter)
+	copy(out[frameHeaderBytes:], message)
+	return out
+}
+
+// DecodeFrame reverses EncodeFrame.
+func DecodeFrame(data []byte) (Sender, uint64, []byte, error) {
+	var from Sender
+	if len(data) < frameHeaderBytes {
+		return from, 0, nil, errors.New("frame too short")
+	}
+	copy(from[:], data)
+	return from, binary.BigEndian.Uint64(data[SenderBytes:]), data[frameHeaderBytes:], nil
+}
+
+// replayGuard remembers the last counter from each sender. Only peers with
+// the key can add senders, so it grows with the people who joined the room.
+type replayGuard struct {
+	self Sender
+	mu   sync.Mutex
+	last map[Sender]uint64
+}
+
+// accept tells whether a frame is new, and if it is, remembers it.
+func (g *replayGuard) accept(from Sender, counter uint64) bool {
+	if from == g.self {
+		return false
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if counter <= g.last[from] {
+		return false
+	}
+	if g.last == nil {
+		g.last = map[Sender]uint64{}
+	}
+	g.last[from] = counter
+	return true
 }

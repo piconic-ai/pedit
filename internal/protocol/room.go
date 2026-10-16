@@ -118,6 +118,12 @@ type Client struct {
 	// applying serializes applying remote updates with Do.
 	applying sync.Mutex
 
+	// sendMu numbers frames in the order they are queued: receivers drop
+	// one numbered below one they already have.
+	sendMu sync.Mutex
+	sent   uint64
+	guard  replayGuard
+
 	mu        sync.Mutex
 	status    Status
 	out       *outbox
@@ -169,6 +175,7 @@ func NewClient(opts ClientOptions) (*Client, error) {
 		cancel: cancel,
 		done:   make(chan struct{}),
 	}
+	c.guard.self = newSender()
 	c.unsubs = []func(){
 		c.doc.OnUpdate(c.handleDocUpdate),
 		c.aw.OnUpdate(c.handleAwarenessUpdate),
@@ -363,7 +370,14 @@ func (c *Client) receive(data []byte) error {
 	if err != nil {
 		return err
 	}
-	t, payload, err := DecodeMessage(plaintext)
+	from, counter, message, err := DecodeFrame(plaintext)
+	if err != nil {
+		return err
+	}
+	if !c.guard.accept(from, counter) {
+		return ErrReplayedFrame
+	}
+	t, payload, err := DecodeMessage(message)
 	if errors.Is(err, ErrUnknownMessageType) {
 		// A newer peer may send message types we do not know yet.
 		return nil
@@ -517,7 +531,10 @@ func (c *Client) send(t MessageType, payload []byte) {
 		out.fail(ErrFrameTooLarge)
 		return
 	}
-	out.push(c.cipher.Encrypt(EncodeMessage(t, payload)))
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	c.sent++
+	out.push(c.cipher.Encrypt(EncodeFrame(c.guard.self, c.sent, EncodeMessage(t, payload))))
 }
 
 func (c *Client) setStatus(s Status) {

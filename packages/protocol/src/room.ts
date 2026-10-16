@@ -23,7 +23,15 @@ import {
   ROOM_FULL,
   SERVER_OUTDATED,
 } from './close.ts'
-import { frameBytes, MAX_FRAME_BYTES } from './frame.ts'
+import {
+  decodeFrame,
+  encodeFrame,
+  frameBytes,
+  MAX_FRAME_BYTES,
+  ReplayedFrameError,
+  ReplayGuard,
+  SENDER_BYTES,
+} from './frame.ts'
 import {
   decodeMessage,
   encodeMessage,
@@ -135,6 +143,10 @@ export class RoomClient {
   private destroyed = false
   private sendChain: Promise<void> = Promise.resolve()
   private receiveChain: Promise<void> = Promise.resolve()
+  // Who we are on the frames we send, and how many we numbered (frame.ts).
+  private readonly sender = globalThis.crypto.getRandomValues(new Uint8Array(SENDER_BYTES))
+  private sent = 0
+  private readonly guard = new ReplayGuard(this.sender)
 
   constructor(opts: RoomClientOptions) {
     this.opts = opts
@@ -241,7 +253,9 @@ export class RoomClient {
   private async receive(data: Uint8Array): Promise<void> {
     let message: Message
     try {
-      message = decodeMessage(await decrypt(this.opts.key, data))
+      const frame = decodeFrame(await decrypt(this.opts.key, data))
+      if (!this.guard.accept(frame.sender, frame.counter)) throw new ReplayedFrameError()
+      message = decodeMessage(frame.message)
     } catch (error) {
       // A newer peer may send message types we do not know yet.
       if (error instanceof UnknownMessageTypeError) return
@@ -332,7 +346,8 @@ export class RoomClient {
       this.tooLarge(socket)
       return
     }
-    const plaintext = encodeMessage(type, payload)
+    // Numbered now, in the order frames are produced, which the chain keeps.
+    const plaintext = encodeFrame(this.sender, ++this.sent, encodeMessage(type, payload))
     this.sendChain = this.sendChain
       .then(async () => {
         const data = await encrypt(this.opts.key, plaintext)

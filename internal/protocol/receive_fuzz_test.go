@@ -10,7 +10,7 @@ import (
 )
 
 // FuzzReceive feeds a client what any peer in the room can send: every
-// frame, once decrypted with the shared key, goes through receive into the
+// message, once decrypted with the shared key, goes through receive into the
 // Yjs document and awareness. A peer must not be able to crash the CLI.
 func FuzzReceive(f *testing.F) {
 	peer := crdt.New()
@@ -39,6 +39,8 @@ func FuzzReceive(f *testing.F) {
 			t.Fatal(err)
 		}
 		defer c.Destroy()
-		_ = c.receive(c.cipher.Encrypt(plaintext)) // an error is fine, a panic is not
+		// From a sender the client has not heard from: the message is what varies.
+		frame := EncodeFrame(Sender{1}, 1, plaintext)
+		_ = c.receive(c.cipher.Encrypt(frame)) // an error is fine, a panic is not
 	})
 }
