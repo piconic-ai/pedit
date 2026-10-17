@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.1.8](https://github.com/piconic-ai/pedit/compare/v0.1.7...v0.1.8) - 2026-10-17
+
+- Say that pedit checks the configuration file's owner on Windows too by @kfly8 in https://github.com/piconic-ai/pedit/pull/154
+
 ## [v0.1.7](https://github.com/piconic-ai/pedit/compare/v0.1.6...v0.1.7) - 2026-10-16
 
 - Keep a peer from crashing the host with canvas values JSON cannot hold by @kfly8 in https://github.com/piconic-ai/pedit/pull/146
