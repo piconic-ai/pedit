@@ -67,6 +67,14 @@ describe('embedFor', () => {
     expect(embedFor('https://vimeo.com/76979871', all)).toMatchObject({ provider: 'vimeo' })
   })
 
+  it.each(['https://player.vimeo.com/video/abc/xyz', 'https://www.youtube-nocookie.com/embed/'])(
+    'leaves player URL %s that names no video a link, with or without frame sources',
+    (href) => {
+      expect(embedFor(href)).toBeNull()
+      expect(embedFor(href, { sources: [], page })).toBeNull()
+    },
+  )
+
   it.each([
     'https://example.com/clip.mp4',
     'https://example.com/clip.WEBM?token=1',

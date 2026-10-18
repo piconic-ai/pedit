@@ -155,5 +155,8 @@ export function embedFor(href: string, custom?: FrameSources): Embed | null {
   const player = frame(youtube(url)) ?? frame(vimeo(url))
   if (player) return player
   if (isVideoFile(url)) return { kind: 'video', src: url.href }
-  return custom ? frame(url.href, custom) : null
+  // Only FRAME_SOURCES are framed as they are; a player URL that youtube() or
+  // vimeo() did not take stays a link, as it does without frame sources.
+  const f = frameFor(url.href, custom)
+  return f?.provider === 'custom' ? { kind: 'frame', src: url.href, ...f } : null
 }

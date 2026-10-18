@@ -287,6 +287,15 @@ describe('render', () => {
     )
   })
 
+  it.each(['https://player.vimeo.com/video/abc/xyz', 'https://www.youtube-nocookie.com/embed/'])(
+    'keeps player URL %s that names no video a link',
+    (href) => {
+      const out = dom(href, [], [])
+      expect(out.querySelector('iframe')).toBeNull()
+      expect(out.querySelector('a')?.getAttribute('href')).toBe(href)
+    },
+  )
+
   describe('with frame sources', () => {
     it('frames a bare URL they match as a generic frame', () => {
       const out = dom('https://embed.example.com/v/1?x=2', [], ['https://embed.example.com/v/'])
