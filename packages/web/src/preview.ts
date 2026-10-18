@@ -317,8 +317,12 @@ export function loadEmbed(
   iframe.setAttribute('referrerpolicy', FRAME_REFERRER_POLICY)
   iframe.title = frame.title
   iframe.src = src
-  // patch() compares blocks by the key it noted for the placeholder, so the
-  // player stays while the paragraph with its URL is unchanged.
+  // patch() compares blocks by the key noted before the player loaded, so the
+  // player stays while the paragraph with its URL is unchanged. Note the keys
+  // of the blocks it sits in, such as a list item, while they look as rendered.
+  for (let el: Element | null = placeholder; el?.hasAttribute('data-line'); el = el.parentElement) {
+    keyOf(el)
+  }
   placeholder.replaceChildren(iframe)
   placeholder.classList.add('embed--loaded')
   iframe.focus()
@@ -345,10 +349,21 @@ function keyOf(node: Node): string {
   return key
 }
 
+/** The element and its descendants, leaving out what a loaded player replaced. */
+function elements(root: Element): Element[] {
+  const found = [root]
+  if (!root.hasAttribute('data-embed-src')) {
+    for (const child of root.children) found.push(...elements(child))
+  }
+  return found
+}
+
 function copyLines(from: Node | undefined, to: Node): void {
   if (!(from instanceof Element) || !(to instanceof Element)) return
-  const source = [from, ...from.querySelectorAll('*')]
-  const target = [to, ...to.querySelectorAll('*')]
+  // A loaded embed holds a frame where the fresh one has its placeholder, so
+  // pair descendants without looking inside embeds.
+  const source = elements(from)
+  const target = elements(to)
   source.forEach((el, i) => {
     const line = el.getAttribute('data-line')
     const to = target[i]
@@ -358,14 +373,84 @@ function copyLines(from: Node | undefined, to: Node): void {
   })
 }
 
+/** An element's tag and attributes, apart from its line. */
+function shellOf(el: Element): string {
+  const attributes = [...el.attributes]
+    .filter((a) => a.name !== 'data-line')
+    .map((a) => `${a.name}=${a.value}`)
+  return [el.tagName, ...attributes].join(' ')
+}
+
+/**
+ * How well an old node can stand for a fresh one: 2 when it looks the same,
+ * 1 when it holds a loaded player and only its children differ (a list whose
+ * other item changed), so its children are patched in turn. Whitespace between
+ * blocks is never matched: it would pull the matching away from the blocks.
+ */
+function affinity(old: Node, fresh: Node): number {
+  if (old.nodeType === Node.TEXT_NODE && old.textContent?.trim() === '') return 0
+  if (keyOf(old) === keyOf(fresh)) return 2
+  if (
+    old instanceof Element &&
+    fresh instanceof Element &&
+    old.querySelector('.embed--loaded') &&
+    shellOf(old) === shellOf(fresh)
+  ) {
+    return 1
+  }
+  return 0
+}
+
+// Beyond this many comparisons the middle of a patch is rebuilt rather than matched.
+const MATCH_LIMIT = 1 << 20
+
+/** Pairs old and fresh nodes in order, keeping as many (and as similar) as possible. */
+function match(before: Node[], after: Node[]): Map<number, [number, number]> {
+  const pairs = new Map<number, [number, number]>()
+  const [n, m] = [before.length, after.length]
+  if (n === 0 || m === 0 || n * m > MATCH_LIMIT) return pairs
+  const score = new Uint8Array(n * m)
+  const at = (i: number, j: number) => i * m + j
+  // best[i][j]: the most that before[i..] and after[j..] can keep.
+  const best = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1))
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      const s = affinity(before[i] as Node, after[j] as Node)
+      score[at(i, j)] = s
+      const row = best[i] as Uint32Array
+      const below = best[i + 1] as Uint32Array
+      row[j] = Math.max(
+        below[j] as number,
+        row[j + 1] as number,
+        s ? s + (below[j + 1] as number) : 0,
+      )
+    }
+  }
+  let [i, j] = [0, 0]
+  while (i < n && j < m) {
+    const s = score[at(i, j)] as number
+    const here = (best[i] as Uint32Array)[j] as number
+    if (s && here === s + ((best[i + 1] as Uint32Array)[j + 1] as number)) {
+      pairs.set(j, [i, s])
+      i++
+      j++
+    } else if (here === (best[i + 1] as Uint32Array)[j]) i++
+    else j++
+  }
+  return pairs
+}
+
 /**
  * Replaces the container's children with the fragment's, leaving unchanged
  * blocks in place so that images and players inside them do not reload while
  * someone types elsewhere.
  */
 export function patch(container: Element, fragment: DocumentFragment): void {
+  patchChildren(container, [...fragment.childNodes])
+}
+
+function patchChildren(container: Node, after: Node[]): void {
   const before = [...container.childNodes]
-  const after = [...fragment.childNodes]
   const same = (a: Node | undefined, b: Node | undefined) =>
     a !== undefined && b !== undefined && keyOf(a) === keyOf(b)
   let head = 0
@@ -385,23 +470,29 @@ export function patch(container: Element, fragment: DocumentFragment): void {
   // moving them, such as a player someone loaded: a frame reloads when it moves.
   const end = before.length - tail
   const anchor = before[end] ?? null
-  const remaining = new Map<string, number[]>()
-  for (let i = head; i < end; i++) {
-    const key = keyOf(before[i] as Node)
-    const at = remaining.get(key)
-    if (at) at.push(i)
-    else remaining.set(key, [i])
-  }
+  const middle = after.slice(head, after.length - tail)
+  const pairs = match(before.slice(head, end), middle)
   let next = head
-  for (const node of after.slice(head, after.length - tail)) {
-    const match = remaining.get(keyOf(node))?.find((i) => i >= next)
-    if (match === undefined) {
+  middle.forEach((node, j) => {
+    const pair = pairs.get(j)
+    if (pair === undefined) {
       container.insertBefore(node, next < end ? (before[next] as Node) : anchor)
-      continue
+      return
     }
-    for (const old of before.slice(next, match)) old.remove()
-    copyLines(node, before[match] as Node)
-    next = match + 1
-  }
+    const [i, score] = pair
+    const old = before[head + i] as Element
+    for (const gone of before.slice(next, head + i)) gone.remove()
+    if (score === 2) copyLines(node, old)
+    else {
+      // The old element now stands for the fresh one: note its key first, as
+      // patching takes the fresh one's children.
+      keys.set(old, keyOf(node))
+      const line = (node as Element).getAttribute('data-line')
+      if (line === null) old.removeAttribute('data-line')
+      else old.setAttribute('data-line', line)
+      patchChildren(old, [...node.childNodes])
+    }
+    next = head + i + 1
+  })
   for (const old of before.slice(next, end)) old.remove()
 }

@@ -556,6 +556,61 @@ describe('patch', () => {
     )
   })
 
+  it('keeps a loaded player when a block is added above it and another changes below', () => {
+    const container = document.createElement('div')
+    patch(container, render('a\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nb\n'))
+    const frame = loadEmbed(container.querySelector('[data-embed-src]') as Element, [])
+    expect(frame).not.toBeNull()
+
+    patch(container, render('a\n\nnew\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nB\n'))
+    expect(container.querySelector('iframe')).toBe(frame)
+    expect(container.textContent).toContain('new')
+    expect(container.textContent).toContain('B')
+
+    patch(container, render('x y\n\nnew\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nB\n'))
+    patch(container, render('x\n\ny\n\nnew\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nb\n'))
+    expect(container.querySelector('iframe')).toBe(frame)
+    expect(container.querySelector('.embed')?.getAttribute('data-line')).toBe('6')
+  })
+
+  it('keeps a loaded player in a list while its other items change', () => {
+    const container = document.createElement('div')
+    patch(container, render('a\n\n- https://youtu.be/dQw4w9WgXcQ\n- x\n\nb\n'))
+    const frame = loadEmbed(container.querySelector('[data-embed-src]') as Element, [])
+    expect(frame).not.toBeNull()
+
+    patch(container, render('a\n\n- https://youtu.be/dQw4w9WgXcQ\n- xy\n\nb\n'))
+    expect(container.querySelector('iframe')).toBe(frame)
+    expect(container.querySelectorAll('li')[1]?.textContent).toBe('xy')
+
+    patch(container, render('> a\n\n- https://youtu.be/dQw4w9WgXcQ\n- xy\n- z\n\nb\n'))
+    expect(container.querySelector('iframe')).toBe(frame)
+    expect([...container.querySelectorAll('li')].map((li) => li.textContent)).toEqual([
+      expect.anything(),
+      'xy',
+      'z',
+    ])
+
+    // Editing the player's own item still turns it back into a placeholder.
+    patch(container, render('> a\n\n- https://youtu.be/dQw4w9WgXcQ?t=5\n- xy\n- z\n\nb\n'))
+    expect(container.querySelector('iframe')).toBeNull()
+    expect(container.innerHTML).toBe(
+      html('> a\n\n- https://youtu.be/dQw4w9WgXcQ?t=5\n- xy\n- z\n\nb\n'),
+    )
+  })
+
+  it('updates the lines after a loaded player in a list', () => {
+    const container = document.createElement('div')
+    patch(container, render('a\n\n- https://youtu.be/dQw4w9WgXcQ\n- next\n'))
+    loadEmbed(container.querySelector('[data-embed-src]') as Element, [])
+
+    patch(container, render('a\n\nb\n\n- https://youtu.be/dQw4w9WgXcQ\n- next\n'))
+    expect([...container.querySelectorAll('li')].map((li) => li.getAttribute('data-line'))).toEqual(
+      ['4', '5'],
+    )
+    expect(container.querySelector('.embed')?.getAttribute('data-line')).toBe('4')
+  })
+
   it('keeps unchanged blocks in place and updates their lines', () => {
     const container = document.createElement('div')
     patch(container, render('# A\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nold\n\nend\n'))
