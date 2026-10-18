@@ -1,3 +1,4 @@
+import { FRAMES } from '@pedit/protocol/csp'
 import { describe, expect, it } from 'vitest'
 import {
   ALWAYS_LOAD_KEY,
@@ -64,6 +65,43 @@ describe('providerLabel', () => {
 
   it('spells out plain HTTP', () => {
     expect(providerLabel('custom:http://embed.example.com')).toBe('http://embed.example.com')
+  })
+})
+
+describe('the built-in providers', () => {
+  const labels = {
+    youtube: 'YouTube',
+    vimeo: 'Vimeo',
+    loom: 'Loom',
+    figma: 'Figma',
+    codepen: 'CodePen',
+    stackblitz: 'StackBlitz',
+    observable: 'Observable',
+    spotify: 'Spotify',
+    soundcloud: 'SoundCloud',
+    miro: 'Miro',
+  }
+
+  it('has an id and a label for every provider in FRAMES', () => {
+    expect(Object.keys(labels).sort()).toEqual(Object.keys(FRAMES).sort())
+    for (const [id, label] of Object.entries(labels)) {
+      expect(isProviderId(id)).toBe(true)
+      expect(providerLabel(id)).toBe(label)
+    }
+  })
+
+  it.each(['Figma', 'figma ', 'codepen.io', 'custom:figma', 'hasOwnProperty'])('rejects %j', (id) =>
+    expect(isProviderId(id)).toBe(false),
+  )
+
+  it('remembers and stores them like the others', () => {
+    const store = memory()
+    const always = new AlwaysLoad(store)
+    always.remember('figma')
+    always.remember('soundcloud')
+    expect(always.has('figma')).toBe(true)
+    expect(store.data.get(ALWAYS_LOAD_KEY)).toBe('["figma","soundcloud"]')
+    expect(loadAlwaysLoad(store)).toEqual(['figma', 'soundcloud'])
   })
 })
 

@@ -5,6 +5,7 @@ import {
   allowsMedia,
   contentSecurityPolicy,
   coversOrigin,
+  FRAME_PREFIXES,
   FRAMES,
   parseFrameSources,
   parseMediaSources,
@@ -189,6 +190,27 @@ describe('allowsMedia', () => {
   })
 })
 
+describe('FRAMES', () => {
+  it('lists each provider by its player paths, with no duplicates', () => {
+    expect(FRAME_PREFIXES).toEqual(Object.values(FRAMES).flat())
+    expect(new Set(FRAME_PREFIXES).size).toBe(FRAME_PREFIXES.length)
+    expect(FRAMES.youtube).toEqual(['https://www.youtube-nocookie.com/embed/'])
+    expect(FRAMES.vimeo).toEqual(['https://player.vimeo.com/video/'])
+  })
+
+  it('names https sources that parseFrameSources would accept', () => {
+    for (const prefix of FRAME_PREFIXES) {
+      expect(prefix).toMatch(/^https:\/\/[a-z0-9.-]+\/([\w.-]+\/)*$/)
+      expect(parseFrameSources(prefix)).toEqual([prefix])
+    }
+  })
+
+  it('allows a whole origin only for CodePen, whose player paths no prefix can name', () => {
+    const wide = FRAME_PREFIXES.filter((p) => new URL(p).pathname === '/')
+    expect(wide).toEqual(['https://codepen.io/'])
+  })
+})
+
 describe('contentSecurityPolicy', () => {
   const origin = new URL('https://pedit.test/r/abc')
 
@@ -200,7 +222,7 @@ describe('contentSecurityPolicy', () => {
         "style-src 'self' 'unsafe-inline'",
         "img-src 'self' blob: data: https://gravatar.com https://www.gravatar.com https://secure.gravatar.com https://avatars.githubusercontent.com https://lh3.googleusercontent.com",
         "media-src 'none'",
-        'frame-src https://www.youtube-nocookie.com/embed/ https://player.vimeo.com/video/',
+        'frame-src https://www.youtube-nocookie.com/embed/ https://player.vimeo.com/video/ https://www.loom.com/embed/ https://embed.figma.com/design/ https://embed.figma.com/board/ https://embed.figma.com/slides/ https://embed.figma.com/deck/ https://embed.figma.com/proto/ https://codepen.io/ https://stackblitz.com/edit/ https://stackblitz.com/github/ https://observablehq.com/embed/ https://open.spotify.com/embed/ https://w.soundcloud.com/player/ https://miro.com/app/live-embed/',
         "connect-src 'self' wss://pedit.test",
         "font-src 'self'",
         "object-src 'none'",
@@ -230,7 +252,10 @@ describe('contentSecurityPolicy', () => {
     const csp = contentSecurityPolicy({ scriptHashes: [], media: [], origin })
     const directive = (name: string) => csp.split('; ').find((d) => d.startsWith(`${name} `)) ?? ''
     for (const host of AVATAR_HOSTS) expect(directive('img-src')).toContain(`https://${host}`)
-    expect(directive('frame-src')).toBe(`frame-src ${FRAMES.youtube} ${FRAMES.vimeo}`)
+    expect(directive('frame-src')).toBe(`frame-src ${FRAME_PREFIXES.join(' ')}`)
+    for (const prefixes of Object.values(FRAMES)) {
+      for (const prefix of prefixes) expect(directive('frame-src')).toContain(` ${prefix}`)
+    }
   })
 
   it('adds the frame sources to frame-src only', () => {
@@ -241,7 +266,7 @@ describe('contentSecurityPolicy', () => {
       origin,
     })
     expect(csp).toContain(
-      `frame-src ${FRAMES.youtube} ${FRAMES.vimeo} https://embed.example.com b.example;`,
+      `frame-src ${FRAME_PREFIXES.join(' ')} https://embed.example.com b.example;`,
     )
     expect(csp).toContain("media-src 'none';")
     expect(contentSecurityPolicy({ scriptHashes: [], media: [], frames: [], origin })).toBe(

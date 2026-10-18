@@ -154,7 +154,8 @@ function embedHtml(embed: Embed, href: string, line: unknown): string {
   )
 }
 
-// A paragraph that is nothing but a YouTube, Vimeo, FRAME_SOURCES or video file URL
+// A paragraph that is nothing but a player's link (YouTube, Figma and so on), a
+// FRAME_SOURCES URL or a video file URL
 // becomes a player (a video) or a placeholder that loads one on request (a frame).
 md.core.ruler.after('linkify', 'embeds', (state) => {
   const tokens = state.tokens

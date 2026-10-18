@@ -104,7 +104,7 @@ describe('pages', () => {
     })
     const csp = res.headers.get('Content-Security-Policy') ?? ''
     expect(csp).toContain(
-      'frame-src https://www.youtube-nocookie.com/embed/ https://player.vimeo.com/video/ https://embed.example.com/v/ b.example;',
+      'frame-src https://www.youtube-nocookie.com/embed/ https://player.vimeo.com/video/ https://www.loom.com/embed/ https://embed.figma.com/design/ https://embed.figma.com/board/ https://embed.figma.com/slides/ https://embed.figma.com/deck/ https://embed.figma.com/proto/ https://codepen.io/ https://stackblitz.com/edit/ https://stackblitz.com/github/ https://observablehq.com/embed/ https://open.spotify.com/embed/ https://w.soundcloud.com/player/ https://miro.com/app/live-embed/ https://embed.example.com/v/ b.example;',
     )
     expect(csp).toContain("media-src 'none'")
     expect(await res.text()).toContain(
@@ -132,7 +132,7 @@ describe('pages', () => {
     const res = await call('https://pedit.test/', { FRAME_SOURCES: value })
     const csp = res.headers.get('Content-Security-Policy') ?? ''
     expect(csp).toContain(
-      'frame-src https://www.youtube-nocookie.com/embed/ https://player.vimeo.com/video/;',
+      'frame-src https://www.youtube-nocookie.com/embed/ https://player.vimeo.com/video/ https://www.loom.com/embed/ https://embed.figma.com/design/ https://embed.figma.com/board/ https://embed.figma.com/slides/ https://embed.figma.com/deck/ https://embed.figma.com/proto/ https://codepen.io/ https://stackblitz.com/edit/ https://stackblitz.com/github/ https://observablehq.com/embed/ https://open.spotify.com/embed/ https://w.soundcloud.com/player/ https://miro.com/app/live-embed/;',
     )
     expect(csp).not.toContain('script-src *')
     expect(await res.text()).toContain('<meta name="pedit-frame-sources" content="" />')

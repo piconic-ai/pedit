@@ -15,15 +15,35 @@ export const AVATAR_HOSTS = [
 ] as const
 
 /**
- * The player each provider's embeds load, by provider. The preview frames these
- * and any FRAME_SOURCES; the sanitiser drops any other iframe.
+ * Where each provider's players are served from, by provider: the frame-src
+ * sources pedit allows for it, in order. The preview frames these and any
+ * FRAME_SOURCES; the sanitiser drops any other iframe. Each is a path prefix,
+ * apart from CodePen: it serves players at /{user}/embed/{slug}, which no
+ * prefix can name, so its whole origin is allowed and the editor checks the path.
  */
 export const FRAMES = {
-  youtube: 'https://www.youtube-nocookie.com/embed/',
-  vimeo: 'https://player.vimeo.com/video/',
+  youtube: ['https://www.youtube-nocookie.com/embed/'],
+  vimeo: ['https://player.vimeo.com/video/'],
+  loom: ['https://www.loom.com/embed/'],
+  figma: [
+    'https://embed.figma.com/design/',
+    'https://embed.figma.com/board/',
+    'https://embed.figma.com/slides/',
+    'https://embed.figma.com/deck/',
+    'https://embed.figma.com/proto/',
+  ],
+  codepen: ['https://codepen.io/'],
+  stackblitz: ['https://stackblitz.com/edit/', 'https://stackblitz.com/github/'],
+  observable: ['https://observablehq.com/embed/'],
+  spotify: ['https://open.spotify.com/embed/'],
+  soundcloud: ['https://w.soundcloud.com/player/'],
+  miro: ['https://miro.com/app/live-embed/'],
 } as const
 
 export type FrameProvider = keyof typeof FRAMES
+
+/** Every source in FRAMES, in the order frame-src lists them. */
+export const FRAME_PREFIXES: readonly string[] = Object.values(FRAMES).flat()
 
 /** The <meta name> through which the Worker tells the editor the allowed media sources. */
 export const MEDIA_META = 'pedit-media-sources'
@@ -139,7 +159,7 @@ export function contentSecurityPolicy(o: {
     "style-src 'self' 'unsafe-inline'",
     `img-src 'self' blob: data: ${avatars}${o.media.map((m) => ` ${m}`).join('')}`,
     `media-src ${o.media.length ? o.media.join(' ') : "'none'"}`,
-    `frame-src ${[...Object.values(FRAMES), ...(o.frames ?? [])].join(' ')}`,
+    `frame-src ${[...FRAME_PREFIXES, ...(o.frames ?? [])].join(' ')}`,
     `connect-src 'self' ${socket}`,
     "font-src 'self'",
     "object-src 'none'",

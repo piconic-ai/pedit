@@ -207,9 +207,12 @@ IP addresses, room IDs, request timing and ciphertext sizes; infrastructure and
 Access logs have separate retention settings and are not erased when a room
 closes.
 
-Markdown previews can show YouTube and Vimeo players, and external images, videos
-and frames where the relay allows them (the public relay does not). A player
-loads only when someone clicks "Load from" on it, so nobody in the room contacts
+Markdown previews can show players for a link on a line of its own from
+YouTube, Vimeo, Loom, Figma (designs, FigJam boards, slides and prototypes),
+CodePen, StackBlitz, Observable, Spotify, SoundCloud (its Share > Embed player
+URL) and Miro, and external images, videos and frames where the relay allows
+them (the public relay does not). A player loads only when someone clicks
+"Load from" on it, so nobody in the room contacts
 a third party just because a URL was written in the file. Ticking "Always load"
 next to it loads that provider's players right away from then on, in your
 browser only; Settings lists the providers you chose and can forget each. With Access,

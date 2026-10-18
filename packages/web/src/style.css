@@ -940,6 +940,18 @@ main.editor[data-resizing] iframe {
 .preview .embed--video {
   aspect-ratio: 16 / 9;
 }
+/* Audio players are a bar of fixed height: Spotify's compact player, SoundCloud's classic one. */
+.preview .embed--audio {
+  height: 166px;
+}
+.preview .embed--audio[data-embed-src^="https://open.spotify.com/"] {
+  height: 152px;
+}
+/* Designs, boards, pens and notebooks need room to be read in place. */
+.preview .embed--doc {
+  aspect-ratio: 4 / 3;
+  max-height: 80vh;
+}
 .preview .embed:not(.embed--loaded) {
   display: flex;
   flex-direction: column;

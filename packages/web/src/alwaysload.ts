@@ -1,16 +1,29 @@
+import type { FrameProvider } from '@pedit/protocol/csp'
 import { defaultStore, type Store as Storage } from './storage.ts'
 import { Store } from './store.ts'
 
 export const ALWAYS_LOAD_KEY = 'pedit:always-load'
 
 /**
- * Who serves a preview frame, as this browser remembers it: 'youtube',
- * 'vimeo', or 'custom:' and the origin of a FRAME_SOURCES site. Never a URL:
+ * Who serves a preview frame, as this browser remembers it: a built-in
+ * provider such as 'youtube' or 'figma', or 'custom:' and the origin of a
+ * FRAME_SOURCES site. Never a URL:
  * the list holds nothing about a room or what someone wrote in it.
  */
 export type ProviderId = string
 
-const KNOWN: Record<string, string> = { youtube: 'YouTube', vimeo: 'Vimeo' }
+const KNOWN: Record<FrameProvider, string> = {
+  youtube: 'YouTube',
+  vimeo: 'Vimeo',
+  loom: 'Loom',
+  figma: 'Figma',
+  codepen: 'CodePen',
+  stackblitz: 'StackBlitz',
+  observable: 'Observable',
+  spotify: 'Spotify',
+  soundcloud: 'SoundCloud',
+  miro: 'Miro',
+}
 const CUSTOM = 'custom:'
 
 /** The origin of a custom provider id, or null if it is not a well-formed one. */
@@ -37,8 +50,7 @@ export function customProvider(src: URL): ProviderId {
 
 /** How the preview and the settings name a provider: its name, or a custom site's host. */
 export function providerLabel(id: ProviderId): string {
-  const known = KNOWN[id]
-  if (known) return known
+  if (Object.hasOwn(KNOWN, id)) return KNOWN[id as FrameProvider]
   const url = customOrigin(id)
   if (!url) return id
   // Spell out plain HTTP, so it cannot pass for the HTTPS site of the same host.

@@ -560,6 +560,155 @@ describe('loadEmbed', () => {
   })
 })
 
+describe('provider embeds', () => {
+  const POPUPS = 'allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox'
+  // A link someone shares, the player it becomes, and how pedit names, lays out and sandboxes it.
+  const cases = [
+    [
+      'https://www.loom.com/share/0123456789abcdef0123456789abcdef?sid=x',
+      'https://www.loom.com/embed/0123456789abcdef0123456789abcdef',
+      'Loom video',
+      'loom',
+      'Loom',
+      'video',
+      `${POPUPS} allow-presentation`,
+      'fullscreen; autoplay',
+    ],
+    [
+      'https://www.figma.com/design/AbCdEfGhIjKlMnOpQrStUv/File?node-id=1-2&t=x',
+      'https://embed.figma.com/design/AbCdEfGhIjKlMnOpQrStUv?embed-host=pedit&node-id=1-2',
+      'Figma file',
+      'figma',
+      'Figma',
+      'doc',
+      `${POPUPS} allow-forms`,
+      'fullscreen; clipboard-write',
+    ],
+    [
+      'https://codepen.io/u/pen/AbC123',
+      'https://codepen.io/u/embed/AbC123?default-tab=result',
+      'CodePen pen',
+      'codepen',
+      'CodePen',
+      'doc',
+      `${POPUPS} allow-forms allow-modals`,
+      'fullscreen; clipboard-write',
+    ],
+    [
+      'https://stackblitz.com/edit/vitejs-vite-abc?file=src/main.ts',
+      'https://stackblitz.com/edit/vitejs-vite-abc?embed=1&file=src/main.ts',
+      'StackBlitz project',
+      'stackblitz',
+      'StackBlitz',
+      'doc',
+      `${POPUPS} allow-forms allow-modals`,
+      'cross-origin-isolated; clipboard-write; fullscreen',
+    ],
+    [
+      'https://observablehq.com/@d3/bar-chart',
+      'https://observablehq.com/embed/@d3/bar-chart',
+      'Observable notebook',
+      'observable',
+      'Observable',
+      'doc',
+      POPUPS,
+      'fullscreen; clipboard-write',
+    ],
+    [
+      'https://open.spotify.com/intl-de/track/4uLU6hMCjMI75M1A2tKUQC?si=x',
+      'https://open.spotify.com/embed/track/4uLU6hMCjMI75M1A2tKUQC',
+      'Spotify player',
+      'spotify',
+      'Spotify',
+      'audio',
+      `${POPUPS} allow-presentation`,
+      'autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture',
+    ],
+    [
+      'https://w.soundcloud.com/player/?url=https%3A//api.soundcloud.com/tracks/293&auto_play=true',
+      'https://w.soundcloud.com/player/?url=https%3A%2F%2Fapi.soundcloud.com%2Ftracks%2F293&auto_play=false',
+      'SoundCloud player',
+      'soundcloud',
+      'SoundCloud',
+      'audio',
+      POPUPS,
+      'autoplay',
+    ],
+    [
+      'https://miro.com/app/board/uXjVOabcdEF=/?share_link_id=1',
+      'https://miro.com/app/live-embed/uXjVOabcdEF=/',
+      'Miro board',
+      'miro',
+      'Miro',
+      'doc',
+      `${POPUPS} allow-forms`,
+      'fullscreen',
+    ],
+  ] as const
+
+  it.each(cases)(
+    'offers %s as a placeholder for its player',
+    (href, src, title, _, label, shape) => {
+      const out = dom(href, [], [])
+      const el = out.querySelector('[data-embed-src]') as Element
+      expect(el.getAttribute('data-embed-src')).toBe(src)
+      expect(el.className).toBe(`embed embed--${shape}`)
+      expect(el.querySelector('.embed-provider')?.textContent).toBe(title)
+      expect(el.querySelector('.embed-load')?.textContent).toBe(`Load from ${new URL(src).host}`)
+      expect(el.querySelector('.embed-remember')?.textContent).toBe(`Always load ${label}`)
+      expect(el.querySelector('.embed-link')?.getAttribute('href')).toBe(href)
+      expect(out.querySelector('iframe')).toBeNull()
+    },
+  )
+
+  it('renders no iframe for any of them before someone asks', () => {
+    const out = dom(cases.map(([href]) => href).join('\n\n'), [], [])
+    expect(out.querySelectorAll('[data-embed-src]')).toHaveLength(cases.length)
+    expect(out.innerHTML).not.toContain('<iframe')
+  })
+
+  it.each(cases)(
+    'loads %s with only its own attributes',
+    (href, src, title, id, _, __, sandbox, allow) => {
+      const div = document.createElement('div')
+      document.body.append(div)
+      patch(div, render(href, undefined, [], []))
+      const placeholder = div.querySelector('[data-embed-src]') as Element
+      expect(embedProvider(placeholder, [])).toBe(id)
+      const frame = loadEmbed(placeholder, [])
+      expect(
+        Object.fromEntries([...(frame?.attributes ?? [])].map((a) => [a.name, a.value])),
+      ).toEqual({ src, title, sandbox, allow, referrerpolicy: 'strict-origin-when-cross-origin' })
+      div.remove()
+    },
+  )
+
+  it('keeps a look-alike or a SoundCloud player for another site a link', () => {
+    const out = dom(
+      [
+        'https://codepen.io.evil.example/u/pen/AbC123',
+        'https://w.soundcloud.com/player/?url=https%3A//evil.example/tracks/293',
+        'https://www.figma.com@evil.example/design/AbCdEfGhIjKlMnOpQrStUv',
+      ].join('\n\n'),
+      [],
+      [],
+    )
+    expect(out.querySelector('[data-embed-src]')).toBeNull()
+    expect(out.querySelectorAll('a[href]')).toHaveLength(3)
+  })
+
+  it('drops a placeholder whose src pedit would not frame, such as a CodePen page that is not a player', () => {
+    expect(
+      sanitize('<div class="embed" data-embed-src="https://codepen.io/login">x</div>').childNodes,
+    ).toHaveLength(0)
+    expect(
+      sanitize(
+        '<div class="embed" data-embed-src="https://w.soundcloud.com/player/?url=https%3A//evil.example/1">x</div>',
+      ).childNodes,
+    ).toHaveLength(0)
+  })
+})
+
 describe('always load', () => {
   function memory(initial: string[] = []) {
     const data = new Map<string, string>([[ALWAYS_LOAD_KEY, JSON.stringify(initial)]])
