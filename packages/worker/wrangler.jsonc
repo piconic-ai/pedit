@@ -45,8 +45,9 @@
   // has to stop (docs/contributing/deployment.md); keep_vars keeps it across
   // deploys.
   "keep_vars": true,
-  // MEDIA_SOURCES (external images and videos in the preview) is deliberately unset
-  // here, in previews.vars and in the lab: unset is the strict code default.
+  // MEDIA_SOURCES (external images and videos in the preview) and FRAME_SOURCES
+  // (extra sites the preview may frame) are deliberately unset here, in
+  // previews.vars and in the lab: unset is the strict code default.
   "vars": {
     "ROOM_GUESTS": "4",
     "BLOB_MAX_BYTES": "5242880",

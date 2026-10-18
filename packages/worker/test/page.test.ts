@@ -55,7 +55,9 @@ describe('pages', () => {
     )
     expect(res.headers.get('Content-Security-Policy')).toContain(`'sha256-${hash}'`)
     const body = await res.text()
-    expect(body).toMatch(/<head><meta name="pedit-media-sources" content="" \/>/)
+    expect(body).toMatch(
+      /<head><meta name="pedit-media-sources" content="" \/><meta name="pedit-frame-sources" content="" \/>/,
+    )
     expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff')
     expect(res.headers.get('Referrer-Policy')).toBe('no-referrer')
     expect(res.headers.get('ETag')).toBeNull()
@@ -94,6 +96,59 @@ describe('pages', () => {
     expect(csp).not.toContain('script-src *')
     expect(await res.text()).toContain('content=""')
     expect(spy).toHaveBeenCalled()
+  })
+
+  it('puts FRAME_SOURCES into frame-src and the meta tag', async () => {
+    const res = await call('https://pedit.test/', {
+      FRAME_SOURCES: 'https://embed.example.com/v/ b.example',
+    })
+    const csp = res.headers.get('Content-Security-Policy') ?? ''
+    expect(csp).toContain(
+      'frame-src https://www.youtube-nocookie.com/embed/ https://player.vimeo.com/video/ https://embed.example.com/v/ b.example;',
+    )
+    expect(csp).toContain("media-src 'none'")
+    expect(await res.text()).toContain(
+      '<meta name="pedit-frame-sources" content="https://embed.example.com/v/ b.example" />',
+    )
+  })
+
+  it.each([
+    'https:',
+    '*',
+    'https://*',
+    'https://a.com; script-src *',
+    "'self'",
+    'data:',
+    'https://a.com"',
+    Array.from({ length: 33 }, (_, i) => `h${i}.example.com`).join(' '),
+    // The relay's own origin: a sandboxed frame there could read the key.
+    'pedit.test',
+    'https://pedit.test/elsewhere/',
+    'http://pedit.test',
+    'https://embed.example.com pedit.test:*',
+  ])('frames only the built-in players for FRAME_SOURCES %j', async (value) => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const res = await call('https://pedit.test/', { FRAME_SOURCES: value })
+    const csp = res.headers.get('Content-Security-Policy') ?? ''
+    expect(csp).toContain(
+      'frame-src https://www.youtube-nocookie.com/embed/ https://player.vimeo.com/video/;',
+    )
+    expect(csp).not.toContain('script-src *')
+    expect(await res.text()).toContain('<meta name="pedit-frame-sources" content="" />')
+    expect(spy).toHaveBeenCalled()
+  })
+
+  it('compares FRAME_SOURCES with the origin of the request', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const vars = { FRAME_SOURCES: 'http://localhost:8787' }
+    const local = await call('http://localhost:8787/', vars)
+    expect(await local.text()).toContain('<meta name="pedit-frame-sources" content="" />')
+    expect(spy).toHaveBeenCalledTimes(1)
+    const other = await call('https://pedit.test/', vars)
+    expect(await other.text()).toContain(
+      '<meta name="pedit-frame-sources" content="http://localhost:8787" />',
+    )
+    expect(spy).toHaveBeenCalledTimes(1)
   })
 
   it('leaves other files alone, apart from nosniff', async () => {

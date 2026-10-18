@@ -1,9 +1,24 @@
-import { allowsMedia, MEDIA_META, parseMediaSources } from '@pedit/protocol/csp'
+import {
+  allowsMedia,
+  coversOrigin,
+  FRAME_META,
+  MEDIA_META,
+  parseFrameSources,
+  parseMediaSources,
+} from '@pedit/protocol/csp'
 import DOMPurify from 'dompurify'
 import MarkdownIt from 'markdown-it'
 import { parseDocument } from 'yaml'
 import type { ImageResolver } from './attachments.ts'
-import { type Embed, embedFor, httpUrl, isAllowedFrame, isVideoFile } from './embed.ts'
+import {
+  type Embed,
+  embedFor,
+  FRAME_REFERRER_POLICY,
+  type FrameSources,
+  frameFor,
+  httpUrl,
+  isVideoFile,
+} from './embed.ts'
 
 // Raw HTML in the document is shown as text, never parsed.
 const md = new MarkdownIt({ html: false, linkify: true })
@@ -79,8 +94,26 @@ export function pageMediaSources(doc?: Document): string[] {
   return sources
 }
 
+let pageFrames: string[] | undefined
+
+/**
+ * The extra frame sources this relay allows (FRAME_SOURCES), as the Worker wrote
+ * them into the page. Without the tag, with a bad value, or with one that covers
+ * the page's own origin, only the built-in players are framed.
+ */
+export function pageFrameSources(doc?: Document, page = new URL(location.href)): string[] {
+  if (!doc && pageFrames) return pageFrames
+  const d = doc ?? document
+  const content = d.querySelector(`meta[name="${FRAME_META}"]`)?.getAttribute('content') ?? ''
+  const parsed = parseFrameSources(content)
+  const sources = parsed && !coversOrigin(parsed, page) ? parsed : []
+  if (!doc) pageFrames = sources
+  return sources
+}
+
 // Set for the duration of one render, like images.
 let media: readonly string[] = []
+let frames: FrameSources | undefined
 
 const allowed = (url: URL) => allowsMedia(media, url, new URL(location.href))
 
@@ -96,16 +129,16 @@ function videoHtml(src: string, label: string, line?: unknown): string {
 
 function embedHtml(embed: Embed, line: unknown): string {
   if (embed.kind === 'video') return videoHtml(embed.src, '', line)
+  const allow = embed.allow ? ` allow="${escape(embed.allow)}"` : ''
   return (
     `<div class="embed"${lineAttr(line)}><iframe src="${escape(embed.src)}" title="${escape(embed.title)}"` +
-    ' loading="lazy" allow="fullscreen; picture-in-picture; encrypted-media"' +
-    ' sandbox="allow-scripts allow-same-origin allow-popups allow-presentation"' +
-    // YouTube refuses to play without a referrer; the origin carries no room or key.
-    ' referrerpolicy="strict-origin-when-cross-origin"></iframe></div>'
+    ` loading="lazy"${allow} sandbox="${escape(embed.sandbox)}"` +
+    ` referrerpolicy="${FRAME_REFERRER_POLICY}"></iframe></div>`
   )
 }
 
-// A paragraph that is nothing but a YouTube, Vimeo or video file URL becomes a player.
+// A paragraph that is nothing but a YouTube, Vimeo, FRAME_SOURCES or video file URL
+// becomes a player.
 md.core.ruler.after('linkify', 'embeds', (state) => {
   const tokens = state.tokens
   for (let i = 0; i + 2 < tokens.length; i++) {
@@ -115,7 +148,7 @@ md.core.ruler.after('linkify', 'embeds', (state) => {
     // info is 'auto' for both linkified URLs and <autolinks>, not for [text](url).
     if (linkOpen?.type !== 'link_open' || linkOpen.info !== 'auto') continue
     if (text?.type !== 'text' || linkClose?.type !== 'link_close' || rest.length > 0) continue
-    const embed = embedFor(String(linkOpen.attrGet('href') ?? ''))
+    const embed = embedFor(String(linkOpen.attrGet('href') ?? ''), frames)
     if (!embed) continue
     // A video file the relay would not load stays an ordinary link.
     if (embed.kind === 'video' && !allowed(new URL(embed.src))) continue
@@ -180,7 +213,7 @@ let images: ImageResolver | undefined
 const purify = DOMPurify(window)
 
 purify.addHook('uponSanitizeElement', (node, data) => {
-  if (data.tagName === 'iframe' && !isAllowedFrame((node as Element).getAttribute('src'))) {
+  if (data.tagName === 'iframe' && !frameFor((node as Element).getAttribute('src'), frames)) {
     node.parentNode?.removeChild(node)
   }
 })
@@ -206,6 +239,21 @@ purify.addHook('afterSanitizeAttributes', (node) => {
         el.removeAttribute('href')
         el.removeAttribute('target')
       }
+      break
+    }
+    case 'IFRAME': {
+      // Whatever the markup says, a frame runs only with what pedit decides for its src.
+      const frame = frameFor(el.getAttribute('src'), frames)
+      if (!frame) {
+        el.remove()
+        break
+      }
+      el.setAttribute('title', frame.title)
+      el.setAttribute('loading', 'lazy')
+      if (frame.allow) el.setAttribute('allow', frame.allow)
+      else el.removeAttribute('allow')
+      el.setAttribute('sandbox', frame.sandbox)
+      el.setAttribute('referrerpolicy', FRAME_REFERRER_POLICY)
       break
     }
     case 'IMG':
@@ -236,20 +284,24 @@ export function sanitize(html: string): DocumentFragment {
 
 /**
  * Renders Markdown to sanitised nodes, ready for {@link patch}. `resolver`
- * finds the images added during the session.
+ * finds the images added during the session; `sources` and `frameSources` are
+ * the relay's MEDIA_SOURCES and FRAME_SOURCES.
  */
 export function render(
   source: string,
   resolver?: ImageResolver,
   sources: readonly string[] = pageMediaSources(),
+  frameSources: readonly string[] = pageFrameSources(),
 ): DocumentFragment {
   images = resolver
   media = sources
+  frames = { sources: frameSources, page: new URL(location.href) }
   try {
     return sanitize(md.render(source))
   } finally {
     images = undefined
     media = []
+    frames = undefined
   }
 }
 

@@ -1,4 +1,11 @@
-import { contentSecurityPolicy, MEDIA_META, parseMediaSources } from '@pedit/protocol/csp'
+import {
+  contentSecurityPolicy,
+  coversOrigin,
+  FRAME_META,
+  MEDIA_META,
+  parseFrameSources,
+  parseMediaSources,
+} from '@pedit/protocol/csp'
 
 // index.html's inline scripts have no attributes (web/test/boot.test.ts enforces it).
 const INLINE_SCRIPT = /<script>([\s\S]*?)<\/script>/g
@@ -24,6 +31,24 @@ export function mediaSourcesFrom(value: string | undefined): string[] {
   return parsed ?? []
 }
 
+/**
+ * FRAME_SOURCES as a list, for a page at `origin`. An invalid value, or one that
+ * would let the relay's own pages be framed (allow-same-origin there escapes the
+ * sandbox), is ignored (and logged): only the built-in players are framed.
+ */
+export function frameSourcesFrom(value: string | undefined, origin: URL): string[] {
+  const parsed = parseFrameSources(value)
+  if (parsed === null) {
+    console.error('FRAME_SOURCES ignored: not a space-separated list of http(s) hosts')
+    return []
+  }
+  if (coversOrigin(parsed, origin)) {
+    console.error("FRAME_SOURCES ignored: it covers the relay's own origin")
+    return []
+  }
+  return parsed
+}
+
 // A navigation, or a request that takes HTML: what may come back is a page.
 function wantsPage(request: Request): boolean {
   return (
@@ -32,10 +57,10 @@ function wantsPage(request: Request): boolean {
   )
 }
 
-/** Serves an asset; HTML responses get the CSP, the media meta and the companion headers. */
+/** Serves an asset; HTML responses get the CSP, the source metas and the companion headers. */
 export async function servePage(
   request: Request,
-  env: { ASSETS: Fetcher; MEDIA_SOURCES?: string },
+  env: { ASSETS: Fetcher; MEDIA_SOURCES?: string; FRAME_SOURCES?: string },
 ): Promise<Response> {
   // No 304 for a page: a cached one would keep an old policy after a var change or
   // deploy. Built files keep their revalidation.
@@ -63,20 +88,20 @@ export async function servePage(
     })
   }
   const html = await asset.text()
+  const origin = new URL(request.url)
   const media = mediaSourcesFrom(env.MEDIA_SOURCES)
+  const frames = frameSourcesFrom(env.FRAME_SOURCES, origin)
   out.set(
     'Content-Security-Policy',
-    contentSecurityPolicy({
-      scriptHashes: await scriptHashes(html),
-      media,
-      origin: new URL(request.url),
-    }),
+    contentSecurityPolicy({ scriptHashes: await scriptHashes(html), media, frames, origin }),
   )
   out.delete('ETag')
   out.delete('Last-Modified')
   out.set('Cache-Control', 'no-cache')
-  // Tokens cannot contain quotes, '<', '>' or '&' (parseMediaSources).
-  const meta = `<meta name="${MEDIA_META}" content="${media.join(' ')}" />`
+  // Tokens cannot contain quotes, '<', '>' or '&' (parseMediaSources, parseFrameSources).
+  const meta =
+    `<meta name="${MEDIA_META}" content="${media.join(' ')}" />` +
+    `<meta name="${FRAME_META}" content="${frames.join(' ')}" />`
   return new HTMLRewriter()
     .on('head', {
       element: (e) => {

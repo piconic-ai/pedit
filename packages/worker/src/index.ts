@@ -1,11 +1,11 @@
 import { checkProtocolVersion } from '@pedit/protocol/admission'
 import { RELAY_BUSY, RELAY_MAINTENANCE } from '@pedit/protocol/close'
 import { Hono } from 'hono'
-import { mediaSourcesFrom, scriptHashes, servePage } from './page.ts'
+import { frameSourcesFrom, mediaSourcesFrom, scriptHashes, servePage } from './page.ts'
 import { HOST_HEADER, maintenance, refuse } from './room.ts'
 
 export { maintenance, Room } from './room.ts'
-export { mediaSourcesFrom, scriptHashes, servePage }
+export { frameSourcesFrom, mediaSourcesFrom, scriptHashes, servePage }
 
 // Room ids are 128+ bits, base64url without padding.
 const ROOM_ID = /^[A-Za-z0-9_-]{22}$/
@@ -89,6 +89,8 @@ type Bindings = Omit<Env, 'ROOM_CREATION_LIMIT' | 'CONNECTION_LIMIT'> & {
   MAINTENANCE?: string
   // Where the Markdown preview may load images and videos from (docs/self-hosting.md).
   MEDIA_SOURCES?: string
+  // Extra sites the Markdown preview may frame (docs/self-hosting.md).
+  FRAME_SOURCES?: string
 }
 
 const UNDER_MAINTENANCE =

@@ -1,10 +1,54 @@
-import { FRAME_PREFIXES } from '@pedit/protocol/csp'
+import { allowsFrame, FRAMES, type FrameProvider } from '@pedit/protocol/csp'
 
-/** A video the preview shows in place of a bare URL or an image. */
-export type Embed = { kind: 'frame'; src: string; title: string } | { kind: 'video'; src: string }
+/** How a frame is laid out: a 16:9 player, a short audio bar or a tall document. */
+export type Shape = 'video' | 'audio' | 'doc'
 
-/** Players the preview may frame; the sanitiser drops any other iframe. */
-export { FRAME_PREFIXES }
+/**
+ * What pedit decides for a frame of one src: who serves it, its accessible title,
+ * its layout, and the sandbox and permissions it runs with.
+ */
+export type Frame = {
+  provider: FrameProvider | 'custom'
+  title: string
+  shape: Shape
+  sandbox: string
+  allow: string
+}
+
+/** A player the preview shows in place of a bare URL or an image. */
+export type Embed = ({ kind: 'frame'; src: string } & Frame) | { kind: 'video'; src: string }
+
+/** The extra frame sources a self-hosted relay allows (FRAME_SOURCES), and the page they apply to. */
+export type FrameSources = { sources: readonly string[]; page: URL }
+
+// YouTube refuses to play without a referrer; the origin carries no room or key.
+export const FRAME_REFERRER_POLICY = 'strict-origin-when-cross-origin'
+
+const PLAYER = {
+  shape: 'video',
+  sandbox: 'allow-scripts allow-same-origin allow-popups allow-presentation',
+  allow: 'fullscreen; picture-in-picture; encrypted-media',
+} as const
+
+const PROVIDERS: Record<FrameProvider, Omit<Frame, 'provider'>> = {
+  youtube: { title: 'YouTube video', ...PLAYER },
+  vimeo: { title: 'Vimeo video', ...PLAYER },
+}
+
+// A frame from FRAME_SOURCES: the relay's operator chose the site, not its features.
+const CUSTOM = {
+  shape: 'video',
+  sandbox: 'allow-scripts allow-same-origin allow-popups',
+  allow: '',
+} as const
+
+const PREFIXES = (Object.keys(FRAMES) as FrameProvider[]).map((provider) => {
+  const url = new URL(FRAMES[provider])
+  return { provider, origin: url.origin, path: url.pathname }
+})
+
+// An encoded slash, backslash or dot could become a different path on the provider's server.
+const ENCODED_SEPARATOR = /%(2f|5c|2e)/i
 
 const VIDEO_FILE = /\.(mp4|m4v|mov|webm|ogv)$/i
 const YOUTUBE_ID = /^[\w-]{11}$/
@@ -27,8 +71,33 @@ export function isVideoFile(url: URL): boolean {
   return VIDEO_FILE.test(url.pathname)
 }
 
-export function isAllowedFrame(src: string | null): boolean {
-  return src !== null && FRAME_PREFIXES.some((prefix) => src.startsWith(prefix))
+/**
+ * The provider of a frame `src` and the attributes pedit gives it, or null if the
+ * preview must not frame it. Both rendering and the sanitiser take a frame's
+ * attributes from here, so they can only be what pedit decides for that src.
+ */
+export function frameFor(src: string | null, custom?: FrameSources): Frame | null {
+  if (src === null) return null
+  let url: URL
+  try {
+    url = new URL(src)
+  } catch {
+    return null
+  }
+  if (url.username || url.password || ENCODED_SEPARATOR.test(url.pathname)) return null
+  if (url.protocol === 'https:') {
+    // The parsed pathname has its dot segments resolved, unlike the raw string.
+    const known = PREFIXES.find((p) => url.origin === p.origin && url.pathname.startsWith(p.path))
+    if (known) return { provider: known.provider, ...PROVIDERS[known.provider] }
+  }
+  if (custom && allowsFrame(custom.sources, url, custom.page)) {
+    return { provider: 'custom', title: url.host, ...CUSTOM }
+  }
+  return null
+}
+
+export function isAllowedFrame(src: string | null, custom?: FrameSources): boolean {
+  return frameFor(src, custom) !== null
 }
 
 /** Reads YouTube's `t=90` or `t=1m30s`. */
@@ -53,7 +122,7 @@ function youtube(url: URL): string | null {
   if (!id || !YOUTUBE_ID.test(id)) return null
   const start = seconds(url.searchParams.get('t') ?? url.searchParams.get('start'))
   // The no-cookie player does not set tracking cookies until playback starts.
-  return `${FRAME_PREFIXES[0]}${id}${start ? `?start=${start}` : ''}`
+  return `${FRAMES.youtube}${id}${start ? `?start=${start}` : ''}`
 }
 
 function vimeo(url: URL): string | null {
@@ -68,17 +137,23 @@ function vimeo(url: URL): string | null {
   // Unlisted videos need their hash, either in the path or as ?h=.
   const hash = m[2] ?? url.searchParams.get('h')
   const query = hash && /^[\da-f]+$/.test(hash) ? `?h=${hash}` : ''
-  return `${FRAME_PREFIXES[1]}${m[1]}${query}`
+  return `${FRAMES.vimeo}${m[1]}${query}`
 }
 
-/** What to show for a URL that stands alone in a paragraph, if anything. */
-export function embedFor(href: string): Embed | null {
+function frame(src: string | null, custom?: FrameSources): Embed | null {
+  const f = frameFor(src, custom)
+  return src !== null && f ? { kind: 'frame', src, ...f } : null
+}
+
+/**
+ * What to show for a URL that stands alone in a paragraph, if anything. `custom`
+ * are the relay's FRAME_SOURCES, framed as they are.
+ */
+export function embedFor(href: string, custom?: FrameSources): Embed | null {
   const url = httpUrl(href)
   if (!url) return null
-  const yt = youtube(url)
-  if (yt) return { kind: 'frame', src: yt, title: 'YouTube video' }
-  const vm = vimeo(url)
-  if (vm) return { kind: 'frame', src: vm, title: 'Vimeo video' }
+  const player = frame(youtube(url)) ?? frame(vimeo(url))
+  if (player) return player
   if (isVideoFile(url)) return { kind: 'video', src: url.href }
-  return null
+  return custom ? frame(url.href, custom) : null
 }

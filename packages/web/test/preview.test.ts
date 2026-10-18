@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
 import type { ImageResolver } from '../src/attachments.ts'
-import { pageMediaSources, patch, render, sanitize } from '../src/preview.ts'
+import { pageFrameSources, pageMediaSources, patch, render, sanitize } from '../src/preview.ts'
 
 function html(source: string): string {
   const div = document.createElement('div')
@@ -9,11 +9,20 @@ function html(source: string): string {
   return div.innerHTML
 }
 
-function dom(source: string, sources?: readonly string[]): HTMLElement {
+function dom(
+  source: string,
+  sources?: readonly string[],
+  frameSources?: readonly string[],
+): HTMLElement {
   const div = document.createElement('div')
-  div.append(render(source, undefined, sources))
+  div.append(render(source, undefined, sources, frameSources))
   return div
 }
+
+const PLAYER_ATTRS =
+  ' loading="lazy" allow="fullscreen; picture-in-picture; encrypted-media"' +
+  ' sandbox="allow-scripts allow-same-origin allow-popups allow-presentation"' +
+  ' referrerpolicy="strict-origin-when-cross-origin"'
 
 describe('sanitize', () => {
   it('strips scripts and event handlers', () => {
@@ -51,6 +60,50 @@ describe('sanitize', () => {
     const frames = [...div.querySelectorAll('iframe')]
     expect(frames.map((f) => f.getAttribute('src'))).toEqual(['https://player.vimeo.com/video/1'])
     expect(frames[0]?.hasAttribute('srcdoc')).toBe(false)
+  })
+
+  it("rewrites a player's attributes to pedit's own", () => {
+    const div = document.createElement('div')
+    div.append(
+      sanitize(
+        '<iframe src="https://player.vimeo.com/video/1" title="x" sandbox="allow-scripts allow-same-origin allow-top-navigation allow-forms"' +
+          ' allow="camera; microphone" referrerpolicy="unsafe-url" loading="eager"></iframe>' +
+          '<iframe src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ"></iframe>',
+      ),
+    )
+    const [vimeo, youtube] = [...div.querySelectorAll('iframe')]
+    for (const [frame, title] of [
+      [vimeo, 'Vimeo video'],
+      [youtube, 'YouTube video'],
+    ] as const) {
+      expect(frame?.getAttribute('title')).toBe(title)
+      expect(frame?.getAttribute('sandbox')).toBe(
+        'allow-scripts allow-same-origin allow-popups allow-presentation',
+      )
+      expect(frame?.getAttribute('allow')).toBe('fullscreen; picture-in-picture; encrypted-media')
+      expect(frame?.getAttribute('referrerpolicy')).toBe('strict-origin-when-cross-origin')
+      expect(frame?.getAttribute('loading')).toBe('lazy')
+    }
+  })
+
+  it('drops iframes whose src only looks like a player', () => {
+    const div = document.createElement('div')
+    div.append(
+      sanitize(
+        '<iframe src="https://player.vimeo.com/video/../x"></iframe>' +
+          '<iframe src="https://player.vimeo.com/video/%2e%2e/x"></iframe>' +
+          '<iframe src="https://u@player.vimeo.com/video/1"></iframe>' +
+          '<iframe src="http://player.vimeo.com/video/1"></iframe>' +
+          '<iframe src="https://player.vimeo.com.evil.example/video/1"></iframe>',
+      ),
+    )
+    expect(div.querySelector('iframe')).toBeNull()
+  })
+
+  it('drops frames from frame sources outside render', () => {
+    const div = document.createElement('div')
+    div.append(sanitize('<iframe src="https://embed.example.com/1"></iframe>'))
+    expect(div.querySelector('iframe')).toBeNull()
   })
 
   it('drops media that does not come from an absolute http(s) URL', () => {
@@ -225,6 +278,46 @@ describe('render', () => {
     expect(out.querySelector('p')).toBeNull()
   })
 
+  it('renders the YouTube and Vimeo players as before', () => {
+    expect(html('https://youtu.be/dQw4w9WgXcQ?t=90\n\nhttps://vimeo.com/76979871/abc123')).toBe(
+      '<div class="embed" data-line="0"><iframe src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?start=90" title="YouTube video"' +
+        `${PLAYER_ATTRS}></iframe></div>` +
+        '<div class="embed" data-line="2"><iframe src="https://player.vimeo.com/video/76979871?h=abc123" title="Vimeo video"' +
+        `${PLAYER_ATTRS}></iframe></div>`,
+    )
+  })
+
+  describe('with frame sources', () => {
+    it('frames a bare URL they match as a generic frame', () => {
+      const out = dom('https://embed.example.com/v/1?x=2', [], ['https://embed.example.com/v/'])
+      expect(out.innerHTML).toBe(
+        '<div class="embed" data-line="0"><iframe src="https://embed.example.com/v/1?x=2" title="embed.example.com"' +
+          ' loading="lazy" sandbox="allow-scripts allow-same-origin allow-popups"' +
+          ' referrerpolicy="strict-origin-when-cross-origin"></iframe></div>',
+      )
+    })
+
+    it('keeps other URLs, and the same URL in a sentence, as links', () => {
+      const out = dom(
+        'https://embed.example.com/other\n\nSee https://embed.example.com/v/1 here\n\n[x](https://embed.example.com/v/1)',
+        [],
+        ['https://embed.example.com/v/'],
+      )
+      expect(out.querySelector('iframe')).toBeNull()
+      expect(out.querySelectorAll('a[href]')).toHaveLength(3)
+    })
+
+    it('never frames the page itself', () => {
+      const out = dom(`${location.origin}/r/x`, [], [location.host])
+      expect(out.querySelector('iframe')).toBeNull()
+      expect(out.querySelector('a')).not.toBeNull()
+    })
+
+    it('frames nothing extra without them', () => {
+      expect(dom('https://embed.example.com/v/1').querySelector('iframe')).toBeNull()
+    })
+  })
+
   it('keeps video URLs inside a sentence or with link text as links', () => {
     const out = dom(
       'Watch https://youtu.be/dQw4w9WgXcQ now\n\n[the talk](https://youtu.be/dQw4w9WgXcQ)',
@@ -298,6 +391,40 @@ describe('patch', () => {
     expect(container.innerHTML).toBe(html('z\n\na\n\nb\n'))
     patch(container, render(''))
     expect(container.innerHTML).toBe('')
+  })
+})
+
+describe('pageFrameSources', () => {
+  const page = (head: string) =>
+    new DOMParser().parseFromString(`<head>${head}</head>`, 'text/html')
+  const meta = (content: string) => page(`<meta name="pedit-frame-sources" content="${content}">`)
+  const at = new URL('https://pedit.test/r/x')
+
+  it('reads the list the Worker wrote into the page', () => {
+    expect(pageFrameSources(meta('https://embed.example.com b.example'), at)).toEqual([
+      'https://embed.example.com',
+      'b.example',
+    ])
+  })
+
+  it.each([
+    'https:',
+    '*',
+    "'self'",
+    'pedit.test',
+    'https://pedit.test/elsewhere/',
+    'b.example http://pedit.test',
+  ])('frames only the players for %j', (content) => {
+    expect(pageFrameSources(meta(content), at)).toEqual([])
+  })
+
+  it('allows nothing extra without the tag', () => {
+    expect(pageFrameSources(page(''), at)).toEqual([])
+  })
+
+  it('compares with the location by default', () => {
+    expect(pageFrameSources(meta(location.host))).toEqual([])
+    expect(pageFrameSources(meta('b.example'))).toEqual(['b.example'])
   })
 })
 
