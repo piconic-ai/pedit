@@ -131,8 +131,13 @@ function videoHtml(src: string, label: string, line?: unknown): string {
 // A frame is not loaded until someone asks: nobody in the room should contact a
 // third party just because someone wrote its URL in the file. The placeholder
 // carries only the frame's src; loadEmbed derives everything else from it again.
+// The frames this preview rendered, by src. loadEmbed loads only these, so a
+// placeholder that reached the page some other way loads nothing.
+const rendered = new Map<string, string>()
+
 function embedHtml(embed: Embed, href: string, line: unknown): string {
   if (embed.kind === 'video') return videoHtml(embed.src, '', line)
+  rendered.set(embed.src, embed.src)
   const host = new URL(embed.src).host
   return (
     `<div class="embed embed--${embed.shape}"${lineAttr(line)} data-embed-src="${escape(embed.src)}">` +
@@ -301,15 +306,16 @@ export function render(
 /**
  * Loads the frame of an embed placeholder, deriving its provider and attributes
  * from its src alone, and moves focus into it. Returns null for a placeholder
- * whose src pedit would not frame. `frameSources` are the relay's FRAME_SOURCES.
+ * the preview did not render or whose src pedit would not frame. `frameSources`
+ * are the relay's FRAME_SOURCES.
  */
 export function loadEmbed(
   placeholder: Element,
   frameSources: readonly string[] = pageFrameSources(),
 ): HTMLIFrameElement | null {
-  const src = placeholder.getAttribute('data-embed-src')
+  const src = rendered.get(placeholder.getAttribute('data-embed-src') ?? '') ?? null
   const frame = frameFor(src, { sources: frameSources, page: new URL(location.href) })
-  if (src === null || !frame) return null
+  if (!frame) return null
   const iframe = placeholder.ownerDocument.createElement('iframe')
   // The sandbox has to be in place before the frame is attached and navigates.
   iframe.setAttribute('sandbox', frame.sandbox)
