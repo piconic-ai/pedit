@@ -203,6 +203,30 @@ describe('frameFor', () => {
       expect(frameFor('https://embed.example.com.evil.test/v/1', c)).toBeNull()
     })
 
+    it("leaves a provider's URL its player does not take to the sources, as before", () => {
+      const pen = 'https://codepen.io/team/t/embed/AbC123'
+      expect(frameFor(pen)).toBeNull()
+      expect(frameFor(pen, custom(['https://codepen.io/']))).toEqual({
+        src: pen,
+        provider: 'custom',
+        title: 'codepen.io',
+        ...CUSTOM,
+      })
+      const track = 'https://open.spotify.com/embed/intl-de/track/4uLU6hMCjMI75M1A2tKUQC'
+      expect(frameFor(track, custom(['https://open.spotify.com/']))).toMatchObject({
+        provider: 'custom',
+      })
+      expect(frameFor(track, custom(['https://other.test/']))).toBeNull()
+      // One the player takes keeps the provider's own attributes.
+      expect(
+        frameFor('https://codepen.io/u/embed/AbC123', custom(['https://codepen.io/'])),
+      ).toMatchObject({ provider: 'codepen' })
+      // The same URL checks still apply first.
+      expect(
+        frameFor('https://u:p@codepen.io/team/t/embed/x', custom(['https://codepen.io/'])),
+      ).toBeNull()
+    })
+
     it('takes http only from a source that names it', () => {
       expect(frameFor('http://embed.example.com/', custom(['embed.example.com']))).toBeNull()
       expect(frameFor('http://embed.example.com/', custom(['http://embed.example.com']))).toEqual({

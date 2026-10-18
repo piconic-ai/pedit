@@ -175,14 +175,17 @@ export function frameFor(src: string | null, custom?: FrameSources): Frame | nul
     const known = PREFIXES.find((p) => url.origin === p.origin && url.pathname.startsWith(p.path))
     if (known) {
       const { provider } = known
-      if (provider === 'codepen' && !CODEPEN_PLAYER.test(url.pathname)) return null
       // YouTube and Vimeo keep what follows their prefix; the others load only
       // what their converter rebuilds from the ids it finds.
       const src =
         provider === 'youtube' || provider === 'vimeo'
           ? `${known.prefix}${url.pathname.slice(known.path.length)}${url.search}`
-          : CONVERTERS[provider](url)
-      return src ? { src, provider, ...PROVIDERS[provider] } : null
+          : provider === 'codepen' && !CODEPEN_PLAYER.test(url.pathname)
+            ? null
+            : CONVERTERS[provider](url)
+      if (src) return { src, provider, ...PROVIDERS[provider] }
+      // One the player does not take is still the relay's to allow, as it was
+      // before pedit knew the provider.
     }
   }
   if (custom && allowsFrame(custom.sources, url, custom.page)) {
