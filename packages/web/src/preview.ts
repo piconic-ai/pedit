@@ -316,7 +316,8 @@ export function loadEmbed(
   if (frame.allow) iframe.setAttribute('allow', frame.allow)
   iframe.setAttribute('referrerpolicy', FRAME_REFERRER_POLICY)
   iframe.title = frame.title
-  iframe.src = src
+  // The URL frameFor rebuilt, never the attribute's text as it stands.
+  iframe.src = frame.src
   // patch() compares blocks by the key noted before the player loaded, so the
   // player stays while the paragraph with its URL is unchanged. Note the keys
   // of the blocks it sits in, such as a list item, while they look as rendered.
