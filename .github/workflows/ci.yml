@@ -62,9 +62,22 @@ jobs:
         # PEDIT_INTEROP makes the interop test fail rather than skip without Node.js deps.
         run: PEDIT_INTEROP=1 go test -race ./...
 
+      # Keep the GoReleaser version and action SHA the same as in
+      # release-build.yml, so this build is the one a release gets.
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          version: v2.18.3
+          install-only: true
+
       - name: Build and verify CLI release archives
+        # A local tag lets GoReleaser validate as it does for a release: the
+        # tag points at HEAD and the tree is clean.
         run: |
-          bash scripts/build-cli-release.sh v0.0.0-test "$RUNNER_TEMP/pedit-release"
+          git tag v0.0.0-test
+          goreleaser release --clean --skip=publish
+          mkdir -p "$RUNNER_TEMP/pedit-release"
+          cp dist/pedit_*.tar.gz dist/pedit_*.zip dist/checksums.txt "$RUNNER_TEMP/pedit-release/"
           cd "$RUNNER_TEMP/pedit-release"
           sha256sum --check checksums.txt
           test "$(wc -l < checksums.txt)" -eq 6
@@ -73,11 +86,11 @@ jobs:
           unzip -l pedit_v0.0.0-test_windows_arm64.zip | grep -q pedit.exe
 
       - name: CLI release archives are reproducible
-        # A second build (new binaries, new file times, another umask) must
-        # give the same bytes, so a release can be rebuilt and compared.
+        # A second build (new dist/, another umask and time zone) must give
+        # the same bytes, so a release can be rebuilt and compared.
         run: |
-          (umask 077 && bash scripts/build-cli-release.sh v0.0.0-test "$RUNNER_TEMP/pedit-release-again")
-          diff "$RUNNER_TEMP/pedit-release/checksums.txt" "$RUNNER_TEMP/pedit-release-again/checksums.txt"
+          (umask 077 && TZ=Asia/Tokyo goreleaser release --clean --skip=publish)
+          diff "$RUNNER_TEMP/pedit-release/checksums.txt" dist/checksums.txt
 
       - name: Install script
         run: bash scripts/test-install.sh v0.0.0-test "$RUNNER_TEMP/pedit-release"

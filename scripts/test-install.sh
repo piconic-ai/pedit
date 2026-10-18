@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Run packages/web/public/install.sh against archives from build-cli-release.sh,
-# served from a local directory instead of GitHub Releases.
+# Run packages/web/public/install.sh against archives built by GoReleaser
+# (.goreleaser.yaml), served from a local directory instead of GitHub Releases.
 #
 # Each case installs into its own $work/<name>/bin and keeps install.sh's
 # output in $work/<name>/{out,err}, plus what the gh and tar mocks saw in
