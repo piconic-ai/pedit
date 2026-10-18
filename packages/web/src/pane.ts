@@ -2,7 +2,7 @@ import type { EditorView } from '@codemirror/view'
 import type * as Y from 'yjs'
 import type { ImageResolver } from './attachments.ts'
 
-type Renderer = Pick<typeof import('./preview.ts'), 'render' | 'patch'>
+type Renderer = Pick<typeof import('./preview.ts'), 'render' | 'patch' | 'loadEmbed'>
 
 /** A source line and where its block starts in the preview's scroll area. */
 export interface Anchor {
@@ -82,6 +82,11 @@ export class PreviewPane {
       this.#dirty = true
       this.#schedule()
     })
+    // One listener for every embed placeholder the rendered Markdown holds.
+    this.element.addEventListener('click', (event) => this.#loadEmbed(event))
+    this.element.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') this.#loadEmbed(event)
+    })
   }
 
   get active(): boolean {
@@ -120,6 +125,16 @@ export class PreviewPane {
     }))
     anchors.push({ line: view.state.doc.lines, top: pane.scrollHeight })
     pane.scrollTop = Math.min(max, scrollTarget(monotonic(anchors), topLine(view)))
+  }
+
+  /** Loads the frame whose "Load from" control the event came from, if any. */
+  #loadEmbed(event: Event): void {
+    const control = event.target instanceof Element ? event.target.closest('.embed-load') : null
+    const placeholder = control?.closest('[data-embed-src]')
+    if (!placeholder || !this.element.contains(placeholder) || !this.#renderer) return
+    // Space would otherwise scroll the preview.
+    event.preventDefault()
+    this.#renderer.loadEmbed(placeholder)
   }
 
   #schedule(): void {

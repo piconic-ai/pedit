@@ -17,6 +17,7 @@ import {
   type FrameSources,
   frameFor,
   httpUrl,
+  isAllowedFrame,
   isVideoFile,
 } from './embed.ts'
 
@@ -127,18 +128,22 @@ function videoHtml(src: string, label: string, line?: unknown): string {
   return `<video${lineAttr(line)} src="${escape(src)}"${aria} controls preload="metadata" playsinline></video>`
 }
 
-function embedHtml(embed: Embed, line: unknown): string {
+// A frame is not loaded until someone asks: nobody in the room should contact a
+// third party just because someone wrote its URL in the file. The placeholder
+// carries only the frame's src; loadEmbed derives everything else from it again.
+function embedHtml(embed: Embed, href: string, line: unknown): string {
   if (embed.kind === 'video') return videoHtml(embed.src, '', line)
-  const allow = embed.allow ? ` allow="${escape(embed.allow)}"` : ''
+  const host = new URL(embed.src).host
   return (
-    `<div class="embed"${lineAttr(line)}><iframe src="${escape(embed.src)}" title="${escape(embed.title)}"` +
-    ` loading="lazy"${allow} sandbox="${escape(embed.sandbox)}"` +
-    ` referrerpolicy="${FRAME_REFERRER_POLICY}"></iframe></div>`
+    `<div class="embed embed--${embed.shape}"${lineAttr(line)} data-embed-src="${escape(embed.src)}">` +
+    `<span class="embed-provider">${escape(embed.title)}</span>` +
+    `<span class="embed-load" role="button" tabindex="0">Load from ${escape(host)}</span>` +
+    `<a class="embed-link" href="${escape(href)}">${escape(href)}</a></div>`
   )
 }
 
 // A paragraph that is nothing but a YouTube, Vimeo, FRAME_SOURCES or video file URL
-// becomes a player.
+// becomes a player (a video) or a placeholder that loads one on request (a frame).
 md.core.ruler.after('linkify', 'embeds', (state) => {
   const tokens = state.tokens
   for (let i = 0; i + 2 < tokens.length; i++) {
@@ -148,12 +153,13 @@ md.core.ruler.after('linkify', 'embeds', (state) => {
     // info is 'auto' for both linkified URLs and <autolinks>, not for [text](url).
     if (linkOpen?.type !== 'link_open' || linkOpen.info !== 'auto') continue
     if (text?.type !== 'text' || linkClose?.type !== 'link_close' || rest.length > 0) continue
-    const embed = embedFor(String(linkOpen.attrGet('href') ?? ''), frames)
+    const href = String(linkOpen.attrGet('href') ?? '')
+    const embed = embedFor(href, frames)
     if (!embed) continue
     // A video file the relay would not load stays an ordinary link.
     if (embed.kind === 'video' && !allowed(new URL(embed.src))) continue
     const token = new state.Token('embed', '', 0)
-    token.meta = { embed, line: open.map?.[0] }
+    token.meta = { embed, href, line: open.map?.[0] }
     inline.children = [token]
     open.hidden = true
     close.hidden = true
@@ -170,8 +176,8 @@ md.core.ruler.push('source_lines', (state) => {
 })
 
 md.renderer.rules.embed = (tokens, idx) => {
-  const { embed, line } = tokens[idx]?.meta as { embed: Embed; line?: number }
-  return embedHtml(embed, line)
+  const { embed, href, line } = tokens[idx]?.meta as { embed: Embed; href: string; line?: number }
+  return embedHtml(embed, href, line)
 }
 
 const defaultImage = md.renderer.rules.image
@@ -212,12 +218,6 @@ let images: ImageResolver | undefined
 
 const purify = DOMPurify(window)
 
-purify.addHook('uponSanitizeElement', (node, data) => {
-  if (data.tagName === 'iframe' && !frameFor((node as Element).getAttribute('src'), frames)) {
-    node.parentNode?.removeChild(node)
-  }
-})
-
 // blob: URLs are not allowed by default; keep the ones for our own images.
 purify.addHook('uponSanitizeAttribute', (node, data) => {
   if (node.nodeName === 'IMG' && data.attrName === 'src' && images?.owns(data.attrValue)) {
@@ -227,6 +227,14 @@ purify.addHook('uponSanitizeAttribute', (node, data) => {
 
 purify.addHook('afterSanitizeAttributes', (node) => {
   const el = node as Element
+  // A placeholder may only ever load a frame pedit would frame for that src.
+  if (
+    el.hasAttribute?.('data-embed-src') &&
+    !isAllowedFrame(el.getAttribute('data-embed-src'), frames)
+  ) {
+    el.remove()
+    return
+  }
   switch (node.nodeName) {
     case 'A': {
       const href = el.getAttribute('href') ?? ''
@@ -239,21 +247,6 @@ purify.addHook('afterSanitizeAttributes', (node) => {
         el.removeAttribute('href')
         el.removeAttribute('target')
       }
-      break
-    }
-    case 'IFRAME': {
-      // Whatever the markup says, a frame runs only with what pedit decides for its src.
-      const frame = frameFor(el.getAttribute('src'), frames)
-      if (!frame) {
-        el.remove()
-        break
-      }
-      el.setAttribute('title', frame.title)
-      el.setAttribute('loading', 'lazy')
-      if (frame.allow) el.setAttribute('allow', frame.allow)
-      else el.removeAttribute('allow')
-      el.setAttribute('sandbox', frame.sandbox)
-      el.setAttribute('referrerpolicy', FRAME_REFERRER_POLICY)
       break
     }
     case 'IMG':
@@ -275,9 +268,9 @@ export function sanitize(html: string): DocumentFragment {
   return purify.sanitize(html, {
     // Markdown only produces plain HTML: no SVG, MathML, styles or forms.
     USE_PROFILES: { html: true },
-    FORBID_TAGS: ['style', 'form', 'input', 'button', 'textarea', 'select'],
-    ADD_TAGS: ['iframe'],
-    ADD_ATTR: ['allow', 'sandbox', 'referrerpolicy', 'loading'],
+    // Frames are never rendered, only built by loadEmbed once someone asks for one.
+    FORBID_TAGS: ['style', 'form', 'input', 'button', 'textarea', 'select', 'iframe'],
+    ADD_ATTR: ['referrerpolicy', 'loading'],
     RETURN_DOM_FRAGMENT: true,
   })
 }
@@ -303,6 +296,33 @@ export function render(
     media = []
     frames = undefined
   }
+}
+
+/**
+ * Loads the frame of an embed placeholder, deriving its provider and attributes
+ * from its src alone, and moves focus into it. Returns null for a placeholder
+ * whose src pedit would not frame. `frameSources` are the relay's FRAME_SOURCES.
+ */
+export function loadEmbed(
+  placeholder: Element,
+  frameSources: readonly string[] = pageFrameSources(),
+): HTMLIFrameElement | null {
+  const src = placeholder.getAttribute('data-embed-src')
+  const frame = frameFor(src, { sources: frameSources, page: new URL(location.href) })
+  if (src === null || !frame) return null
+  const iframe = placeholder.ownerDocument.createElement('iframe')
+  // The sandbox has to be in place before the frame is attached and navigates.
+  iframe.setAttribute('sandbox', frame.sandbox)
+  if (frame.allow) iframe.setAttribute('allow', frame.allow)
+  iframe.setAttribute('referrerpolicy', FRAME_REFERRER_POLICY)
+  iframe.title = frame.title
+  iframe.src = src
+  // patch() compares blocks by the key it noted for the placeholder, so the
+  // player stays while the paragraph with its URL is unchanged.
+  placeholder.replaceChildren(iframe)
+  placeholder.classList.add('embed--loaded')
+  iframe.focus()
+  return iframe
 }
 
 const keys = new WeakMap<Node, string>()
@@ -340,8 +360,8 @@ function copyLines(from: Node | undefined, to: Node): void {
 
 /**
  * Replaces the container's children with the fragment's, leaving unchanged
- * blocks at the start and end in place so that images and players inside
- * them do not reload while someone types elsewhere.
+ * blocks in place so that images and players inside them do not reload while
+ * someone types elsewhere.
  */
 export function patch(container: Element, fragment: DocumentFragment): void {
   const before = [...container.childNodes]
@@ -361,10 +381,27 @@ export function patch(container: Element, fragment: DocumentFragment): void {
   const kept = [...before.slice(0, head), ...before.slice(before.length - tail)]
   const fresh = [...after.slice(0, head), ...after.slice(after.length - tail)]
   kept.forEach((node, i) => copyLines(fresh[i], node))
-  const anchor = before[before.length - tail] ?? null
-  for (const node of before.slice(head, before.length - tail)) node.remove()
-  for (const node of after.slice(head, after.length - tail)) {
-    keyOf(node)
-    container.insertBefore(node, anchor)
+  // In between, keep the blocks that are still there in the same order without
+  // moving them, such as a player someone loaded: a frame reloads when it moves.
+  const end = before.length - tail
+  const anchor = before[end] ?? null
+  const remaining = new Map<string, number[]>()
+  for (let i = head; i < end; i++) {
+    const key = keyOf(before[i] as Node)
+    const at = remaining.get(key)
+    if (at) at.push(i)
+    else remaining.set(key, [i])
   }
+  let next = head
+  for (const node of after.slice(head, after.length - tail)) {
+    const match = remaining.get(keyOf(node))?.find((i) => i >= next)
+    if (match === undefined) {
+      container.insertBefore(node, next < end ? (before[next] as Node) : anchor)
+      continue
+    }
+    for (const old of before.slice(next, match)) old.remove()
+    copyLines(node, before[match] as Node)
+    next = match + 1
+  }
+  for (const old of before.slice(next, end)) old.remove()
 }

@@ -83,8 +83,11 @@ external image shows as a placeholder saying this relay does not load external
 images, so a document cannot make your browser contact a host its author
 picked. Images pasted in the session are decrypted in your browser and shown
 from memory. A YouTube (`youtube-nocookie.com`) or Vimeo link on a line of its
-own still shows that site's player; those players run their own scripts, can
-set their own cookies, and get only the origin as `Referer`. The page's
+own shows a placeholder naming the host it would load from; the player loads
+only when you click it, so a URL in the file alone does not make anyone's
+browser contact that site. This is for privacy, not a sandbox: once loaded, the
+players run their own scripts, can set their own cookies, and get only the
+origin as `Referer`. The page's
 Content-Security-Policy enforces this: the browser refuses any other image,
 video, frame or connection. A self-hosted relay can allow external images and
 videos with `MEDIA_SOURCES`, and frames from other sites with `FRAME_SOURCES`

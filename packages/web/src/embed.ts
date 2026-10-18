@@ -73,8 +73,9 @@ export function isVideoFile(url: URL): boolean {
 
 /**
  * The provider of a frame `src` and the attributes pedit gives it, or null if the
- * preview must not frame it. Both rendering and the sanitiser take a frame's
- * attributes from here, so they can only be what pedit decides for that src.
+ * preview must not frame it. Rendering, the sanitiser and loading a frame on
+ * request all take its attributes from here, so they can only be what pedit
+ * decides for that src.
  */
 export function frameFor(src: string | null, custom?: FrameSources): Frame | null {
   if (src === null) return null

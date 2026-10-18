@@ -902,8 +902,49 @@ main.editor[data-resizing] iframe {
   display: block;
   max-width: min(100%, 820px);
 }
-.preview .embed {
+/* The placeholder keeps the player's size, so loading it does not move the page. */
+.preview .embed--video {
   aspect-ratio: 16 / 9;
+}
+.preview .embed:not(.embed--loaded) {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--muted);
+  text-align: center;
+}
+.preview .embed-provider {
+  color: var(--ink);
+  font-weight: 600;
+}
+.preview .embed-load {
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 0.875em;
+  cursor: pointer;
+}
+.preview .embed-load:hover {
+  border-color: var(--accent);
+}
+.preview .embed-load:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.preview .embed-link {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 0.875em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .preview .embed iframe {
   width: 100%;
