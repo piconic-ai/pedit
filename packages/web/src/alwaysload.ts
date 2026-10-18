@@ -76,6 +76,10 @@ export function saveAlwaysLoad(
  * only: nothing about it goes over the wire. `ids` is published only when the
  * list changes. Remembering a provider never widens what pedit frames: a
  * placeholder still loads only what frameFor allows for its src.
+ *
+ * Other pedit tabs share the stored list, so each change starts from what is
+ * stored now rather than from this tab's copy: a stale tab must not bring
+ * back a provider someone forgot elsewhere. `refresh` takes in such changes.
  */
 export class AlwaysLoad {
   readonly ids: Store<readonly ProviderId[]>
@@ -91,17 +95,39 @@ export class AlwaysLoad {
   }
 
   remember(id: ProviderId): void {
-    if (!isProviderId(id) || this.has(id)) return
-    this.#set([...this.ids.get(), id])
+    if (!isProviderId(id)) return
+    const ids = this.#current()
+    if (ids.includes(id)) return this.#publish(ids)
+    this.#publish([...ids, id])
+    saveAlwaysLoad(this.ids.get(), this.#store)
   }
 
   forget(id: ProviderId): void {
-    if (!this.has(id)) return
-    this.#set(this.ids.get().filter((i) => i !== id))
+    const ids = this.#current()
+    if (!ids.includes(id)) return this.#publish(ids)
+    this.#publish(ids.filter((i) => i !== id))
+    saveAlwaysLoad(this.ids.get(), this.#store)
   }
 
-  #set(ids: readonly ProviderId[]): void {
+  /** Takes in what another tab stored, e.g. on a `storage` event for ALWAYS_LOAD_KEY. */
+  refresh(): void {
+    this.#publish(this.#current())
+  }
+
+  /** What is stored now, or this page's copy when storage cannot be read. */
+  #current(): readonly ProviderId[] {
+    if (!this.#store) return this.ids.get()
+    try {
+      const raw = this.#store.getItem(ALWAYS_LOAD_KEY)
+      return parseAlwaysLoad(raw ? JSON.parse(raw) : null)
+    } catch {
+      return this.ids.get()
+    }
+  }
+
+  #publish(ids: readonly ProviderId[]): void {
+    const now = this.ids.get()
+    if (ids.length === now.length && ids.every((id, i) => id === now[i])) return
     this.ids.set(ids)
-    saveAlwaysLoad(ids, this.#store)
   }
 }

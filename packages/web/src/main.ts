@@ -13,7 +13,7 @@ import { basicSetup } from 'codemirror'
 import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next'
 import { Awareness } from 'y-protocols/awareness'
 import * as Y from 'yjs'
-import { AlwaysLoad } from './alwaysload.ts'
+import { ALWAYS_LOAD_KEY, AlwaysLoad } from './alwaysload.ts'
 import {
   type Appearance,
   applyText,
@@ -311,6 +311,10 @@ async function joinRoom(
     if (main.dataset.view === 'split') preview.follow(editor)
   }
   const alwaysLoad = new AlwaysLoad()
+  // Another pedit tab remembered or forgot a provider: follow it here too.
+  window.addEventListener('storage', (e) => {
+    if (e.key === ALWAYS_LOAD_KEY || e.key === null) alwaysLoad.refresh()
+  })
   const preview = new PreviewPane(text, {
     onRender: followEditor,
     images: attachments,

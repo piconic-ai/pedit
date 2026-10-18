@@ -143,4 +143,30 @@ describe('AlwaysLoad', () => {
     expect(always.has('vimeo')).toBe(true)
     expect(new AlwaysLoad(throwing).has('vimeo')).toBe(false)
   })
+
+  it('starts each change from what other tabs stored, so a forgotten provider stays forgotten', () => {
+    const store = memory({ [ALWAYS_LOAD_KEY]: '["youtube"]' })
+    const a = new AlwaysLoad(store)
+    const b = new AlwaysLoad(store)
+    a.forget('youtube')
+    b.remember('vimeo')
+    expect(loadAlwaysLoad(store)).toEqual(['vimeo'])
+    expect(b.ids.get()).toEqual(['vimeo'])
+    a.remember('youtube')
+    b.forget('vimeo')
+    expect(loadAlwaysLoad(store)).toEqual(['youtube'])
+  })
+
+  it("takes in another tab's change on refresh, publishing only when it differs", () => {
+    const store = memory({ [ALWAYS_LOAD_KEY]: '["youtube"]' })
+    const a = new AlwaysLoad(store)
+    const b = new AlwaysLoad(store)
+    const seen: (readonly string[])[] = []
+    b.ids.subscribe((ids) => seen.push(ids))
+    a.forget('youtube')
+    b.refresh()
+    b.refresh()
+    expect(b.has('youtube')).toBe(false)
+    expect(seen).toEqual([[]])
+  })
 })
