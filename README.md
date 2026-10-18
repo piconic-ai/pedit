@@ -210,7 +210,9 @@ closes.
 Markdown previews can show YouTube and Vimeo players, and external images, videos
 and frames where the relay allows them (the public relay does not). A player
 loads only when someone clicks "Load from" on it, so nobody in the room contacts
-a third party just because a URL was written in the file. With Access,
+a third party just because a URL was written in the file. Ticking "Always load"
+next to it loads that provider's players right away from then on, in your
+browser only; Settings lists the providers you chose and can forget each. With Access,
 avatars may load from an identity provider or Gravatar using an email hash.
 Those providers can see the requests.
 

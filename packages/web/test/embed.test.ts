@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { embedFor, frameFor, httpUrl, isAllowedFrame } from '../src/embed.ts'
+import { embedFor, frameFor, httpUrl, isAllowedFrame, providerOf } from '../src/embed.ts'
 
 const PLAYER = {
   shape: 'video',
@@ -207,5 +207,31 @@ describe('frameFor', () => {
       ).toBeNull()
       expect(frameFor('https://other.test/', custom(['other.test']))).not.toBeNull()
     })
+  })
+})
+
+describe('providerOf', () => {
+  const custom = { sources: ['https://embed.example.com/v/', 'http://local.test:8080'], page }
+
+  it('names the players by provider', () => {
+    expect(providerOf('https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?start=9')).toBe('youtube')
+    expect(providerOf('https://player.vimeo.com/video/1?h=ab', custom)).toBe('vimeo')
+  })
+
+  it('names a frame source by its origin alone', () => {
+    expect(providerOf('https://embed.example.com/v/1?x=2#t', custom)).toBe(
+      'custom:https://embed.example.com',
+    )
+    expect(providerOf('http://local.test:8080/a', custom)).toBe('custom:http://local.test:8080')
+  })
+
+  it.each([
+    null,
+    'https://embed.example.com/other',
+    'https://evil.example/',
+    'https://player.vimeo.com/video/../x',
+    'not a url',
+  ])('names nothing pedit would not frame: %j', (src) => {
+    expect(providerOf(src, custom)).toBeNull()
   })
 })

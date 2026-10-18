@@ -9,6 +9,7 @@ import {
 import DOMPurify from 'dompurify'
 import MarkdownIt from 'markdown-it'
 import { parseDocument } from 'yaml'
+import { providerLabel } from './alwaysload.ts'
 import type { ImageResolver } from './attachments.ts'
 import {
   type Embed,
@@ -19,6 +20,7 @@ import {
   httpUrl,
   isAllowedFrame,
   isVideoFile,
+  providerOf,
 } from './embed.ts'
 
 // Raw HTML in the document is shown as text, never parsed.
@@ -131,13 +133,18 @@ function videoHtml(src: string, label: string, line?: unknown): string {
 // A frame is not loaded until someone asks: nobody in the room should contact a
 // third party just because someone wrote its URL in the file. The placeholder
 // carries only the frame's src; loadEmbed derives everything else from it again.
+// "Always load" is a checkbox drawn with a role, since the sanitiser drops inputs.
 function embedHtml(embed: Embed, href: string, line: unknown): string {
   if (embed.kind === 'video') return videoHtml(embed.src, '', line)
   const host = new URL(embed.src).host
+  const provider = providerOf(embed.src, frames)
+  const remember = provider
+    ? `<span class="embed-remember" role="checkbox" aria-checked="false" tabindex="0">Always load ${escape(providerLabel(provider))}</span>`
+    : ''
   return (
     `<div class="embed embed--${embed.shape}"${lineAttr(line)} data-embed-src="${escape(embed.src)}">` +
     `<span class="embed-provider">${escape(embed.title)}</span>` +
-    `<span class="embed-load" role="button" tabindex="0">Load from ${escape(host)}</span>` +
+    `<span class="embed-actions"><span class="embed-load" role="button" tabindex="0">Load from ${escape(host)}</span>${remember}</span>` +
     `<a class="embed-link" href="${escape(href)}">${escape(href)}</a></div>`
   )
 }
@@ -299,13 +306,47 @@ export function render(
 }
 
 /**
+ * Who serves the frame of an embed placeholder, derived from its src alone as
+ * loadEmbed does, or null if pedit would not frame it.
+ */
+export function embedProvider(
+  placeholder: Element,
+  frameSources: readonly string[] = pageFrameSources(),
+): string | null {
+  return providerOf(placeholder.getAttribute('data-embed-src'), {
+    sources: frameSources,
+    page: new URL(location.href),
+  })
+}
+
+// patch() compares blocks by the key noted for them as rendered. Note the keys
+// of a placeholder and the blocks it sits in, such as a list item, before it
+// changes, so it stays while the paragraph with its URL is unchanged.
+function noteKeys(placeholder: Element): void {
+  for (let el: Element | null = placeholder; el?.hasAttribute('data-line'); el = el.parentElement) {
+    keyOf(el)
+  }
+}
+
+/** Ticks or clears an embed placeholder's "Always load" box; returns whether it is ticked. */
+export function toggleRemember(control: Element): boolean {
+  const placeholder = control.closest('[data-embed-src]')
+  if (placeholder) noteKeys(placeholder)
+  const on = control.getAttribute('aria-checked') !== 'true'
+  control.setAttribute('aria-checked', String(on))
+  return on
+}
+
+/**
  * Loads the frame of an embed placeholder, deriving its provider and attributes
- * from its src alone, and moves focus into it. Returns null for a placeholder
- * whose src pedit would not frame. `frameSources` are the relay's FRAME_SOURCES.
+ * from its src alone, and moves focus into it unless `focus` is false. Returns
+ * null for a placeholder whose src pedit would not frame. `frameSources` are
+ * the relay's FRAME_SOURCES.
  */
 export function loadEmbed(
   placeholder: Element,
   frameSources: readonly string[] = pageFrameSources(),
+  focus = true,
 ): HTMLIFrameElement | null {
   const src = placeholder.getAttribute('data-embed-src')
   const frame = frameFor(src, { sources: frameSources, page: new URL(location.href) })
@@ -317,15 +358,10 @@ export function loadEmbed(
   iframe.setAttribute('referrerpolicy', FRAME_REFERRER_POLICY)
   iframe.title = frame.title
   iframe.src = src
-  // patch() compares blocks by the key noted before the player loaded, so the
-  // player stays while the paragraph with its URL is unchanged. Note the keys
-  // of the blocks it sits in, such as a list item, while they look as rendered.
-  for (let el: Element | null = placeholder; el?.hasAttribute('data-line'); el = el.parentElement) {
-    keyOf(el)
-  }
+  noteKeys(placeholder)
   placeholder.replaceChildren(iframe)
   placeholder.classList.add('embed--loaded')
-  iframe.focus()
+  if (focus) iframe.focus()
   return iframe
 }
 

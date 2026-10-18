@@ -1,6 +1,7 @@
 'use client'
 
 import { createEffect, createMemo, createSignal, onCleanup, onMount } from '@barefootjs/client'
+import { providerLabel } from '../alwaysload.ts'
 import {
   CHEVRON_LEFT,
   CHEVRON_RIGHT,
@@ -26,6 +27,7 @@ export function Settings(props: { model: SettingsModel }) {
   const lineHeight = () => m.lineHeight.get()
   const wrap = () => m.wrap.get()
   const vim = () => m.vim.get()
+  const alwaysLoad = () => m.alwaysLoad.get()
 
   const [gallery, setGallery] = createSignal(false)
   const current = createMemo(() => m.themes.find((t) => t.id === theme()))
@@ -209,6 +211,32 @@ export function Settings(props: { model: SettingsModel }) {
                 <small>Only in this browser.</small>
               </span>
             </label>
+            <h3 className="settings-section">Preview</h3>
+            <p className="settings-note" hidden={alwaysLoad().length > 0}>
+              Players load only when you click them.
+            </p>
+            <ul
+              className="settings-providers"
+              aria-label="Players that always load"
+              hidden={alwaysLoad().length === 0}
+            >
+              {alwaysLoad().map((id) => (
+                <li key={id} className="settings-provider">
+                  <span className="settings-text">
+                    <span>{`Always load ${providerLabel(id)}`}</span>
+                    <small>Only in this browser.</small>
+                  </span>
+                  <button
+                    type="button"
+                    className="settings-forget"
+                    aria-label={`Forget ${providerLabel(id)}`}
+                    onClick={() => m.forgetAlwaysLoad(id)}
+                  >
+                    Forget
+                  </button>
+                </li>
+              ))}
+            </ul>
           </div>
         </div>
         <div

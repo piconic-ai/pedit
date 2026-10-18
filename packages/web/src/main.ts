@@ -13,6 +13,7 @@ import { basicSetup } from 'codemirror'
 import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next'
 import { Awareness } from 'y-protocols/awareness'
 import * as Y from 'yjs'
+import { AlwaysLoad } from './alwaysload.ts'
 import {
   type Appearance,
   applyText,
@@ -125,6 +126,7 @@ function settingsModel(
   themes: ThemeSwitcher,
   wrapMode: Compartment,
   vim: VimToggle,
+  alwaysLoad: AlwaysLoad,
   initial: Appearance,
   fontMode: Compartment,
   /** Other editors on the page, which take the same reader theme. */
@@ -196,6 +198,8 @@ function settingsModel(
         if (!ok) vimOn.set(vim.on)
       })
     },
+    alwaysLoad: alwaysLoad.ids,
+    forgetAlwaysLoad: (id) => alwaysLoad.forget(id),
   }
 }
 
@@ -306,10 +310,12 @@ async function joinRoom(
   const followEditor = () => {
     if (main.dataset.view === 'split') preview.follow(editor)
   }
+  const alwaysLoad = new AlwaysLoad()
   const preview = new PreviewPane(text, {
     onRender: followEditor,
     images: attachments,
     element: parts.preview,
+    alwaysLoad,
   })
   attachments.version.subscribe(() => preview.refresh())
   const splitter = new Splitter(main, { onResize: followEditor })
@@ -353,7 +359,7 @@ async function joinRoom(
   const vim = new VimToggle(editor, vimMode, () => vimExtension(undoManager))
   const themes = new ThemeSwitcher(editor, themeMode, theme.id)
   themes.follow(jsonPane.view, jsonTheme)
-  const settings = settingsModel(editor, themes, wrap, vim, appearance, fontMode, [
+  const settings = settingsModel(editor, themes, wrap, vim, alwaysLoad, appearance, fontMode, [
     { view: jsonPane.view, compartment: jsonFont },
   ])
   if (loadVimMode()) settings.setVim(true)

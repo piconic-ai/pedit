@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
 import * as Y from 'yjs'
+import { ALWAYS_LOAD_KEY, AlwaysLoad } from '../src/alwaysload.ts'
 import type { ImageResolver } from '../src/attachments.ts'
 import { PreviewPane } from '../src/pane.ts'
 import * as preview from '../src/preview.ts'
 import {
+  embedProvider,
   loadEmbed,
   pageFrameSources,
   pageMediaSources,
@@ -32,11 +34,19 @@ function dom(
 const PLAYER_SANDBOX = 'allow-scripts allow-same-origin allow-popups allow-presentation'
 const PLAYER_ALLOW = 'fullscreen; picture-in-picture; encrypted-media'
 
-function placeholder(line: number, src: string, title: string, href: string): string {
+function placeholder(
+  line: number,
+  src: string,
+  title: string,
+  href: string,
+  provider: string,
+): string {
   return (
     `<div class="embed embed--video" data-line="${line}" data-embed-src="${src}">` +
     `<span class="embed-provider">${title}</span>` +
+    `<span class="embed-actions">` +
     `<span class="embed-load" role="button" tabindex="0">Load from ${new URL(src).host}</span>` +
+    `<span class="embed-remember" role="checkbox" aria-checked="false" tabindex="0">Always load ${provider}</span></span>` +
     `<a class="embed-link" href="${href}" target="_blank" rel="noopener noreferrer">${href}</a></div>`
   )
 }
@@ -297,12 +307,14 @@ describe('render', () => {
         'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?start=90',
         'YouTube video',
         'https://youtu.be/dQw4w9WgXcQ?t=90',
+        'YouTube',
       ) +
         placeholder(
           2,
           'https://player.vimeo.com/video/76979871?h=abc123',
           'Vimeo video',
           'https://vimeo.com/76979871/abc123',
+          'Vimeo',
         ),
     )
   })
@@ -339,6 +351,7 @@ describe('render', () => {
           'https://embed.example.com/v/1?x=2',
           'embed.example.com',
           'https://embed.example.com/v/1?x=2',
+          'embed.example.com',
         ),
       )
     })
@@ -535,6 +548,176 @@ describe('loadEmbed', () => {
       expect(element.querySelector('iframe')).toBeNull()
       element.remove()
     })
+  })
+})
+
+describe('always load', () => {
+  function memory(initial: string[] = []) {
+    const data = new Map<string, string>([[ALWAYS_LOAD_KEY, JSON.stringify(initial)]])
+    return {
+      data,
+      getItem: (k: string) => data.get(k) ?? null,
+      setItem: (k: string, v: string) => {
+        data.set(k, v)
+      },
+    }
+  }
+
+  const loaded = (element: Element) =>
+    [...element.querySelectorAll('iframe')].map((f) => f.getAttribute('src'))
+
+  async function pane(source: string, always: AlwaysLoad) {
+    const text = new Y.Doc().getText('content')
+    const p = new PreviewPane(text, { load: () => Promise.resolve(preview), alwaysLoad: always })
+    document.body.append(p.element)
+    text.insert(0, source)
+    p.active = true
+    await vi.waitFor(() => expect(p.element.querySelector('[data-embed-src]')).not.toBeNull())
+    return { element: p.element, text }
+  }
+
+  it('offers to always load the provider of each placeholder', () => {
+    const out = dom(
+      'https://youtu.be/dQw4w9WgXcQ\n\nhttps://vimeo.com/1\n\nhttps://embed.example.com:8443/v/1',
+      [],
+      ['https://embed.example.com:8443/v/'],
+    )
+    const boxes = [...out.querySelectorAll('.embed-remember')]
+    expect(boxes.map((b) => b.textContent)).toEqual([
+      'Always load YouTube',
+      'Always load Vimeo',
+      'Always load embed.example.com:8443',
+    ])
+    for (const b of boxes) {
+      expect(b.getAttribute('role')).toBe('checkbox')
+      expect(b.getAttribute('aria-checked')).toBe('false')
+      expect(b.getAttribute('tabindex')).toBe('0')
+    }
+  })
+
+  it('names the provider of a placeholder from its src alone', () => {
+    const sources = ['https://embed.example.com/v/']
+    const out = dom('https://vimeo.com/1\n\nhttps://embed.example.com/v/1?x=2', [], sources)
+    const [vimeo, custom] = [...out.querySelectorAll('[data-embed-src]')] as Element[]
+    expect(embedProvider(vimeo as Element, sources)).toBe('vimeo')
+    expect(embedProvider(custom as Element, sources)).toBe('custom:https://embed.example.com')
+    expect(embedProvider(custom as Element, [])).toBeNull()
+    vimeo?.setAttribute('data-embed-src', 'https://evil.example/')
+    expect(embedProvider(vimeo as Element, sources)).toBeNull()
+  })
+
+  it('loads a remembered provider after rendering, leaving focus where it is', async () => {
+    const before = document.activeElement
+    const { element } = await pane(
+      '# Videos\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nhttps://vimeo.com/76979871',
+      new AlwaysLoad(memory(['youtube'])),
+    )
+    await vi.waitFor(() => expect(element.querySelector('iframe')).not.toBeNull())
+    expect(loaded(element)).toEqual(['https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ'])
+    expect(element.querySelector('.embed--loaded iframe')?.getAttribute('sandbox')).toBe(
+      PLAYER_SANDBOX,
+    )
+    // The provider nobody chose stays a placeholder.
+    expect(element.querySelectorAll('[data-embed-src]:not(.embed--loaded)')).toHaveLength(1)
+    expect(document.activeElement).toBe(before)
+    element.remove()
+  })
+
+  it('loads a remembered provider added by a later edit', async () => {
+    const { element, text } = await pane(
+      'https://vimeo.com/76979871',
+      new AlwaysLoad(memory(['youtube'])),
+    )
+    expect(element.querySelector('iframe')).toBeNull()
+    text.insert(text.length, '\n\n- https://youtu.be/dQw4w9WgXcQ\n')
+    await vi.waitFor(() => expect(loaded(element)).toHaveLength(1))
+    expect(loaded(element)).toEqual(['https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ'])
+    const frame = element.querySelector('iframe')
+    text.insert(0, 'Above\n\n')
+    await vi.waitFor(() => expect(element.querySelector('p')?.textContent).toBe('Above'))
+    expect(element.querySelector('iframe')).toBe(frame)
+    element.remove()
+  })
+
+  it('loads nothing without a remembered provider', async () => {
+    const storage = memory()
+    const { element, text } = await pane('https://youtu.be/dQw4w9WgXcQ', new AlwaysLoad(storage))
+    text.insert(text.length, '\n\nhttps://vimeo.com/76979871')
+    await vi.waitFor(() => expect(element.querySelectorAll('[data-embed-src]')).toHaveLength(2))
+    expect(element.querySelector('iframe')).toBeNull()
+    // Loading without ticking the box remembers nothing.
+    ;(element.querySelector('.embed-load') as HTMLElement).click()
+    expect(loaded(element)).toHaveLength(1)
+    expect(storage.data.get(ALWAYS_LOAD_KEY)).toBe('[]')
+    element.remove()
+  })
+
+  it('ticks the box by click, Enter or Space, and keeps it ticked through edits elsewhere', async () => {
+    const { element, text } = await pane('https://vimeo.com/76979871', new AlwaysLoad(memory()))
+    const box = () => element.querySelector('.embed-remember') as HTMLElement
+    box().click()
+    expect(box().getAttribute('aria-checked')).toBe('true')
+    for (const key of ['Enter', ' ']) {
+      const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+      box().dispatchEvent(event)
+      expect(event.defaultPrevented).toBe(true)
+    }
+    expect(box().getAttribute('aria-checked')).toBe('true')
+    expect(element.querySelector('iframe')).toBeNull()
+    const ticked = box()
+    text.insert(0, 'Above\n\n')
+    await vi.waitFor(() => expect(element.querySelector('p')?.textContent).toBe('Above'))
+    expect(box()).toBe(ticked)
+    expect(box().getAttribute('aria-checked')).toBe('true')
+    element.remove()
+  })
+
+  it('remembers only the provider when loading with the box ticked, and loads its other players', async () => {
+    const storage = memory()
+    const always = new AlwaysLoad(storage)
+    const { element } = await pane(
+      'https://youtu.be/dQw4w9WgXcQ?t=5\n\nhttps://vimeo.com/76979871\n\nhttps://youtu.be/aaaaaaaaaaa',
+      always,
+    )
+    const first = element.querySelector('[data-embed-src]') as Element
+    ;(first.querySelector('.embed-remember') as HTMLElement).click()
+    ;(first.querySelector('.embed-load') as HTMLElement).click()
+    expect(always.ids.get()).toEqual(['youtube'])
+    expect(storage.data.get(ALWAYS_LOAD_KEY)).toBe('["youtube"]')
+    // Nothing about the URL, the room or its key: the only entry is the provider id.
+    expect([...storage.data]).toEqual([[ALWAYS_LOAD_KEY, '["youtube"]']])
+    expect(loaded(element)).toEqual([
+      'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?start=5',
+      'https://www.youtube-nocookie.com/embed/aaaaaaaaaaa',
+    ])
+    // Focus goes to the player that was clicked, not the one loaded with it.
+    expect(document.activeElement).toBe(first.querySelector('iframe'))
+    element.remove()
+  })
+
+  it('still loads only what pedit frames for a remembered provider', async () => {
+    const always = new AlwaysLoad(memory())
+    const { element } = await pane('https://vimeo.com/76979871', always)
+    element
+      .querySelector('[data-embed-src]')
+      ?.setAttribute('data-embed-src', 'https://evil.example/')
+    always.remember('vimeo')
+    always.remember('custom:https://evil.example')
+    expect(element.querySelector('iframe')).toBeNull()
+    element.remove()
+  })
+
+  it('keeps players loaded when their provider is forgotten, and asks again for new ones', async () => {
+    const always = new AlwaysLoad(memory(['vimeo']))
+    const { element, text } = await pane('https://vimeo.com/76979871', always)
+    await vi.waitFor(() => expect(element.querySelector('iframe')).not.toBeNull())
+    const frame = element.querySelector('iframe')
+    always.forget('vimeo')
+    text.insert(text.length, '\n\nhttps://vimeo.com/1')
+    await vi.waitFor(() => expect(element.querySelectorAll('[data-embed-src]')).toHaveLength(2))
+    expect(element.querySelector('iframe')).toBe(frame)
+    expect(loaded(element)).toHaveLength(1)
+    element.remove()
   })
 })
 

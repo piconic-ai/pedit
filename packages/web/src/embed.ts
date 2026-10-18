@@ -1,4 +1,5 @@
 import { allowsFrame, FRAMES, type FrameProvider } from '@pedit/protocol/csp'
+import { customProvider, type ProviderId } from './alwaysload.ts'
 
 /** How a frame is laid out: a 16:9 player, a short audio bar or a tall document. */
 export type Shape = 'video' | 'audio' | 'doc'
@@ -99,6 +100,16 @@ export function frameFor(src: string | null, custom?: FrameSources): Frame | nul
 
 export function isAllowedFrame(src: string | null, custom?: FrameSources): boolean {
   return frameFor(src, custom) !== null
+}
+
+/**
+ * Who serves a frame `src`, as the "Always load" preference names it, or null if
+ * the preview must not frame it. Like the frame itself, it comes from frameFor.
+ */
+export function providerOf(src: string | null, custom?: FrameSources): ProviderId | null {
+  const frame = frameFor(src, custom)
+  if (src === null || !frame) return null
+  return frame.provider === 'custom' ? customProvider(new URL(src)) : frame.provider
 }
 
 /** Reads YouTube's `t=90` or `t=1m30s`. */

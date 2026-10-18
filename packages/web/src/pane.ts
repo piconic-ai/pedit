@@ -1,8 +1,12 @@
 import type { EditorView } from '@codemirror/view'
 import type * as Y from 'yjs'
+import type { AlwaysLoad } from './alwaysload.ts'
 import type { ImageResolver } from './attachments.ts'
 
-type Renderer = Pick<typeof import('./preview.ts'), 'render' | 'patch' | 'loadEmbed'>
+type Renderer = Pick<
+  typeof import('./preview.ts'),
+  'render' | 'patch' | 'loadEmbed' | 'embedProvider' | 'toggleRemember'
+>
 
 /** A source line and where its block starts in the preview's scroll area. */
 export interface Anchor {
@@ -61,6 +65,7 @@ export class PreviewPane {
   #frame = 0
   #onRender: () => void
   #images: ImageResolver | undefined
+  #alwaysLoad: AlwaysLoad | undefined
 
   constructor(
     text: Y.Text,
@@ -71,6 +76,8 @@ export class PreviewPane {
       images?: ImageResolver
       /** The article to render into, laid out by components/Layout.tsx. */
       element?: HTMLElement
+      /** The providers whose players load without a click, in this browser. */
+      alwaysLoad?: AlwaysLoad
     } = {},
   ) {
     this.#text = text
@@ -78,6 +85,9 @@ export class PreviewPane {
     this.#onRender = options.onRender ?? (() => {})
     this.#images = options.images
     this.element = options.element ?? document.createElement('article')
+    this.#alwaysLoad = options.alwaysLoad
+    // Remembering a provider also loads its other players on the page.
+    this.#alwaysLoad?.ids.subscribe(() => this.#loadRemembered())
     text.observe(() => {
       this.#dirty = true
       this.#schedule()
@@ -127,14 +137,39 @@ export class PreviewPane {
     pane.scrollTop = Math.min(max, scrollTarget(monotonic(anchors), topLine(view)))
   }
 
-  /** Loads the frame whose "Load from" control the event came from, if any. */
+  /**
+   * Loads the frame whose "Load from" control the event came from, remembering
+   * its provider if "Always load" is ticked, or toggles that box.
+   */
   #loadEmbed(event: Event): void {
-    const control = event.target instanceof Element ? event.target.closest('.embed-load') : null
+    const target = event.target instanceof Element ? event.target : null
+    const control = target?.closest('.embed-load, .embed-remember')
     const placeholder = control?.closest('[data-embed-src]')
-    if (!placeholder || !this.element.contains(placeholder) || !this.#renderer) return
+    if (!control || !placeholder || !this.element.contains(placeholder) || !this.#renderer) return
     // Space would otherwise scroll the preview.
     event.preventDefault()
-    this.#renderer.loadEmbed(placeholder)
+    if (control.classList.contains('embed-remember')) {
+      this.#renderer.toggleRemember(control)
+      return
+    }
+    const remember = placeholder.querySelector('.embed-remember')?.getAttribute('aria-checked')
+    const provider = this.#renderer.embedProvider(placeholder)
+    if (!this.#renderer.loadEmbed(placeholder)) return
+    if (remember === 'true' && provider) this.#alwaysLoad?.remember(provider)
+  }
+
+  /** Loads the players of the providers this browser always loads, leaving focus where it is. */
+  #loadRemembered(): void {
+    const always = this.#alwaysLoad
+    const renderer = this.#renderer
+    if (!always || !renderer) return
+    for (const placeholder of this.element.querySelectorAll(
+      '[data-embed-src]:not(.embed--loaded)',
+    )) {
+      if (always.has(renderer.embedProvider(placeholder))) {
+        renderer.loadEmbed(placeholder, undefined, false)
+      }
+    }
   }
 
   #schedule(): void {
@@ -166,6 +201,7 @@ export class PreviewPane {
     this.#dirty = false
     const { render, patch } = this.#renderer
     patch(this.element, render(this.#text.toString(), this.#images))
+    this.#loadRemembered()
     this.#images?.rendered?.()
     this.#onRender()
   }
