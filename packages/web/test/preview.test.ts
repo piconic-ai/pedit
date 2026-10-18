@@ -457,12 +457,12 @@ describe('loadEmbed', () => {
     div.remove()
   })
 
-  it('loads the src frameFor rebuilt, not the attribute as written', () => {
+  it('loads only frames the preview rendered', () => {
     const div = document.createElement('div')
     div.innerHTML =
-      '<div class="embed" data-embed-src="https://www.youtube-nocookie.com/embed/a/../dQw4w9WgXcQ#x"></div>'
-    const frame = loadEmbed(div.firstElementChild as Element, [])
-    expect(frame?.getAttribute('src')).toBe('https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ')
+      '<div class="embed" data-embed-src="https://www.youtube-nocookie.com/embed/aaaaaaaaaaa"></div>'
+    expect(loadEmbed(div.firstElementChild as Element, [])).toBeNull()
+    expect(div.querySelector('iframe')).toBeNull()
   })
 
   it('loads a frame source as a generic frame', () => {
