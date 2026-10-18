@@ -344,15 +344,9 @@ export function toggleRemember(control: Element): boolean {
 
 /**
  * Loads the frame of an embed placeholder, deriving its provider and attributes
-<<<<<<< HEAD
  * from its src alone, and moves focus into it unless `focus` is false. Returns
- * null for a placeholder whose src pedit would not frame. `frameSources` are
- * the relay's FRAME_SOURCES.
-=======
- * from its src alone, and moves focus into it. Returns null for a placeholder
- * the preview did not render or whose src pedit would not frame. `frameSources`
- * are the relay's FRAME_SOURCES.
->>>>>>> claude/gracious-planck-4xgt7x-click
+ * null for a placeholder the preview did not render or whose src pedit would
+ * not frame. `frameSources` are the relay's FRAME_SOURCES.
  */
 export function loadEmbed(
   placeholder: Element,
