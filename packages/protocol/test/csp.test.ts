@@ -96,6 +96,8 @@ describe('coversOrigin', () => {
     'http://pedit.test',
     'https://PEDIT.test/other/',
     'https://pedit.test:443',
+    'http://pedit.test:80',
+    'pedit.test:80',
     'pedit.test:*',
     'https://other.example pedit.test',
   ])('finds the page origin in %j', (value) => {

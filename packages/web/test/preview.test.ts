@@ -423,6 +423,7 @@ describe('pageFrameSources', () => {
     'pedit.test',
     'https://pedit.test/elsewhere/',
     'b.example http://pedit.test',
+    'http://pedit.test:80',
   ])('frames only the players for %j', (content) => {
     expect(pageFrameSources(meta(content), at)).toEqual([])
   })

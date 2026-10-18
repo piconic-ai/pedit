@@ -125,6 +125,7 @@ describe('pages', () => {
     'pedit.test',
     'https://pedit.test/elsewhere/',
     'http://pedit.test',
+    'http://pedit.test:80',
     'https://embed.example.com pedit.test:*',
   ])('frames only the built-in players for FRAME_SOURCES %j', async (value) => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {})

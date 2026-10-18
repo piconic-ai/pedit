@@ -80,7 +80,11 @@ function allowsBy(source: string, url: URL, page: URL, withPath = true): boolean
   if (port === undefined) {
     if (url.port !== '') return false
   } else if (port !== '*') {
-    const ok = url.port === port || (url.port === '' && DEFAULT_PORTS[url.protocol] === port)
+    // CSP3 lets :80 match https on its default port too, as browsers upgrade.
+    const ok =
+      url.port === port ||
+      (url.port === '' &&
+        (DEFAULT_PORTS[url.protocol] === port || (port === '80' && url.protocol === 'https:')))
     if (!ok) return false
   }
   if (withPath && path !== undefined) {
