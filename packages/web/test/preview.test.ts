@@ -13,6 +13,7 @@ import {
   patch,
   render,
   sanitize,
+  toggleRemember,
 } from '../src/preview.ts'
 
 function html(source: string): string {
@@ -808,6 +809,23 @@ describe('patch', () => {
       expect(quotes[at]?.textContent).toContain('edited')
       expect(quotes[1 - at]?.textContent).toContain('new quote')
     }
+  })
+
+  it('keeps a ticked "Always load" box in a list while its other items change, not once its URL changes', () => {
+    const container = document.createElement('div')
+    patch(container, render('- https://vimeo.com/76979871\n- Original sibling\n'))
+    const box = () => container.querySelector('.embed-remember') as Element
+    const ticked = box()
+    expect(toggleRemember(ticked)).toBe(true)
+
+    patch(container, render('- https://vimeo.com/76979871\n- Edited sibling\n'))
+    expect(box()).toBe(ticked)
+    expect(box().getAttribute('aria-checked')).toBe('true')
+    expect(container.querySelectorAll('li')[1]?.textContent).toBe('Edited sibling')
+
+    patch(container, render('- https://vimeo.com/1\n- Edited sibling\n'))
+    expect(box().getAttribute('aria-checked')).toBe('false')
+    expect(container.innerHTML).toBe(html('- https://vimeo.com/1\n- Edited sibling\n'))
   })
 
   it('updates the lines after a loaded player in a list', () => {

@@ -423,11 +423,18 @@ function shellOf(el: Element): string {
   return [el.tagName, ...attributes].join(' ')
 }
 
-/** Whether the fresh element still renders an embed the old one loaded, with the same src. */
+/** The embeds under an element that hold something to keep: a loaded player or a ticked box. */
+function heldEmbeds(el: Element): Element[] {
+  const ticked = [...el.querySelectorAll('.embed-remember[aria-checked="true"]')]
+  return [
+    ...el.querySelectorAll('.embed--loaded'),
+    ...ticked.flatMap((box) => box.closest('[data-embed-src]') ?? []),
+  ]
+}
+
+/** Whether the fresh element still renders an embed the old one holds, with the same src. */
 function keepsEmbed(old: Element, fresh: Element): boolean {
-  const held = new Set(
-    [...old.querySelectorAll('.embed--loaded')].map((el) => el.getAttribute('data-embed-src')),
-  )
+  const held = new Set(heldEmbeds(old).map((el) => el.getAttribute('data-embed-src')))
   if (held.size === 0) return false
   return [...fresh.querySelectorAll('[data-embed-src]')].some((el) =>
     held.has(el.getAttribute('data-embed-src')),
@@ -436,11 +443,11 @@ function keepsEmbed(old: Element, fresh: Element): boolean {
 
 /**
  * How well an old node can stand for a fresh one: 2 when it looks the same,
- * 1 when only its children differ and the fresh one still renders a player the
- * old one loaded (a list whose other item changed), so its children are patched
- * in turn. A block of the same shape without that player, such as a new quote
- * above, never takes it. Whitespace between blocks is never matched: it would
- * pull the matching away from the blocks.
+ * 1 when only its children differ and the fresh one still renders an embed the
+ * old one holds, a player or a ticked box (a list whose other item changed), so
+ * its children are patched in turn. A block of the same shape without that
+ * embed, such as a new quote above, never takes it. Whitespace between blocks
+ * is never matched: it would pull the matching away from the blocks.
  */
 function affinity(old: Node, fresh: Node): number {
   if (old.nodeType === Node.TEXT_NODE && old.textContent?.trim() === '') return 0
