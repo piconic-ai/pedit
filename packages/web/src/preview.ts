@@ -357,7 +357,8 @@ export function loadEmbed(
   if (frame.allow) iframe.setAttribute('allow', frame.allow)
   iframe.setAttribute('referrerpolicy', FRAME_REFERRER_POLICY)
   iframe.title = frame.title
-  iframe.src = src
+  // The URL frameFor rebuilt, never the attribute's text as it stands.
+  iframe.src = frame.src
   noteKeys(placeholder)
   placeholder.replaceChildren(iframe)
   placeholder.classList.add('embed--loaded')

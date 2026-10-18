@@ -151,16 +151,27 @@ describe('isAllowedFrame', () => {
 describe('frameFor', () => {
   it('derives each provider and its attributes from the src alone', () => {
     expect(frameFor('https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ')).toEqual({
+      src: 'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ',
       provider: 'youtube',
       title: 'YouTube video',
       ...PLAYER,
     })
     expect(frameFor('https://player.vimeo.com/video/1')).toEqual({
+      src: 'https://player.vimeo.com/video/1',
       provider: 'vimeo',
       title: 'Vimeo video',
       ...PLAYER,
     })
     expect(frameFor('https://embed.example.com/1')).toBeNull()
+  })
+
+  it('rebuilds the src to load from the allowed prefix and the parsed path', () => {
+    expect(frameFor('https://www.youtube-nocookie.com/embed/x/../dQw4w9WgXcQ?start=5#t')?.src).toBe(
+      'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?start=5',
+    )
+    expect(frameFor('HTTPS://PLAYER.VIMEO.COM/video/1?h=ab')?.src).toBe(
+      'https://player.vimeo.com/video/1?h=ab',
+    )
   })
 
   describe("with the relay's frame sources", () => {
@@ -169,7 +180,12 @@ describe('frameFor', () => {
     it('frames what they match, with the custom attributes', () => {
       expect(
         frameFor('https://embed.example.com:8443/1', custom(['embed.example.com:8443'])),
-      ).toEqual({ provider: 'custom', title: 'embed.example.com:8443', ...CUSTOM })
+      ).toEqual({
+        src: 'https://embed.example.com:8443/1',
+        provider: 'custom',
+        title: 'embed.example.com:8443',
+        ...CUSTOM,
+      })
       expect(frameFor('https://a.example.com/1', custom(['*.example.com']))).toMatchObject({
         provider: 'custom',
       })
@@ -190,6 +206,7 @@ describe('frameFor', () => {
     it('takes http only from a source that names it', () => {
       expect(frameFor('http://embed.example.com/', custom(['embed.example.com']))).toBeNull()
       expect(frameFor('http://embed.example.com/', custom(['http://embed.example.com']))).toEqual({
+        src: 'http://embed.example.com/',
         provider: 'custom',
         title: 'embed.example.com',
         ...CUSTOM,

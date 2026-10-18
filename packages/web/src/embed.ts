@@ -9,6 +9,8 @@ export type Shape = 'video' | 'audio' | 'doc'
  * its layout, and the sandbox and permissions it runs with.
  */
 export type Frame = {
+  /** The URL to load: rebuilt from the parsed src, starting with the allowed prefix. */
+  src: string
   provider: FrameProvider | 'custom'
   title: string
   shape: Shape
@@ -31,7 +33,7 @@ const PLAYER = {
   allow: 'fullscreen; picture-in-picture; encrypted-media',
 } as const
 
-const PROVIDERS: Record<FrameProvider, Omit<Frame, 'provider'>> = {
+const PROVIDERS: Record<FrameProvider, Omit<Frame, 'src' | 'provider'>> = {
   youtube: { title: 'YouTube video', ...PLAYER },
   vimeo: { title: 'Vimeo video', ...PLAYER },
 }
@@ -90,10 +92,17 @@ export function frameFor(src: string | null, custom?: FrameSources): Frame | nul
   if (url.protocol === 'https:') {
     // The parsed pathname has its dot segments resolved, unlike the raw string.
     const known = PREFIXES.find((p) => url.origin === p.origin && url.pathname.startsWith(p.path))
-    if (known) return { provider: known.provider, ...PROVIDERS[known.provider] }
+    if (known) {
+      const rest = `${url.pathname.slice(known.path.length)}${url.search}`
+      return {
+        src: `${FRAMES[known.provider]}${rest}`,
+        provider: known.provider,
+        ...PROVIDERS[known.provider],
+      }
+    }
   }
   if (custom && allowsFrame(custom.sources, url, custom.page)) {
-    return { provider: 'custom', title: url.host, ...CUSTOM }
+    return { src: url.href, provider: 'custom', title: url.host, ...CUSTOM }
   }
   return null
 }
@@ -154,7 +163,7 @@ function vimeo(url: URL): string | null {
 
 function frame(src: string | null, custom?: FrameSources): Embed | null {
   const f = frameFor(src, custom)
-  return src !== null && f ? { kind: 'frame', src, ...f } : null
+  return f ? { kind: 'frame', ...f } : null
 }
 
 /**
@@ -170,5 +179,5 @@ export function embedFor(href: string, custom?: FrameSources): Embed | null {
   // Only FRAME_SOURCES are framed as they are; a player URL that youtube() or
   // vimeo() did not take stays a link, as it does without frame sources.
   const f = frameFor(url.href, custom)
-  return f?.provider === 'custom' ? { kind: 'frame', src: url.href, ...f } : null
+  return f?.provider === 'custom' ? { kind: 'frame', ...f } : null
 }
