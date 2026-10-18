@@ -388,11 +388,24 @@ function shellOf(el: Element): string {
   return [el.tagName, ...attributes].join(' ')
 }
 
+/** Whether the fresh element still renders an embed the old one loaded, with the same src. */
+function keepsEmbed(old: Element, fresh: Element): boolean {
+  const held = new Set(
+    [...old.querySelectorAll('.embed--loaded')].map((el) => el.getAttribute('data-embed-src')),
+  )
+  if (held.size === 0) return false
+  return [...fresh.querySelectorAll('[data-embed-src]')].some((el) =>
+    held.has(el.getAttribute('data-embed-src')),
+  )
+}
+
 /**
  * How well an old node can stand for a fresh one: 2 when it looks the same,
- * 1 when it holds a loaded player and only its children differ (a list whose
- * other item changed), so its children are patched in turn. Whitespace between
- * blocks is never matched: it would pull the matching away from the blocks.
+ * 1 when only its children differ and the fresh one still renders a player the
+ * old one loaded (a list whose other item changed), so its children are patched
+ * in turn. A block of the same shape without that player, such as a new quote
+ * above, never takes it. Whitespace between blocks is never matched: it would
+ * pull the matching away from the blocks.
  */
 function affinity(old: Node, fresh: Node): number {
   if (old.nodeType === Node.TEXT_NODE && old.textContent?.trim() === '') return 0
@@ -400,8 +413,8 @@ function affinity(old: Node, fresh: Node): number {
   if (
     old instanceof Element &&
     fresh instanceof Element &&
-    old.querySelector('.embed--loaded') &&
-    shellOf(old) === shellOf(fresh)
+    shellOf(old) === shellOf(fresh) &&
+    keepsEmbed(old, fresh)
   ) {
     return 1
   }

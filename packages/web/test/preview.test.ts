@@ -607,6 +607,26 @@ describe('patch', () => {
     )
   })
 
+  it('keeps a loaded player in the block that still holds it, not one shaped the same', () => {
+    // A new quote, above or below, competes with the player's own while that changes.
+    for (const [edited, at] of [
+      ['> new quote\n\nseparator\n\n> https://youtu.be/dQw4w9WgXcQ\n>\n> edited\n', 1],
+      ['> https://youtu.be/dQw4w9WgXcQ\n>\n> edited\n\nseparator\n\n> new quote\n', 0],
+    ] as const) {
+      const container = document.createElement('div')
+      patch(container, render('> https://youtu.be/dQw4w9WgXcQ\n>\n> old\n'))
+      const frame = loadEmbed(container.querySelector('[data-embed-src]') as Element, [])
+      expect(frame).not.toBeNull()
+
+      patch(container, render(edited))
+      expect(container.querySelector('iframe')).toBe(frame)
+      const quotes = container.querySelectorAll('blockquote')
+      expect(quotes[at]?.contains(frame)).toBe(true)
+      expect(quotes[at]?.textContent).toContain('edited')
+      expect(quotes[1 - at]?.textContent).toContain('new quote')
+    }
+  })
+
   it('updates the lines after a loaded player in a list', () => {
     const container = document.createElement('div')
     patch(container, render('a\n\n- https://youtu.be/dQw4w9WgXcQ\n- next\n'))
