@@ -125,7 +125,9 @@ v0.1.5 also carry the attestation as a file, `pedit_<version>.sigstore.json`,
 for `gh attestation verify <archive> --bundle <file> ...`. The archives are
 reproducible: GoReleaser v2.18.3 (`goreleaser release --clean --skip=publish`
 with `.goreleaser.yaml`) run on the same tag with the Go version from `go.mod`
-on `ubuntu-24.04` gives the same `checksums.txt`.
+on `ubuntu-24.04` gives the same `checksums.txt`. Releases made before the
+switch to GoReleaser were built by `scripts/build-cli-release.sh`; their tags
+still carry it, so rebuild those with that script instead.
 
 ## Configuration and templates
 
