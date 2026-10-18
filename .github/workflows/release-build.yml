@@ -12,8 +12,8 @@ name: release-build
 # artifact, which the caller uploads to the Release.
 #
 # The input is only the tag, and the environment is pinned (runner image,
-# Go version from go.mod, action SHAs), so scripts/build-cli-release.sh gives
-# the same bytes when the tag is rebuilt here.
+# Go version from go.mod, GoReleaser version, action SHAs), so .goreleaser.yaml
+# gives the same bytes when the tag is rebuilt here.
 
 on:
   workflow_call:
@@ -48,8 +48,27 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      # GoReleaser only builds: publishing is skipped, the Release is
+      # tagpr.yml's job. Left alone it takes the highest tag at HEAD, so
+      # another tag on the same commit would name and stamp the archives;
+      # GORELEASER_CURRENT_TAG pins the build to the requested tag, and
+      # validation still checks that it points at HEAD and the tree is clean.
       - name: Build release archives and checksums
-        run: bash scripts/build-cli-release.sh "$TAG" "$RUNNER_TEMP/pedit-release"
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        env:
+          GORELEASER_CURRENT_TAG: ${{ inputs.tag }}
+        with:
+          distribution: goreleaser
+          version: v2.18.3
+          args: release --clean --skip=publish
+      # dist/ also holds the per-target binaries and GoReleaser's metadata;
+      # the release files are only the archives and checksums.txt.
+      - name: Collect the release files
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/pedit-release"
+          mkdir -p "$out"
+          cp dist/pedit_*.tar.gz dist/pedit_*.zip dist/checksums.txt "$out/"
       - name: Attest build provenance of the archives
         id: attest
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2

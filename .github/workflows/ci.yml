@@ -62,9 +62,21 @@ jobs:
         # PEDIT_INTEROP makes the interop test fail rather than skip without Node.js deps.
         run: PEDIT_INTEROP=1 go test -race ./...
 
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          version: v2.18.3
+          install-only: true
+
       - name: Build and verify CLI release archives
+        # The checkout has no tag, so GORELEASER_CURRENT_TAG names one and
+        # validation (tag at HEAD, clean tree) is skipped.
+        env:
+          GORELEASER_CURRENT_TAG: v0.0.0-test
         run: |
-          bash scripts/build-cli-release.sh v0.0.0-test "$RUNNER_TEMP/pedit-release"
+          goreleaser release --clean --skip=publish,validate
+          mkdir -p "$RUNNER_TEMP/pedit-release"
+          cp dist/pedit_*.tar.gz dist/pedit_*.zip dist/checksums.txt "$RUNNER_TEMP/pedit-release/"
           cd "$RUNNER_TEMP/pedit-release"
           sha256sum --check checksums.txt
           test "$(wc -l < checksums.txt)" -eq 6
@@ -73,11 +85,13 @@ jobs:
           unzip -l pedit_v0.0.0-test_windows_arm64.zip | grep -q pedit.exe
 
       - name: CLI release archives are reproducible
-        # A second build (new binaries, new file times, another umask) must
-        # give the same bytes, so a release can be rebuilt and compared.
+        # A second build (new dist/, another umask and time zone) must give
+        # the same bytes, so a release can be rebuilt and compared.
+        env:
+          GORELEASER_CURRENT_TAG: v0.0.0-test
         run: |
-          (umask 077 && bash scripts/build-cli-release.sh v0.0.0-test "$RUNNER_TEMP/pedit-release-again")
-          diff "$RUNNER_TEMP/pedit-release/checksums.txt" "$RUNNER_TEMP/pedit-release-again/checksums.txt"
+          (umask 077 && TZ=Asia/Tokyo goreleaser release --clean --skip=publish,validate)
+          diff "$RUNNER_TEMP/pedit-release/checksums.txt" dist/checksums.txt
 
       - name: Install script
         run: bash scripts/test-install.sh v0.0.0-test "$RUNNER_TEMP/pedit-release"

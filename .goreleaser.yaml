@@ -1,0 +1,69 @@
+# Builds the CLI release archives and checksums.txt for the tag at HEAD into
+# dist/. .github/workflows/release-build.yml runs it for a release, ci.yml for
+# a test build; both copy only the archives and checksums.txt out of dist/.
+#
+# GoReleaser only builds here: it publishes nothing (release is disabled and
+# the workflows pass --skip=publish). Uploading to the Release stays in
+# tagpr.yml, signing the provenance in release-build.yml, and the Homebrew
+# formula in homebrew-formula.yml.
+#
+# The archives are reproducible: the same tag built in the same environment
+# (GoReleaser and Go versions, runner image) gives byte-identical files, so
+# anyone can rebuild a release and compare it with the published checksums.
+# Everything that would otherwise leak from the build machine is fixed:
+#   - binary and archive entry times are the commit time of HEAD
+#   - modes are 0755 for the binary and 0644 for LICENSE, whatever the umask
+#   - tar entries are owned by root:root (uid and gid 0); GoReleaser cannot
+#     write empty owner names, so the names are root rather than blank
+#   - -trimpath drops the build machine's paths from the binary
+# GoReleaser writes the archives itself, so neither GNU tar nor zip is needed.
+#
+# Archive names (pedit_<tag>_<os>_<arch>.tar.gz, .zip on Windows) and their
+# layout (the binary and LICENSE at the root) are what install.sh and
+# scripts/update-homebrew-formula.py expect; keep them.
+version: 2
+
+project_name: pedit
+
+builds:
+  - main: ./cmd/pedit
+    binary: pedit
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux, windows]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Tag }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - name_template: "{{ .ProjectName }}_{{ .Tag }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    builds_info:
+      mode: 0755
+      mtime: "{{ .CommitDate }}"
+      owner: root
+      group: root
+    files:
+      - src: LICENSE
+        info:
+          mode: 0644
+          mtime: "{{ .CommitDate }}"
+          owner: root
+          group: root
+
+# sha256sum format, so `sha256sum --check checksums.txt` verifies the archives.
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+changelog:
+  disable: true
+
+release:
+  disable: true

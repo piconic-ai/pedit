@@ -123,8 +123,9 @@ gh attestation verify <archive> --repo piconic-ai/pedit \
 (releases up to v0.1.2 were signed by `tagpr.yml` instead). Releases after
 v0.1.5 also carry the attestation as a file, `pedit_<version>.sigstore.json`,
 for `gh attestation verify <archive> --bundle <file> ...`. The archives are
-reproducible: `scripts/build-cli-release.sh` run on the same tag with the Go
-version from `go.mod` on `ubuntu-24.04` gives the same `checksums.txt`.
+reproducible: GoReleaser v2.18.3 (`goreleaser release --clean --skip=publish`
+with `.goreleaser.yaml`) run on the same tag with the Go version from `go.mod`
+on `ubuntu-24.04` gives the same `checksums.txt`.
 
 ## Configuration and templates
 
