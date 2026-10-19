@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.1.10](https://github.com/piconic-ai/pedit/compare/v0.1.9...v0.1.10) - 2026-10-19
+
+- Embed GitHub source files in the preview by @kfly8 in https://github.com/piconic-ai/pedit/pull/164
+
 ## [v0.1.9](https://github.com/piconic-ai/pedit/compare/v0.1.8...v0.1.9) - 2026-10-19
 
 - Define embed providers as files in a build-time registry by @kfly8 in https://github.com/piconic-ai/pedit/pull/157
