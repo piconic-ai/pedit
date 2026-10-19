@@ -2,8 +2,13 @@ package protocol_test
 
 import (
 	"bytes"
+	"path"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/piconic-ai/pedit/internal/protocol"
 )
@@ -139,5 +144,31 @@ func FuzzParseExpiredReason(f *testing.F) {
 	f.Add(protocol.ExpiredReason(86400))
 	f.Fuzz(func(t *testing.T, reason string) {
 		_, _ = protocol.ParseExpiredReason(reason) // must not panic
+	})
+}
+
+func FuzzCheckPath(f *testing.F) {
+	for _, p := range []string{"notes.md", "docs/a.md", "../x", "CON", "a:b", "a\\b", "café.md", "a‮b", "trailing.", "a//b", "\xff"} {
+		f.Add(p)
+	}
+	f.Fuzz(func(t *testing.T, p string) {
+		if protocol.CheckPath(p) != nil {
+			return
+		}
+		// What the checks promise, and what filepath agrees with on this platform.
+		if !utf8.ValidString(p) || path.Clean(p) != p || !filepath.IsLocal(filepath.FromSlash(p)) {
+			t.Fatalf("CheckPath accepted %q, which is not a clean local path", p)
+		}
+		if strings.ContainsAny(p, `\:<>"|?*`) {
+			t.Fatalf("CheckPath accepted %q, with a character Windows refuses", p)
+		}
+		for _, r := range p {
+			if unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) {
+				t.Fatalf("CheckPath accepted %q, with %U", p, r)
+			}
+		}
+		if k := protocol.PathKey(p); protocol.PathKey(k) != k {
+			t.Fatalf("PathKey(%q) = %q, but PathKey of that is %q", p, k, protocol.PathKey(k))
+		}
 	})
 }
