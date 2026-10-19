@@ -4,15 +4,23 @@ import {
   allowsMedia,
   contentSecurityPolicy,
   coversOrigin,
+  embedSources,
   framedProviders,
   isSize,
+  isSnippet,
   PROVIDERS,
   parseMediaSources,
   providerProblem,
 } from '../src/csp.ts'
-import { defineProvider, type Provider } from '../src/embeds/define.ts'
+import {
+  defineProvider,
+  type FetchProvider,
+  type FrameProvider,
+  type Provider,
+} from '../src/embeds/define.ts'
 
-const FRAMES = Object.values(PROVIDERS).flatMap((p) => p.frames)
+const FRAMES = Object.values(PROVIDERS).flatMap((p) => p.frames ?? [])
+const FETCHES = Object.values(PROVIDERS).flatMap((p) => p.fetches ?? [])
 
 describe('parseMediaSources', () => {
   it.each([
@@ -136,6 +144,7 @@ describe('contentSecurityPolicy', () => {
         media: [],
         // Not the registry's frames, which a relay chooses for itself.
         frames: ['https://www.youtube-nocookie.com/embed/', 'https://player.vimeo.com/video/'],
+        fetches: ['https://raw.githubusercontent.com/'],
         origin,
       }),
     ).toBe(
@@ -146,7 +155,7 @@ describe('contentSecurityPolicy', () => {
         "img-src 'self' blob: data: https://gravatar.com https://www.gravatar.com https://secure.gravatar.com https://avatars.githubusercontent.com https://lh3.googleusercontent.com",
         "media-src 'none'",
         'frame-src https://www.youtube-nocookie.com/embed/ https://player.vimeo.com/video/',
-        "connect-src 'self' wss://pedit.test",
+        "connect-src 'self' wss://pedit.test https://raw.githubusercontent.com/",
         "font-src 'self'",
         "object-src 'none'",
         "base-uri 'none'",
@@ -157,7 +166,13 @@ describe('contentSecurityPolicy', () => {
   })
 
   it('adds the media sources to img-src and media-src', () => {
-    const csp = contentSecurityPolicy({ scriptHashes: [], media: ['https:'], frames: [], origin })
+    const csp = contentSecurityPolicy({
+      scriptHashes: [],
+      media: ['https:'],
+      frames: [],
+      fetches: [],
+      origin,
+    })
     expect(csp).toMatch(/img-src [^;]* https:(;|$)/)
     expect(csp).toContain('media-src https:;')
   })
@@ -167,21 +182,66 @@ describe('contentSecurityPolicy', () => {
       scriptHashes: [],
       media: [],
       frames: [],
+      fetches: [],
       origin: new URL('http://localhost:8787/'),
     })
     expect(csp).toContain("connect-src 'self' ws://localhost:8787;")
   })
 
-  it('lists every avatar host and player', () => {
-    const csp = contentSecurityPolicy({ scriptHashes: [], media: [], frames: FRAMES, origin })
+  it('lists every avatar host, player and fetch prefix', () => {
+    const csp = contentSecurityPolicy({
+      scriptHashes: [],
+      media: [],
+      frames: FRAMES,
+      fetches: FETCHES,
+      origin,
+    })
     const directive = (name: string) => csp.split('; ').find((d) => d.startsWith(`${name} `)) ?? ''
     for (const host of AVATAR_HOSTS) expect(directive('img-src')).toContain(`https://${host}`)
     expect(directive('frame-src')).toBe(`frame-src ${FRAMES.join(' ')}`)
+    expect(directive('connect-src')).toBe(
+      `connect-src 'self' wss://pedit.test ${FETCHES.join(' ')}`,
+    )
+    expect(FETCHES).toEqual(['https://raw.githubusercontent.com/'])
   })
 
-  it('frames nothing without frames', () => {
-    const csp = contentSecurityPolicy({ scriptHashes: [], media: [], frames: [], origin })
+  it('frames nothing without frames, and connects only home without fetches', () => {
+    const csp = contentSecurityPolicy({
+      scriptHashes: [],
+      media: [],
+      frames: [],
+      fetches: [],
+      origin,
+    })
     expect(csp).toContain("frame-src 'none';")
+    expect(csp).toContain("connect-src 'self' wss://pedit.test;")
+  })
+})
+
+describe('embedSources', () => {
+  it("splits the registry's prefixes into frames and fetches, in order", () => {
+    expect(embedSources(Object.keys(PROVIDERS) as (keyof typeof PROVIDERS)[])).toEqual({
+      frames: FRAMES,
+      fetches: FETCHES,
+    })
+  })
+
+  it('lists each prefix once, in the order of the ids', () => {
+    const providers = {
+      a: defineProvider({
+        name: 'A',
+        fetches: ['https://a.example/', 'https://b.example/'],
+        snippet: () => null,
+      }),
+      b: defineProvider({ name: 'B', fetches: ['https://b.example/'], snippet: () => null }),
+      c: defineProvider(good as FrameProvider),
+      d: defineProvider(good as FrameProvider),
+    }
+    expect(embedSources(['b', 'c', 'a', 'd'], providers)).toEqual({
+      frames: ['https://embed.example.com/v/'],
+      fetches: ['https://b.example/', 'https://a.example/'],
+    })
+    expect(embedSources([], providers)).toEqual({ frames: [], fetches: [] })
   })
 })
 
@@ -325,9 +385,15 @@ describe('framedProviders', () => {
 
   it("leaves out a built-in provider on that provider's own origin", () => {
     const [id = '', provider] = Object.entries(PROVIDERS)[0] ?? []
-    const { framed, refused } = framedProviders(new URL(provider?.frames[0] ?? ''))
+    const { framed, refused } = framedProviders(new URL(provider?.frames?.[0] ?? ''))
     expect(framed).not.toContain(id)
     expect(refused.map((r) => r.id)).toEqual([id])
+  })
+
+  it('leaves out GitHub on its own raw host', () => {
+    const { framed, refused } = framedProviders(new URL('https://raw.githubusercontent.com/r/x'))
+    expect(refused).toEqual([{ id: 'github', reason: "its fetches cover the editor's own origin" }])
+    expect(framed).toEqual(Object.keys(PROVIDERS).filter((p) => p !== 'github'))
   })
 
   it.each([
@@ -338,6 +404,101 @@ describe('framedProviders', () => {
     const { framed, refused } = framedProviders(new URL(href))
     expect(refused).toEqual([{ id, reason: "its frames cover the editor's own origin" }])
     expect(framed).toEqual(Object.keys(PROVIDERS).filter((p) => p !== id))
+  })
+})
+
+// A fetch provider that passes every check, to vary one field at a time.
+const fetching: FetchProvider = {
+  name: 'Files',
+  fetches: ['https://files.example.com/raw/'],
+  snippet: () => null,
+}
+const fetchProblem = (over: Record<string, unknown>, at = page) =>
+  providerProblem({ ...fetching, ...over } as Provider, at)
+
+describe('providerProblem for a fetch provider', () => {
+  it('passes a provider within the rules', () => {
+    expect(fetchProblem({})).toBeNull()
+    expect(
+      fetchProblem({ fetches: ['https://files.example.com/', 'https://cdn.example.com:8443/a/'] }),
+    ).toBeNull()
+  })
+
+  it.each([
+    { name: '' },
+    { fetches: [] },
+    { fetches: undefined },
+    { fetches: 'https://files.example.com/' },
+    { snippet: undefined },
+    { snippet: 'https://files.example.com/raw/a' },
+  ])('refuses %j', (over) => {
+    expect(fetchProblem(over)).not.toBeNull()
+  })
+
+  it.each([
+    { frames: ['https://embed.example.com/'] },
+    { size: { ratio: '16/9' } },
+    { embed: () => null },
+    { sandbox: ['allow-forms'] },
+    { allow: ['fullscreen'] },
+  ])('refuses one with something of a frame provider too: %j', (over) => {
+    expect(fetchProblem(over)).toMatch(/^both fetches and /)
+  })
+
+  it('refuses a frame provider with a snippet', () => {
+    expect(problem({ snippet: () => null })).toMatch(/^both fetches and frames/)
+  })
+
+  it.each([
+    'http://files.example.com/',
+    'https://files.example.com',
+    'https://*.example.com/',
+    'https://files.example.com/ https:/',
+    "https://files.example.com/'self'/",
+    'https://files.example.com/;script-src/',
+    'https://Files.example.com/',
+    'https://files.example.com:443/',
+    'https://files.example.com/a/../',
+    'https://u@files.example.com/',
+    'https://files.example.com/?a=/',
+  ])('refuses fetch %j', (prefix) => {
+    expect(fetchProblem({ fetches: [prefix] })).toMatch(/^fetch .* is not https/)
+  })
+
+  it.each(['https://pedit.test/', 'https://pedit.test/raw/', 'https://pedit.test:80/'])(
+    "refuses fetches %j that cover the editor's own origin",
+    (prefix) => {
+      expect(fetchProblem({ fetches: ['https://files.example.com/', prefix] })).toMatch(
+        /own origin/,
+      )
+    },
+  )
+})
+
+describe('isSnippet', () => {
+  it.each([
+    { src: 'https://x.example/a' },
+    { src: 'https://x.example/a', lines: [1, 1] },
+    { src: 'https://x.example/a', lines: [3, 1_000_000] },
+  ])('takes %j', (snippet) => {
+    expect(isSnippet(snippet)).toBe(true)
+  })
+
+  it.each([
+    null,
+    'https://x.example/a',
+    {},
+    { src: 1 },
+    { src: 'https://x.example/a', lines: null },
+    { src: 'https://x.example/a', lines: [2, 1] },
+    { src: 'https://x.example/a', lines: [0, 1] },
+    { src: 'https://x.example/a', lines: [1, 1_000_001] },
+    { src: 'https://x.example/a', lines: [1.5, 2] },
+    { src: 'https://x.example/a', lines: ['1', '2'] },
+    { src: 'https://x.example/a', lines: [1] },
+    { src: 'https://x.example/a', lines: [1, 2, 3] },
+  ])('refuses %j', (snippet) => {
+    expect(isSnippet(snippet)).toBe(false)
   })
 })
 

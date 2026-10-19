@@ -183,6 +183,7 @@ The relay is built with these, in the order the preview tries them:
 | `spotify` | Spotify | tracks, albums, playlists, artists, episodes and shows | 152 px high |
 | `soundcloud` | SoundCloud | the player Share > Embed gives, for a track or playlist | 166 px high |
 | `miro` | Miro | boards | 4:3 |
+| `github` | GitHub | public source files (`/blob/` links), or some of their lines (`#L10-L20`), shown as text | as tall as its lines, up to 60% of the window |
 
 ```ts
 import { defineProvider, onHost } from './define.ts'
@@ -225,6 +226,30 @@ Browsers that ticked "Always load" for a provider remember it by its id, the
 key in `index.ts`. Renaming a key, or dropping a provider, forgets that choice
 in every browser: an id the relay no longer lists is ignored, so people are
 asked again before its players load.
+
+A provider can also show text instead of a player: it names `fetches`, where
+its files live, in place of `frames`, and `snippet()` in place of `embed()`,
+and has no `size`, `sandbox` or `allow`. GitHub's (`github.ts`) is one:
+
+```ts
+export default defineProvider({
+  name: 'GitHub',
+  fetches: ['https://raw.githubusercontent.com/'], // into connect-src
+  // The file to fetch for a pasted URL, and the lines to show, or null.
+  snippet(url) {
+    // https://github.com/{owner}/{repo}/blob/{ref}/{path}#L10-L20 becomes
+    // { src: 'https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}', lines: [10, 20] }
+  },
+})
+```
+
+The fetch prefixes go into the policy's `connect-src` and follow the rules of
+frame prefixes, including never covering the relay's own origin. As with
+`embed()`, given a src it built, `snippet()` must return that src unchanged
+(and no lines); the preview fetches only such srcs. It fetches only after a
+click or "Always load", without credentials or referrer, for at most 10
+seconds and 1 MB, and shows at most 5000 lines, as text only. A size hint does
+not apply to a snippet: the fragment goes to `snippet()` as written.
 
 `size` is the player's box when its URL names none. Someone can still size one
 player by ending its URL with `#width=560&height=315`, `#width=100%&height=480`,

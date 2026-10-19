@@ -1,8 +1,8 @@
 import {
   contentSecurityPolicy,
+  embedSources,
   framedProviders,
   MEDIA_META,
-  PROVIDERS,
   parseMediaSources,
 } from '@pedit/protocol/csp'
 
@@ -31,15 +31,15 @@ export function mediaSourcesFrom(value: string | undefined): string[] {
 }
 
 /**
- * The frame-src prefixes of the embed providers framed on a page at `origin`. A
- * provider that fails the checks, such as one whose frames would cover the
- * relay's own pages (allow-same-origin there escapes the sandbox), is left out
- * (and logged); the editor leaves it out too.
+ * The frame-src and connect-src prefixes of the embed providers shown on a page
+ * at `origin`. A provider that fails the checks, such as one whose frames would
+ * cover the relay's own pages (allow-same-origin there escapes the sandbox), is
+ * left out (and logged); the editor leaves it out too.
  */
-export function frameSourcesFor(origin: URL): string[] {
+export function embedSourcesFor(origin: URL): { frames: string[]; fetches: string[] } {
   const { framed, refused } = framedProviders(origin)
   for (const { id, reason } of refused) console.error(`Embed provider ${id} ignored: ${reason}`)
-  return framed.flatMap((id) => PROVIDERS[id].frames)
+  return embedSources(framed)
 }
 
 // A navigation, or a request that takes HTML: what may come back is a page.
@@ -83,10 +83,16 @@ export async function servePage(
   const html = await asset.text()
   const origin = new URL(request.url)
   const media = mediaSourcesFrom(env.MEDIA_SOURCES)
-  const frames = frameSourcesFor(origin)
+  const { frames, fetches } = embedSourcesFor(origin)
   out.set(
     'Content-Security-Policy',
-    contentSecurityPolicy({ scriptHashes: await scriptHashes(html), media, frames, origin }),
+    contentSecurityPolicy({
+      scriptHashes: await scriptHashes(html),
+      media,
+      frames,
+      fetches,
+      origin,
+    }),
   )
   out.delete('ETag')
   out.delete('Last-Modified')

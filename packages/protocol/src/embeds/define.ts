@@ -1,8 +1,9 @@
 // What an embed provider is. Each provider is one file next to this one, written
-// with defineProvider, and index.ts lists the ones this relay frames: adding or
+// with defineProvider, and index.ts lists the ones this relay shows: adding or
 // removing a provider is adding or removing a file and its line there.
+// A provider either frames players (frames) or fetches text files (fetches).
 // The types only hold at compile time; csp.ts checks every provider again when
-// the policy is built and when the preview frames a URL.
+// the policy is built and when the preview frames or fetches a URL.
 
 /** Sandbox tokens every provider's frames get. */
 export const SANDBOX_BASE = ['allow-scripts', 'allow-same-origin', 'allow-popups'] as const
@@ -44,10 +45,23 @@ export type AllowFeature = (typeof ALLOW_FEATURES)[number]
 /** A frame-src prefix: an https origin and a path that ends in '/'. */
 export type FrameUrl = `https://${string}/`
 
+/** A connect-src prefix, written like a frame prefix. */
+export type FetchUrl = `https://${string}/`
+
 /** A frame's default box: an aspect ratio such as '16/9', or a height in pixels. */
 export type Size = { ratio: `${number}/${number}` } | { height: number }
 
-export type Provider = {
+/** The highest line number a snippet may name. */
+export const MAX_LINE = 1_000_000
+
+/**
+ * A text file the preview fetches and shows as text: its URL, and the lines to
+ * show, first and last counted from 1 (the whole file without).
+ */
+export type Snippet = { src: string; lines?: readonly [number, number] }
+
+/** A provider whose players the preview frames. */
+export type FrameProvider = {
   /** The name people see, as in "Always load {name}", and the frame's title. */
   name: string
   /**
@@ -69,23 +83,59 @@ export type Provider = {
   sandbox?: readonly SandboxExtra[]
   /** Permissions policy features of the frame. */
   allow?: readonly AllowFeature[]
+  fetches?: never
+  snippet?: never
 }
 
-/** The providers a relay frames, by id. The id is what "Always load" remembers. */
+/**
+ * A provider whose files the preview fetches and shows as text, never as markup.
+ * Nothing it serves runs on the page.
+ */
+export type FetchProvider = {
+  /** The name people see, as in "Always load {name}". */
+  name: string
+  /**
+   * Where its files live. They go into the policy's connect-src, and the preview
+   * fetches only URLs under one of them.
+   */
+  fetches: readonly FetchUrl[]
+  /**
+   * The file to fetch for a pasted URL, rebuilt from the parts it checked, or
+   * null. The src must start with one of `fetches`, and given a src it built
+   * (without lines), it must return that src unchanged, as embed() does.
+   */
+  snippet: (url: URL) => Snippet | null
+  frames?: never
+  size?: never
+  embed?: never
+  sandbox?: never
+  allow?: never
+}
+
+export type Provider = FrameProvider | FetchProvider
+
+/** Whether `provider` is shown by fetching text rather than in a frame. */
+export function isFetchProvider(provider: Provider): provider is FetchProvider {
+  return 'fetches' in provider
+}
+
+/** The providers a relay shows, by id. The id is what "Always load" remembers. */
 export type Providers = Readonly<Record<string, Provider>>
 
 /** Declares a provider; the type rejects anything a provider may not have. */
+export function defineProvider(provider: FrameProvider): FrameProvider
+export function defineProvider(provider: FetchProvider): FetchProvider
 export function defineProvider(provider: Provider): Provider {
   return provider
 }
 
 /** The sandbox attribute of a provider's frames. */
-export function sandboxOf(provider: Provider): string {
+export function sandboxOf(provider: Pick<FrameProvider, 'sandbox'>): string {
   return [...SANDBOX_BASE, ...(provider.sandbox ?? [])].join(' ')
 }
 
 /** The allow attribute of a provider's frames ('' for none). */
-export function allowOf(provider: Provider): string {
+export function allowOf(provider: Pick<FrameProvider, 'allow'>): string {
   return (provider.allow ?? []).join('; ')
 }
 

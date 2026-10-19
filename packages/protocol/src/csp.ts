@@ -1,5 +1,5 @@
-// The Content-Security-Policy of the browser editor, and the media and frame
-// sources that both the policy and the Markdown preview read. The Worker
+// The Content-Security-Policy of the browser editor, and the media, frame and
+// fetch sources that both the policy and the Markdown preview read. The Worker
 // (packages/worker/src/page.ts) builds the header from the MEDIA_SOURCES var,
 // which the web editor learns from a <meta> tag the Worker injects, and from the
 // embed providers (embeds/index.ts), which both are built with.
@@ -7,10 +7,13 @@
 
 import {
   ALLOW_FEATURES,
+  isFetchProvider,
+  MAX_LINE,
   type Provider,
   type Providers,
   SANDBOX_EXTRAS,
   type Size,
+  type Snippet,
 } from './embeds/define.ts'
 import PROVIDERS from './embeds/index.ts'
 
@@ -106,13 +109,14 @@ const FEATURES = new Set<string>(ALLOW_FEATURES)
 const RATIO = /^[1-9]\d{0,3}\/[1-9]\d{0,3}$/
 
 /**
- * Why `provider` must not be framed on a page at `page`, or null if it may. The
+ * Why `provider` must not be shown on a page at `page`, or null if it may. The
  * types of defineProvider only hold at compile time; this checks them again,
- * and that no frame prefix covers the page's own origin (see coversOrigin).
+ * and that no frame or fetch prefix covers the page's own origin (see coversOrigin).
  */
 export function providerProblem(provider: Provider, page: URL): string | null {
   const p: Partial<Record<keyof Provider, unknown>> = provider
   if (typeof p.name !== 'string' || !p.name.trim()) return 'no name'
+  if (p.fetches !== undefined || p.snippet !== undefined) return fetchProblem(p, page)
   if (!Array.isArray(p.frames) || p.frames.length === 0) return 'no frames'
   for (const frame of p.frames as unknown[]) {
     if (!validFrame(frame)) return `frame ${JSON.stringify(frame)} is not https://host/path/`
@@ -132,6 +136,21 @@ export function providerProblem(provider: Provider, page: URL): string | null {
       return `a ${key} token it may not have`
     }
   }
+  return null
+}
+
+// A provider that fetches text has nothing of a frame, and its fetch prefixes
+// follow the rules of frame prefixes: they go into connect-src the same way.
+function fetchProblem(p: Partial<Record<keyof Provider, unknown>>, page: URL): string | null {
+  for (const key of ['frames', 'size', 'embed', 'sandbox', 'allow'] as const) {
+    if (p[key] !== undefined) return `both fetches and ${key}`
+  }
+  if (!Array.isArray(p.fetches) || p.fetches.length === 0) return 'no fetches'
+  for (const prefix of p.fetches as unknown[]) {
+    if (!validFrame(prefix)) return `fetch ${JSON.stringify(prefix)} is not https://host/path/`
+  }
+  if (coversOrigin(p.fetches as string[], page)) return "its fetches cover the editor's own origin"
+  if (typeof p.snippet !== 'function') return 'a snippet that is no function'
   return null
 }
 
@@ -157,8 +176,9 @@ export function isSize(size: unknown): size is Size {
 }
 
 /**
- * The providers the preview frames on a page at `page`, in order, and those it
- * refuses with the reason. The Worker builds frame-src from the same answer.
+ * The providers the preview shows on a page at `page`, in order, and those it
+ * refuses with the reason. The Worker builds frame-src and connect-src from the
+ * same answer.
  */
 export function framedProviders<P extends Providers = typeof PROVIDERS>(
   page: URL,
@@ -175,13 +195,49 @@ export function framedProviders<P extends Providers = typeof PROVIDERS>(
 }
 
 /**
+ * Whether `value` is a snippet a provider may answer: a src, and lines, if any,
+ * as whole numbers from 1 to MAX_LINE, the first no later than the last.
+ * Whether the src is under the provider's fetches is the caller's to check.
+ */
+export function isSnippet(value: unknown): value is Snippet {
+  if (typeof value !== 'object' || value === null) return false
+  const s = value as Record<string, unknown>
+  if (typeof s.src !== 'string') return false
+  if (s.lines === undefined) return true
+  if (!Array.isArray(s.lines) || s.lines.length !== 2) return false
+  const [from, to] = s.lines as unknown[]
+  const line = (n: unknown): n is number => Number.isInteger(n) && (n as number) >= 1
+  return line(from) && line(to) && from <= to && to <= MAX_LINE
+}
+
+/**
+ * The frame-src and connect-src prefixes of the providers `ids`, in their
+ * order, each once.
+ */
+export function embedSources<P extends Providers = typeof PROVIDERS>(
+  ids: readonly (keyof P & string)[],
+  providers: P = PROVIDERS as unknown as P,
+): { frames: string[]; fetches: string[] } {
+  const frames = new Set<string>()
+  const fetches = new Set<string>()
+  for (const id of ids) {
+    const provider = providers[id] as Provider
+    if (isFetchProvider(provider)) for (const f of provider.fetches) fetches.add(f)
+    else for (const f of provider.frames) frames.add(f)
+  }
+  return { frames: [...frames], fetches: [...fetches] }
+}
+
+/**
  * The policy for one HTML response, on one line. `origin` is the request's URL;
- * `frames` are the frame prefixes of the providers framed there (framedProviders).
+ * `frames` and `fetches` are the frame and fetch prefixes of the providers shown
+ * there (framedProviders, embedSources).
  */
 export function contentSecurityPolicy(o: {
   scriptHashes: readonly string[]
   media: readonly string[]
   frames: readonly string[]
+  fetches: readonly string[]
   origin: URL
 }): string {
   const socket = `${o.origin.protocol === 'https:' ? 'wss' : 'ws'}://${o.origin.host}`
@@ -194,7 +250,7 @@ export function contentSecurityPolicy(o: {
     `img-src 'self' blob: data: ${avatars}${o.media.map((m) => ` ${m}`).join('')}`,
     `media-src ${o.media.length ? o.media.join(' ') : "'none'"}`,
     `frame-src ${o.frames.length ? o.frames.join(' ') : "'none'"}`,
-    `connect-src 'self' ${socket}`,
+    `connect-src 'self' ${socket}${o.fetches.map((f) => ` ${f}`).join('')}`,
     "font-src 'self'",
     "object-src 'none'",
     "base-uri 'none'",

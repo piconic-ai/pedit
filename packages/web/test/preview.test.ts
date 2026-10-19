@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { PROVIDERS, type ProviderId } from '@pedit/protocol/csp'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
 import * as Y from 'yjs'
 import { ALWAYS_LOAD_KEY, AlwaysLoad } from '../src/alwaysload.ts'
 import type { ImageResolver } from '../src/attachments.ts'
@@ -10,6 +10,7 @@ import * as preview from '../src/preview.ts'
 import {
   embedProvider,
   loadEmbed,
+  loadSnippet,
   pageMediaSources,
   patch,
   render,
@@ -762,6 +763,7 @@ describe('always load', () => {
       soundcloud:
         'https://w.soundcloud.com/player/?url=https%3A//api.soundcloud.com/playlists/soundcloud%3Aplaylists%3A7',
       miro: 'https://miro.com/app/board/o9J_abcdefgh/',
+      github: 'https://github.com/o/r/blob/main/README.md',
     }
     for (const [id, url] of Object.entries(samples).filter(([id]) => id in PROVIDERS)) {
       const out = dom(url)
@@ -1094,6 +1096,296 @@ describe('patch', () => {
     expect(container.innerHTML).toBe(html('z\n\na\n\nb\n'))
     patch(container, render(''))
     expect(container.innerHTML).toBe('')
+  })
+})
+
+describe('snippets', () => {
+  const BLOB = 'https://github.com/o/r/blob/main/src/a.ts'
+  const RAW = 'https://raw.githubusercontent.com/o/r/main/src/a.ts'
+  const FILE = [
+    'line 1',
+    'line 2',
+    'line 3',
+    '<script>alert(1)</script>',
+    '<img src=x onerror="alert(1)">',
+    'line 6',
+    'line 7',
+    '',
+  ].join('\n')
+  let fetch: Mock<(src: string, init?: RequestInit) => Promise<Response>>
+
+  beforeEach(() => {
+    fetch = vi.fn(() => Promise.resolve(new Response(FILE)))
+    vi.stubGlobal('fetch', fetch)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    document.body.replaceChildren()
+  })
+
+  function mounted(source: string): HTMLElement {
+    const div = document.createElement('div')
+    document.body.append(div)
+    patch(div, render(source, undefined, []))
+    return div
+  }
+
+  const placeholderOf = (el: Element) => el.querySelector('[data-embed-src]') as HTMLElement
+
+  it('offers a GitHub file as a placeholder, fetching nothing until asked', () => {
+    const div = mounted(`# Code\n\n${BLOB}#L3-L7`)
+    const el = placeholderOf(div)
+    expect(el.outerHTML).toBe(
+      `<div class="embed embed--snippet" data-line="2" data-embed-src="${RAW}" data-embed-lines="3-7">` +
+        '<span class="embed-provider">GitHub</span>' +
+        '<span class="embed-actions">' +
+        '<span class="embed-load" role="button" tabindex="0">Load from raw.githubusercontent.com</span>' +
+        '<span class="embed-remember" role="checkbox" aria-checked="false" tabindex="0">Always load GitHub</span></span>' +
+        `<a class="embed-link" href="${BLOB}#L3-L7" target="_blank" rel="noopener noreferrer">${BLOB}#L3-L7</a></div>`,
+    )
+    expect(embedProvider(el)).toBe('github')
+    patch(div, render(`# Code, edited\n\n${BLOB}#L3-L7`, undefined, []))
+    expect(fetch).not.toHaveBeenCalled()
+    expect(div.querySelector('pre')).toBeNull()
+  })
+
+  it('names no lines for the whole file', () => {
+    const el = placeholderOf(dom(BLOB))
+    expect(el.hasAttribute('data-embed-lines')).toBe(false)
+    expect(el.hasAttribute('style')).toBe(false)
+  })
+
+  it('fetches the raw file without cookies or referrer once asked', async () => {
+    const el = placeholderOf(mounted(BLOB))
+    expect(await loadSnippet(el)).toBe(true)
+    expect(fetch).toHaveBeenCalledTimes(1)
+    const [src, init] = fetch.mock.calls[0] ?? []
+    expect(src).toBe(RAW)
+    expect(init).toMatchObject({ credentials: 'omit', referrerPolicy: 'no-referrer' })
+  })
+
+  it('shows the lines asked for, numbered from the first, and keeps the link', async () => {
+    const div = mounted(`${BLOB}#L2-L3`)
+    const el = placeholderOf(div)
+    expect(await loadSnippet(el)).toBe(true)
+    expect(el.classList.contains('embed--loaded')).toBe(true)
+    const pre = el.querySelector('pre.embed-snippet') as HTMLElement
+    expect(pre.querySelector('.embed-snippet-lines')?.textContent).toBe('2\n3')
+    expect(pre.querySelector('.embed-snippet-lines')?.getAttribute('aria-hidden')).toBe('true')
+    expect(pre.querySelector('code')?.textContent).toBe('line 2\nline 3')
+    expect(pre.getAttribute('aria-label')).toBe('GitHub, lines 2 to 3')
+    expect(el.querySelector('.embed-link')?.getAttribute('href')).toBe(`${BLOB}#L2-L3`)
+    expect(el.querySelector('.embed-load, .embed-remember')).toBeNull()
+    expect(document.activeElement).toBe(pre)
+  })
+
+  it('shows markup in the file as text, never as elements', async () => {
+    const el = placeholderOf(mounted(`${BLOB}#L4-L5`))
+    await loadSnippet(el)
+    expect(el.querySelector('code')?.textContent).toBe(
+      '<script>alert(1)</script>\n<img src=x onerror="alert(1)">',
+    )
+    expect(el.querySelector('script, img')).toBeNull()
+    expect(el.querySelector('code')?.children).toHaveLength(0)
+    expect(el.innerHTML).toContain('&lt;script&gt;alert(1)&lt;/script&gt;')
+  })
+
+  it('says when lines were left out', async () => {
+    fetch.mockImplementation(() =>
+      Promise.resolve(new Response(Array.from({ length: 5010 }, (_, i) => `${i + 1}`).join('\n'))),
+    )
+    const el = placeholderOf(mounted(`${BLOB}#L2-L5010`))
+    await loadSnippet(el)
+    const gutter = el.querySelector('.embed-snippet-lines')?.textContent?.split('\n') ?? []
+    expect(gutter).toHaveLength(5000)
+    expect([gutter[0], gutter.at(-1)]).toEqual(['2', '5001'])
+    expect(el.querySelector('.embed-note')?.textContent).toBe('Showing the first 5000 lines.')
+  })
+
+  it('fetches only snippets the preview rendered', async () => {
+    const div = document.createElement('div')
+    div.append(
+      sanitize(
+        '<div class="embed embed--snippet" data-embed-src="https://raw.githubusercontent.com/o/r/main/never-rendered.ts"><span class="embed-load">Load</span></div>',
+      ),
+    )
+    const el = placeholderOf(div)
+    expect(el).not.toBeNull()
+    expect(loadSnippet(el)).toBeNull()
+    expect(loadEmbed(el)).toBeNull()
+    // Rendered for the whole file, not for these lines.
+    const whole = placeholderOf(mounted(BLOB))
+    whole.setAttribute('data-embed-lines', '1-2')
+    expect(loadSnippet(whole)).toBeNull()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    'https://evil.example/o/r/main/src/a.ts',
+    `${RAW}?token=1`,
+    'http://raw.githubusercontent.com/o/r/main/src/a.ts',
+  ])('refuses a placeholder whose src was changed to %s', (src) => {
+    const el = placeholderOf(mounted(BLOB))
+    el.setAttribute('data-embed-src', src)
+    expect(loadSnippet(el)).toBeNull()
+    expect(loadEmbed(el)).toBeNull()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('keeps only snippet placeholders pedit would fetch', () => {
+    const keep = (attributes: string) =>
+      sanitize(`<div class="embed" ${attributes}>x</div>`).querySelector('[data-embed-src]')
+    expect(keep(`data-embed-src="${RAW}" data-embed-lines="1-2"`)).not.toBeNull()
+    expect(keep(`data-embed-src="${RAW}"`)).not.toBeNull()
+    expect(keep('data-embed-src="https://evil.example/a.ts"')).toBeNull()
+    expect(keep(`data-embed-src="${RAW}?x=1"`)).toBeNull()
+    expect(keep(`data-embed-src="${RAW}" data-embed-lines="2-1"`)).toBeNull()
+    expect(keep(`data-embed-src="${RAW}" data-embed-lines="1-2;x"`)).toBeNull()
+    // A player has no lines.
+    expect(
+      keep(
+        'data-embed-src="https://player.vimeo.com/video/1" data-embed-lines="1-2"',
+      )?.hasAttribute('data-embed-lines'),
+    ).toBe(false)
+  })
+
+  it('says why it failed, keeps the link and offers to try again', async () => {
+    fetch.mockImplementationOnce(() => Promise.resolve(new Response('', { status: 404 })))
+    const el = placeholderOf(mounted(BLOB))
+    expect(await loadSnippet(el)).toBe(false)
+    expect(el.classList.contains('embed--failed')).toBe(true)
+    expect(el.querySelector('.embed-error')?.textContent).toBe(
+      'The file was not found. Only public files can be shown.',
+    )
+    expect(el.querySelector('.embed-load')?.textContent).toBe('Try again')
+    expect(el.querySelector('.embed-link')?.getAttribute('href')).toBe(BLOB)
+    expect(await loadSnippet(el)).toBe(true)
+    expect(el.classList.contains('embed--failed')).toBe(false)
+    expect(el.querySelector('.embed-error')).toBeNull()
+    expect(el.querySelector('code')?.textContent).toContain('line 7')
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('says the network failed, as when the file is not served to this page', async () => {
+    fetch.mockImplementationOnce(() => Promise.reject(new TypeError('Failed to fetch')))
+    const el = placeholderOf(mounted(BLOB))
+    expect(await loadSnippet(el)).toBe(false)
+    expect(el.querySelector('.embed-error')?.textContent).toMatch(/could not be loaded/)
+  })
+
+  it('shows the loading state and fetches once however often it is asked', async () => {
+    let answer: (r: Response) => void = () => {}
+    fetch.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)))
+    const el = placeholderOf(mounted(BLOB))
+    const first = loadSnippet(el)
+    expect(el.classList.contains('embed--loading')).toBe(true)
+    expect(el.querySelector('.embed-load')?.textContent).toBe('Loading…')
+    expect(el.querySelector('.embed-load')?.getAttribute('aria-disabled')).toBe('true')
+    expect(loadSnippet(el)).toBe(first)
+    expect(loadEmbed(el)).toBe(el)
+    answer(new Response(FILE))
+    expect(await first).toBe(true)
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(el.classList.contains('embed--loading')).toBe(false)
+  })
+
+  it('keeps a loaded snippet while someone types elsewhere, not once its URL changes', async () => {
+    const div = mounted(`a\n\n- ${BLOB}#L1-L2\n- x\n\nb\n`)
+    const el = placeholderOf(div)
+    await loadSnippet(el)
+    const pre = div.querySelector('pre')
+    expect(pre).not.toBeNull()
+
+    patch(div, render(`A\n\nnew\n\n- ${BLOB}#L1-L2\n- xy\n\nB\n`, undefined, []))
+    expect(div.querySelector('pre')).toBe(pre)
+    expect(div.textContent).toContain('xy')
+    expect(placeholderOf(div).getAttribute('data-line')).toBe('4')
+
+    patch(div, render(`A\n\nnew\n\n- ${BLOB}#L1-L3\n- xy\n\nB\n`, undefined, []))
+    expect(div.querySelector('pre')).toBeNull()
+    expect(placeholderOf(div).getAttribute('data-embed-lines')).toBe('1-3')
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('writes into a snippet that patch took away without harm', async () => {
+    let answer: (r: Response) => void = () => {}
+    fetch.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)))
+    const div = mounted(BLOB)
+    const el = placeholderOf(div)
+    const loading = loadSnippet(el)
+    patch(div, render(`${BLOB}#L1`, undefined, []))
+    answer(new Response(FILE))
+    expect(await loading).toBe(true)
+    expect(div.querySelector('pre')).toBeNull()
+    expect(placeholderOf(div).querySelector('.embed-load')?.textContent).toMatch(/^Load from/)
+  })
+
+  describe('from the preview pane', () => {
+    function memory(initial: string[] = []) {
+      const data = new Map<string, string>([[ALWAYS_LOAD_KEY, JSON.stringify(initial)]])
+      return {
+        data,
+        getItem: (k: string) => data.get(k) ?? null,
+        setItem: (k: string, v: string) => {
+          data.set(k, v)
+        },
+      }
+    }
+
+    async function pane(source: string, always = new AlwaysLoad(memory())) {
+      const text = new Y.Doc().getText('content')
+      const p = new PreviewPane(text, { load: () => Promise.resolve(preview), alwaysLoad: always })
+      document.body.append(p.element)
+      text.insert(0, source)
+      p.active = true
+      await vi.waitFor(() => expect(p.element.querySelector('[data-embed-src]')).not.toBeNull())
+      return { element: p.element, text }
+    }
+
+    it.each(['click', 'Enter', ' '])('loads the snippet by %j', async (how) => {
+      const { element } = await pane(`${BLOB}#L1-L2`)
+      const control = element.querySelector('.embed-load') as HTMLElement
+      if (how === 'click') control.click()
+      else control.dispatchEvent(new KeyboardEvent('keydown', { key: how, bubbles: true }))
+      await vi.waitFor(() =>
+        expect(element.querySelector('code')?.textContent).toBe('line 1\nline 2'),
+      )
+      expect(fetch).toHaveBeenCalledTimes(1)
+    })
+
+    it('remembers GitHub when loading with the box ticked', async () => {
+      const storage = memory()
+      const always = new AlwaysLoad(storage)
+      const { element } = await pane(BLOB, always)
+      ;(element.querySelector('.embed-remember') as HTMLElement).click()
+      ;(element.querySelector('.embed-load') as HTMLElement).click()
+      expect(always.ids.get()).toEqual(['github'])
+      expect([...storage.data]).toEqual([[ALWAYS_LOAD_KEY, '["github"]']])
+      await vi.waitFor(() => expect(element.querySelector('pre')).not.toBeNull())
+    })
+
+    it('loads snippets right away once GitHub is always loaded, leaving focus where it is', async () => {
+      const before = document.activeElement
+      const { element } = await pane(`# Code\n\n${BLOB}#L6-L7`, new AlwaysLoad(memory(['github'])))
+      await vi.waitFor(() =>
+        expect(element.querySelector('code')?.textContent).toBe('line 6\nline 7'),
+      )
+      expect(fetch).toHaveBeenCalledTimes(1)
+      expect(document.activeElement).toBe(before)
+    })
+
+    it('does not try a failed snippet again on its own as the file changes', async () => {
+      fetch.mockImplementation(() => Promise.resolve(new Response('', { status: 500 })))
+      const { element, text } = await pane(BLOB, new AlwaysLoad(memory(['github'])))
+      await vi.waitFor(() => expect(element.querySelector('.embed-error')).not.toBeNull())
+      text.insert(text.length, '\n\nmore')
+      await vi.waitFor(() => expect(element.textContent).toContain('more'))
+      text.insert(0, 'above\n\n')
+      await vi.waitFor(() => expect(element.querySelector('p')?.textContent).toBe('above'))
+      expect(fetch).toHaveBeenCalledTimes(1)
+      expect(element.querySelector('.embed-error')?.textContent).toContain('HTTP 500')
+    })
   })
 })
 

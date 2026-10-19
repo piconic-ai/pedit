@@ -1,11 +1,11 @@
 import { checkProtocolVersion } from '@pedit/protocol/admission'
 import { RELAY_BUSY, RELAY_MAINTENANCE } from '@pedit/protocol/close'
 import { Hono } from 'hono'
-import { frameSourcesFor, mediaSourcesFrom, scriptHashes, servePage } from './page.ts'
+import { embedSourcesFor, mediaSourcesFrom, scriptHashes, servePage } from './page.ts'
 import { HOST_HEADER, maintenance, refuse } from './room.ts'
 
 export { maintenance, Room } from './room.ts'
-export { frameSourcesFor, mediaSourcesFrom, scriptHashes, servePage }
+export { embedSourcesFor, mediaSourcesFrom, scriptHashes, servePage }
 
 // Room ids are 128+ bits, base64url without padding.
 const ROOM_ID = /^[A-Za-z0-9_-]{22}$/

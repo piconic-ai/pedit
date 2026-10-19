@@ -208,8 +208,8 @@ Access logs have separate retention settings and are not erased when a room
 closes.
 
 Markdown previews can show YouTube, Vimeo, Loom, Figma, CodePen, StackBlitz,
-Observable, Spotify, SoundCloud and Miro players (a self-hosted relay can add or
-drop providers), and external images and videos where the relay allows
+Observable, Spotify, SoundCloud and Miro players, public source files on GitHub
+(a self-hosted relay can add or drop providers), and external images and videos where the relay allows
 them (the public relay does not). A player loads only when someone clicks "Load
 from" on it, so nobody in the room contacts a third party just because a URL was
 written in the file. Ticking "Always load" next to it loads that provider's
@@ -231,6 +231,16 @@ https://youtu.be/dQw4w9WgXcQ#height=400
 Sizes are whole pixels from 100 to 4000 (a width may also be `100%`), and a
 box keeps between 4:1 and 1:2 and at most 80% of the window's height. Without
 a size, or with any other fragment, the player takes its site's default box.
+
+A link to a file on GitHub on a line of its own shows that file's text, also
+only once someone clicks "Load from raw.githubusercontent.com" (or ticked
+"Always load GitHub"). `https://github.com/{owner}/{repo}/blob/{ref}/{path}` is
+fetched from `https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}`,
+and a fragment such as `#L10` or `#L10-L20` shows just those lines, numbered as
+in the file. Only public files can be shown: the browser asks without cookies
+or a referrer, so GitHub sees the viewer's IP address after the click and
+nothing about the room. The text is shown as text, never run or rendered, up to
+1 MB and 5000 lines.
 
 Besides the relay, the CLI itself connects only to `api.github.com`, to check
 for a newer release, and keeps the answer for a day; it never downloads or

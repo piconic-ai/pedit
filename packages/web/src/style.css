@@ -963,7 +963,9 @@ main.editor[data-resizing] iframe {
   aspect-ratio: var(--embed-rw) / var(--embed-rh);
   overflow: hidden;
 }
-.preview .embed:not(.embed--loaded) {
+.preview .embed:not(.embed--loaded),
+.preview .embed--loading,
+.preview .embed--failed {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1042,6 +1044,48 @@ main.editor[data-resizing] iframe {
   height: 100%;
   border: 0;
   border-radius: 6px;
+}
+/*
+ * A snippet has no box of its own: it is as tall as its lines, and they scroll
+ * beyond 60vh. The line numbers are a gutter beside the code that a selection
+ * leaves out.
+ */
+.preview .embed--snippet {
+  max-height: none;
+  overflow: visible;
+}
+.preview .embed-load[aria-disabled="true"] {
+  cursor: progress;
+}
+.preview .embed-error {
+  color: var(--ink);
+  font-size: 0.875em;
+}
+.preview .embed-snippet {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 16px;
+  max-height: 60vh;
+  margin-bottom: 4px;
+  border: 1px solid var(--line);
+}
+.preview .embed-snippet-lines {
+  color: var(--muted);
+  text-align: right;
+  white-space: pre;
+  user-select: none;
+}
+.preview .embed-snippet:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.preview .embed-note {
+  display: block;
+  color: var(--muted);
+  font-size: 0.875em;
+}
+.preview .embed--snippet.embed--loaded:not(.embed--loading, .embed--failed) .embed-link {
+  display: block;
 }
 .preview .missing-image {
   color: var(--muted);

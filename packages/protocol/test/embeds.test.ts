@@ -3,6 +3,7 @@ import {
   ALLOW_FEATURES,
   allowOf,
   defineProvider,
+  isFetchProvider,
   onHost,
   type Provider,
   SANDBOX_BASE,
@@ -42,16 +43,24 @@ describe('the provider registry', () => {
     for (const id of Object.keys(PROVIDERS)) expect(id).toMatch(/^[a-z][a-z0-9-]*$/)
   })
 
-  it("has no frame under another provider's frame", () => {
-    const frames = Object.entries(PROVIDERS).flatMap(([id, p]) =>
-      p.frames.map((frame) => ({ id, url: new URL(frame) })),
+  it.each(['frames', 'fetches'] as const)("has none of its %s under another provider's", (key) => {
+    const prefixes = Object.entries(PROVIDERS).flatMap(([id, p]) =>
+      (p[key] ?? []).map((prefix) => ({ id, url: new URL(prefix) })),
     )
-    for (const a of frames) {
-      for (const b of frames) {
+    for (const a of prefixes) {
+      for (const b of prefixes) {
         if (a.id === b.id) continue
         const under = a.url.origin === b.url.origin && a.url.pathname.startsWith(b.url.pathname)
         expect(under, `${a.url.href} (${a.id}) under ${b.url.href} (${b.id})`).toBe(false)
       }
+    }
+  })
+
+  it('has every provider either frame or fetch', () => {
+    for (const [id, p] of Object.entries(PROVIDERS)) {
+      const kinds = [p.frames, p.fetches].filter((k) => k !== undefined)
+      expect(kinds, id).toHaveLength(1)
+      expect(isFetchProvider(p), id).toBe(p.fetches !== undefined)
     }
   })
 
@@ -182,5 +191,60 @@ describe('defineProvider', () => {
       () => defineProvider({ name: 'X', frames, size, allow: ['fullscreen; camera'] }),
     ]
     expect(bad).toHaveLength(13)
+  })
+
+  it('takes a provider that fetches text, and returns it as it is', () => {
+    const p = defineProvider({
+      name: 'Files',
+      fetches: ['https://files.example.com/'],
+      snippet: (url) => ({ src: url.href, lines: [1, 2] }),
+    })
+    expect(isFetchProvider(p)).toBe(true)
+    expect(p.snippet(new URL('https://files.example.com/a'))).toEqual({
+      src: 'https://files.example.com/a',
+      lines: [1, 2],
+    })
+  })
+
+  it('rejects what a fetch provider may not have, at compile time', () => {
+    const fetches = ['https://files.example.com/'] as const
+    const snippet = () => null
+    const bad = [
+      // @ts-expect-error a provider needs a name
+      () => defineProvider({ fetches, snippet }),
+      // @ts-expect-error a snippet is required
+      () => defineProvider({ name: 'X', fetches }),
+      // @ts-expect-error fetches are required
+      () => defineProvider({ name: 'X', snippet }),
+      // @ts-expect-error fetches are https
+      () => defineProvider({ name: 'X', fetches: ['http://files.example.com/'], snippet }),
+      // @ts-expect-error fetches end in '/'
+      () => defineProvider({ name: 'X', fetches: ['https://files.example.com'], snippet }),
+      // @ts-expect-error a snippet answers a src
+      () => defineProvider({ name: 'X', fetches, snippet: () => 'https://files.example.com/a' }),
+      // @ts-expect-error lines are a pair
+      () => defineProvider({ name: 'X', fetches, snippet: () => ({ src: 'x', lines: [1] }) }),
+      () =>
+        defineProvider({
+          name: 'X',
+          fetches,
+          snippet,
+          // @ts-expect-error nothing is framed
+          frames: ['https://files.example.com/'],
+        }),
+      // @ts-expect-error no box: a snippet is as tall as its lines
+      () => defineProvider({ name: 'X', fetches, snippet, size: { ratio: '16/9' } }),
+      // @ts-expect-error no frame, so no sandbox
+      () => defineProvider({ name: 'X', fetches, snippet, sandbox: ['allow-forms'] }),
+      () =>
+        defineProvider({
+          name: 'X',
+          frames: ['https://x.example/'],
+          size: { ratio: '16/9' },
+          // @ts-expect-error a frame provider fetches nothing
+          snippet,
+        }),
+    ]
+    expect(bad).toHaveLength(11)
   })
 })
