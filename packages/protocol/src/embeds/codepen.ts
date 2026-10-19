@@ -1,6 +1,7 @@
 import { defineProvider, onHost } from './define.ts'
 
-const PATH = /^\/([\w-]{1,64})\/(?:pen|embed|full|details)\/([A-Za-z0-9]{1,32})\/?$/
+// A user's pen, or a team's (/team/{team}/pen/{id}).
+const PATH = /^\/((?:team\/)?[\w-]{1,64})\/(?:pen|embed|full|details)\/([A-Za-z0-9]{1,32})\/?$/
 const TABS = /^(?:html|css|js|result)(?:,(?:html|css|js|result))?$/
 
 export default defineProvider({
