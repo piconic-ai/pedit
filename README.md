@@ -207,10 +207,11 @@ IP addresses, room IDs, request timing and ciphertext sizes; infrastructure and
 Access logs have separate retention settings and are not erased when a room
 closes.
 
-Markdown previews can show YouTube and Vimeo players, and external images, videos
-and frames where the relay allows them (the public relay does not). A player
-loads only when someone clicks "Load from" on it, so nobody in the room contacts
-a third party just because a URL was written in the file. With Access,
+Markdown previews can show YouTube and Vimeo players (a self-hosted relay can
+add other sites' players), and external images and videos where the relay allows
+them (the public relay does not). A player loads only when someone clicks "Load
+from" on it, so nobody in the room contacts a third party just because a URL was
+written in the file. With Access,
 avatars may load from an identity provider or Gravatar using an email hash.
 Those providers can see the requests.
 

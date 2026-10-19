@@ -1,59 +1,57 @@
-import { allowsFrame, FRAMES, type FrameProvider } from '@pedit/protocol/csp'
-
-/** How a frame is laid out: a 16:9 player, a short audio bar or a tall document. */
-export type Shape = 'video' | 'audio' | 'doc'
+import { framedProviders, PROVIDERS, type ProviderId } from '@pedit/protocol/csp'
+import { allowOf, sandboxOf } from '@pedit/protocol/embeds/define'
 
 /**
- * What pedit decides for a frame of one src: who serves it, its accessible title,
- * its layout, and the sandbox and permissions it runs with.
+ * What pedit decides for a frame of one src: the URL to load, the provider that
+ * serves it, its accessible title, and the sandbox and permissions it runs with.
  */
 export type Frame = {
-  /** The URL to load: rebuilt from the parsed src, starting with the allowed prefix. */
+  /** The URL to load: rebuilt from the parsed src, starting with the provider's frame prefix. */
   src: string
-  provider: FrameProvider | 'custom'
+  provider: ProviderId
   title: string
-  shape: Shape
   sandbox: string
   allow: string
 }
 
 /** A player the preview shows in place of a bare URL or an image. */
-export type Embed = ({ kind: 'frame'; src: string } & Frame) | { kind: 'video'; src: string }
-
-/** The extra frame sources a self-hosted relay allows (FRAME_SOURCES), and the page they apply to. */
-export type FrameSources = { sources: readonly string[]; page: URL }
+export type Embed = ({ kind: 'frame' } & Frame) | { kind: 'video'; src: string }
 
 // YouTube refuses to play without a referrer; the origin carries no room or key.
 export const FRAME_REFERRER_POLICY = 'strict-origin-when-cross-origin'
 
-const PLAYER = {
-  shape: 'video',
-  sandbox: 'allow-scripts allow-same-origin allow-popups allow-presentation',
-  allow: 'fullscreen; picture-in-picture; encrypted-media',
-} as const
+type Prefix = { provider: ProviderId; frame: string; origin: string; path: string }
 
-const PROVIDERS: Record<FrameProvider, Omit<Frame, 'src' | 'provider'>> = {
-  youtube: { title: 'YouTube video', ...PLAYER },
-  vimeo: { title: 'Vimeo video', ...PLAYER },
+// The registry is fixed at build time, so the answer only depends on the origin.
+const framing = new Map<string, { ids: ProviderId[]; prefixes: Prefix[] }>()
+
+/**
+ * The providers framed on a page at `page`, as the Worker decided for the
+ * policy: none whose frames would cover the editor's own origin, where a frame
+ * with allow-same-origin could read the key.
+ */
+function framedOn(page: URL): { ids: ProviderId[]; prefixes: Prefix[] } {
+  let out = framing.get(page.origin)
+  if (!out) {
+    const ids = framedProviders(page).framed
+    const prefixes = ids.flatMap((provider) =>
+      PROVIDERS[provider].frames.map((frame) => {
+        const url = new URL(frame)
+        return { provider, frame, origin: url.origin, path: url.pathname }
+      }),
+    )
+    out = { ids, prefixes }
+    framing.set(page.origin, out)
+  }
+  return out
 }
 
-// A frame from FRAME_SOURCES: the relay's operator chose the site, not its features.
-const CUSTOM = {
-  shape: 'video',
-  sandbox: 'allow-scripts allow-same-origin allow-popups',
-  allow: '',
-} as const
-
-const PREFIXES = (Object.keys(FRAMES) as FrameProvider[]).map((provider) => {
-  const url = new URL(FRAMES[provider])
-  return { provider, origin: url.origin, path: url.pathname }
-})
+const here = () => new URL(location.href)
 
 // An encoded slash, backslash or dot could become a different path on the provider's server.
 const ENCODED_SEPARATOR = /%(2f|5c|2e)/i
 
 const VIDEO_FILE = /\.(mp4|m4v|mov|webm|ogv)$/i
-const YOUTUBE_ID = /^[\w-]{11}$/
 
 /**
  * The URL if it is absolute http(s). Anything else, such as a path relative
@@ -75,11 +73,11 @@ export function isVideoFile(url: URL): boolean {
 
 /**
  * The provider of a frame `src` and the attributes pedit gives it, or null if the
- * preview must not frame it. Rendering, the sanitiser and loading a frame on
- * request all take its attributes from here, so they can only be what pedit
- * decides for that src.
+ * preview must not frame it on a page at `page`. Rendering, the sanitiser and
+ * loading a frame on request all take its attributes from here, so they can only
+ * be what pedit decides for that src.
  */
-export function frameFor(src: string | null, custom?: FrameSources): Frame | null {
+export function frameFor(src: string | null, page: URL = here()): Frame | null {
   if (src === null) return null
   let url: URL
   try {
@@ -88,85 +86,55 @@ export function frameFor(src: string | null, custom?: FrameSources): Frame | nul
     return null
   }
   if (url.username || url.password || ENCODED_SEPARATOR.test(url.pathname)) return null
-  if (url.protocol === 'https:') {
-    // The parsed pathname has its dot segments resolved, unlike the raw string.
-    const known = PREFIXES.find((p) => url.origin === p.origin && url.pathname.startsWith(p.path))
-    if (known) {
-      const rest = `${url.pathname.slice(known.path.length)}${url.search}`
-      return {
-        src: `${FRAMES[known.provider]}${rest}`,
-        provider: known.provider,
-        ...PROVIDERS[known.provider],
-      }
-    }
+  if (url.protocol !== 'https:') return null
+  // The parsed pathname has its dot segments resolved, unlike the raw string.
+  const known = framedOn(page).prefixes.find(
+    (p) => url.origin === p.origin && url.pathname.startsWith(p.path),
+  )
+  if (!known) return null
+  const provider = PROVIDERS[known.provider]
+  return {
+    // Never the fragment: the player has no use for it.
+    src: `${known.frame}${url.pathname.slice(known.path.length)}${url.search}`,
+    provider: known.provider,
+    title: provider.name,
+    sandbox: sandboxOf(provider),
+    allow: allowOf(provider),
   }
-  if (custom && allowsFrame(custom.sources, url, custom.page)) {
-    return { src: url.href, provider: 'custom', title: url.host, ...CUSTOM }
+}
+
+export function isAllowedFrame(src: string | null, page?: URL): boolean {
+  return frameFor(src, page) !== null
+}
+
+// What the provider makes of a pasted URL. A provider's code runs on a copy, and
+// a failure only means it does not take the URL.
+function playerUrl(provider: ProviderId, url: URL): string | null {
+  const { embed } = PROVIDERS[provider]
+  if (!embed) return url.href
+  try {
+    const src = embed(new URL(url.href))
+    return typeof src === 'string' ? src : null
+  } catch {
+    return null
   }
-  return null
-}
-
-export function isAllowedFrame(src: string | null, custom?: FrameSources): boolean {
-  return frameFor(src, custom) !== null
-}
-
-/** Reads YouTube's `t=90` or `t=1m30s`. */
-function seconds(t: string | null): number {
-  if (!t) return 0
-  if (/^\d+$/.test(t)) return Number(t)
-  const m = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/.exec(t)
-  if (!m) return 0
-  return Number(m[1] ?? 0) * 3600 + Number(m[2] ?? 0) * 60 + Number(m[3] ?? 0)
-}
-
-function youtube(url: URL): string | null {
-  const host = url.hostname.replace(/^(www|m)\./, '')
-  const [, first, second] = url.pathname.split('/')
-  let id: string | null | undefined
-  if (host === 'youtu.be') {
-    id = first
-  } else if (host === 'youtube.com' || host === 'youtube-nocookie.com') {
-    if (first === 'watch') id = url.searchParams.get('v')
-    else if (first === 'shorts' || first === 'embed' || first === 'live') id = second
-  }
-  if (!id || !YOUTUBE_ID.test(id)) return null
-  const start = seconds(url.searchParams.get('t') ?? url.searchParams.get('start'))
-  // The no-cookie player does not set tracking cookies until playback starts.
-  return `${FRAMES.youtube}${id}${start ? `?start=${start}` : ''}`
-}
-
-function vimeo(url: URL): string | null {
-  const host = url.hostname.replace(/^www\./, '')
-  const m =
-    host === 'vimeo.com'
-      ? /^\/(\d+)(?:\/([\da-f]+))?\/?$/.exec(url.pathname)
-      : host === 'player.vimeo.com'
-        ? /^\/video\/(\d+)\/?$/.exec(url.pathname)
-        : null
-  if (!m) return null
-  // Unlisted videos need their hash, either in the path or as ?h=.
-  const hash = m[2] ?? url.searchParams.get('h')
-  const query = hash && /^[\da-f]+$/.test(hash) ? `?h=${hash}` : ''
-  return `${FRAMES.vimeo}${m[1]}${query}`
-}
-
-function frame(src: string | null, custom?: FrameSources): Embed | null {
-  const f = frameFor(src, custom)
-  return f ? { kind: 'frame', ...f } : null
 }
 
 /**
- * What to show for a URL that stands alone in a paragraph, if anything. `custom`
- * are the relay's FRAME_SOURCES, framed as they are.
+ * What to show for a URL that stands alone in a paragraph, if anything: the
+ * player of the first provider that takes it, a video file, or nothing.
  */
-export function embedFor(href: string, custom?: FrameSources): Embed | null {
+export function embedFor(href: string, page: URL = here()): Embed | null {
   const url = httpUrl(href)
   if (!url) return null
-  const player = frame(youtube(url)) ?? frame(vimeo(url))
-  if (player) return player
+  for (const provider of framedOn(page).ids) {
+    const src = playerUrl(provider, url)
+    // What embed() built must still be under that provider's own frames.
+    const f = frameFor(src, page)
+    if (f?.provider === provider) {
+      return { kind: 'frame', ...f }
+    }
+  }
   if (isVideoFile(url)) return { kind: 'video', src: url.href }
-  // Only FRAME_SOURCES are framed as they are; a player URL that youtube() or
-  // vimeo() did not take stays a link, as it does without frame sources.
-  const f = frameFor(url.href, custom)
-  return f?.provider === 'custom' ? { kind: 'frame', ...f } : null
+  return null
 }

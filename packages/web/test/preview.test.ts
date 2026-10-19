@@ -4,14 +4,7 @@ import * as Y from 'yjs'
 import type { ImageResolver } from '../src/attachments.ts'
 import { PreviewPane } from '../src/pane.ts'
 import * as preview from '../src/preview.ts'
-import {
-  loadEmbed,
-  pageFrameSources,
-  pageMediaSources,
-  patch,
-  render,
-  sanitize,
-} from '../src/preview.ts'
+import { loadEmbed, pageMediaSources, patch, render, sanitize } from '../src/preview.ts'
 
 function html(source: string): string {
   const div = document.createElement('div')
@@ -19,13 +12,9 @@ function html(source: string): string {
   return div.innerHTML
 }
 
-function dom(
-  source: string,
-  sources?: readonly string[],
-  frameSources?: readonly string[],
-): HTMLElement {
+function dom(source: string, sources?: readonly string[]): HTMLElement {
   const div = document.createElement('div')
-  div.append(render(source, undefined, sources, frameSources))
+  div.append(render(source, undefined, sources))
   return div
 }
 
@@ -34,7 +23,7 @@ const PLAYER_ALLOW = 'fullscreen; picture-in-picture; encrypted-media'
 
 function placeholder(line: number, src: string, title: string, href: string): string {
   return (
-    `<div class="embed embed--video" data-line="${line}" data-embed-src="${src}">` +
+    `<div class="embed" data-line="${line}" data-embed-src="${src}">` +
     `<span class="embed-provider">${title}</span>` +
     `<span class="embed-load" role="button" tabindex="0">Load from ${new URL(src).host}</span>` +
     `<a class="embed-link" href="${href}" target="_blank" rel="noopener noreferrer">${href}</a></div>`
@@ -85,7 +74,7 @@ describe('sanitize', () => {
     const div = document.createElement('div')
     div.append(
       sanitize(
-        '<div class="embed embed--video" data-embed-src="https://player.vimeo.com/video/1">' +
+        '<div class="embed" data-embed-src="https://player.vimeo.com/video/1">' +
           '<span class="embed-load" role="button" tabindex="0">Load from player.vimeo.com</span></div>',
       ),
     )
@@ -113,7 +102,7 @@ describe('sanitize', () => {
     expect(div.innerHTML).toBe('<p>before</p>')
   })
 
-  it('drops placeholders for frame sources outside render', () => {
+  it('drops placeholders for sites no provider names', () => {
     const div = document.createElement('div')
     div.append(sanitize('<div class="embed" data-embed-src="https://embed.example.com/1"></div>'))
     expect(div.innerHTML).toBe('')
@@ -295,13 +284,13 @@ describe('render', () => {
       placeholder(
         0,
         'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?start=90',
-        'YouTube video',
+        'YouTube',
         'https://youtu.be/dQw4w9WgXcQ?t=90',
       ) +
         placeholder(
           2,
           'https://player.vimeo.com/video/76979871?h=abc123',
-          'Vimeo video',
+          'Vimeo',
           'https://vimeo.com/76979871/abc123',
         ),
     )
@@ -314,54 +303,25 @@ describe('render', () => {
       'https://youtu.be/dQw4w9WgXcQ',
       'https://vimeo.com/76979871',
       'https://player.vimeo.com/video/76979871',
-      'https://embed.example.com/v/1',
     ].join('\n\n')
-    const out = dom(source, [], ['https://embed.example.com/v/'])
-    expect(out.querySelectorAll('[data-embed-src]')).toHaveLength(6)
+    const out = dom(source, [])
+    expect(out.querySelectorAll('[data-embed-src]')).toHaveLength(5)
     expect(out.innerHTML).not.toContain('<iframe')
   })
 
   it.each(['https://player.vimeo.com/video/abc/xyz', 'https://www.youtube-nocookie.com/embed/'])(
     'keeps player URL %s that names no video a link',
     (href) => {
-      const out = dom(href, [], [])
+      const out = dom(href, [])
       expect(out.querySelector('[data-embed-src]')).toBeNull()
       expect(out.querySelector('a')?.getAttribute('href')).toBe(href)
     },
   )
 
-  describe('with frame sources', () => {
-    it('offers a bare URL they match as a generic frame', () => {
-      const out = dom('https://embed.example.com/v/1?x=2', [], ['https://embed.example.com/v/'])
-      expect(out.innerHTML).toBe(
-        placeholder(
-          0,
-          'https://embed.example.com/v/1?x=2',
-          'embed.example.com',
-          'https://embed.example.com/v/1?x=2',
-        ),
-      )
-    })
-
-    it('keeps other URLs, and the same URL in a sentence, as links', () => {
-      const out = dom(
-        'https://embed.example.com/other\n\nSee https://embed.example.com/v/1 here\n\n[x](https://embed.example.com/v/1)',
-        [],
-        ['https://embed.example.com/v/'],
-      )
-      expect(out.querySelector('[data-embed-src]')).toBeNull()
-      expect(out.querySelectorAll('a[href]')).toHaveLength(3)
-    })
-
-    it('never frames the page itself', () => {
-      const out = dom(`${location.origin}/r/x`, [], [location.host])
-      expect(out.querySelector('[data-embed-src]')).toBeNull()
-      expect(out.querySelector('a')).not.toBeNull()
-    })
-
-    it('frames nothing extra without them', () => {
-      expect(dom('https://embed.example.com/v/1').querySelector('[data-embed-src]')).toBeNull()
-    })
+  it('keeps a URL no provider takes a link', () => {
+    const out = dom('https://embed.example.com/v/1')
+    expect(out.querySelector('[data-embed-src]')).toBeNull()
+    expect(out.querySelector('a')?.getAttribute('href')).toBe('https://embed.example.com/v/1')
   })
 
   it('keeps video URLs inside a sentence or with link text as links', () => {
@@ -410,10 +370,10 @@ describe('render', () => {
 })
 
 describe('loadEmbed', () => {
-  function mounted(source: string, frameSources?: readonly string[]): HTMLElement {
+  function mounted(source: string): HTMLElement {
     const div = document.createElement('div')
     document.body.append(div)
-    patch(div, render(source, undefined, [], frameSources))
+    patch(div, render(source, undefined, []))
     return div
   }
 
@@ -421,13 +381,13 @@ describe('loadEmbed', () => {
     [
       'https://youtu.be/dQw4w9WgXcQ',
       'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ',
-      'YouTube video',
+      'YouTube',
     ],
-    ['https://vimeo.com/76979871', 'https://player.vimeo.com/video/76979871', 'Vimeo video'],
+    ['https://vimeo.com/76979871', 'https://player.vimeo.com/video/76979871', 'Vimeo'],
   ])('loads the player for %s with only its own attributes', (url, src, title) => {
     const div = mounted(url)
     const placeholder = div.querySelector('[data-embed-src]') as Element
-    const frame = loadEmbed(placeholder, [])
+    const frame = loadEmbed(placeholder)
     expect(frame).toBe(div.querySelector('iframe'))
     expect(placeholder.children).toHaveLength(1)
     expect(placeholder.classList.contains('embed--loaded')).toBe(true)
@@ -448,23 +408,8 @@ describe('loadEmbed', () => {
     const div = document.createElement('div')
     div.innerHTML =
       '<div class="embed" data-embed-src="https://www.youtube-nocookie.com/embed/aaaaaaaaaaa"></div>'
-    expect(loadEmbed(div.firstElementChild as Element, [])).toBeNull()
+    expect(loadEmbed(div.firstElementChild as Element)).toBeNull()
     expect(div.querySelector('iframe')).toBeNull()
-  })
-
-  it('loads a frame source as a generic frame', () => {
-    const sources = ['https://embed.example.com/v/']
-    const div = mounted('https://embed.example.com/v/1?x=2', sources)
-    const frame = loadEmbed(div.querySelector('[data-embed-src]') as Element, sources)
-    expect(
-      Object.fromEntries([...(frame?.attributes ?? [])].map((a) => [a.name, a.value])),
-    ).toEqual({
-      src: 'https://embed.example.com/v/1?x=2',
-      title: 'embed.example.com',
-      sandbox: 'allow-scripts allow-same-origin allow-popups',
-      referrerpolicy: 'strict-origin-when-cross-origin',
-    })
-    div.remove()
   })
 
   it('takes nothing but the src from the placeholder', () => {
@@ -472,9 +417,9 @@ describe('loadEmbed', () => {
     const placeholder = div.querySelector('[data-embed-src]') as Element
     placeholder.setAttribute('data-embed-sandbox', 'allow-top-navigation')
     placeholder.setAttribute('data-title', 'x')
-    const frame = loadEmbed(placeholder, [])
+    const frame = loadEmbed(placeholder)
     expect(frame?.getAttribute('sandbox')).not.toContain('allow-top-navigation')
-    expect(frame?.title).toBe('Vimeo video')
+    expect(frame?.title).toBe('Vimeo')
     div.remove()
   })
 
@@ -487,7 +432,7 @@ describe('loadEmbed', () => {
     const div = mounted('https://vimeo.com/76979871')
     const placeholder = div.querySelector('[data-embed-src]') as Element
     placeholder.setAttribute('data-embed-src', src)
-    expect(loadEmbed(placeholder, [])).toBeNull()
+    expect(loadEmbed(placeholder)).toBeNull()
     expect(div.querySelector('iframe')).toBeNull()
     expect(placeholder.querySelector('.embed-load')).not.toBeNull()
     div.remove()
@@ -550,7 +495,7 @@ describe('patch', () => {
   it('keeps a loaded player while someone types elsewhere, not once its URL changes', () => {
     const container = document.createElement('div')
     patch(container, render('# A\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nold\n'))
-    const frame = loadEmbed(container.querySelector('[data-embed-src]') as Element, [])
+    const frame = loadEmbed(container.querySelector('[data-embed-src]') as Element)
     expect(frame).not.toBeNull()
 
     patch(container, render('# A, edited\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nnew\n'))
@@ -567,7 +512,7 @@ describe('patch', () => {
   it('keeps a loaded player when a block is added above it and another changes below', () => {
     const container = document.createElement('div')
     patch(container, render('a\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nb\n'))
-    const frame = loadEmbed(container.querySelector('[data-embed-src]') as Element, [])
+    const frame = loadEmbed(container.querySelector('[data-embed-src]') as Element)
     expect(frame).not.toBeNull()
 
     patch(container, render('a\n\nnew\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nB\n'))
@@ -584,7 +529,7 @@ describe('patch', () => {
   it('keeps a loaded player in a list while its other items change', () => {
     const container = document.createElement('div')
     patch(container, render('a\n\n- https://youtu.be/dQw4w9WgXcQ\n- x\n\nb\n'))
-    const frame = loadEmbed(container.querySelector('[data-embed-src]') as Element, [])
+    const frame = loadEmbed(container.querySelector('[data-embed-src]') as Element)
     expect(frame).not.toBeNull()
 
     patch(container, render('a\n\n- https://youtu.be/dQw4w9WgXcQ\n- xy\n\nb\n'))
@@ -615,7 +560,7 @@ describe('patch', () => {
     ] as const) {
       const container = document.createElement('div')
       patch(container, render('> https://youtu.be/dQw4w9WgXcQ\n>\n> old\n'))
-      const frame = loadEmbed(container.querySelector('[data-embed-src]') as Element, [])
+      const frame = loadEmbed(container.querySelector('[data-embed-src]') as Element)
       expect(frame).not.toBeNull()
 
       patch(container, render(edited))
@@ -630,7 +575,7 @@ describe('patch', () => {
   it('updates the lines after a loaded player in a list', () => {
     const container = document.createElement('div')
     patch(container, render('a\n\n- https://youtu.be/dQw4w9WgXcQ\n- next\n'))
-    loadEmbed(container.querySelector('[data-embed-src]') as Element, [])
+    loadEmbed(container.querySelector('[data-embed-src]') as Element)
 
     patch(container, render('a\n\nb\n\n- https://youtu.be/dQw4w9WgXcQ\n- next\n'))
     expect([...container.querySelectorAll('li')].map((li) => li.getAttribute('data-line'))).toEqual(
@@ -690,41 +635,6 @@ describe('patch', () => {
     expect(container.innerHTML).toBe(html('z\n\na\n\nb\n'))
     patch(container, render(''))
     expect(container.innerHTML).toBe('')
-  })
-})
-
-describe('pageFrameSources', () => {
-  const page = (head: string) =>
-    new DOMParser().parseFromString(`<head>${head}</head>`, 'text/html')
-  const meta = (content: string) => page(`<meta name="pedit-frame-sources" content="${content}">`)
-  const at = new URL('https://pedit.test/r/x')
-
-  it('reads the list the Worker wrote into the page', () => {
-    expect(pageFrameSources(meta('https://embed.example.com b.example'), at)).toEqual([
-      'https://embed.example.com',
-      'b.example',
-    ])
-  })
-
-  it.each([
-    'https:',
-    '*',
-    "'self'",
-    'pedit.test',
-    'https://pedit.test/elsewhere/',
-    'b.example http://pedit.test',
-    'http://pedit.test:80',
-  ])('frames only the players for %j', (content) => {
-    expect(pageFrameSources(meta(content), at)).toEqual([])
-  })
-
-  it('allows nothing extra without the tag', () => {
-    expect(pageFrameSources(page(''), at)).toEqual([])
-  })
-
-  it('compares with the location by default', () => {
-    expect(pageFrameSources(meta(location.host))).toEqual([])
-    expect(pageFrameSources(meta('b.example'))).toEqual(['b.example'])
   })
 })
 

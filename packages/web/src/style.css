@@ -903,7 +903,7 @@ main.editor[data-resizing] iframe {
   max-width: min(100%, 820px);
 }
 /* The placeholder keeps the player's size, so loading it does not move the page. */
-.preview .embed--video {
+.preview .embed {
   aspect-ratio: 16 / 9;
 }
 .preview .embed:not(.embed--loaded) {

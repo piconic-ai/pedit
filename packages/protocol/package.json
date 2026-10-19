@@ -17,6 +17,7 @@
     "./admission": "./src/admission.ts",
     "./close": "./src/close.ts",
     "./csp": "./src/csp.ts",
+    "./embeds/define": "./src/embeds/define.ts",
     "./frame": "./src/frame.ts",
     "./testing": "./src/testing.ts"
   }

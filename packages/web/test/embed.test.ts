@@ -1,17 +1,17 @@
-import { describe, expect, it } from 'vitest'
+// @vitest-environment jsdom
+import { PROVIDERS } from '@pedit/protocol/csp'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { embedFor, frameFor, httpUrl, isAllowedFrame } from '../src/embed.ts'
 
 const PLAYER = {
-  shape: 'video',
   sandbox: 'allow-scripts allow-same-origin allow-popups allow-presentation',
   allow: 'fullscreen; picture-in-picture; encrypted-media',
 }
-const CUSTOM = {
-  shape: 'video',
-  sandbox: 'allow-scripts allow-same-origin allow-popups',
-  allow: '',
-}
 const page = new URL('https://pedit.test/r/x')
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
 describe('httpUrl', () => {
   it.each([
@@ -47,31 +47,15 @@ describe('embedFor', () => {
     ],
   ])('frames %s', (href, src) => {
     const provider = src.includes('vimeo') ? 'vimeo' : 'youtube'
-    const title = provider === 'vimeo' ? 'Vimeo video' : 'YouTube video'
+    const title = provider === 'vimeo' ? 'Vimeo' : 'YouTube'
     expect(embedFor(href)).toEqual({ kind: 'frame', src, provider, title, ...PLAYER })
   })
 
-  it("frames a URL from the relay's frame sources as it is", () => {
-    const custom = { sources: ['https://embed.example.com/v/'], page }
-    expect(embedFor('https://embed.example.com/v/1?x=2', custom)).toEqual({
-      kind: 'frame',
-      src: 'https://embed.example.com/v/1?x=2',
-      provider: 'custom',
-      title: 'embed.example.com',
-      ...CUSTOM,
-    })
-    expect(embedFor('https://embed.example.com/other', custom)).toBeNull()
-    expect(embedFor('https://embed.example.com/v/1')).toBeNull()
-    // The built-in players keep their own attributes.
-    const all = { sources: ['player.vimeo.com'], page }
-    expect(embedFor('https://vimeo.com/76979871', all)).toMatchObject({ provider: 'vimeo' })
-  })
-
   it.each(['https://player.vimeo.com/video/abc/xyz', 'https://www.youtube-nocookie.com/embed/'])(
-    'leaves player URL %s that names no video a link, with or without frame sources',
+    'leaves player URL %s that names no video a link',
     (href) => {
       expect(embedFor(href)).toBeNull()
-      expect(embedFor(href, { sources: [], page })).toBeNull()
+      expect(embedFor(href, page)).toBeNull()
     },
   )
 
@@ -142,6 +126,10 @@ describe('isAllowedFrame', () => {
     'https://youtube-nocookie.com/embed/dQw4w9WgXcQ',
     'https://www.youtube.com/embed/dQw4w9WgXcQ',
     'https://www.youtube-nocookie.com.evil.example/embed/x',
+    // A trailing dot is another origin; a homoglyph host parses to xn--.
+    'https://player.vimeo.com./video/1',
+    'https://www.youtube-nocookie.com./embed/dQw4w9WgXcQ',
+    'https://pl\u0430yer.vimeo.com/video/1',
     'javascript:alert(1)//https://player.vimeo.com/video/1',
   ])('refuses %j', (src) => {
     expect(isAllowedFrame(src)).toBe(false)
@@ -153,13 +141,13 @@ describe('frameFor', () => {
     expect(frameFor('https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ')).toEqual({
       src: 'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ',
       provider: 'youtube',
-      title: 'YouTube video',
+      title: 'YouTube',
       ...PLAYER,
     })
     expect(frameFor('https://player.vimeo.com/video/1')).toEqual({
       src: 'https://player.vimeo.com/video/1',
       provider: 'vimeo',
-      title: 'Vimeo video',
+      title: 'Vimeo',
       ...PLAYER,
     })
     expect(frameFor('https://embed.example.com/1')).toBeNull()
@@ -174,55 +162,72 @@ describe('frameFor', () => {
     )
   })
 
-  describe("with the relay's frame sources", () => {
-    const custom = (sources: string[], from = page) => ({ sources, page: from })
+  it('takes the attributes from the registry', () => {
+    for (const [id, provider] of Object.entries(PROVIDERS)) {
+      for (const prefix of provider.frames) {
+        expect(frameFor(`${prefix}1`)).toMatchObject({ provider: id })
+      }
+    }
+  })
+})
 
-    it('frames what they match, with the custom attributes', () => {
-      expect(
-        frameFor('https://embed.example.com:8443/1', custom(['embed.example.com:8443'])),
-      ).toEqual({
-        src: 'https://embed.example.com:8443/1',
-        provider: 'custom',
-        title: 'embed.example.com:8443',
-        ...CUSTOM,
-      })
-      expect(frameFor('https://a.example.com/1', custom(['*.example.com']))).toMatchObject({
-        provider: 'custom',
-      })
-      expect(frameFor('https://example.com/1', custom(['*.example.com']))).toBeNull()
-      expect(frameFor('https://embed.example.com/1', custom([]))).toBeNull()
-    })
+describe("the editor's own origin", () => {
+  const youtube = new URL('https://www.youtube-nocookie.com/r/x')
 
-    it('applies the same URL checks as for the players', () => {
-      const c = custom(['https://embed.example.com/v/'])
-      expect(frameFor('https://embed.example.com/v/1', c)).not.toBeNull()
-      expect(frameFor('https://embed.example.com/v/../x', c)).toBeNull()
-      expect(frameFor('https://embed.example.com/v/%2e%2e/x', c)).toBeNull()
-      expect(frameFor('https://embed.example.com/v/..%2fx', c)).toBeNull()
-      expect(frameFor('https://u:p@embed.example.com/v/1', c)).toBeNull()
-      expect(frameFor('https://embed.example.com.evil.test/v/1', c)).toBeNull()
-    })
+  it('never frames a provider whose frames cover it', () => {
+    expect(frameFor('https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ', youtube)).toBeNull()
+    expect(embedFor('https://youtu.be/dQw4w9WgXcQ', youtube)).toBeNull()
+    expect(isAllowedFrame('https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ', youtube)).toBe(
+      false,
+    )
+  })
 
-    it('takes http only from a source that names it', () => {
-      expect(frameFor('http://embed.example.com/', custom(['embed.example.com']))).toBeNull()
-      expect(frameFor('http://embed.example.com/', custom(['http://embed.example.com']))).toEqual({
-        src: 'http://embed.example.com/',
-        provider: 'custom',
-        title: 'embed.example.com',
-        ...CUSTOM,
-      })
+  it('still frames the other providers', () => {
+    expect(frameFor('https://player.vimeo.com/video/1', youtube)).toMatchObject({
+      provider: 'vimeo',
     })
+    expect(embedFor('https://vimeo.com/76979871', youtube)).toMatchObject({ provider: 'vimeo' })
+  })
 
-    it("never frames the page's own origin", () => {
-      expect(frameFor('https://pedit.test/r/y', custom(['pedit.test']))).toBeNull()
-      expect(frameFor('https://pedit.test/', custom(['https:']))).toBeNull()
-      expect(
-        frameFor(
-          'http://localhost:8787/',
-          custom(['http://localhost:8787'], new URL('http://localhost:8787/r/x')),
-        ),
-      ).toBeNull()
-      expect(frameFor('https://other.test/', custom(['other.test']))).not.toBeNull()
+  it('frames every provider elsewhere', () => {
+    for (const at of [page, new URL('http://localhost:8787/r/x')]) {
+      expect(frameFor('https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ', at)).not.toBeNull()
+      expect(frameFor('https://player.vimeo.com/video/1', at)).not.toBeNull()
+    }
+  })
+})
+
+describe("a provider's embed()", () => {
+  const youtube = PROVIDERS.youtube as { embed: (url: URL) => string | null }
+
+  it.each([
+    // Another provider's player is not this provider's.
+    'https://player.vimeo.com/video/1',
+    'https://evil.example/embed/x',
+    'http://www.youtube-nocookie.com/embed/dQw4w9WgXcQ',
+    'https://www.youtube-nocookie.com/embed/../watch',
+    'https://www.youtube-nocookie.com/embed/..%2fwatch',
+    'https://u@www.youtube-nocookie.com/embed/dQw4w9WgXcQ',
+    'javascript:alert(1)',
+    'not a url',
+  ])('is checked again at runtime: %j is not framed', (src) => {
+    vi.spyOn(youtube, 'embed').mockReturnValue(src)
+    expect(embedFor('https://youtu.be/dQw4w9WgXcQ')).toBeNull()
+  })
+
+  it('may fail without breaking the preview', () => {
+    vi.spyOn(youtube, 'embed').mockImplementation(() => {
+      throw new Error('bad provider')
     })
+    expect(embedFor('https://youtu.be/dQw4w9WgXcQ')).toBeNull()
+    expect(embedFor('https://vimeo.com/76979871')).toMatchObject({ provider: 'vimeo' })
+  })
+
+  it('works on a copy of the URL', () => {
+    vi.spyOn(youtube, 'embed').mockImplementation((url) => {
+      url.hostname = 'evil.example'
+      return null
+    })
+    expect(embedFor('https://vimeo.com/76979871')).toMatchObject({ provider: 'vimeo' })
   })
 })
