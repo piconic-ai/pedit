@@ -1,5 +1,12 @@
 # Changelog
 
+## [v0.1.9](https://github.com/piconic-ai/pedit/compare/v0.1.8...v0.1.9) - 2026-10-19
+
+- Define embed providers as files in a build-time registry by @kfly8 in https://github.com/piconic-ai/pedit/pull/157
+- Load preview embeds only when someone clicks them by @kfly8 in https://github.com/piconic-ai/pedit/pull/158
+- Let people always load the preview players of chosen providers by @kfly8 in https://github.com/piconic-ai/pedit/pull/159
+- Embed Loom, Figma, CodePen, StackBlitz, Observable, Spotify, SoundCloud and Miro by @kfly8 in https://github.com/piconic-ai/pedit/pull/161
+
 ## [v0.1.8](https://github.com/piconic-ai/pedit/compare/v0.1.7...v0.1.8) - 2026-10-18
 
 - Say that pedit checks the configuration file's owner on Windows too by @kfly8 in https://github.com/piconic-ai/pedit/pull/154
