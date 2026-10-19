@@ -14,6 +14,7 @@ import {
   MAX_FILE_ID,
   MAX_FRAME_BYTES,
   MessageType,
+  Pacer,
   RoomClient,
   type RoomClientOptions,
   SENDER_BYTES,
@@ -221,5 +222,61 @@ describe('RoomClient with several files', () => {
     expect(errors).toEqual([])
     expect(encodeFileDoc(1, MessageType.Sync, new Uint8Array()).length).toBe(3)
     newer.close()
+  })
+})
+
+describe('pacing', () => {
+  // A small allowance, so a few files go over it as forty large ones go over
+  // the real relay's.
+  const byteRate = { burst: 64 * 1024, perSecond: 256 * 1024 }
+  const big = (n: number) => file('x'.repeat(n * 1024))
+
+  it('keeps a room with several large files within the relay allowance', async () => {
+    const relay = new Relay({ byteRate })
+    const key = await importKey(generateKey())
+    const statuses: string[] = []
+    const host = join(relay, key, { byteRate, onStatus: (s) => statuses.push(s) })
+    for (const id of [1, 2, 3]) host.addFile(id, big(40))
+    const guest = join(relay, key, { byteRate })
+    const docs = [1, 2, 3].map((id) => {
+      const doc = file()
+      guest.addFile(id, doc)
+      return doc
+    })
+    await vi.waitFor(() => expect(docs.map((d) => text(d).length)).toEqual([40960, 40960, 40960]), {
+      timeout: 5000,
+    })
+    expect(statuses).not.toContain('disconnected')
+    expect(host.status).toBe('connected')
+  })
+
+  it('would be closed by the relay without pacing', async () => {
+    const relay = new Relay({ byteRate })
+    const key = await importKey(generateKey())
+    const statuses: string[] = []
+    const unpaced = { burst: 1e12, perSecond: 1e12 }
+    const host = join(relay, key, { byteRate: unpaced, onStatus: (s) => statuses.push(s) })
+    for (const id of [1, 2, 3]) host.addFile(id, big(40))
+    await vi.waitFor(() => expect(statuses).toContain('disconnected'))
+  })
+})
+
+describe('Pacer', () => {
+  it('lets a burst through, then waits for the rate, keeping a margin', () => {
+    let now = 0
+    const pacer = new Pacer(
+      { burst: 100, perSecond: 100 },
+      { burst: 800, perSecond: 800 },
+      () => now,
+    )
+    // 7/8 of 800 bytes at once.
+    expect(pacer.take(700)).toBe(0)
+    expect(pacer.take(70)).toBeCloseTo(100) // 70 bytes at 700 a second
+    now += 100
+    expect(pacer.take(0)).toBe(0)
+    // Messages are counted too: 87.5 of them at once, then 87.5 a second.
+    const many = new Pacer({ burst: 8, perSecond: 8 }, undefined, () => now)
+    for (let i = 0; i < 7; i++) expect(many.take(1)).toBe(0)
+    expect(many.take(1)).toBeCloseTo((1 / 7) * 1000)
   })
 })

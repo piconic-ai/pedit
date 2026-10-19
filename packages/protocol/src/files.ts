@@ -42,7 +42,8 @@ export const MAX_FILE_ID = 2 ** 32 - 1
 
 const FORMAT = /^[a-z][a-z0-9-]{0,31}$/
 const utf8 = new TextEncoder()
-const fatalUtf8 = new TextDecoder('utf-8', { fatal: true })
+// ignoreBOM keeps a leading U+FEFF, as Go does: it is part of the name.
+const fatalUtf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
 
 export function encodeManifest(files: FileEntry[]): Uint8Array {
   validateManifest(files)

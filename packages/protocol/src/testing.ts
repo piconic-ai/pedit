@@ -1,5 +1,9 @@
 import { MESSAGE_TOO_BIG, RELAY_BUSY, ROOM_CLOSED, ROOM_FULL } from './close.ts'
+import type { Rate } from './pace.ts'
 import type { SocketLike } from './room.ts'
+
+/** The Room's close code for a connection over its rate (RATE_LIMITED in packages/worker). */
+export const RATE_LIMITED = 1008
 
 export interface RelayOptions {
   /**
@@ -16,6 +20,8 @@ export interface RelayOptions {
   refuseReason?: string
   /** Turn away this many sockets with RELAY_BUSY before letting any in. */
   busy?: number
+  /** Close a socket that sends more bytes than this with RATE_LIMITED, as the Room does. */
+  byteRate?: Rate
   /** Close a socket that sends a larger frame with MESSAGE_TOO_BIG, as the Room does at MAX_FRAME_BYTES. */
   maxFrame?: number
 }
@@ -89,6 +95,9 @@ export class FakeSocket implements SocketLike {
   onmessage: SocketLike['onmessage'] = null
   onclose: SocketLike['onclose'] = null
   onerror: SocketLike['onerror'] = null
+  // The byte allowance under RelayOptions.byteRate, and when it was counted.
+  private bytes: number | undefined
+  private at: number | undefined
   constructor(
     private relay: Relay,
     readonly isHost: boolean,
@@ -97,6 +106,18 @@ export class FakeSocket implements SocketLike {
     if (this.relay.opts.maxFrame !== undefined && data.length > this.relay.opts.maxFrame) {
       this.close(MESSAGE_TOO_BIG)
       return
+    }
+    const rate = this.relay.opts.byteRate
+    if (rate) {
+      const now = performance.now()
+      const seconds = this.at === undefined ? 0 : (now - this.at) / 1000
+      this.at = now
+      this.bytes = Math.min(rate.burst, (this.bytes ?? rate.burst) + seconds * rate.perSecond)
+      if (this.bytes < data.length) {
+        this.close(RATE_LIMITED)
+        return
+      }
+      this.bytes -= data.length
     }
     this.relay.frames.push(data)
     for (const peer of this.relay.sockets) {

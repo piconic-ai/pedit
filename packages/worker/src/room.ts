@@ -17,6 +17,7 @@ import {
   SERVER_OUTDATED,
 } from '@pedit/protocol/close'
 import { MAX_FRAME_BYTES } from '@pedit/protocol/frame'
+import { RELAY_BYTE_RATE, RELAY_MESSAGE_RATE } from '@pedit/protocol/pace'
 
 // Shared browser code brings DOM's SubtleCrypto into this program. Augment it
 // with the documented Workers extension also present in our generated types.
@@ -43,14 +44,16 @@ export const MAX_UPLOADS = 4
  * second on fast displays, besides typing and cursors. Bytes are counted
  * loosely: every
  * peer answers a newcomer with the whole document (one message of at most
- * MAX_FRAME_BYTES), so a full room reconnecting at once must fit.
+ * MAX_FRAME_BYTES), so a full room reconnecting at once must fit. Clients
+ * pace what they send to stay within both (packages/protocol/src/pace.ts),
+ * which a room that shares several files needs on connecting.
  *
  * A guest over it is closed, and its client reconnects and resyncs, which
  * loses nothing. A host over it ends the session, as any host leaving does,
  * so the limits stay far above what editing needs.
  */
-export const MESSAGE_RATE = { burst: 1000, perSecond: 200 }
-export const BYTE_RATE = { burst: MAX_PEERS * MAX_FRAME_BYTES, perSecond: 1024 * 1024 }
+export const MESSAGE_RATE = RELAY_MESSAGE_RATE
+export const BYTE_RATE = RELAY_BYTE_RATE
 /** Close code for a connection over its rate: a policy violation. */
 export const RATE_LIMITED = 1008
 

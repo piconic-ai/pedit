@@ -80,6 +80,14 @@ describe('files messages', () => {
     }
   })
 
+  it('keeps a leading BOM in a path, as Go does', () => {
+    const files = [
+      { id: 1, path: '\uFEFFagenda.md', format: 'text' },
+      { id: 2, path: 'agenda.md', format: 'text' },
+    ]
+    expect(decodeFiles(encodeManifest(files))).toEqual({ kind: 'manifest', files })
+  })
+
   it('carries only sync, attachment and canvas messages about a file', () => {
     // File 0 is the room's own doc, synced with plain messages.
     expect(() => encodeFileDoc(0, MessageType.Sync, new Uint8Array())).toThrow()

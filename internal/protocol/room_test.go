@@ -47,6 +47,7 @@ type joinOpts struct {
 	onFileSynced     func(uint64)
 	onFileAttachment func(uint64, protocol.Attachment)
 	onFileCanvas     func(uint64, protocol.CanvasMessage)
+	bytes            protocol.Rate
 }
 
 func join(t *testing.T, relay *prototest.Relay, key string, o joinOpts) *peer {
@@ -84,6 +85,7 @@ func join(t *testing.T, relay *prototest.Relay, key string, o joinOpts) *peer {
 		OnFileSynced:     o.onFileSynced,
 		OnFileAttachment: o.onFileAttachment,
 		OnFileCanvas:     o.onFileCanvas,
+		Bytes:            o.bytes,
 	})
 	if err != nil {
 		t.Fatal(err)

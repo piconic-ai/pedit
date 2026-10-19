@@ -20,7 +20,11 @@ var manifest = []protocol.FileEntry{
 }
 
 func TestManifestRoundTrips(t *testing.T) {
-	for _, files := range [][]protocol.FileEntry{manifest, {}, {{ID: protocol.MaxFileID, Path: "a", Format: "future-format"}}} {
+	for _, files := range [][]protocol.FileEntry{
+		manifest, {}, {{ID: protocol.MaxFileID, Path: "a", Format: "future-format"}},
+		// A leading BOM is part of the name, here and in packages/protocol.
+		{{ID: 1, Path: "\ufeffagenda.md", Format: "text"}, {ID: 2, Path: "agenda.md", Format: "text"}},
+	} {
 		payload, err := protocol.EncodeManifest(files)
 		if err != nil {
 			t.Fatal(err)
