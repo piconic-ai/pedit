@@ -100,7 +100,7 @@ frames only player URLs of that shape: the browser refuses any other image,
 video, frame or connection. A self-hosted relay can allow external images and
 videos with `MEDIA_SOURCES` ([self-hosting](self-hosting.md#room-limits)), and
 be built with other sites' players
-([self-hosting](self-hosting.md#embed-providers)); the public relay does neither.
+([embeds](embeds.md#customizing-the-providers)); the public relay does neither.
 
 A link on a line of its own to a file on GitHub
 (`https://github.com/{owner}/{repo}/blob/{ref}/{path}`, with `#L10` or
