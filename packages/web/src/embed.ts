@@ -118,9 +118,10 @@ export function isAllowedFrame(src: string | null, page?: URL): boolean {
 /** A size someone wrote after a URL: `#width=560&height=315`, either may be left out. */
 export type SizeHint = { width?: number | '100%'; height?: number }
 
-const LENGTH = '(\\d{1,9})'
+// Any run of digits: one too long for a number is clamped like any other.
+const LENGTH = '(\\d+)'
 // Markdown links write '%' as '%25'.
-const WIDTH = '(\\d{1,9}|100%(?:25)?)'
+const WIDTH = '(\\d+|100%(?:25)?)'
 const HINT = new RegExp(
   `^#(?:width=${WIDTH}(?:&height=${LENGTH})?|height=${LENGTH}(?:&width=${WIDTH})?)$`,
 )
@@ -193,13 +194,14 @@ export function boxOf(size: Size, hint: SizeHint | null): Box {
 export function boxStyle(box: Box): string {
   const props: string[] = []
   if (box.width !== null) props.push(`--embed-w:${box.width}`)
-  if ('ratio' in box) props.push(`--embed-ratio:${box.ratio[0]}/${box.ratio[1]}`)
+  // The ratio as two numbers, so the CSS can also narrow the box by it.
+  if ('ratio' in box) props.push(`--embed-rw:${box.ratio[0]};--embed-rh:${box.ratio[1]}`)
   else props.push(`--embed-h:${box.height}`)
   return props.join(';')
 }
 
 const BOX_STYLE =
-  /^(?:--embed-w:(\d{1,4});)?(?:--embed-ratio:(\d{1,4})\/(\d{1,4})|--embed-h:(\d{1,4}))$/
+  /^(?:--embed-w:(\d{1,4});)?(?:--embed-rw:(\d{1,4});--embed-rh:(\d{1,4})|--embed-h:(\d{1,4}))$/
 
 /**
  * The style attribute again if it is one boxStyle could have written, or null.

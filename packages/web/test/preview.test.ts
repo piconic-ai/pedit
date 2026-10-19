@@ -26,7 +26,7 @@ function placeholder(
   src: string,
   title: string,
   href: string,
-  style = '--embed-ratio:16/9',
+  style = '--embed-rw:16;--embed-rh:9',
 ): string {
   return (
     `<div class="embed" data-line="${line}" data-embed-src="${src}" style="${style}">` +
@@ -80,7 +80,7 @@ describe('sanitize', () => {
     const div = document.createElement('div')
     div.append(
       sanitize(
-        '<div class="embed" data-embed-src="https://player.vimeo.com/video/1" style="--embed-ratio:16/9">' +
+        '<div class="embed" data-embed-src="https://player.vimeo.com/video/1" style="--embed-rw:16;--embed-rh:9">' +
           '<span class="embed-load" role="button" tabindex="0">Load from player.vimeo.com</span></div>',
       ),
     )
@@ -89,26 +89,27 @@ describe('sanitize', () => {
     expect(load?.getAttribute('tabindex')).toBe('0')
   })
 
-  it.each(['--embed-ratio:16/9', '--embed-w:560;--embed-ratio:560/315', '--embed-h:152'])(
-    "keeps a placeholder's box %s",
-    (style) => {
-      const div = document.createElement('div')
-      div.append(
-        sanitize(
-          `<div class="embed" data-embed-src="https://player.vimeo.com/video/1" style="${style}"></div>`,
-        ),
-      )
-      expect(div.querySelector('[data-embed-src]')?.getAttribute('style')).toBe(style)
-    },
-  )
+  it.each([
+    '--embed-rw:16;--embed-rh:9',
+    '--embed-w:560;--embed-rw:560;--embed-rh:315',
+    '--embed-h:152',
+  ])("keeps a placeholder's box %s", (style) => {
+    const div = document.createElement('div')
+    div.append(
+      sanitize(
+        `<div class="embed" data-embed-src="https://player.vimeo.com/video/1" style="${style}"></div>`,
+      ),
+    )
+    expect(div.querySelector('[data-embed-src]')?.getAttribute('style')).toBe(style)
+  })
 
   it.each([
     'color:red',
-    '--embed-ratio:16/9;color:red',
-    '--embed-ratio:16/9;background:url(https://evil.example/)',
+    '--embed-rw:16;--embed-rh:9;color:red',
+    '--embed-rw:16;--embed-rh:9;background:url(https://evil.example/)',
     '--embed-w:560',
     '--embed-h:99999',
-    '--embed-ratio:100/1',
+    '--embed-rw:100;--embed-rh:1',
   ])("drops a placeholder's style %j that is no box", (style) => {
     const div = document.createElement('div')
     div.append(
@@ -342,7 +343,7 @@ describe('render', () => {
         'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?start=90',
         'YouTube',
         href.replace('&', '&amp;'),
-        '--embed-w:400;--embed-ratio:400/300',
+        '--embed-w:400;--embed-rw:400;--embed-rh:300',
       ),
     )
     const full = dom('https://vimeo.com/76979871#width=100%&height=480')
@@ -353,7 +354,7 @@ describe('render', () => {
     const out = dom('https://www.youtube.com/shorts/dQw4w9WgXcQ\n\nhttps://vimeo.com/76979871')
     expect(
       [...out.querySelectorAll('[data-embed-src]')].map((el) => el.getAttribute('style')),
-    ).toEqual(['--embed-ratio:9/16', '--embed-ratio:16/9'])
+    ).toEqual(['--embed-rw:9;--embed-rh:16', '--embed-rw:16;--embed-rh:9'])
   })
 
   it.each([
@@ -363,7 +364,7 @@ describe('render', () => {
     'https://youtu.be/dQw4w9WgXcQ#width=560&height=315&style=color:red',
   ])('ignores a fragment %s that is not a hint', (href) => {
     const el = dom(href).querySelector('[data-embed-src]')
-    expect(el?.getAttribute('style')).toBe('--embed-ratio:16/9')
+    expect(el?.getAttribute('style')).toBe('--embed-rw:16;--embed-rh:9')
     expect(el?.getAttribute('data-embed-src')).toBe(
       'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ',
     )
@@ -490,7 +491,7 @@ describe('loadEmbed', () => {
     const div = mounted('https://vimeo.com/76979871#width=640&height=360')
     const placeholder = div.querySelector('[data-embed-src]') as HTMLElement
     const style = placeholder.getAttribute('style')
-    expect(style).toBe('--embed-w:640;--embed-ratio:640/360')
+    expect(style).toBe('--embed-w:640;--embed-rw:640;--embed-rh:360')
     const frame = loadEmbed(placeholder)
     expect(frame?.parentElement).toBe(placeholder)
     expect(div.querySelector('.embed')).toBe(placeholder)
@@ -624,13 +625,13 @@ describe('patch', () => {
     patch(container, render(`a\n\nnew\n\n${url}\n\nB\n`))
     expect(container.querySelector('iframe')).toBe(frame)
     expect(container.querySelector('.embed')?.getAttribute('style')).toBe(
-      '--embed-w:400;--embed-ratio:400/225',
+      '--embed-w:400;--embed-rw:400;--embed-rh:225',
     )
 
     patch(container, render('a\n\nnew\n\nhttps://youtu.be/dQw4w9WgXcQ#width=500\n\nB\n'))
     expect(container.querySelector('iframe')).toBeNull()
     expect(container.querySelector('.embed')?.getAttribute('style')).toBe(
-      '--embed-w:500;--embed-ratio:500/281',
+      '--embed-w:500;--embed-rw:500;--embed-rh:281',
     )
   })
 

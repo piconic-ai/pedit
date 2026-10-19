@@ -199,4 +199,6 @@ file is listed and that no two providers' frames overlap.
 player by ending its URL with `#width=560&height=315`, `#width=100%&height=480`,
 `#width=560` or `#height=400`; that fragment is taken off before `embed()` sees
 the URL, so it never reaches the provider. A width alone keeps the provider's
-ratio for that URL, as does a height alone.
+ratio for that URL, as does a height alone. Every box is kept within 100 to
+4000 pixels a side, between 4:1 and 1:2, and no taller than 80% of the window;
+a size outside that, however many digits it has, is clamped to it.

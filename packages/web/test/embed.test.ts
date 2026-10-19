@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { PROVIDERS } from '@pedit/protocol/csp'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -258,6 +260,7 @@ describe('sizeHint', () => {
     ['#width=100%25&height=400', { width: '100%', height: 400 }],
     // Out of range is clamped later, by boxOf.
     ['#width=0&height=99999', { width: 0, height: 99999 }],
+    ['#width=1234567890', { width: 1234567890 }],
   ])('reads %s', (hash, want) => {
     expect(hint(hash)).toEqual(want)
   })
@@ -286,7 +289,6 @@ describe('sizeHint', () => {
     '#width=560&height=315;background:url(x)',
     '#width=560%3Bcolor:red',
     '#width=%20560',
-    '#width=1234567890',
   ])('ignores the fragment %j', (hash) => {
     expect(hint(hash)).toBeNull()
   })
@@ -324,6 +326,11 @@ describe('boxOf', () => {
     ['taller than 1:2', { width: 300, height: 1000 }, { width: 300, ratio: [300, 600] }],
     ['a height too high', { height: 99999 }, { width: 4000, ratio: [4000, 4000] }],
     ['a height too low', { height: 0 }, { width: 178, ratio: [178, 100] }],
+    [
+      'with more digits than a number holds',
+      { width: Infinity },
+      { width: 4000, ratio: [4000, 2250] },
+    ],
   ] as const)('clamps a size %s', (_, hint, box) => {
     expect(boxOf({ ratio: '16/9' }, hint)).toEqual(box)
   })
@@ -334,12 +341,23 @@ describe('boxOf', () => {
     expect(boxOf({ height: 20 }, null)).toEqual({ width: null, height: 100 })
     expect(boxOf({ height: 9000 }, null)).toEqual({ width: null, height: 4000 })
   })
+  it('clamps a size with more digits than any limit', () => {
+    for (const digits of ['1234567890', '9'.repeat(400)]) {
+      const box = embedFor(`https://youtu.be/dQw4w9WgXcQ#width=${digits}`)
+      expect(box).toMatchObject({ box: { width: 4000, ratio: [4000, 2250] } })
+      expect(embedFor(`https://youtu.be/dQw4w9WgXcQ#height=${digits}`)).toMatchObject({
+        box: { width: 4000, ratio: [4000, 4000] },
+      })
+    }
+  })
 })
 
 describe('boxStyle and checkBoxStyle', () => {
   it('writes only custom properties from whole numbers', () => {
-    expect(boxStyle({ width: null, ratio: [16, 9] })).toBe('--embed-ratio:16/9')
-    expect(boxStyle({ width: 560, ratio: [560, 315] })).toBe('--embed-w:560;--embed-ratio:560/315')
+    expect(boxStyle({ width: null, ratio: [16, 9] })).toBe('--embed-rw:16;--embed-rh:9')
+    expect(boxStyle({ width: 560, ratio: [560, 315] })).toBe(
+      '--embed-w:560;--embed-rw:560;--embed-rh:315',
+    )
     expect(boxStyle({ width: null, height: 152 })).toBe('--embed-h:152')
   })
 
@@ -365,24 +383,28 @@ describe('boxStyle and checkBoxStyle', () => {
     null,
     '',
     'color:red',
-    '--embed-ratio:16/9;color:red',
-    '--embed-w:560;--embed-ratio:560/315;',
-    '--embed-ratio:16/9;--embed-w:560',
-    ' --embed-ratio:16/9',
+    '--embed-rw:16;--embed-rh:9;color:red',
+    '--embed-w:560;--embed-rw:560;--embed-rh:315;',
+    '--embed-rw:16;--embed-rh:9;--embed-w:560',
+    ' --embed-rw:16;--embed-rh:9',
     '--embed-w:560',
     '--embed-w:560;--embed-h:300',
     '--embed-h:50',
     '--embed-h:4001',
-    '--embed-w:99;--embed-ratio:16/9',
-    '--embed-ratio:10/1',
-    '--embed-ratio:1/3',
-    '--embed-ratio:0/1',
-    '--embed-ratio:16/0',
-    '--embed-ratio:16 / 9',
+    '--embed-w:99;--embed-rw:16;--embed-rh:9',
+    '--embed-rw:10;--embed-rh:1',
+    '--embed-rw:1;--embed-rh:3',
+    '--embed-rw:0;--embed-rh:1',
+    '--embed-rw:16;--embed-rh:0',
+    '--embed-ratio:16/9',
+    '--embed-rw:16',
+    '--embed-rh:9',
+    '--embed-rh:9;--embed-rw:16',
+    '--embed-rw:16 ;--embed-rh:9',
     '--embed-h:300px',
     '--embed-h:calc(100vh)',
     '--embed-h:300;background:url(https://evil.example/)',
-    '--embed-ratio:16/9}*{color:red',
+    '--embed-rw:16;--embed-rh:9}*{color:red',
   ])('refuses the style %j', (style) => {
     expect(checkBoxStyle(style)).toBeNull()
   })
@@ -451,5 +473,24 @@ describe('embed sizes', () => {
     expect(embedFor('https://youtu.be/dQw4w9WgXcQ')).toMatchObject({
       box: { width: null, ratio: [16, 9] },
     })
+  })
+})
+
+// jsdom does no layout, so this holds the rule that keeps a box's ratio in place.
+describe('the embed box in style.css', () => {
+  const css = readFileSync(resolve(import.meta.dirname, '../src/style.css'), 'utf8')
+  const rule =
+    /\n\.preview \.embed \{([^}]*aspect-ratio[^}]*)\}/.exec(css)?.[1]?.replace(/\s+/g, ' ') ?? ''
+
+  it('narrows a ratio box with its 80vh height cap, so it keeps its ratio', () => {
+    expect(rule).toContain('aspect-ratio: var(--embed-rw) / var(--embed-rh);')
+    expect(rule).toContain('calc(80vh * var(--embed-rw, 4) / var(--embed-rh, 1))')
+    expect(rule).toContain('max-height: min(80vh, 200cqw);')
+  })
+
+  it('keeps a height box within 4:1 and 1:2', () => {
+    // At most four times as wide as its height, and at most twice as tall as the preview is wide.
+    expect(rule).toContain('calc(var(--embed-h, 4000) * 4px)')
+    expect(css).toMatch(/\n\.preview \{\s*container-type: inline-size;\s*\}/)
   })
 })
