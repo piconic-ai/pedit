@@ -15,6 +15,8 @@ describe('youtube', () => {
     ['https://youtu.be/dQw4w9WgXcQ?t=90', `${PLAYER}?start=90`],
     ['https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=1m30s', `${PLAYER}?start=90`],
     ['https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=1h2m3s', `${PLAYER}?start=3723`],
+    // The largest compound start that still reads back as itself.
+    ['https://youtu.be/dQw4w9WgXcQ?t=277h46m39s', `${PLAYER}?start=999999`],
     ['https://www.youtube.com/shorts/dQw4w9WgXcQ', PLAYER],
     ['https://www.youtube.com/live/dQw4w9WgXcQ', PLAYER],
     ['https://www.youtube.com/embed/dQw4w9WgXcQ?start=5', `${PLAYER}?start=5`],
@@ -32,6 +34,9 @@ describe('youtube', () => {
     ['https://youtu.be/dQw4w9WgXcQ?t=99999999999999999999999', PLAYER],
     ['https://youtu.be/dQw4w9WgXcQ?t=1234567', PLAYER],
     ['https://youtu.be/dQw4w9WgXcQ?t=99999999999h', PLAYER],
+    // A compound start over six digits: the start goes, the player stays.
+    ['https://youtu.be/dQw4w9WgXcQ?t=278h', PLAYER],
+    ['https://youtu.be/dQw4w9WgXcQ?t=277h46m40s', PLAYER],
     ['https://youtu.be/dQw4w9WgXcQ?t=1e3', PLAYER],
     ['https://youtu.be/dQw4w9WgXcQ?t=-5', PLAYER],
   ])('drops a start it cannot read from %s', (href, src) => {

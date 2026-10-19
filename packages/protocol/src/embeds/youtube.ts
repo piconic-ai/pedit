@@ -4,16 +4,21 @@ import { defineProvider } from './define.ts'
 const PLAYER = 'https://www.youtube-nocookie.com/embed/'
 const ID = /^[\w-]{11}$/
 
+// The largest start written back: the plain form reads at most six digits, so
+// a longer start would read back as no start and the player as not ours.
+const MAX_START = 999_999
+
 /**
- * Reads YouTube's `t=90` or `t=1m30s`. The digits are bounded so the start is
- * always written as a plain integer: `1e+23` would read back as no start.
+ * Reads YouTube's `t=90` or `t=1m30s`. A start beyond MAX_START is dropped, so
+ * the player URL built from it reads back the same.
  */
 function seconds(t: string | null): number {
   if (!t) return 0
   if (/^\d{1,6}$/.test(t)) return Number(t)
   const m = /^(?:(\d{1,4})h)?(?:(\d{1,4})m)?(?:(\d{1,6})s)?$/.exec(t)
   if (!m) return 0
-  return Number(m[1] ?? 0) * 3600 + Number(m[2] ?? 0) * 60 + Number(m[3] ?? 0)
+  const total = Number(m[1] ?? 0) * 3600 + Number(m[2] ?? 0) * 60 + Number(m[3] ?? 0)
+  return total <= MAX_START ? total : 0
 }
 
 export default defineProvider({

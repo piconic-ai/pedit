@@ -92,8 +92,12 @@ describe('embedFor', () => {
     },
   )
 
-  it('frames a YouTube link whose start is too long to read, without the start', () => {
-    const out = embedFor('https://youtu.be/dQw4w9WgXcQ?t=99999999999999999999999', page)
+  it.each([
+    'https://youtu.be/dQw4w9WgXcQ?t=99999999999999999999999',
+    // A compound start whose total is over six digits.
+    'https://youtu.be/dQw4w9WgXcQ?t=278h',
+  ])('frames a YouTube link whose start is too long to read, without the start: %s', (href) => {
+    const out = embedFor(href, page)
     expect(out?.kind === 'frame' && out.src).toBe(yt)
   })
 
