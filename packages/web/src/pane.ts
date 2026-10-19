@@ -91,15 +91,26 @@ export class PreviewPane {
     this.#alwaysLoad = options.alwaysLoad
     // Remembering a provider also loads its other players on the page.
     this.#alwaysLoad?.ids.subscribe(() => this.#loadRemembered())
-    text.observe(() => {
-      this.#dirty = true
-      this.#schedule()
-    })
+    text.observe(this.#changed)
     // One listener for every embed placeholder the rendered Markdown holds.
     this.element.addEventListener('click', (event) => this.#loadEmbed(event))
     this.element.addEventListener('keydown', (event) => {
       if (event.key === 'Enter' || event.key === ' ') this.#loadEmbed(event)
     })
+  }
+
+  #changed = () => {
+    this.#dirty = true
+    this.#schedule()
+  }
+
+  /** Shows another text, such as another file of the room. */
+  setText(text: Y.Text): void {
+    if (text === this.#text) return
+    this.#text.unobserve(this.#changed)
+    this.#text = text
+    text.observe(this.#changed)
+    this.#changed()
   }
 
   get active(): boolean {

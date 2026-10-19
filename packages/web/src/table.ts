@@ -543,7 +543,9 @@ export class TableView {
     }
     const byCell: Record<string, CellPeers> = {}
     const states = this.#awareness.getStates()
-    for (const p of participants(states, doc.clientID)) {
+    // Self by the awareness: a file of a room that shares several has a doc
+    // of its own, with another client id.
+    for (const p of participants(states, this.#awareness.clientID)) {
       if (p.isSelf) continue
       const cursor = (states.get(p.clientId) as { cursor?: { head?: unknown } } | undefined)?.cursor
       if (!cursor?.head) continue

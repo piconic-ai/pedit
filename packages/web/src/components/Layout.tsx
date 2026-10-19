@@ -5,6 +5,8 @@ import { onMount } from '@barefootjs/client'
 /** Where main.ts puts the room's parts once the page is laid out. */
 export interface LayoutParts {
   header: HTMLElement
+  /** The room's files, when it shares more than one. */
+  files: HTMLElement
   banner: HTMLElement
   notice: HTMLElement
   main: HTMLElement
@@ -18,7 +20,10 @@ export interface LayoutParts {
   canvas: HTMLElement
 }
 
-/** The room page: header, the ended banner, notices, and the editor with its panes. */
+/**
+ * The room page: header, the room's files, the ended banner, notices, and the
+ * editor with its panes.
+ */
 export function Layout(props: { onReady: (parts: LayoutParts) => void }) {
   const parts: Partial<LayoutParts> = {}
   onMount(() => props.onReady(parts as LayoutParts))
@@ -29,6 +34,12 @@ export function Layout(props: { onReady: (parts: LayoutParts) => void }) {
         className="header-slot"
         ref={(el) => {
           parts.header = el
+        }}
+      />
+      <div
+        className="files-slot"
+        ref={(el) => {
+          parts.files = el
         }}
       />
       <div

@@ -423,6 +423,57 @@ describe('BoardView', () => {
     expect(view.element.querySelectorAll('.canvas-ghost')).toHaveLength(0)
   })
 
+  it('in a room of several files, shows only the others on this canvas, and not itself', async () => {
+    // The canvas is file 2, with a doc of its own; the room's awareness is
+    // on the room's doc.
+    const doc = docOf([node('a')])
+    const room = new Y.Doc()
+    const awareness = new Awareness(room)
+    awareness.setLocalState({ user: { name: 'Me', color: '#123456' }, file: 2 })
+    const view = new BoardView(doc, awareness, {
+      here: (s) => (typeof s.file === 'number' ? s.file : 0) === 2,
+    })
+    document.body.append(view.element)
+    views.push(view)
+    view.active = true
+    await tick()
+    // Selecting a node shares it: it must not show as someone else's.
+    const store = storeOf(view)
+    store.setNodes((prev) => prev.map((n) => ({ ...n, selected: n.id === 'a' })))
+    await tick()
+    expect(awareness.getLocalState()?.canvas).toEqual({ selected: ['a'] })
+    const card = view.element.querySelector(
+      '.bf-flow__node[data-id="a"] .canvas-card',
+    ) as HTMLElement
+    expect(card.hasAttribute('data-peer')).toBe(false)
+
+    // Someone on another canvas, whose node is also called "a".
+    const elsewhere = new Awareness(new Y.Doc())
+    elsewhere.setLocalState({
+      user: { name: 'Bo', color: '#1f7a64' },
+      file: 3,
+      canvas: { selected: ['a'] },
+    })
+    applyAwarenessUpdate(
+      awareness,
+      encodeAwarenessUpdate(elsewhere, [elsewhere.clientID]),
+      'remote',
+    )
+    await tick()
+    expect(card.hasAttribute('data-peer')).toBe(false)
+
+    // Someone on this one.
+    const here = new Awareness(new Y.Doc())
+    here.setLocalState({
+      user: { name: 'Ann', color: '#1f7a64' },
+      file: 2,
+      canvas: { selected: ['a'] },
+    })
+    applyAwarenessUpdate(awareness, encodeAwarenessUpdate(here, [here.clientID]), 'remote')
+    await tick()
+    expect(card.querySelector('.canvas-peer')?.textContent).toBe('Ann')
+  })
+
   it('changes nothing once the room has closed', async () => {
     const doc = docOf([node('a')])
     const view = setup(doc)

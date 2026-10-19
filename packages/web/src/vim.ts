@@ -34,7 +34,9 @@ export function saveVimMode(on: boolean, store: Store | null = defaultStore()): 
  * Tab indents instead of moving focus, as it does in Vim. Escape then Tab
  * still leaves the editor.
  */
-export async function vimExtension(undoManager: Y.UndoManager): Promise<Extension> {
+export async function vimExtension(
+  undoManager: Pick<Y.UndoManager, 'undo' | 'redo'>,
+): Promise<Extension> {
   const { CodeMirror, getCM, Vim, vim } = await import('@replit/codemirror-vim')
   const undo = () => {
     undoManager.undo()
