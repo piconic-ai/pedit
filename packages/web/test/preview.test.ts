@@ -21,9 +21,15 @@ function dom(source: string, sources?: readonly string[]): HTMLElement {
 const PLAYER_SANDBOX = 'allow-scripts allow-same-origin allow-popups allow-presentation'
 const PLAYER_ALLOW = 'fullscreen; picture-in-picture; encrypted-media'
 
-function placeholder(line: number, src: string, title: string, href: string): string {
+function placeholder(
+  line: number,
+  src: string,
+  title: string,
+  href: string,
+  style = '--embed-ratio:16/9',
+): string {
   return (
-    `<div class="embed" data-line="${line}" data-embed-src="${src}">` +
+    `<div class="embed" data-line="${line}" data-embed-src="${src}" style="${style}">` +
     `<span class="embed-provider">${title}</span>` +
     `<span class="embed-load" role="button" tabindex="0">Load from ${new URL(src).host}</span>` +
     `<a class="embed-link" href="${href}" target="_blank" rel="noopener noreferrer">${href}</a></div>`
@@ -74,13 +80,45 @@ describe('sanitize', () => {
     const div = document.createElement('div')
     div.append(
       sanitize(
-        '<div class="embed" data-embed-src="https://player.vimeo.com/video/1">' +
+        '<div class="embed" data-embed-src="https://player.vimeo.com/video/1" style="--embed-ratio:16/9">' +
           '<span class="embed-load" role="button" tabindex="0">Load from player.vimeo.com</span></div>',
       ),
     )
     const load = div.querySelector('[data-embed-src] .embed-load')
     expect(load?.getAttribute('role')).toBe('button')
     expect(load?.getAttribute('tabindex')).toBe('0')
+  })
+
+  it.each(['--embed-ratio:16/9', '--embed-w:560;--embed-ratio:560/315', '--embed-h:152'])(
+    "keeps a placeholder's box %s",
+    (style) => {
+      const div = document.createElement('div')
+      div.append(
+        sanitize(
+          `<div class="embed" data-embed-src="https://player.vimeo.com/video/1" style="${style}"></div>`,
+        ),
+      )
+      expect(div.querySelector('[data-embed-src]')?.getAttribute('style')).toBe(style)
+    },
+  )
+
+  it.each([
+    'color:red',
+    '--embed-ratio:16/9;color:red',
+    '--embed-ratio:16/9;background:url(https://evil.example/)',
+    '--embed-w:560',
+    '--embed-h:99999',
+    '--embed-ratio:100/1',
+  ])("drops a placeholder's style %j that is no box", (style) => {
+    const div = document.createElement('div')
+    div.append(
+      sanitize(
+        `<div class="embed" data-embed-src="https://player.vimeo.com/video/1" style="${style}"></div>`,
+      ),
+    )
+    const el = div.querySelector('[data-embed-src]')
+    expect(el).not.toBeNull()
+    expect(el?.hasAttribute('style')).toBe(false)
   })
 
   it.each([
@@ -296,6 +334,42 @@ describe('render', () => {
     )
   })
 
+  it('sizes a placeholder by the hint after its URL, which the frame never gets', () => {
+    const href = 'https://youtu.be/dQw4w9WgXcQ?t=90#height=300&width=400'
+    expect(html(href)).toBe(
+      placeholder(
+        0,
+        'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?start=90',
+        'YouTube',
+        href.replace('&', '&amp;'),
+        '--embed-w:400;--embed-ratio:400/300',
+      ),
+    )
+    const full = dom('https://vimeo.com/76979871#width=100%&height=480')
+    expect(full.querySelector('[data-embed-src]')?.getAttribute('style')).toBe('--embed-h:480')
+  })
+
+  it("gives a placeholder its provider's box for the URL", () => {
+    const out = dom('https://www.youtube.com/shorts/dQw4w9WgXcQ\n\nhttps://vimeo.com/76979871')
+    expect(
+      [...out.querySelectorAll('[data-embed-src]')].map((el) => el.getAttribute('style')),
+    ).toEqual(['--embed-ratio:9/16', '--embed-ratio:16/9'])
+  })
+
+  it.each([
+    'https://youtu.be/dQw4w9WgXcQ#width=560;color:red',
+    'https://youtu.be/dQw4w9WgXcQ#width=560&height=315;color:red',
+    'https://youtu.be/dQw4w9WgXcQ#width=560%22%20onclick=%22alert(1)',
+    'https://youtu.be/dQw4w9WgXcQ#width=560&height=315&style=color:red',
+  ])('ignores a fragment %s that is not a hint', (href) => {
+    const el = dom(href).querySelector('[data-embed-src]')
+    expect(el?.getAttribute('style')).toBe('--embed-ratio:16/9')
+    expect(el?.getAttribute('data-embed-src')).toBe(
+      'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ',
+    )
+    expect(el?.hasAttribute('onclick')).toBe(false)
+  })
+
   it('renders no iframe for any provider', () => {
     const source = [
       'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
@@ -412,6 +486,20 @@ describe('loadEmbed', () => {
     expect(div.querySelector('iframe')).toBeNull()
   })
 
+  it('keeps the box when the player loads, and loads without the hint', () => {
+    const div = mounted('https://vimeo.com/76979871#width=640&height=360')
+    const placeholder = div.querySelector('[data-embed-src]') as HTMLElement
+    const style = placeholder.getAttribute('style')
+    expect(style).toBe('--embed-w:640;--embed-ratio:640/360')
+    const frame = loadEmbed(placeholder)
+    expect(frame?.parentElement).toBe(placeholder)
+    expect(div.querySelector('.embed')).toBe(placeholder)
+    expect(placeholder.getAttribute('style')).toBe(style)
+    expect(frame?.getAttribute('src')).toBe('https://player.vimeo.com/video/76979871')
+    expect(frame?.hasAttribute('style')).toBe(false)
+    div.remove()
+  })
+
   it('takes nothing but the src from the placeholder', () => {
     const div = mounted('https://vimeo.com/76979871')
     const placeholder = div.querySelector('[data-embed-src]') as Element
@@ -524,6 +612,26 @@ describe('patch', () => {
     patch(container, render('x\n\ny\n\nnew\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nb\n'))
     expect(container.querySelector('iframe')).toBe(frame)
     expect(container.querySelector('.embed')?.getAttribute('data-line')).toBe('6')
+  })
+
+  it('keeps a sized player while someone types elsewhere, not once its size changes', () => {
+    const container = document.createElement('div')
+    const url = 'https://youtu.be/dQw4w9WgXcQ#width=400'
+    patch(container, render(`a\n\n${url}\n\nb\n`))
+    const frame = loadEmbed(container.querySelector('[data-embed-src]') as Element)
+    expect(frame).not.toBeNull()
+
+    patch(container, render(`a\n\nnew\n\n${url}\n\nB\n`))
+    expect(container.querySelector('iframe')).toBe(frame)
+    expect(container.querySelector('.embed')?.getAttribute('style')).toBe(
+      '--embed-w:400;--embed-ratio:400/225',
+    )
+
+    patch(container, render('a\n\nnew\n\nhttps://youtu.be/dQw4w9WgXcQ#width=500\n\nB\n'))
+    expect(container.querySelector('iframe')).toBeNull()
+    expect(container.querySelector('.embed')?.getAttribute('style')).toBe(
+      '--embed-w:500;--embed-ratio:500/281',
+    )
   })
 
   it('keeps a loaded player in a list while its other items change', () => {

@@ -5,6 +5,7 @@ import {
   contentSecurityPolicy,
   coversOrigin,
   framedProviders,
+  isSize,
   PROVIDERS,
   parseMediaSources,
   providerProblem,
@@ -321,5 +322,31 @@ describe('framedProviders', () => {
     const { framed, refused } = framedProviders(new URL(provider?.frames[0] ?? ''))
     expect(framed).not.toContain(id)
     expect(refused.map((r) => r.id)).toEqual([id])
+  })
+})
+
+describe('isSize', () => {
+  it.each([{ ratio: '16/9' }, { ratio: '9/16' }, { ratio: '1/1' }, { height: 152 }])(
+    'takes %j',
+    (size) => {
+      expect(isSize(size)).toBe(true)
+    },
+  )
+
+  it.each([
+    null,
+    undefined,
+    '16/9',
+    {},
+    { ratio: '16:9' },
+    { ratio: '0/9' },
+    { ratio: '16/9;color:red' },
+    { ratio: 16 / 9 },
+    { height: 0 },
+    { height: -1 },
+    { height: 1.5 },
+    { height: '152' },
+  ])('refuses %j', (size) => {
+    expect(isSize(size)).toBe(false)
   })
 })

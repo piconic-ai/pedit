@@ -5,7 +5,13 @@
 // embed providers (embeds/index.ts), which both are built with.
 // This is not part of the wire format, so internal/protocol has no mirror.
 
-import { ALLOW_FEATURES, type Provider, type Providers, SANDBOX_EXTRAS } from './embeds/define.ts'
+import {
+  ALLOW_FEATURES,
+  type Provider,
+  type Providers,
+  SANDBOX_EXTRAS,
+  type Size,
+} from './embeds/define.ts'
 import PROVIDERS from './embeds/index.ts'
 
 /** The embed providers this relay was built with (embeds/index.ts). */
@@ -113,10 +119,7 @@ export function providerProblem(provider: Provider, page: URL): string | null {
   }
   if (coversOrigin(p.frames as string[], page)) return "its frames cover the editor's own origin"
   const size = p.size
-  if (
-    typeof size !== 'function' &&
-    !(typeof size === 'object' && size !== null && validSize(size as Record<string, unknown>))
-  ) {
+  if (typeof size !== 'function' && !isSize(size)) {
     return 'no valid size'
   }
   if (p.embed !== undefined && typeof p.embed !== 'function') return 'an embed that is no function'
@@ -142,9 +145,15 @@ function validFrame(frame: unknown): boolean {
   }
 }
 
-function validSize(size: Record<string, unknown>): boolean {
-  if ('ratio' in size) return typeof size.ratio === 'string' && RATIO.test(size.ratio)
-  return Number.isInteger(size.height) && (size.height as number) > 0
+/**
+ * Whether `size` is a frame box a provider may give: a ratio of whole numbers or
+ * a height in whole pixels. A size function's answer is checked with it too.
+ */
+export function isSize(size: unknown): size is Size {
+  if (typeof size !== 'object' || size === null) return false
+  const s = size as Record<string, unknown>
+  if ('ratio' in s) return typeof s.ratio === 'string' && RATIO.test(s.ratio)
+  return Number.isInteger(s.height) && (s.height as number) > 0
 }
 
 /**

@@ -194,3 +194,9 @@ types refuse what a frame may not have, such as `allow-top-navigation` or
 (and logs) a provider that fails, or whose frames would cover the relay's own
 origin, where the frame could read the page. `pnpm test` checks that every
 file is listed and that no two providers' frames overlap.
+
+`size` is the player's box when its URL names none. Someone can still size one
+player by ending its URL with `#width=560&height=315`, `#width=100%&height=480`,
+`#width=560` or `#height=400`; that fragment is taken off before `embed()` sees
+the URL, so it never reaches the provider. A width alone keeps the provider's
+ratio for that URL, as does a height alone.

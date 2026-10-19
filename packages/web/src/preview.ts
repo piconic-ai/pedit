@@ -4,6 +4,8 @@ import MarkdownIt from 'markdown-it'
 import { parseDocument } from 'yaml'
 import type { ImageResolver } from './attachments.ts'
 import {
+  boxStyle,
+  checkBoxStyle,
   type Embed,
   embedFor,
   FRAME_REFERRER_POLICY,
@@ -104,7 +106,9 @@ function videoHtml(src: string, label: string, line?: unknown): string {
 
 // A frame is not loaded until someone asks: nobody in the room should contact a
 // third party just because someone wrote its URL in the file. The placeholder
-// carries only the frame's src; loadEmbed derives everything else from it again.
+// carries only the frame's src and its box; loadEmbed derives everything else
+// from the src again, and the frame fills the same box, so loading it does not
+// move the page.
 // The frames this preview rendered, by src. loadEmbed loads only these, so a
 // placeholder that reached the page some other way loads nothing.
 const rendered = new Map<string, string>()
@@ -114,7 +118,8 @@ function embedHtml(embed: Embed, href: string, line: unknown): string {
   rendered.set(embed.src, embed.src)
   const host = new URL(embed.src).host
   return (
-    `<div class="embed"${lineAttr(line)} data-embed-src="${escape(embed.src)}">` +
+    `<div class="embed"${lineAttr(line)} data-embed-src="${escape(embed.src)}"` +
+    ` style="${boxStyle(embed.box)}">` +
     `<span class="embed-provider">${escape(embed.title)}</span>` +
     `<span class="embed-load" role="button" tabindex="0">Load from ${escape(host)}</span>` +
     `<a class="embed-link" href="${escape(href)}">${escape(href)}</a></div>`
@@ -212,6 +217,8 @@ purify.addHook('afterSanitizeAttributes', (node) => {
       el.remove()
       return
     }
+    // Its style may only be a box boxStyle writes, never other CSS.
+    if (checkBoxStyle(el.getAttribute('style')) === null) el.removeAttribute('style')
   }
   switch (node.nodeName) {
     case 'A': {

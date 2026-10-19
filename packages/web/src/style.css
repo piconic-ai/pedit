@@ -902,9 +902,20 @@ main.editor[data-resizing] iframe {
   display: block;
   max-width: min(100%, 820px);
 }
-/* The placeholder keeps the player's size, so loading it does not move the page. */
+/*
+ * The placeholder has the player's box, so loading it does not move the page.
+ * The box comes from whole numbers the preview writes (boxStyle in embed.ts): a
+ * width in pixels with a ratio, or the preview's width with a ratio or a height.
+ * An unset property leaves width, height or aspect-ratio at auto.
+ */
 .preview .embed {
-  aspect-ratio: 16 / 9;
+  box-sizing: border-box;
+  width: calc(var(--embed-w) * 1px);
+  max-width: 100%;
+  height: calc(var(--embed-h) * 1px);
+  max-height: 80vh;
+  aspect-ratio: var(--embed-ratio);
+  overflow: hidden;
 }
 .preview .embed:not(.embed--loaded) {
   display: flex;
