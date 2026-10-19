@@ -173,8 +173,7 @@ line to `index.ts`; to drop one, remove both. The id is the key in `index.ts`.
 import { defineProvider } from './define.ts'
 
 export default defineProvider({
-  name: 'Example', // the name people see
-  title: 'Example video', // the frame's accessible title; the name if unset
+  name: 'Example', // the name people see, and the frame's title
   frames: ['https://embed.example.com/player/'], // where its players live
   size: { ratio: '16/9' }, // or { height: 152 }, or a function of the URL
   // The player URL for a pasted URL, rebuilt from the parts it checked, or

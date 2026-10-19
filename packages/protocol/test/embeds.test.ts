@@ -91,13 +91,11 @@ describe('frame attributes', () => {
       expect(sandboxOf(p)).toBe('allow-scripts allow-same-origin allow-popups allow-presentation')
       expect(allowOf(p)).toBe('fullscreen; picture-in-picture; encrypted-media')
     }
-    expect(PROVIDERS.youtube.title).toBe('YouTube video')
-    expect(PROVIDERS.vimeo.title).toBe('Vimeo video')
   })
 
   it('offers no token that could take the tab away or download', () => {
     const tokens: readonly string[] = [...SANDBOX_BASE, ...SANDBOX_EXTRAS]
-    expect(tokens.filter((t) => /top-navigation|downloads/.test(t))).toEqual([])
+    expect(tokens.filter((t) => /top-navigation|escape-sandbox|downloads/.test(t))).toEqual([])
     expect(ALLOW_FEATURES).not.toContain('clipboard-read')
   })
 })

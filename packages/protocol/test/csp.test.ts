@@ -62,6 +62,10 @@ describe('coversOrigin', () => {
     expect(coversOrigin(value.split(' '), page)).toBe(true)
   })
 
+  it('leaves a trailing-dot page host, another origin, alone', () => {
+    expect(coversOrigin(['https://pedit.test'], new URL('https://pedit.test./'))).toBe(false)
+  })
+
   it('finds a wildcard over the page host', () => {
     expect(coversOrigin(['*.pedit.test'], new URL('https://edit.pedit.test/'))).toBe(true)
   })
@@ -189,7 +193,6 @@ describe('providerProblem', () => {
     expect(problem({})).toBeNull()
     expect(
       problem({
-        title: 'Example player',
         frames: ['https://embed.example.com/', 'https://cdn.example.com:8443/a/b/'],
         size: () => ({ height: 152 }),
         embed: () => null,
@@ -210,7 +213,6 @@ describe('providerProblem', () => {
     { name: '' },
     { name: '  ' },
     { name: undefined },
-    { title: '' },
     { frames: [] },
     { frames: undefined },
     { size: undefined },
@@ -256,6 +258,8 @@ describe('providerProblem', () => {
     'allow-top-navigation-by-user-activation',
     'allow-top-navigation-to-custom-protocols',
     'allow-downloads',
+    // Its popups could navigate the editor tab through opener.top.
+    'allow-popups-to-escape-sandbox',
     'allow-scripts allow-top-navigation',
     'allow-forms ',
   ])('refuses sandbox token %j', (token) => {
@@ -284,6 +288,14 @@ describe('providerProblem', () => {
     const local = new URL('https://localhost:8443/r/x')
     expect(problem({ frames: ['https://localhost:8443/'] }, local)).toMatch(/own origin/)
     expect(problem({ frames: ['https://localhost/'] }, local)).toBeNull()
+  })
+
+  it('takes a trailing-dot host for another origin, as browsers do', () => {
+    // pedit.test. and pedit.test are different origins, so neither page can be
+    // read from a frame on the other.
+    expect(
+      problem({ frames: ['https://pedit.test/'] }, new URL('https://pedit.test./r/x')),
+    ).toBeNull()
   })
 })
 

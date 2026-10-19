@@ -47,7 +47,7 @@ describe('embedFor', () => {
     ],
   ])('frames %s', (href, src) => {
     const provider = src.includes('vimeo') ? 'vimeo' : 'youtube'
-    const title = provider === 'vimeo' ? 'Vimeo video' : 'YouTube video'
+    const title = provider === 'vimeo' ? 'Vimeo' : 'YouTube'
     expect(embedFor(href)).toEqual({ kind: 'frame', src, provider, title, ...PLAYER })
   })
 
@@ -126,6 +126,10 @@ describe('isAllowedFrame', () => {
     'https://youtube-nocookie.com/embed/dQw4w9WgXcQ',
     'https://www.youtube.com/embed/dQw4w9WgXcQ',
     'https://www.youtube-nocookie.com.evil.example/embed/x',
+    // A trailing dot is another origin; a homoglyph host parses to xn--.
+    'https://player.vimeo.com./video/1',
+    'https://www.youtube-nocookie.com./embed/dQw4w9WgXcQ',
+    'https://pl\u0430yer.vimeo.com/video/1',
     'javascript:alert(1)//https://player.vimeo.com/video/1',
   ])('refuses %j', (src) => {
     expect(isAllowedFrame(src)).toBe(false)
@@ -136,12 +140,12 @@ describe('frameFor', () => {
   it('derives each provider and its attributes from the src alone', () => {
     expect(frameFor('https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ')).toEqual({
       provider: 'youtube',
-      title: 'YouTube video',
+      title: 'YouTube',
       ...PLAYER,
     })
     expect(frameFor('https://player.vimeo.com/video/1')).toEqual({
       provider: 'vimeo',
-      title: 'Vimeo video',
+      title: 'Vimeo',
       ...PLAYER,
     })
     expect(frameFor('https://embed.example.com/1')).toBeNull()

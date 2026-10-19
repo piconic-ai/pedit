@@ -107,9 +107,6 @@ const RATIO = /^[1-9]\d{0,3}\/[1-9]\d{0,3}$/
 export function providerProblem(provider: Provider, page: URL): string | null {
   const p: Partial<Record<keyof Provider, unknown>> = provider
   if (typeof p.name !== 'string' || !p.name.trim()) return 'no name'
-  if (p.title !== undefined && (typeof p.title !== 'string' || !p.title.trim())) {
-    return 'an empty title'
-  }
   if (!Array.isArray(p.frames) || p.frames.length === 0) return 'no frames'
   for (const frame of p.frames as unknown[]) {
     if (!validFrame(frame)) return `frame ${JSON.stringify(frame)} is not https://host/path/`

@@ -69,8 +69,8 @@ describe('sanitize', () => {
     )
     const [vimeo, youtube] = [...div.querySelectorAll('iframe')]
     for (const [frame, title] of [
-      [vimeo, 'Vimeo video'],
-      [youtube, 'YouTube video'],
+      [vimeo, 'Vimeo'],
+      [youtube, 'YouTube'],
     ] as const) {
       expect(frame?.getAttribute('title')).toBe(title)
       expect(frame?.getAttribute('sandbox')).toBe(
@@ -276,9 +276,9 @@ describe('render', () => {
 
   it('renders the YouTube and Vimeo players as before', () => {
     expect(html('https://youtu.be/dQw4w9WgXcQ?t=90\n\nhttps://vimeo.com/76979871/abc123')).toBe(
-      '<div class="embed" data-line="0"><iframe src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?start=90" title="YouTube video"' +
+      '<div class="embed" data-line="0"><iframe src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?start=90" title="YouTube"' +
         `${PLAYER_ATTRS}></iframe></div>` +
-        '<div class="embed" data-line="2"><iframe src="https://player.vimeo.com/video/76979871?h=abc123" title="Vimeo video"' +
+        '<div class="embed" data-line="2"><iframe src="https://player.vimeo.com/video/76979871?h=abc123" title="Vimeo"' +
         `${PLAYER_ATTRS}></iframe></div>`,
     )
   })

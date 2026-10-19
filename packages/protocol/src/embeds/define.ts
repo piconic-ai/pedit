@@ -9,14 +9,14 @@ export const SANDBOX_BASE = ['allow-scripts', 'allow-same-origin', 'allow-popups
 
 /**
  * Sandbox tokens a provider may add. Never allow-top-navigation*, which could take
- * the editor tab away, nor allow-downloads.
+ * the editor tab away, nor allow-popups-to-escape-sandbox: an unsandboxed popup
+ * could do the same through `opener.top`. Nor allow-downloads.
  */
 export const SANDBOX_EXTRAS = [
   'allow-forms',
   'allow-modals',
   'allow-orientation-lock',
   'allow-pointer-lock',
-  'allow-popups-to-escape-sandbox',
   'allow-presentation',
   'allow-storage-access-by-user-activation',
 ] as const
@@ -48,10 +48,8 @@ export type FrameUrl = `https://${string}/`
 export type Size = { ratio: `${number}/${number}` } | { height: number }
 
 export type Provider = {
-  /** The name people see, as in "Always load {name}". */
+  /** The name people see, as in "Always load {name}", and the frame's title. */
   name: string
-  /** The frame's accessible title; the name if unset. */
-  title?: string
   /**
    * Where its players live. They go into the policy's frame-src, and the preview
    * frames only URLs under one of them.

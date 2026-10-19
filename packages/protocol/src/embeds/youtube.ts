@@ -15,7 +15,6 @@ function seconds(t: string | null): number {
 
 export default defineProvider({
   name: 'YouTube',
-  title: 'YouTube video',
   frames: [PLAYER],
   // Shorts are filmed upright.
   size: (url) => (url.pathname.startsWith('/shorts/') ? { ratio: '9/16' } : { ratio: '16/9' }),

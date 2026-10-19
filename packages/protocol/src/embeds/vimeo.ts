@@ -4,7 +4,6 @@ const PLAYER = 'https://player.vimeo.com/video/'
 
 export default defineProvider({
   name: 'Vimeo',
-  title: 'Vimeo video',
   frames: [PLAYER],
   size: { ratio: '16/9' },
   embed(url) {

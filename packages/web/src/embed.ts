@@ -93,7 +93,7 @@ export function frameFor(src: string | null, page: URL = here()): Frame | null {
   const provider = PROVIDERS[known.provider]
   return {
     provider: known.provider,
-    title: provider.title ?? provider.name,
+    title: provider.name,
     sandbox: sandboxOf(provider),
     allow: allowOf(provider),
   }
