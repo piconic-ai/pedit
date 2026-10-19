@@ -321,3 +321,25 @@ func TestKeepsSeveralLargeFilesWithinTheRelayAllowance(t *testing.T) {
 		}
 	}
 }
+
+// Leaving flushes what was queued, within the allowance: going over it would
+// close the connection before the edit reached the room.
+func TestFlushesAnEditQueuedBehindAPacedTransferOnLeaving(t *testing.T) {
+	relay := prototest.NewRelay(false)
+	relay.Bytes = testBytes
+	key := protocol.GenerateKey()
+	observer := join(t, relay, key, joinOpts{bytes: testBytes})
+	prototest.WaitFor(t, wait, func() bool { return observer.Status() == protocol.StatusConnected }, "observer connected")
+	guest := join(t, relay, key, joinOpts{bytes: testBytes})
+	prototest.WaitFor(t, wait, func() bool { return guest.Status() == protocol.StatusConnected }, "guest connected")
+	for id := uint64(1); id <= 5; id++ {
+		addFile(t, guest, id, newFileText(strings.Repeat("x", 40<<10)))
+	}
+	time.Sleep(50 * time.Millisecond)
+	guest.insert(0, "last edit")
+	guest.Destroy()
+	prototest.WaitFor(t, wait, func() bool { return observer.String() == "last edit" }, "the edit queued last")
+	if n := relay.Limited(); n != 0 {
+		t.Fatalf("%d connections went over the allowance", n)
+	}
+}

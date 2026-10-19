@@ -587,8 +587,6 @@ type outbox struct {
 	mu     sync.Mutex
 	queue  [][]byte
 	closed bool
-	// hurry is set by drain: the last frames go without waiting.
-	hurry  bool
 	failed error // why this side gave the connection up
 	wake   chan struct{}
 	// quit is closed when the frames still queued are dropped.
@@ -679,12 +677,10 @@ func (o *outbox) loop() {
 }
 
 // wait waits d before the next frame, unless the queue is dropped meanwhile,
-// and tells whether to go on. Once draining, nothing waits.
+// and tells whether to go on. Draining waits too: going over the allowance
+// would close the connection before the edits still queued reach the room.
 func (o *outbox) wait(d time.Duration) bool {
-	o.mu.Lock()
-	hurry := o.hurry
-	o.mu.Unlock()
-	if d <= 0 || hurry {
+	if d <= 0 {
 		return true
 	}
 	timer := time.NewTimer(d)
@@ -705,7 +701,6 @@ func (o *outbox) wait(d time.Duration) bool {
 func (o *outbox) drain() {
 	o.mu.Lock()
 	o.closed = true
-	o.hurry = true
 	o.mu.Unlock()
 	o.signal()
 	select {

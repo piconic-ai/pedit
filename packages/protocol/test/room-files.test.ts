@@ -250,6 +250,36 @@ describe('pacing', () => {
     expect(host.status).toBe('connected')
   })
 
+  it('flushes an edit queued behind a paced transfer on leaving, within the allowance', async () => {
+    const relay = new Relay({ byteRate })
+    const key = await importKey(generateKey())
+    const observer = join(relay, key, { byteRate })
+    await vi.waitFor(() => expect(observer.status).toBe('connected'))
+    const guest = join(relay, key, { byteRate })
+    for (const id of [1, 2, 3, 4, 5]) guest.addFile(id, big(40))
+    await new Promise((r) => setTimeout(r, 50))
+    guest.doc.getText('content').insert(0, 'last edit')
+    await guest.destroy()
+    await vi.waitFor(() => expect(text(observer.doc)).toBe('last edit'))
+    expect(relay.rateLimited).toBe(0)
+  }, 10_000)
+
+  it('lets a new connection sync at once, dropping what the old one had queued', async () => {
+    const relay = new Relay({ byteRate })
+    const key = await importKey(generateKey())
+    const client = join(relay, key, { byteRate })
+    for (const id of [1, 2, 3, 4, 5]) client.addFile(id, big(40))
+    await vi.waitFor(() => expect(client.status).toBe('connected'))
+    await new Promise((r) => setTimeout(r, 50))
+    const [first] = relay.sockets
+    first?.close(1006)
+    await vi.waitFor(() => expect(relay.sockets.size).toBe(1))
+    await vi.waitFor(() => expect(client.status).toBe('connected'))
+    const before = relay.frames.length
+    await new Promise((r) => setTimeout(r, 300))
+    expect(relay.frames.length).toBeGreaterThan(before)
+  })
+
   it('would be closed by the relay without pacing', async () => {
     const relay = new Relay({ byteRate })
     const key = await importKey(generateKey())
