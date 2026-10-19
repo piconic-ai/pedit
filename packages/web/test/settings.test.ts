@@ -66,7 +66,38 @@ describe('Settings', () => {
   it('lists the sections in order', () => {
     const { container } = mount()
     const sections = [...container.querySelectorAll('.settings-section')].map((s) => s.textContent)
-    expect(sections).toEqual(['Appearance', 'Text', 'Editor'])
+    expect(sections).toEqual(['Appearance', 'Text', 'Editor', 'Preview'])
+  })
+
+  it('says players load on click while no provider is remembered', () => {
+    const { q } = mount()
+    expect(q('.settings-note').hidden).toBe(false)
+    expect(q('.settings-providers').hidden).toBe(true)
+    expect(q('.settings-providers').children).toHaveLength(0)
+  })
+
+  it('lists the remembered providers and forgets each one', () => {
+    const { container, q, calls, stores } = mount({
+      alwaysLoad: ['youtube', 'vimeo'],
+    })
+    const rows = () =>
+      [...container.querySelectorAll('.settings-provider')].map(
+        (r) => r.querySelector('.settings-text > span')?.textContent,
+      )
+    expect(q('.settings-note').hidden).toBe(true)
+    expect(q('.settings-providers').hidden).toBe(false)
+    expect(rows()).toEqual(['Always load YouTube', 'Always load Vimeo'])
+    const forget = q<HTMLButtonElement>('button[aria-label="Forget Vimeo"]')
+    expect(forget.textContent?.trim()).toBe('Forget')
+    forget.click()
+    expect(calls).toEqual([['forgetAlwaysLoad', 'vimeo']])
+    expect(rows()).toEqual(['Always load YouTube'])
+    q<HTMLButtonElement>('button[aria-label="Forget YouTube"]').click()
+    expect(rows()).toEqual([])
+    expect(q('.settings-note').hidden).toBe(false)
+    // Remembered elsewhere, such as from a placeholder in the preview.
+    stores.alwaysLoad.set(['vimeo'])
+    expect(rows()).toEqual(['Always load Vimeo'])
   })
 
   it('reports toggles, and follows the model when it changes or puts a toggle back', () => {

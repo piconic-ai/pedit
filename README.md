@@ -207,10 +207,30 @@ IP addresses, room IDs, request timing and ciphertext sizes; infrastructure and
 Access logs have separate retention settings and are not erased when a room
 closes.
 
-Markdown previews can load YouTube and Vimeo players, and external images and videos
-where the relay allows them (the public relay does not). With Access,
+Markdown previews can show YouTube, Vimeo, Loom, Figma, CodePen, StackBlitz,
+Observable, Spotify, SoundCloud and Miro players (a self-hosted relay can add or
+drop providers), and external images and videos where the relay allows
+them (the public relay does not). A player loads only when someone clicks "Load
+from" on it, so nobody in the room contacts a third party just because a URL was
+written in the file. Ticking "Always load" next to it loads that provider's
+players right away from then on, in your browser only; Settings lists the
+providers you chose and can forget each. With Access,
 avatars may load from an identity provider or Gravatar using an email hash.
 Those providers can see the requests.
+
+A player's URL may end with its size, which stays in the preview and never
+reaches the site:
+
+```
+https://youtu.be/dQw4w9WgXcQ#width=560&height=315
+https://vimeo.com/76979871#width=100%&height=480
+https://youtu.be/dQw4w9WgXcQ#width=560
+https://youtu.be/dQw4w9WgXcQ#height=400
+```
+
+Sizes are whole pixels from 100 to 4000 (a width may also be `100%`), and a
+box keeps between 4:1 and 1:2 and at most 80% of the window's height. Without
+a size, or with any other fragment, the player takes its site's default box.
 
 Besides the relay, the CLI itself connects only to `api.github.com`, to check
 for a newer release, and keeps the answer for a day; it never downloads or

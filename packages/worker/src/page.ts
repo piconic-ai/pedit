@@ -1,4 +1,10 @@
-import { contentSecurityPolicy, MEDIA_META, parseMediaSources } from '@pedit/protocol/csp'
+import {
+  contentSecurityPolicy,
+  framedProviders,
+  MEDIA_META,
+  PROVIDERS,
+  parseMediaSources,
+} from '@pedit/protocol/csp'
 
 // index.html's inline scripts have no attributes (web/test/boot.test.ts enforces it).
 const INLINE_SCRIPT = /<script>([\s\S]*?)<\/script>/g
@@ -22,6 +28,18 @@ export function mediaSourcesFrom(value: string | undefined): string[] {
     console.error('MEDIA_SOURCES ignored: not a space-separated list of http(s) sources')
   }
   return parsed ?? []
+}
+
+/**
+ * The frame-src prefixes of the embed providers framed on a page at `origin`. A
+ * provider that fails the checks, such as one whose frames would cover the
+ * relay's own pages (allow-same-origin there escapes the sandbox), is left out
+ * (and logged); the editor leaves it out too.
+ */
+export function frameSourcesFor(origin: URL): string[] {
+  const { framed, refused } = framedProviders(origin)
+  for (const { id, reason } of refused) console.error(`Embed provider ${id} ignored: ${reason}`)
+  return framed.flatMap((id) => PROVIDERS[id].frames)
 }
 
 // A navigation, or a request that takes HTML: what may come back is a page.
@@ -63,14 +81,12 @@ export async function servePage(
     })
   }
   const html = await asset.text()
+  const origin = new URL(request.url)
   const media = mediaSourcesFrom(env.MEDIA_SOURCES)
+  const frames = frameSourcesFor(origin)
   out.set(
     'Content-Security-Policy',
-    contentSecurityPolicy({
-      scriptHashes: await scriptHashes(html),
-      media,
-      origin: new URL(request.url),
-    }),
+    contentSecurityPolicy({ scriptHashes: await scriptHashes(html), media, frames, origin }),
   )
   out.delete('ETag')
   out.delete('Last-Modified')

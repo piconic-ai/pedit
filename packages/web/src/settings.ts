@@ -1,3 +1,4 @@
+import type { ProviderId } from './alwaysload.ts'
 import type { Readable } from './store.ts'
 import type { ThemeInfo } from './themes.ts'
 
@@ -70,6 +71,10 @@ export interface SettingsModel {
   setWrap(on: boolean): void
   vim: Readable<boolean>
   setVim(on: boolean): void
+  /** The providers whose preview players load without a click, in this browser. */
+  alwaysLoad: Readable<readonly ProviderId[]>
+  /** Asks again before loading this provider's players; loaded ones stay. */
+  forgetAlwaysLoad(id: ProviderId): void
 }
 
 /** Where the arrow keys go in the theme gallery, or null for keys it does not handle. */

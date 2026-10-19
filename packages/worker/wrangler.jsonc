@@ -46,7 +46,8 @@
   // deploys.
   "keep_vars": true,
   // MEDIA_SOURCES (external images and videos in the preview) is deliberately unset
-  // here, in previews.vars and in the lab: unset is the strict code default.
+  // here, in previews.vars and in the lab: unset is the strict code default. The
+  // sites the preview may frame are the providers in packages/protocol/src/embeds.
   "vars": {
     "ROOM_GUESTS": "4",
     "BLOB_MAX_BYTES": "5242880",

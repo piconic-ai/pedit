@@ -2,8 +2,20 @@ import { allowsMedia, MEDIA_META, parseMediaSources } from '@pedit/protocol/csp'
 import DOMPurify from 'dompurify'
 import MarkdownIt from 'markdown-it'
 import { parseDocument } from 'yaml'
+import { type ProviderId, providerLabel } from './alwaysload.ts'
 import type { ImageResolver } from './attachments.ts'
-import { type Embed, embedFor, httpUrl, isAllowedFrame, isVideoFile } from './embed.ts'
+import {
+  boxStyle,
+  checkBoxStyle,
+  type Embed,
+  embedFor,
+  FRAME_REFERRER_POLICY,
+  frameFor,
+  httpUrl,
+  isAllowedFrame,
+  isVideoFile,
+  providerOf,
+} from './embed.ts'
 
 // Raw HTML in the document is shown as text, never parsed.
 const md = new MarkdownIt({ html: false, linkify: true })
@@ -94,18 +106,32 @@ function videoHtml(src: string, label: string, line?: unknown): string {
   return `<video${lineAttr(line)} src="${escape(src)}"${aria} controls preload="metadata" playsinline></video>`
 }
 
-function embedHtml(embed: Embed, line: unknown): string {
+// The frames this preview rendered, by src. loadEmbed loads only these, so a
+// placeholder that reached the page some other way loads nothing.
+const rendered = new Map<string, string>()
+
+// A frame is not loaded until someone asks: nobody in the room should contact a
+// third party just because someone wrote its URL in the file. The placeholder
+// carries only the frame's src and its box; loadEmbed derives everything else
+// from the src again, and the frame fills the same box, so loading it does not
+// move the page. "Always load" is a checkbox drawn with a role, since the
+// sanitiser drops inputs.
+function embedHtml(embed: Embed, href: string, line: unknown): string {
   if (embed.kind === 'video') return videoHtml(embed.src, '', line)
+  rendered.set(embed.src, embed.src)
+  const host = new URL(embed.src).host
+  const remember = `<span class="embed-remember" role="checkbox" aria-checked="false" tabindex="0">Always load ${escape(providerLabel(embed.provider))}</span>`
   return (
-    `<div class="embed"${lineAttr(line)}><iframe src="${escape(embed.src)}" title="${escape(embed.title)}"` +
-    ' loading="lazy" allow="fullscreen; picture-in-picture; encrypted-media"' +
-    ' sandbox="allow-scripts allow-same-origin allow-popups allow-presentation"' +
-    // YouTube refuses to play without a referrer; the origin carries no room or key.
-    ' referrerpolicy="strict-origin-when-cross-origin"></iframe></div>'
+    `<div class="embed"${lineAttr(line)} data-embed-src="${escape(embed.src)}"` +
+    ` style="${boxStyle(embed.box)}">` +
+    `<span class="embed-provider">${escape(embed.title)}</span>` +
+    `<span class="embed-actions"><span class="embed-load" role="button" tabindex="0">Load from ${escape(host)}</span>${remember}</span>` +
+    `<a class="embed-link" href="${escape(href)}">${escape(href)}</a></div>`
   )
 }
 
-// A paragraph that is nothing but a YouTube, Vimeo or video file URL becomes a player.
+// A paragraph that is nothing but a URL an embed provider takes, or a video file
+// URL, becomes a player (a video) or a placeholder that loads one on request (a frame).
 md.core.ruler.after('linkify', 'embeds', (state) => {
   const tokens = state.tokens
   for (let i = 0; i + 2 < tokens.length; i++) {
@@ -115,12 +141,13 @@ md.core.ruler.after('linkify', 'embeds', (state) => {
     // info is 'auto' for both linkified URLs and <autolinks>, not for [text](url).
     if (linkOpen?.type !== 'link_open' || linkOpen.info !== 'auto') continue
     if (text?.type !== 'text' || linkClose?.type !== 'link_close' || rest.length > 0) continue
-    const embed = embedFor(String(linkOpen.attrGet('href') ?? ''))
+    const href = String(linkOpen.attrGet('href') ?? '')
+    const embed = embedFor(href)
     if (!embed) continue
     // A video file the relay would not load stays an ordinary link.
     if (embed.kind === 'video' && !allowed(new URL(embed.src))) continue
     const token = new state.Token('embed', '', 0)
-    token.meta = { embed, line: open.map?.[0] }
+    token.meta = { embed, href, line: open.map?.[0] }
     inline.children = [token]
     open.hidden = true
     close.hidden = true
@@ -137,8 +164,8 @@ md.core.ruler.push('source_lines', (state) => {
 })
 
 md.renderer.rules.embed = (tokens, idx) => {
-  const { embed, line } = tokens[idx]?.meta as { embed: Embed; line?: number }
-  return embedHtml(embed, line)
+  const { embed, href, line } = tokens[idx]?.meta as { embed: Embed; href: string; line?: number }
+  return embedHtml(embed, href, line)
 }
 
 const defaultImage = md.renderer.rules.image
@@ -179,12 +206,6 @@ let images: ImageResolver | undefined
 
 const purify = DOMPurify(window)
 
-purify.addHook('uponSanitizeElement', (node, data) => {
-  if (data.tagName === 'iframe' && !isAllowedFrame((node as Element).getAttribute('src'))) {
-    node.parentNode?.removeChild(node)
-  }
-})
-
 // blob: URLs are not allowed by default; keep the ones for our own images.
 purify.addHook('uponSanitizeAttribute', (node, data) => {
   if (node.nodeName === 'IMG' && data.attrName === 'src' && images?.owns(data.attrValue)) {
@@ -194,6 +215,15 @@ purify.addHook('uponSanitizeAttribute', (node, data) => {
 
 purify.addHook('afterSanitizeAttributes', (node) => {
   const el = node as Element
+  if (el.hasAttribute?.('data-embed-src')) {
+    // A placeholder may only ever load a frame pedit would frame for that src.
+    if (!isAllowedFrame(el.getAttribute('data-embed-src'))) {
+      el.remove()
+      return
+    }
+    // Its style may only be a box boxStyle writes, never other CSS.
+    if (checkBoxStyle(el.getAttribute('style')) === null) el.removeAttribute('style')
+  }
   switch (node.nodeName) {
     case 'A': {
       const href = el.getAttribute('href') ?? ''
@@ -227,16 +257,17 @@ export function sanitize(html: string): DocumentFragment {
   return purify.sanitize(html, {
     // Markdown only produces plain HTML: no SVG, MathML, styles or forms.
     USE_PROFILES: { html: true },
-    FORBID_TAGS: ['style', 'form', 'input', 'button', 'textarea', 'select'],
-    ADD_TAGS: ['iframe'],
-    ADD_ATTR: ['allow', 'sandbox', 'referrerpolicy', 'loading'],
+    // Frames are never rendered, only built by loadEmbed once someone asks for one.
+    FORBID_TAGS: ['style', 'form', 'input', 'button', 'textarea', 'select', 'iframe'],
+    ADD_ATTR: ['referrerpolicy', 'loading'],
     RETURN_DOM_FRAGMENT: true,
   })
 }
 
 /**
  * Renders Markdown to sanitised nodes, ready for {@link patch}. `resolver`
- * finds the images added during the session.
+ * finds the images added during the session; `sources` are the relay's
+ * MEDIA_SOURCES.
  */
 export function render(
   source: string,
@@ -251,6 +282,57 @@ export function render(
     images = undefined
     media = []
   }
+}
+
+/**
+ * Who serves the frame of an embed placeholder, derived from its src alone as
+ * loadEmbed does, or null if pedit would not frame it.
+ */
+export function embedProvider(placeholder: Element): ProviderId | null {
+  return providerOf(placeholder.getAttribute('data-embed-src'))
+}
+
+// patch() compares blocks by the key noted for them as rendered. Note the keys
+// of a placeholder and the blocks it sits in, such as a list item, before it
+// changes, so it stays while the paragraph with its URL is unchanged.
+function noteKeys(placeholder: Element): void {
+  for (let el: Element | null = placeholder; el?.hasAttribute('data-line'); el = el.parentElement) {
+    keyOf(el)
+  }
+}
+
+/** Ticks or clears an embed placeholder's "Always load" box; returns whether it is ticked. */
+export function toggleRemember(control: Element): boolean {
+  const placeholder = control.closest('[data-embed-src]')
+  if (placeholder) noteKeys(placeholder)
+  const on = control.getAttribute('aria-checked') !== 'true'
+  control.setAttribute('aria-checked', String(on))
+  return on
+}
+
+/**
+ * Loads the frame of an embed placeholder, deriving its provider and attributes
+ * from its src alone, and moves focus into it unless `focus` is false. Returns
+ * null for a placeholder the preview did not render or whose src pedit would
+ * not frame.
+ */
+export function loadEmbed(placeholder: Element, focus = true): HTMLIFrameElement | null {
+  const src = rendered.get(placeholder.getAttribute('data-embed-src') ?? '') ?? null
+  const frame = frameFor(src)
+  if (!frame) return null
+  const iframe = placeholder.ownerDocument.createElement('iframe')
+  // The sandbox has to be in place before the frame is attached and navigates.
+  iframe.setAttribute('sandbox', frame.sandbox)
+  if (frame.allow) iframe.setAttribute('allow', frame.allow)
+  iframe.setAttribute('referrerpolicy', FRAME_REFERRER_POLICY)
+  iframe.title = frame.title
+  // The URL frameFor rebuilt, never the attribute's text as it stands.
+  iframe.src = frame.src
+  noteKeys(placeholder)
+  placeholder.replaceChildren(iframe)
+  placeholder.classList.add('embed--loaded')
+  if (focus) iframe.focus()
+  return iframe
 }
 
 const keys = new WeakMap<Node, string>()
@@ -273,10 +355,21 @@ function keyOf(node: Node): string {
   return key
 }
 
+/** The element and its descendants, leaving out what a loaded player replaced. */
+function elements(root: Element): Element[] {
+  const found = [root]
+  if (!root.hasAttribute('data-embed-src')) {
+    for (const child of root.children) found.push(...elements(child))
+  }
+  return found
+}
+
 function copyLines(from: Node | undefined, to: Node): void {
   if (!(from instanceof Element) || !(to instanceof Element)) return
-  const source = [from, ...from.querySelectorAll('*')]
-  const target = [to, ...to.querySelectorAll('*')]
+  // A loaded embed holds a frame where the fresh one has its placeholder, so
+  // pair descendants without looking inside embeds.
+  const source = elements(from)
+  const target = elements(to)
   source.forEach((el, i) => {
     const line = el.getAttribute('data-line')
     const to = target[i]
@@ -286,14 +379,104 @@ function copyLines(from: Node | undefined, to: Node): void {
   })
 }
 
+/** An element's tag and attributes, apart from its line. */
+function shellOf(el: Element): string {
+  const attributes = [...el.attributes]
+    .filter((a) => a.name !== 'data-line')
+    .map((a) => `${a.name}=${a.value}`)
+  return [el.tagName, ...attributes].join(' ')
+}
+
+/** The embeds under an element that hold something to keep: a loaded player or a ticked box. */
+function heldEmbeds(el: Element): Element[] {
+  const ticked = [...el.querySelectorAll('.embed-remember[aria-checked="true"]')]
+  return [
+    ...el.querySelectorAll('.embed--loaded'),
+    ...ticked.flatMap((box) => box.closest('[data-embed-src]') ?? []),
+  ]
+}
+
+/** Whether the fresh element still renders an embed the old one holds, with the same src. */
+function keepsEmbed(old: Element, fresh: Element): boolean {
+  const held = new Set(heldEmbeds(old).map((el) => el.getAttribute('data-embed-src')))
+  if (held.size === 0) return false
+  return [...fresh.querySelectorAll('[data-embed-src]')].some((el) =>
+    held.has(el.getAttribute('data-embed-src')),
+  )
+}
+
+/**
+ * How well an old node can stand for a fresh one: 2 when it looks the same,
+ * 1 when only its children differ and the fresh one still renders an embed the
+ * old one holds, a player or a ticked box (a list whose other item changed), so
+ * its children are patched in turn. A block of the same shape without that
+ * embed, such as a new quote above, never takes it. Whitespace between blocks
+ * is never matched: it would pull the matching away from the blocks.
+ */
+function affinity(old: Node, fresh: Node): number {
+  if (old.nodeType === Node.TEXT_NODE && old.textContent?.trim() === '') return 0
+  if (keyOf(old) === keyOf(fresh)) return 2
+  if (
+    old instanceof Element &&
+    fresh instanceof Element &&
+    shellOf(old) === shellOf(fresh) &&
+    keepsEmbed(old, fresh)
+  ) {
+    return 1
+  }
+  return 0
+}
+
+// Beyond this many comparisons the middle of a patch is rebuilt rather than matched.
+const MATCH_LIMIT = 1 << 20
+
+/** Pairs old and fresh nodes in order, keeping as many (and as similar) as possible. */
+function match(before: Node[], after: Node[]): Map<number, [number, number]> {
+  const pairs = new Map<number, [number, number]>()
+  const [n, m] = [before.length, after.length]
+  if (n === 0 || m === 0 || n * m > MATCH_LIMIT) return pairs
+  const score = new Uint8Array(n * m)
+  const at = (i: number, j: number) => i * m + j
+  // best[i][j]: the most that before[i..] and after[j..] can keep.
+  const best = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1))
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      const s = affinity(before[i] as Node, after[j] as Node)
+      score[at(i, j)] = s
+      const row = best[i] as Uint32Array
+      const below = best[i + 1] as Uint32Array
+      row[j] = Math.max(
+        below[j] as number,
+        row[j + 1] as number,
+        s ? s + (below[j + 1] as number) : 0,
+      )
+    }
+  }
+  let [i, j] = [0, 0]
+  while (i < n && j < m) {
+    const s = score[at(i, j)] as number
+    const here = (best[i] as Uint32Array)[j] as number
+    if (s && here === s + ((best[i + 1] as Uint32Array)[j + 1] as number)) {
+      pairs.set(j, [i, s])
+      i++
+      j++
+    } else if (here === (best[i + 1] as Uint32Array)[j]) i++
+    else j++
+  }
+  return pairs
+}
+
 /**
  * Replaces the container's children with the fragment's, leaving unchanged
- * blocks at the start and end in place so that images and players inside
- * them do not reload while someone types elsewhere.
+ * blocks in place so that images and players inside them do not reload while
+ * someone types elsewhere.
  */
 export function patch(container: Element, fragment: DocumentFragment): void {
+  patchChildren(container, [...fragment.childNodes])
+}
+
+function patchChildren(container: Node, after: Node[]): void {
   const before = [...container.childNodes]
-  const after = [...fragment.childNodes]
   const same = (a: Node | undefined, b: Node | undefined) =>
     a !== undefined && b !== undefined && keyOf(a) === keyOf(b)
   let head = 0
@@ -309,10 +492,33 @@ export function patch(container: Element, fragment: DocumentFragment): void {
   const kept = [...before.slice(0, head), ...before.slice(before.length - tail)]
   const fresh = [...after.slice(0, head), ...after.slice(after.length - tail)]
   kept.forEach((node, i) => copyLines(fresh[i], node))
-  const anchor = before[before.length - tail] ?? null
-  for (const node of before.slice(head, before.length - tail)) node.remove()
-  for (const node of after.slice(head, after.length - tail)) {
-    keyOf(node)
-    container.insertBefore(node, anchor)
-  }
+  // In between, keep the blocks that are still there in the same order without
+  // moving them, such as a player someone loaded: a frame reloads when it moves.
+  const end = before.length - tail
+  const anchor = before[end] ?? null
+  const middle = after.slice(head, after.length - tail)
+  const pairs = match(before.slice(head, end), middle)
+  let next = head
+  middle.forEach((node, j) => {
+    const pair = pairs.get(j)
+    if (pair === undefined) {
+      container.insertBefore(node, next < end ? (before[next] as Node) : anchor)
+      return
+    }
+    const [i, score] = pair
+    const old = before[head + i] as Element
+    for (const gone of before.slice(next, head + i)) gone.remove()
+    if (score === 2) copyLines(node, old)
+    else {
+      // The old element now stands for the fresh one: note its key first, as
+      // patching takes the fresh one's children.
+      keys.set(old, keyOf(node))
+      const line = (node as Element).getAttribute('data-line')
+      if (line === null) old.removeAttribute('data-line')
+      else old.setAttribute('data-line', line)
+      patchChildren(old, [...node.childNodes])
+    }
+    next = head + i + 1
+  })
+  for (const old of before.slice(next, end)) old.remove()
 }
