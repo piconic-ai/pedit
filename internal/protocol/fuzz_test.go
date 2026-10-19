@@ -172,3 +172,36 @@ func FuzzCheckPath(f *testing.F) {
 		}
 	})
 }
+
+func FuzzDecodeFiles(f *testing.F) {
+	m, _ := protocol.EncodeManifest([]protocol.FileEntry{{ID: 1, Path: "a.md", Format: protocol.FormatText}})
+	d, _ := protocol.EncodeFileDoc(1, protocol.MessageSync, []byte{0, 1, 0})
+	f.Add(m)
+	f.Add(d)
+	f.Add([]byte{})
+	f.Add([]byte{0, 1, 1, 4, '.', '.', '/', 'x', 4, 't', 'e', 'x', 't'})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		m, err := protocol.DecodeFiles(data)
+		if err != nil {
+			return
+		}
+		// What decodes is safe to show and to route, and encodes the same.
+		var again []byte
+		if m.Kind == protocol.FilesManifest {
+			for _, e := range m.Files {
+				if protocol.CheckPath(e.Path) != nil || e.ID > protocol.MaxFileID {
+					t.Fatalf("decoded an unsafe entry %+v", e)
+				}
+			}
+			again, err = protocol.EncodeManifest(m.Files)
+		} else {
+			again, err = protocol.EncodeFileDoc(m.File, m.Type, m.Payload)
+		}
+		if err != nil {
+			t.Fatalf("re-encoding %+v: %v", m, err)
+		}
+		if again2, _ := protocol.DecodeFiles(again); !reflect.DeepEqual(again2, m) {
+			t.Fatalf("decode(encode(%+v)) = %+v", m, again2)
+		}
+	})
+}

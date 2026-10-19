@@ -24,6 +24,14 @@ import {
   SERVER_OUTDATED,
 } from './close.ts'
 import {
+  decodeFiles,
+  encodeFileDoc,
+  encodeManifest,
+  type FileEntry,
+  MAX_FILE_ID,
+  UnknownFilesKindError,
+} from './files.ts'
+import {
   decodeFrame,
   encodeFrame,
   frameBytes,
@@ -117,6 +125,22 @@ export interface RoomClientOptions {
   onError?: (error: unknown) => void
   onAttachment?: (attachment: Attachment) => void
   onCanvas?: (message: CanvasMessage) => void
+  /**
+   * In a room that shares several files (see addFile): each list of the
+   * room's files, once per added file the first SyncStep2 for it, and the
+   * messages about one file.
+   */
+  onManifest?: (files: FileEntry[]) => void
+  onFileSynced?: (file: number) => void
+  onFileAttachment?: (file: number, attachment: Attachment) => void
+  onFileCanvas?: (file: number, message: CanvasMessage) => void
+}
+
+/** A file's Y.Doc that a RoomClient keeps in sync. */
+interface FileDoc {
+  doc: Y.Doc
+  onUpdate: (update: Uint8Array, origin: unknown) => void
+  synced: boolean
 }
 
 const OPEN = 1
@@ -147,6 +171,9 @@ export class RoomClient {
   private readonly sender = globalThis.crypto.getRandomValues(new Uint8Array(SENDER_BYTES))
   private sent = 0
   private readonly guard = new ReplayGuard(this.sender)
+  private readonly files = new Map<number, FileDoc>()
+  // The encoded manifest, when this client set one.
+  private manifest: Uint8Array | null = null
 
   constructor(opts: RoomClientOptions) {
     this.opts = opts
@@ -186,6 +213,8 @@ export class RoomClient {
       this.sendSync((encoder) => syncProtocol.writeSyncStep1(encoder, this.doc))
       this.send(MessageType.Sync, state)
       this.sendAwareness([this.doc.clientID])
+      if (this.manifest) this.send(MessageType.Files, this.manifest)
+      for (const [id, f] of this.files) this.syncFile(id, f.doc)
     }
     socket.onmessage = (ev) => {
       if (this.socket !== socket) return
@@ -228,6 +257,7 @@ export class RoomClient {
     this.doc.off('update', this.handleDocUpdate)
     this.awareness.off('update', this.handleAwarenessUpdate)
     this.awareness.off('change', this.handleAwarenessChange)
+    for (const f of this.files.values()) f.doc.off('update', f.onUpdate)
     const socket = this.socket
     this.socket = null
     socket?.close()
@@ -248,6 +278,49 @@ export class RoomClient {
    */
   sendCanvas(message: CanvasMessage): void {
     this.send(MessageType.Canvas, encodeCanvas(message))
+  }
+
+  /*
+   * A room that shares several files keeps each in a Y.Doc of its own, synced
+   * like `doc` but in files messages that name the file. `doc` then stays
+   * empty, so a peer that knows nothing of files gets nothing to save, and
+   * the awareness stays one for the room.
+   */
+
+  /**
+   * Keeps `doc` in sync with the room as the file with this id: sends its
+   * state now if connected, and on every connection after. Messages about a
+   * file that was not added are dropped, so a peer follows only the files it
+   * added.
+   */
+  addFile(id: number, doc: Y.Doc): void {
+    if (!Number.isInteger(id) || id < 0 || id > MAX_FILE_ID)
+      throw new Error(`invalid file id ${id}`)
+    if (this.destroyed) throw new Error('client destroyed')
+    if (this.files.has(id)) throw new Error(`file ${id} added twice`)
+    const onUpdate = (update: Uint8Array, origin: unknown) => {
+      if (origin === this) return
+      this.sendFileSync(id, (encoder) => syncProtocol.writeUpdate(encoder, update))
+    }
+    doc.on('update', onUpdate)
+    this.files.set(id, { doc, onUpdate, synced: false })
+    if (this.socket?.readyState === OPEN && this.status === 'connected') this.syncFile(id, doc)
+  }
+
+  /** Tells the room which files it shares, now and to everyone who connects later. */
+  setManifest(files: FileEntry[]): void {
+    this.manifest = encodeManifest(files)
+    this.send(MessageType.Files, this.manifest)
+  }
+
+  /** Sends an attachment message about one file. Dropped while disconnected. */
+  sendFileAttachment(file: number, attachment: Attachment): void {
+    this.sendFile(file, MessageType.Attachment, encodeAttachment(attachment))
+  }
+
+  /** Sends a canvas message about one file. Dropped while disconnected. */
+  sendFileCanvas(file: number, message: CanvasMessage): void {
+    this.sendFile(file, MessageType.Canvas, encodeCanvas(message))
   }
 
   private async receive(data: Uint8Array): Promise<void> {
@@ -274,6 +347,8 @@ export class RoomClient {
         decoding.readVarUint8Array(decoder),
         this,
       )
+    } else if (message.type === MessageType.Files) {
+      this.receiveFiles(message.payload)
     } else if (message.type === MessageType.Canvas) {
       let canvas: CanvasMessage
       try {
@@ -297,6 +372,81 @@ export class RoomClient {
     }
   }
 
+  private receiveFiles(payload: Uint8Array): void {
+    let m: ReturnType<typeof decodeFiles>
+    try {
+      m = decodeFiles(payload)
+    } catch (error) {
+      // Likewise for files kinds, and message types about a file.
+      if (error instanceof UnknownFilesKindError || error instanceof UnknownMessageTypeError) return
+      throw error
+    }
+    if (m.kind === 'manifest') {
+      this.opts.onManifest?.(m.files)
+      return
+    }
+    if (m.type === MessageType.Sync) {
+      const f = this.files.get(m.file)
+      if (!f) return
+      const encoder = encoding.createEncoder()
+      const kind = syncProtocol.readSyncMessage(
+        decoding.createDecoder(m.payload),
+        encoder,
+        f.doc,
+        this,
+      )
+      if (encoding.length(encoder) > 0)
+        this.sendFile(m.file, MessageType.Sync, encoding.toUint8Array(encoder))
+      if (kind === syncProtocol.messageYjsSyncStep2 && !f.synced) {
+        f.synced = true
+        this.opts.onFileSynced?.(m.file)
+      }
+    } else if (m.type === MessageType.Canvas) {
+      let canvas: CanvasMessage
+      try {
+        canvas = decodeCanvas(m.payload)
+      } catch (error) {
+        if (error instanceof UnknownCanvasKindError) return
+        throw error
+      }
+      this.opts.onFileCanvas?.(m.file, canvas)
+    } else {
+      let attachment: Attachment
+      try {
+        attachment = decodeAttachment(m.payload)
+      } catch (error) {
+        if (error instanceof UnknownAttachmentKindError) return
+        throw error
+      }
+      this.opts.onFileAttachment?.(m.file, attachment)
+    }
+  }
+
+  /** Sends a file's state to the room, as onopen does for `doc`. */
+  private syncFile(id: number, doc: Y.Doc): void {
+    const socket = this.socket
+    if (!socket) return
+    const step2 = encoding.createEncoder()
+    syncProtocol.writeSyncStep2(step2, doc)
+    const state = encodeFileDoc(id, MessageType.Sync, encoding.toUint8Array(step2))
+    if (frameBytes(state.length) > MAX_FRAME_BYTES) {
+      this.tooLarge(socket)
+      return
+    }
+    this.sendFileSync(id, (encoder) => syncProtocol.writeSyncStep1(encoder, doc))
+    this.send(MessageType.Files, state)
+  }
+
+  private sendFileSync(id: number, write: (encoder: encoding.Encoder) => void): void {
+    const encoder = encoding.createEncoder()
+    write(encoder)
+    this.sendFile(id, MessageType.Sync, encoding.toUint8Array(encoder))
+  }
+
+  private sendFile(id: number, type: MessageType, payload: Uint8Array): void {
+    this.send(MessageType.Files, encodeFileDoc(id, type, payload))
+  }
+
   private handleDocUpdate = (update: Uint8Array, origin: unknown) => {
     if (origin === this) return
     this.sendSync((encoder) => syncProtocol.writeUpdate(encoder, update))
@@ -311,9 +461,12 @@ export class RoomClient {
   }
 
   // Someone new showed up: tell them about us right away instead of waiting for the
-  // periodic awareness renewal.
+  // periodic awareness renewal, and which files the room shares.
   private handleAwarenessChange = ({ added }: AwarenessChanges, origin: unknown) => {
-    if (origin === this && added.length > 0) this.sendAwareness([this.doc.clientID])
+    if (origin === this && added.length > 0) {
+      this.sendAwareness([this.doc.clientID])
+      if (this.manifest) this.send(MessageType.Files, this.manifest)
+    }
   }
 
   private dropRemoteAwareness(): void {

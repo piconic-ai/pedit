@@ -99,6 +99,16 @@ type ClientOptions struct {
 	// OnCanvas is called with each canvas message from the room, on the
 	// connection's read loop: return quickly.
 	OnCanvas func(CanvasMessage)
+
+	// In a room that shares several files (room_files.go), these are called
+	// on the connection's read loop too: return quickly. OnManifest gets
+	// each list of the room's files. OnFileSynced is called once per added
+	// file, when the first SyncStep2 for it has been applied.
+	// OnFileAttachment and OnFileCanvas get the messages about one file.
+	OnManifest       func([]FileEntry)
+	OnFileSynced     func(id uint64)
+	OnFileAttachment func(id uint64, a Attachment)
+	OnFileCanvas     func(id uint64, m CanvasMessage)
 }
 
 // Client keeps a Doc and Awareness in sync with every other peer in a room.
@@ -132,6 +142,8 @@ type Client struct {
 	synced    bool
 	timeLimit time.Duration
 	unsubs    []func()
+	files     map[uint64]*fileDoc
+	manifest  []byte // the encoded FilesManifest, when this Client set one
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -266,6 +278,7 @@ func (c *Client) Destroy() {
 	for _, unsub := range c.unsubs {
 		unsub()
 	}
+	c.unsubscribeFiles()
 	if out != nil {
 		out.drain()
 	}
@@ -342,6 +355,7 @@ func (c *Client) serve(conn Conn) error {
 		c.send(MessageSync, ysync.EncodeSyncStep1(c.doc))
 		c.send(MessageSync, step2)
 		c.sendAwareness([]uint64{c.aw.ClientID()})
+		c.syncFiles()
 	}
 
 	for {
@@ -384,6 +398,9 @@ func (c *Client) receive(data []byte) error {
 	}
 	if err != nil {
 		return err
+	}
+	if t == MessageFiles {
+		return c.receiveFiles(payload)
 	}
 	if t == MessageAttachment {
 		a, err := DecodeAttachment(payload)
@@ -472,10 +489,11 @@ func (c *Client) handleAwarenessUpdate(ev awareness.UpdateEvent) {
 }
 
 // Someone new showed up: tell them about us right away instead of waiting for the
-// periodic awareness renewal.
+// periodic awareness renewal, and which files the room shares.
 func (c *Client) handleAwarenessChange(ev awareness.ChangeEvent) {
 	if ev.Origin == c && len(ev.Added) > 0 {
 		c.sendAwareness([]uint64{c.aw.ClientID()})
+		c.sendManifest()
 	}
 }
 
