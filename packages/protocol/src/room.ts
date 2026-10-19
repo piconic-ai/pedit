@@ -282,19 +282,20 @@ export class RoomClient {
 
   /*
    * A room that shares several files keeps each in a Y.Doc of its own, synced
-   * like `doc` but in files messages that name the file. `doc` then stays
-   * empty, so a peer that knows nothing of files gets nothing to save, and
-   * the awareness stays one for the room.
+   * like `doc` but in files messages that name the file. `doc` is file 0, so
+   * a peer that knows nothing of files goes on editing it, and the awareness
+   * stays one for the room.
    */
 
   /**
-   * Keeps `doc` in sync with the room as the file with this id: sends its
+   * Keeps `doc` in sync with the room as the file with this id, from 1 up
+   * (file 0 is the client's own `doc`): sends its
    * state now if connected, and on every connection after. Messages about a
    * file that was not added are dropped, so a peer follows only the files it
    * added.
    */
   addFile(id: number, doc: Y.Doc): void {
-    if (!Number.isInteger(id) || id < 0 || id > MAX_FILE_ID)
+    if (!Number.isInteger(id) || id < 1 || id > MAX_FILE_ID)
       throw new Error(`invalid file id ${id}`)
     if (this.destroyed) throw new Error('client destroyed')
     if (this.files.has(id)) throw new Error(`file ${id} added twice`)

@@ -11,8 +11,8 @@ import (
 
 // A room that shares several files keeps each in a Y.Doc of its own, synced
 // like the Client's Doc but in FilesDoc messages that name the file. The
-// Client's Doc then stays empty, so a peer that knows nothing of files gets
-// nothing to save, and Awareness stays one for the room.
+// Client's Doc is file 0, so a peer that knows nothing of files goes on
+// editing it, and Awareness stays one for the room.
 
 // fileDoc is a file's Y.Doc that the Client keeps in sync.
 type fileDoc struct {
@@ -21,12 +21,13 @@ type fileDoc struct {
 	synced bool
 }
 
-// AddFile keeps doc in sync with the room as the file with this ID: it sends
+// AddFile keeps doc in sync with the room as the file with this ID, from 1
+// up (file 0 is the Client's Doc): it sends
 // the doc's state now if connected, and on every connection after. Messages
 // about a file that was not added are dropped, so a peer only follows the
 // files it added.
 func (c *Client) AddFile(id uint64, doc *crdt.Doc) error {
-	if id > MaxFileID {
+	if id == 0 || id > MaxFileID {
 		return fmt.Errorf("invalid file id %d", id)
 	}
 	// Subscribed outside c.mu: an update in another goroutine holds the

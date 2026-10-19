@@ -81,6 +81,9 @@ describe('files messages', () => {
   })
 
   it('carries only sync, attachment and canvas messages about a file', () => {
+    // File 0 is the room's own doc, synced with plain messages.
+    expect(() => encodeFileDoc(0, MessageType.Sync, new Uint8Array())).toThrow()
+    expect(() => decodeFiles(new Uint8Array([1, 0, MessageType.Sync, 0]))).toThrow()
     for (const type of [MessageType.Awareness, MessageType.Files]) {
       expect(() => encodeFileDoc(1, type, new Uint8Array())).toThrow()
       expect(() => decodeFiles(new Uint8Array([1, 1, type, 0]))).toThrow()

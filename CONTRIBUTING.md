@@ -57,16 +57,19 @@ is shared by both implementations: change them together.
   from its sender, and their own: the relay could send any frame again.
   Types: `0` sync, `1` awareness, `2` attachment, `3` canvas, `4` files.
   Clients skip types they do not know, so newer peers can add more.
-- A room that shares several files keeps each in a Y.Doc of its own. Files
-  messages carry a lib0 varint kind: `0` manifest (a count, then for each file
-  its id, path and format), the host's list of the room's files, which
-  replaces any sent before; `1` doc (a file id, then a sync, attachment or
-  canvas message, type byte and payload, as in a room that shares one file).
+- A room that shares several files keeps each in a Y.Doc of its own. File `0`
+  is the room's own doc, synced with plain sync messages as in a room that
+  shares one file; the others are synced in files messages. These carry a
+  lib0 varint kind: `0` manifest (a count, then for each file its id, path
+  and format), the host's list of the room's files, which replaces any sent
+  before; `1` doc (a file id other than `0`, then a sync, attachment or canvas
+  message, type byte and payload, as in a room that shares one file).
   The host routes messages only by the ids it issued, never by a path. Paths
   pass the checks in `internal/protocol/path.go` and
   `packages/protocol/src/path.ts` (`packages/testdata/path-vectors.json`), and
-  `packages/testdata/files-vectors.json` pins the encoding. The room's own doc
-  stays empty, so an older peer, which skips type `4`, has nothing to save.
+  `packages/testdata/files-vectors.json` pins the encoding. A room can start
+  with one file and add more, and an older peer, which skips type `4`, goes on
+  editing file `0`.
 - Clients offer the protocol version as the WebSocket subprotocol `pedit-v<N>`
   (`PROTOCOL_VERSION` in `packages/protocol`, `ProtocolVersion` in
   `internal/protocol`). The Room turns another version away with close code

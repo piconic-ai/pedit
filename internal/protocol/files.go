@@ -10,8 +10,9 @@ import (
 
 // MessageFiles carries the files of a room that shares several (#113). Each
 // file is a Y.Doc of its own: one doc for all would put every file under the
-// one frame its state is sent in. Older peers skip this type, so a room that
-// shares one file, which never sends it, works as before.
+// one frame its state is sent in. File 0 is the room's own doc, synced as in a
+// room that shares one file: a room can start with one file and add more, and
+// older peers, which skip this type, go on editing file 0.
 const MessageFiles MessageType = 4
 
 // FilesKind says what a files message is about.
@@ -22,7 +23,8 @@ const (
 	// list sent before.
 	FilesManifest FilesKind = 0
 	// FilesDoc: a sync, attachment or canvas message, as it would be sent in
-	// a room that shares one file, for the file with ID File.
+	// a room that shares one file, for the file with ID File. Never file 0,
+	// whose messages are sent as in a room that shares one file.
 	FilesDoc FilesKind = 1
 )
 
@@ -44,7 +46,8 @@ var formatPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 
 // FileEntry is one file in a manifest. The host gives each file an ID that
 // it never reuses in the room, and only ever routes a message by the ID it
-// carries: Path is for people to read, and checked with CheckPath.
+// carries: Path is for people to read, and checked with CheckPath. ID 0 is
+// the room's own doc.
 type FileEntry struct {
 	ID     uint64
 	Path   string
@@ -186,7 +189,7 @@ func validateManifest(files []FileEntry) error {
 }
 
 func validateDoc(file uint64, t MessageType) error {
-	if file > MaxFileID {
+	if file == 0 || file > MaxFileID {
 		return fmt.Errorf("invalid file id %d", file)
 	}
 	switch t {

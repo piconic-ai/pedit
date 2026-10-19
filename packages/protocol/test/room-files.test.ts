@@ -54,43 +54,42 @@ function file(init = ''): Y.Doc {
 const text = (doc: Y.Doc) => doc.getText('content').toString()
 
 const manifest: FileEntry[] = [
-  { id: 1, path: 'agenda.md', format: 'text' },
-  { id: 2, path: '議事録/board.canvas', format: 'canvas' },
+  { id: 0, path: 'agenda.md', format: 'text' },
+  { id: 1, path: '議事録/notes.md', format: 'text' },
 ]
 
 describe('RoomClient with several files', () => {
-  it('syncs each file in a doc of its own', async () => {
+  it('syncs each file in a doc of its own, with file 0 the room doc', async () => {
     const relay = new Relay()
     const key = await importKey(generateKey())
     const host = join(relay, key)
-    const agenda = file('# agenda\n')
+    host.doc.getText('content').insert(0, '# agenda\n')
     const notes = file('# notes\n')
-    host.addFile(1, agenda)
-    host.addFile(2, notes)
+    host.addFile(1, notes)
     host.setManifest(manifest)
     await vi.waitFor(() => expect(host.status).toBe('connected'))
 
     const heard: FileEntry[][] = []
     const guest = join(relay, key, { onManifest: (files) => heard.push(files) })
     await vi.waitFor(() => expect(heard.at(-1)).toEqual(manifest))
-    const gAgenda = file()
     const gNotes = file()
-    guest.addFile(1, gAgenda)
-    guest.addFile(2, gNotes)
+    guest.addFile(1, gNotes)
     await vi.waitFor(() => {
-      expect(text(gAgenda)).toBe('# agenda\n')
+      expect(text(guest.doc)).toBe('# agenda\n')
       expect(text(gNotes)).toBe('# notes\n')
     })
     gNotes.getText('content').insert(8, '- decided\n')
-    agenda.getText('content').insert(0, '!')
+    host.doc.getText('content').insert(0, '!')
     await vi.waitFor(() => {
       expect(text(notes)).toBe('# notes\n- decided\n')
-      expect(text(gAgenda)).toBe('!# agenda\n')
+      expect(text(guest.doc)).toBe('!# agenda\n')
     })
-    // The room's own doc stays empty: a peer that knows nothing of files has
-    // nothing to save.
-    expect(text(host.doc)).toBe('')
-    expect(text(guest.doc)).toBe('')
+    // A peer that knows nothing of files goes on editing file 0, and only it.
+    const older = join(relay, key)
+    await vi.waitFor(() => expect(text(older.doc)).toBe('!# agenda\n'))
+    older.doc.getText('content').insert(0, '?')
+    await vi.waitFor(() => expect(text(host.doc)).toBe('?!# agenda\n'))
+    expect(text(notes)).toBe('# notes\n- decided\n')
   })
 
   it('follows only the files it added, and reports each synced once', async () => {
@@ -132,6 +131,7 @@ describe('RoomClient with several files', () => {
     host.addFile(3, file('spec'))
     await vi.waitFor(() => expect(text(gSpec)).toBe('spec'))
     expect(() => host.addFile(3, file())).toThrow()
+    expect(() => host.addFile(0, file())).toThrow() // the room's own doc
     expect(() => host.addFile(MAX_FILE_ID + 1, file())).toThrow()
     expect(() => host.addFile(1.5, file())).toThrow()
   })

@@ -13,7 +13,8 @@ import (
 )
 
 var manifest = []protocol.FileEntry{
-	{ID: 1, Path: "agenda.md", Format: protocol.FormatText},
+	{ID: 0, Path: "agenda.md", Format: protocol.FormatText},
+	{ID: 1, Path: "notes.md", Format: protocol.FormatText},
 	{ID: 2, Path: "議事録/board.canvas", Format: protocol.FormatCanvas},
 	{ID: 300, Path: "data.csv", Format: protocol.FormatText},
 }
@@ -98,6 +99,13 @@ func appendUvarint(b []byte, v uint64) []byte {
 }
 
 func TestFileDocCarriesOnlySyncAttachmentsAndCanvas(t *testing.T) {
+	// File 0 is the room's own doc, synced with plain messages.
+	if _, err := protocol.EncodeFileDoc(0, protocol.MessageSync, nil); err == nil {
+		t.Error("a doc message about file 0 encoded")
+	}
+	if _, err := protocol.DecodeFiles([]byte{byte(protocol.FilesDoc), 0, byte(protocol.MessageSync), 0}); err == nil {
+		t.Error("a doc message about file 0 decoded")
+	}
 	for _, typ := range []protocol.MessageType{protocol.MessageAwareness, protocol.MessageFiles} {
 		if _, err := protocol.EncodeFileDoc(1, typ, nil); err == nil {
 			t.Errorf("type %d: encoded", typ)

@@ -6,12 +6,14 @@ import { checkPath } from './path.ts'
 /**
  * Files messages carry the files of a room that shares several (#113). Each
  * file is a Y.Doc of its own: one doc for all would put every file under the
- * one frame its state is sent in.
+ * one frame its state is sent in. File 0 is the room's own doc, synced as in
+ * a room that shares one file: a room can start with one file and add more,
+ * and older peers, which skip these messages, go on editing file 0.
  *
  * - manifest: the host's list of the room's files, which replaces any list
  *   sent before
  * - doc: a sync, attachment or canvas message, as it would be sent in a room
- *   that shares one file, for the file with this id
+ *   that shares one file, for the file with this id (never 0)
  *
  * The host gives each file an id that it never reuses in the room, and only
  * ever routes a message by the id it carries: a path is for people to read.
@@ -135,7 +137,7 @@ function validateManifest(files: FileEntry[]): void {
 }
 
 function validateDoc(file: number, type: MessageType): void {
-  if (!validId(file)) throw new Error(`invalid file id ${file}`)
+  if (file === 0 || !validId(file)) throw new Error(`invalid file id ${file}`)
   if (type !== MessageType.Sync && type !== MessageType.Attachment && type !== MessageType.Canvas) {
     throw new Error(`a ${type} message cannot be about a file`)
   }

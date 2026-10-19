@@ -64,34 +64,39 @@ func (l *manifestLog) last() []protocol.FileEntry {
 func TestSyncsEachFileInADocOfItsOwn(t *testing.T) {
 	relay := prototest.NewRelay(true)
 	key := protocol.GenerateKey()
-	host := join(t, relay, key, joinOpts{header: hostHeader()})
-	agenda, notes := newFileText("# agenda\n"), newFileText("# notes\n")
-	addFile(t, host, 1, agenda)
-	addFile(t, host, 2, notes)
-	if err := host.SetManifest(manifest[:2]); err != nil {
+	// File 0 is the room's own doc, as in a room that shares one file.
+	host := join(t, relay, key, joinOpts{header: hostHeader(), init: "# agenda\n"})
+	notes, board := newFileText("# notes\n"), newFileText("{}")
+	addFile(t, host, 1, notes)
+	addFile(t, host, 2, board)
+	if err := host.SetManifest(manifest[:3]); err != nil {
 		t.Fatal(err)
 	}
 	prototest.WaitFor(t, wait, func() bool { return host.Status() == protocol.StatusConnected }, "host connected")
 
 	var heard manifestLog
 	guest := join(t, relay, key, joinOpts{onManifest: heard.add})
-	prototest.WaitFor(t, wait, func() bool { return reflect.DeepEqual(heard.last(), manifest[:2]) }, "the manifest")
-	gAgenda, gNotes := newFileText(""), newFileText("")
-	addFile(t, guest, 1, gAgenda)
-	addFile(t, guest, 2, gNotes)
+	prototest.WaitFor(t, wait, func() bool { return reflect.DeepEqual(heard.last(), manifest[:3]) }, "the manifest")
+	gNotes, gBoard := newFileText(""), newFileText("")
+	addFile(t, guest, 1, gNotes)
+	addFile(t, guest, 2, gBoard)
 	prototest.WaitFor(t, wait, func() bool {
-		return gAgenda.String() == "# agenda\n" && gNotes.String() == "# notes\n"
-	}, "the guest to get both files")
+		return guest.String() == "# agenda\n" && gNotes.String() == "# notes\n" && gBoard.String() == "{}"
+	}, "the guest to get every file")
 
 	gNotes.insert(len("# notes\n"), "- decided\n")
-	agenda.insert(0, "!")
+	host.insert(0, "!")
 	prototest.WaitFor(t, wait, func() bool {
-		return notes.String() == "# notes\n- decided\n" && gAgenda.String() == "!# agenda\n"
+		return notes.String() == "# notes\n- decided\n" && guest.String() == "!# agenda\n"
 	}, "edits both ways")
-	// The room's own doc stays empty: a peer that knows nothing of files has
-	// nothing to save.
-	if host.String() != "" || guest.String() != "" {
-		t.Fatalf("room doc: host %q, guest %q", host.String(), guest.String())
+
+	// A peer that knows nothing of files goes on editing file 0, and only it.
+	older := join(t, relay, key, joinOpts{})
+	prototest.WaitFor(t, wait, func() bool { return older.String() == "!# agenda\n" }, "file 0 for an older peer")
+	older.insert(0, "?")
+	prototest.WaitFor(t, wait, func() bool { return host.String() == "?!# agenda\n" }, "its edit")
+	if notes.String() != "# notes\n- decided\n" || board.String() != "{}" {
+		t.Fatalf("other files changed: %q %q", notes.String(), board.String())
 	}
 }
 
@@ -147,6 +152,9 @@ func TestAddingAFileWhileConnectedSyncsIt(t *testing.T) {
 	prototest.WaitFor(t, wait, func() bool { return gSpec.String() == "spec" }, "the new file")
 	if err := host.AddFile(3, crdt.New()); err == nil {
 		t.Fatal("a file added twice")
+	}
+	if err := host.AddFile(0, crdt.New()); err == nil {
+		t.Fatal("file 0, the room's own doc, added")
 	}
 	if err := host.AddFile(protocol.MaxFileID+1, crdt.New()); err == nil {
 		t.Fatal("an id over MaxFileID")
