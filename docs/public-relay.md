@@ -93,8 +93,9 @@ players run their own scripts, can set their own cookies, and get only the
 origin as `Referer`. The page's
 Content-Security-Policy enforces this: the browser refuses any other image,
 video, frame or connection. A self-hosted relay can allow external images and
-videos with `MEDIA_SOURCES`, and frames from other sites with `FRAME_SOURCES`
-([self-hosting](self-hosting.md#room-limits)); the public relay sets neither.
+videos with `MEDIA_SOURCES` ([self-hosting](self-hosting.md#room-limits)), and
+be built with other sites' players
+([self-hosting](self-hosting.md#embed-providers)); the public relay does neither.
 
 ## What Cloudflare sees
 

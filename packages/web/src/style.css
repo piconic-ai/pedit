@@ -936,9 +936,32 @@ main.editor[data-resizing] iframe {
   display: block;
   max-width: min(100%, 820px);
 }
-/* The placeholder keeps the player's size, so loading it does not move the page. */
-.preview .embed--video {
-  aspect-ratio: 16 / 9;
+/*
+ * The placeholder has the player's box, so loading it does not move the page.
+ * The box comes from whole numbers the preview writes (boxStyle in embed.ts): a
+ * width in pixels with a ratio, or the preview's width with a ratio or a height.
+ * An unset property leaves width, height or aspect-ratio at auto.
+ * No box is taller than 80vh or outside 4:1..1:2. max-height alone would cut a
+ * stretched box's height and not its width, so the width is capped too: by the
+ * ratio for a ratio box (the fallbacks make the other terms no-ops), and to 4:1
+ * of its height for a height box, whose height is in turn at most twice the
+ * preview's width (200cqw).
+ */
+.preview {
+  container-type: inline-size;
+}
+.preview .embed {
+  box-sizing: border-box;
+  width: calc(var(--embed-w) * 1px);
+  max-width: min(
+    100%,
+    calc(80vh * var(--embed-rw, 4) / var(--embed-rh, 1)),
+    calc(var(--embed-h, 4000) * 4px)
+  );
+  height: calc(var(--embed-h) * 1px);
+  max-height: min(80vh, 200cqw);
+  aspect-ratio: var(--embed-rw) / var(--embed-rh);
+  overflow: hidden;
 }
 .preview .embed:not(.embed--loaded) {
   display: flex;

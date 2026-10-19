@@ -167,7 +167,7 @@ export class PreviewPane {
       '[data-embed-src]:not(.embed--loaded)',
     )) {
       if (always.has(renderer.embedProvider(placeholder))) {
-        renderer.loadEmbed(placeholder, undefined, false)
+        renderer.loadEmbed(placeholder, false)
       }
     }
   }

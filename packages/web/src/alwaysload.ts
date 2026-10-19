@@ -1,51 +1,30 @@
+import { PROVIDERS, type ProviderId } from '@pedit/protocol/csp'
 import { defaultStore, type Store as Storage } from './storage.ts'
 import { Store } from './store.ts'
 
 export const ALWAYS_LOAD_KEY = 'pedit:always-load'
 
+export type { ProviderId }
+
 /**
- * Who serves a preview frame, as this browser remembers it: 'youtube',
- * 'vimeo', or 'custom:' and the origin of a FRAME_SOURCES site. Never a URL:
- * the list holds nothing about a room or what someone wrote in it.
+ * Whether `id` names a provider this relay was built with: a key of the
+ * registry (packages/protocol/src/embeds/index.ts). That is all the list holds,
+ * never a URL: nothing about a room or what someone wrote in it.
  */
-export type ProviderId = string
-
-const KNOWN: Record<string, string> = { youtube: 'YouTube', vimeo: 'Vimeo' }
-const CUSTOM = 'custom:'
-
-/** The origin of a custom provider id, or null if it is not a well-formed one. */
-function customOrigin(id: string): URL | null {
-  if (!id.startsWith(CUSTOM)) return null
-  const origin = id.slice(CUSTOM.length)
-  try {
-    const url = new URL(origin)
-    const web = url.protocol === 'https:' || url.protocol === 'http:'
-    return web && url.origin === origin ? url : null
-  } catch {
-    return null
-  }
-}
-
 export function isProviderId(id: unknown): id is ProviderId {
-  return typeof id === 'string' && (Object.hasOwn(KNOWN, id) || customOrigin(id) !== null)
+  return typeof id === 'string' && Object.hasOwn(PROVIDERS, id)
 }
 
-/** The id of a custom provider for a frame src, from its origin alone. */
-export function customProvider(src: URL): ProviderId {
-  return `${CUSTOM}${src.origin}`
-}
-
-/** How the preview and the settings name a provider: its name, or a custom site's host. */
+/** How the preview and the settings name a provider: its name in the registry. */
 export function providerLabel(id: ProviderId): string {
-  const known = KNOWN[id]
-  if (known) return known
-  const url = customOrigin(id)
-  if (!url) return id
-  // Spell out plain HTTP, so it cannot pass for the HTTPS site of the same host.
-  return url.protocol === 'https:' ? url.host : url.origin
+  return PROVIDERS[id].name
 }
 
-/** The providers this browser always loads; anything malformed is left out. */
+/**
+ * The providers this browser always loads. Anything malformed is left out, and
+ * so is an id this relay has no provider for (one dropped from the registry
+ * since, or an id from an older pedit).
+ */
 export function parseAlwaysLoad(value: unknown): ProviderId[] {
   if (!Array.isArray(value)) return []
   return [...new Set(value.filter(isProviderId))]

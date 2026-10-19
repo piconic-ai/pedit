@@ -1,9 +1,24 @@
-// The Content-Security-Policy of the browser editor, and the lists of media and
-// frame sources that both the policy and the Markdown preview read. The Worker
-// (packages/worker/src/page.ts) builds the header from the MEDIA_SOURCES and
-// FRAME_SOURCES vars; the web editor learns the same lists from <meta> tags the
-// Worker injects.
+// The Content-Security-Policy of the browser editor, and the media and frame
+// sources that both the policy and the Markdown preview read. The Worker
+// (packages/worker/src/page.ts) builds the header from the MEDIA_SOURCES var,
+// which the web editor learns from a <meta> tag the Worker injects, and from the
+// embed providers (embeds/index.ts), which both are built with.
 // This is not part of the wire format, so internal/protocol has no mirror.
+
+import {
+  ALLOW_FEATURES,
+  type Provider,
+  type Providers,
+  SANDBOX_EXTRAS,
+  type Size,
+} from './embeds/define.ts'
+import PROVIDERS from './embeds/index.ts'
+
+/** The embed providers this relay was built with (embeds/index.ts). */
+export { PROVIDERS }
+
+/** The id of one of those providers, as "Always load" remembers it. */
+export type ProviderId = keyof typeof PROVIDERS
 
 /** Hosts an avatar may come from. Awareness state is written by anyone with the link. */
 export const AVATAR_HOSTS = [
@@ -14,24 +29,9 @@ export const AVATAR_HOSTS = [
   'lh3.googleusercontent.com',
 ] as const
 
-/**
- * The player each provider's embeds load, by provider. The preview frames these
- * and any FRAME_SOURCES; the sanitiser drops any other iframe.
- */
-export const FRAMES = {
-  youtube: 'https://www.youtube-nocookie.com/embed/',
-  vimeo: 'https://player.vimeo.com/video/',
-} as const
-
-export type FrameProvider = keyof typeof FRAMES
-
 /** The <meta name> through which the Worker tells the editor the allowed media sources. */
 export const MEDIA_META = 'pedit-media-sources'
 export const MAX_MEDIA_SOURCES = 32
-
-/** The <meta name> through which the Worker tells the editor the extra frame sources. */
-export const FRAME_META = 'pedit-frame-sources'
-export const MAX_FRAME_SOURCES = 32
 
 const SCHEME_SOURCE = /^https?:$/i
 // [scheme://][*.]host[:port|:*][/path]. No quotes, ';', ',', '&', '<', '>' or whitespace,
@@ -44,17 +44,6 @@ export function parseMediaSources(value: string | undefined): string[] | null {
   const tokens = (value ?? '').trim().split(/\s+/).filter(Boolean)
   if (tokens.length > MAX_MEDIA_SOURCES) return null
   return tokens.every((t) => SCHEME_SOURCE.test(t) || HOST_SOURCE.test(t)) ? tokens : null
-}
-
-/**
- * Parses FRAME_SOURCES. Like MEDIA_SOURCES, but every token must name a host: a
- * scheme alone (https:) or '*' would let a document frame any site. Unset or blank
- * gives []; any invalid token gives null (callers use []).
- */
-export function parseFrameSources(value: string | undefined): string[] | null {
-  const tokens = (value ?? '').trim().split(/\s+/).filter(Boolean)
-  if (tokens.length > MAX_FRAME_SOURCES) return null
-  return tokens.every((t) => HOST_SOURCE.test(t)) ? tokens : null
 }
 
 /**
@@ -108,26 +97,91 @@ export function allowsMedia(sources: readonly string[], url: URL, page: URL): bo
   return sources.some((s) => allowsBy(s, url, page))
 }
 
+// https://host[:port]/path/, as written in frame-src. No '*', quotes, ';', ',', '%'
+// or whitespace, so a prefix can never add a keyword or end a directive.
+const FRAME_PREFIX =
+  /^https:\/\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*(?::\d{1,5})?\/(?:[A-Za-z0-9._~-]+\/)*$/
+const SANDBOX = new Set<string>(SANDBOX_EXTRAS)
+const FEATURES = new Set<string>(ALLOW_FEATURES)
+const RATIO = /^[1-9]\d{0,3}\/[1-9]\d{0,3}$/
+
 /**
- * Whether the preview may frame `url` from FRAME_SOURCES `sources`, for a page at
- * `page`. Stricter than the browser: https only, unless a source names http://
- * itself; no user-info; never the page's own origin.
+ * Why `provider` must not be framed on a page at `page`, or null if it may. The
+ * types of defineProvider only hold at compile time; this checks them again,
+ * and that no frame prefix covers the page's own origin (see coversOrigin).
  */
-export function allowsFrame(sources: readonly string[], url: URL, page: URL): boolean {
-  if (url.username || url.password || url.origin === page.origin) return false
-  if (url.protocol === 'http:')
-    return sources.some((s) => /^http:\/\//i.test(s) && allowsBy(s, url, page))
-  return url.protocol === 'https:' && sources.some((s) => allowsBy(s, url, page))
+export function providerProblem(provider: Provider, page: URL): string | null {
+  const p: Partial<Record<keyof Provider, unknown>> = provider
+  if (typeof p.name !== 'string' || !p.name.trim()) return 'no name'
+  if (!Array.isArray(p.frames) || p.frames.length === 0) return 'no frames'
+  for (const frame of p.frames as unknown[]) {
+    if (!validFrame(frame)) return `frame ${JSON.stringify(frame)} is not https://host/path/`
+  }
+  if (coversOrigin(p.frames as string[], page)) return "its frames cover the editor's own origin"
+  const size = p.size
+  if (typeof size !== 'function' && !isSize(size)) {
+    return 'no valid size'
+  }
+  if (p.embed !== undefined && typeof p.embed !== 'function') return 'an embed that is no function'
+  for (const [key, allowed] of [
+    ['sandbox', SANDBOX],
+    ['allow', FEATURES],
+  ] as const) {
+    const tokens = p[key] ?? []
+    if (!Array.isArray(tokens) || !tokens.every((t) => allowed.has(t))) {
+      return `a ${key} token it may not have`
+    }
+  }
+  return null
+}
+
+// In the parser's own form too: lower-case host, no default port, no dot segments.
+function validFrame(frame: unknown): boolean {
+  if (typeof frame !== 'string' || !FRAME_PREFIX.test(frame)) return false
+  try {
+    return new URL(frame).href === frame
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Whether `size` is a frame box a provider may give: a ratio of whole numbers or
+ * a height in whole pixels. A size function's answer is checked with it too.
+ */
+export function isSize(size: unknown): size is Size {
+  if (typeof size !== 'object' || size === null) return false
+  const s = size as Record<string, unknown>
+  if ('ratio' in s) return typeof s.ratio === 'string' && RATIO.test(s.ratio)
+  return Number.isInteger(s.height) && (s.height as number) > 0
+}
+
+/**
+ * The providers the preview frames on a page at `page`, in order, and those it
+ * refuses with the reason. The Worker builds frame-src from the same answer.
+ */
+export function framedProviders<P extends Providers = typeof PROVIDERS>(
+  page: URL,
+  providers: P = PROVIDERS as unknown as P,
+): { framed: (keyof P & string)[]; refused: { id: string; reason: string }[] } {
+  const framed: (keyof P & string)[] = []
+  const refused: { id: string; reason: string }[] = []
+  for (const [id, provider] of Object.entries(providers)) {
+    const reason = providerProblem(provider, page)
+    if (reason) refused.push({ id, reason })
+    else framed.push(id)
+  }
+  return { framed, refused }
 }
 
 /**
  * The policy for one HTML response, on one line. `origin` is the request's URL;
- * `frames` are the FRAME_SOURCES, which must not cover it (see coversOrigin).
+ * `frames` are the frame prefixes of the providers framed there (framedProviders).
  */
 export function contentSecurityPolicy(o: {
   scriptHashes: readonly string[]
   media: readonly string[]
-  frames?: readonly string[]
+  frames: readonly string[]
   origin: URL
 }): string {
   const socket = `${o.origin.protocol === 'https:' ? 'wss' : 'ws'}://${o.origin.host}`
@@ -139,7 +193,7 @@ export function contentSecurityPolicy(o: {
     "style-src 'self' 'unsafe-inline'",
     `img-src 'self' blob: data: ${avatars}${o.media.map((m) => ` ${m}`).join('')}`,
     `media-src ${o.media.length ? o.media.join(' ') : "'none'"}`,
-    `frame-src ${[...Object.values(FRAMES), ...(o.frames ?? [])].join(' ')}`,
+    `frame-src ${o.frames.length ? o.frames.join(' ') : "'none'"}`,
     `connect-src 'self' ${socket}`,
     "font-src 'self'",
     "object-src 'none'",

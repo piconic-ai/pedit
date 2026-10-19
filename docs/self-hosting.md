@@ -142,7 +142,6 @@ Cloudflare dashboard → your Worker → Settings → Variables and Secrets):
 | `BLOB_QUOTA_COUNT` | All images of a session, in number | `500` |
 | `ROOM_MAX_SECONDS` | How long a room lasts, in seconds from its host's first connection | *(unset: no limit)* |
 | `MEDIA_SOURCES` | Where the Markdown preview may load images and videos from: space-separated Content-Security-Policy sources, such as `https:` for any HTTPS site or `https://images.example.com`. An invalid list is ignored. | *(unset: none; only images pasted in the session)* |
-| `FRAME_SOURCES` | Sites, besides the YouTube and Vimeo players, that the Markdown preview may frame: space-separated Content-Security-Policy host sources, such as `https://embed.example.com/player/`. A URL on a line of its own that matches one is shown as a placeholder that, when clicked, loads a sandboxed frame that may run its scripts and open popups (nothing is fetched from the site before the click, unless that viewer ticked "Always load" for it in their browser); plain HTTP only for a source written with `http://`. Every source must name a host (not `https:` or `*`), and none may cover the relay's own origin, which would let the frame read the page. An invalid list is ignored. | *(unset: only YouTube and Vimeo)* |
 
 Whatever the limits, a connection that sends far more than editing needs is
 closed: a guest's client reconnects, and a host's disconnect ends the session,
@@ -161,3 +160,45 @@ seconds) to raise them, for example for a class that starts pedit together, or
 remove a binding to drop that limit. Their `namespace_id` must not be used by
 another Worker in the same Cloudflare account. The limits are counted per
 Cloudflare location and are approximate.
+
+## Embed providers
+
+A URL on a line of its own in a Markdown document shows a player when an embed
+provider takes it. The providers are built into the relay: each is one file in
+`packages/protocol/src/embeds/`, and `packages/protocol/src/embeds/index.ts`
+lists the ones the relay frames. To add one, write `<id>.ts` there and add its
+line to `index.ts`; to drop one, remove both. The id is the key in `index.ts`.
+
+```ts
+import { defineProvider } from './define.ts'
+
+export default defineProvider({
+  name: 'Example', // the name people see, and the frame's title
+  frames: ['https://embed.example.com/player/'], // where its players live
+  size: { ratio: '16/9' }, // or { height: 152 }, or a function of the URL
+  // The player URL for a pasted URL, rebuilt from the parts it checked, or
+  // null. Without it, only URLs already under `frames` are framed, as they are.
+  embed(url) {
+    const id = /^\/v\/(\d{1,20})$/.exec(url.pathname)?.[1]
+    return url.hostname === 'example.com' && id ? `https://embed.example.com/player/${id}` : null
+  },
+  sandbox: ['allow-forms'], // on top of allow-scripts allow-same-origin allow-popups
+  allow: ['fullscreen'], // permissions policy features
+})
+```
+
+Every frame goes into the page's Content-Security-Policy `frame-src`, and the
+preview frames only URLs under the frames of the provider that built them. The
+types refuse what a frame may not have, such as `allow-top-navigation` or
+`allow-downloads`; the relay checks the same again at run time and leaves out
+(and logs) a provider that fails, or whose frames would cover the relay's own
+origin, where the frame could read the page. `pnpm test` checks that every
+file is listed and that no two providers' frames overlap.
+
+`size` is the player's box when its URL names none. Someone can still size one
+player by ending its URL with `#width=560&height=315`, `#width=100%&height=480`,
+`#width=560` or `#height=400`; that fragment is taken off before `embed()` sees
+the URL, so it never reaches the provider. A width alone keeps the provider's
+ratio for that URL, as does a height alone. Every box is kept within 100 to
+4000 pixels a side, between 4:1 and 1:2, and no taller than 80% of the window;
+a size outside that, however many digits it has, is clamped to it.
