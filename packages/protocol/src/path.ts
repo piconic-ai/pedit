@@ -65,9 +65,9 @@ function checkComponent(c: string): PathProblem | null {
  * letters are upper-cased, so no other letter folds into one.
  */
 function reservedOnWindows(c: string): boolean {
-  const stem = c
-    .replace(/\..*/s, '')
-    .replace(/ +$/, '')
-    .replace(/[a-z]/g, (l) => l.toUpperCase())
+  let stem = c.split('.', 1)[0] ?? ''
+  let end = stem.length
+  while (stem[end - 1] === ' ') end--
+  stem = stem.slice(0, end).replace(/[a-z]/g, (l) => l.toUpperCase())
   return /^(?:CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|(?:COM|LPT)[0-9¹²³])$/.test(stem)
 }
