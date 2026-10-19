@@ -60,6 +60,9 @@ export type Provider = {
   /**
    * The player URL for a pasted URL, rebuilt from the parts it checked, or null.
    * Without it, only URLs already under `frames` are framed, as they are.
+   * Given a player URL it built, it must return that URL unchanged: the preview
+   * frames only player URLs the provider would build itself, so a provider's
+   * frames may be wider than its players (CodePen's are all of codepen.io).
    */
   embed?: (url: URL) => string | null
   /** Sandbox tokens on top of SANDBOX_BASE. */
@@ -84,4 +87,17 @@ export function sandboxOf(provider: Provider): string {
 /** The allow attribute of a provider's frames ('' for none). */
 export function allowOf(provider: Provider): string {
   return (provider.allow ?? []).join('; ')
+}
+
+// An encoded slash, backslash or dot could become a different path on the provider's server.
+const ENCODED_SEPARATOR = /%(2f|5c|2e)/i
+
+/**
+ * Whether `url` is on one of `hosts`, compared exactly, and could be one of its
+ * links: no user-info, port or encoded separator in the path, which no
+ * provider's links carry. For an embed() to check a pasted URL with.
+ */
+export function onHost(url: URL, ...hosts: readonly string[]): boolean {
+  if (url.username || url.password || url.port || ENCODED_SEPARATOR.test(url.pathname)) return false
+  return hosts.includes(url.hostname)
 }

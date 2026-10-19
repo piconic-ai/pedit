@@ -82,8 +82,9 @@ The Markdown preview does not load images or videos from other sites: an
 external image shows as a placeholder saying this relay does not load external
 images, so a document cannot make your browser contact a host its author
 picked. Images pasted in the session are decrypted in your browser and shown
-from memory. A YouTube (`youtube-nocookie.com`) or Vimeo link on a line of its
-own shows a placeholder naming the host it would load from; the player loads
+from memory. A link on a line of its own to YouTube (`youtube-nocookie.com`),
+Vimeo, Loom, Figma, CodePen, StackBlitz, Observable, Spotify, SoundCloud or
+Miro shows a placeholder naming the host it would load from; the player loads
 only when you click it, so a URL in the file alone does not make anyone's
 browser contact that site. If you tick "Always load" for a provider, your
 browser loads that provider's players without asking; the choice is stored in
@@ -91,7 +92,11 @@ your browser only (just the provider's id, such as `youtube`, no URL), is never 
 relay, and can be undone in Settings. This is for privacy, not a sandbox: once loaded, the
 players run their own scripts, can set their own cookies, and get only the
 origin as `Referer`. The page's
-Content-Security-Policy enforces this: the browser refuses any other image,
+Content-Security-Policy enforces this, by path where the provider allows
+(`https://www.loom.com/embed/`, for example). CodePen is the exception: its
+players live at `/{user}/embed/{pen}`, which no Content-Security-Policy source
+can name, so the policy allows all of `https://codepen.io/` and the editor
+frames only player URLs of that shape: the browser refuses any other image,
 video, frame or connection. A self-hosted relay can allow external images and
 videos with `MEDIA_SOURCES` ([self-hosting](self-hosting.md#room-limits)), and
 be built with other sites' players

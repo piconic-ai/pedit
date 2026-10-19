@@ -593,6 +593,122 @@ describe('loadEmbed', () => {
   })
 })
 
+describe('provider embeds', () => {
+  // A link someone shares, the player it becomes, its provider and its box.
+  const cases = [
+    [
+      'https://www.loom.com/share/0123456789abcdef0123456789abcdef?sid=x',
+      'https://www.loom.com/embed/0123456789abcdef0123456789abcdef',
+      'loom',
+      '--embed-rw:16;--embed-rh:9',
+    ],
+    [
+      'https://www.figma.com/design/AbCdEfGhIjKlMnOpQrStUv/File?node-id=1-2&t=x',
+      'https://embed.figma.com/design/AbCdEfGhIjKlMnOpQrStUv?embed-host=pedit&node-id=1-2',
+      'figma',
+      '--embed-rw:4;--embed-rh:3',
+    ],
+    [
+      'https://codepen.io/u/pen/AbC123',
+      'https://codepen.io/u/embed/AbC123?default-tab=result',
+      'codepen',
+      '--embed-rw:4;--embed-rh:3',
+    ],
+    [
+      'https://stackblitz.com/edit/vitejs-vite-abc?file=src/main.ts',
+      'https://stackblitz.com/edit/vitejs-vite-abc?embed=1&file=src/main.ts',
+      'stackblitz',
+      '--embed-rw:4;--embed-rh:3',
+    ],
+    [
+      'https://observablehq.com/@d3/bar-chart',
+      'https://observablehq.com/embed/@d3/bar-chart',
+      'observable',
+      '--embed-rw:4;--embed-rh:3',
+    ],
+    [
+      'https://open.spotify.com/intl-de/track/4uLU6hMCjMI75M1A2tKUQC?si=x',
+      'https://open.spotify.com/embed/track/4uLU6hMCjMI75M1A2tKUQC',
+      'spotify',
+      '--embed-h:152',
+    ],
+    [
+      'https://w.soundcloud.com/player/?url=https%3A//api.soundcloud.com/tracks/293&auto_play=true',
+      'https://w.soundcloud.com/player/?url=https%3A%2F%2Fapi.soundcloud.com%2Ftracks%2F293&auto_play=false',
+      'soundcloud',
+      '--embed-h:166',
+    ],
+    [
+      'https://miro.com/app/board/uXjVOabcdEF=/?share_link_id=1',
+      'https://miro.com/app/live-embed/uXjVOabcdEF=/',
+      'miro',
+      '--embed-rw:4;--embed-rh:3',
+    ],
+  ] as const
+
+  it.each(cases)('offers %s as a placeholder for its player', (href, src, id, style) => {
+    const out = dom(href)
+    const el = out.querySelector('[data-embed-src]') as Element
+    const name = PROVIDERS[id].name
+    expect(el.getAttribute('data-embed-src')).toBe(src)
+    expect(el.getAttribute('style')).toBe(style)
+    expect(el.querySelector('.embed-provider')?.textContent).toBe(name)
+    expect(el.querySelector('.embed-load')?.textContent).toBe(`Load from ${new URL(src).host}`)
+    expect(el.querySelector('.embed-remember')?.textContent).toBe(`Always load ${name}`)
+    expect(el.querySelector('.embed-link')?.getAttribute('href')).toBe(href)
+    expect(out.querySelector('iframe')).toBeNull()
+  })
+
+  it('renders no iframe for any of them before someone asks', () => {
+    const out = dom(cases.map(([href]) => href).join('\n\n'))
+    expect(out.querySelectorAll('[data-embed-src]')).toHaveLength(cases.length)
+    expect(out.innerHTML).not.toContain('<iframe')
+  })
+
+  it.each(cases)('loads %s with only its own attributes', (href, src, id) => {
+    const div = document.createElement('div')
+    document.body.append(div)
+    patch(div, render(href, undefined, []))
+    const el = div.querySelector('[data-embed-src]') as Element
+    expect(embedProvider(el)).toBe(id)
+    const frame = loadEmbed(el)
+    const p = PROVIDERS[id]
+    expect(
+      Object.fromEntries([...(frame?.attributes ?? [])].map((a) => [a.name, a.value])),
+    ).toEqual({
+      src,
+      title: p.name,
+      sandbox: ['allow-scripts allow-same-origin allow-popups', ...(p.sandbox ?? [])].join(' '),
+      allow: (p.allow ?? []).join('; '),
+      referrerpolicy: 'strict-origin-when-cross-origin',
+    })
+    div.remove()
+  })
+
+  it('keeps a look-alike or a SoundCloud player for another site a link', () => {
+    const out = dom(
+      [
+        'https://codepen.io.evil.example/u/pen/AbC123',
+        'https://w.soundcloud.com/player/?url=https%3A//evil.example/tracks/293',
+        'https://www.figma.com@evil.example/design/AbCdEfGhIjKlMnOpQrStUv',
+      ].join('\n\n'),
+    )
+    expect(out.querySelector('[data-embed-src]')).toBeNull()
+    expect(out.querySelectorAll('a[href]')).toHaveLength(3)
+  })
+
+  it('drops a placeholder whose src no provider would build, such as a CodePen page', () => {
+    for (const src of [
+      'https://codepen.io/login',
+      'https://w.soundcloud.com/player/?url=https%3A//evil.example/1',
+    ]) {
+      expect(
+        sanitize(`<div class="embed" data-embed-src="${src}">x</div>`).childNodes,
+      ).toHaveLength(0)
+    }
+  })
+})
+
 describe('always load', () => {
   function memory(initial: string[] = []) {
     const data = new Map<string, string>([[ALWAYS_LOAD_KEY, JSON.stringify(initial)]])
@@ -637,6 +753,15 @@ describe('always load', () => {
     const samples: Record<ProviderId, string> = {
       youtube: 'https://youtu.be/dQw4w9WgXcQ',
       vimeo: 'https://vimeo.com/76979871',
+      loom: 'https://www.loom.com/share/0123456789abcdef0123456789abcdef',
+      figma: 'https://www.figma.com/board/AbCdEfGhIjKlMnOpQrStUv',
+      codepen: 'https://codepen.io/u/pen/AbC123',
+      stackblitz: 'https://stackblitz.com/github/user/repo',
+      observable: 'https://observablehq.com/@d3/bar-chart',
+      spotify: 'https://open.spotify.com/album/4uLU6hMCjMI75M1A2tKUQC',
+      soundcloud:
+        'https://w.soundcloud.com/player/?url=https%3A//api.soundcloud.com/playlists/soundcloud%3Aplaylists%3A7',
+      miro: 'https://miro.com/app/board/o9J_abcdefgh/',
     }
     for (const [id, url] of Object.entries(samples)) {
       const out = dom(url)

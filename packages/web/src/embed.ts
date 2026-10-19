@@ -101,9 +101,18 @@ export function frameFor(src: string | null, page: URL = here()): Frame | null {
   )
   if (!known) return null
   const provider = PROVIDERS[known.provider]
+  // Never the fragment: it stays in the room, as a size hint or anything else.
+  const rebuilt = `${known.frame}${url.pathname.slice(known.path.length)}${url.search}`
+  // A provider that builds its player URLs frames only one it would build, as
+  // its frames may be wider than its players (CodePen's are all of codepen.io).
+  if (
+    provider.embed &&
+    httpUrl(playerUrl(known.provider, new URL(rebuilt)) ?? '')?.href !== rebuilt
+  ) {
+    return null
+  }
   return {
-    // Never the fragment: it stays in the room, as a size hint or anything else.
-    src: `${known.frame}${url.pathname.slice(known.path.length)}${url.search}`,
+    src: rebuilt,
     provider: known.provider,
     title: provider.name,
     sandbox: sandboxOf(provider),

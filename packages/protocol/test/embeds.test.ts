@@ -3,6 +3,7 @@ import {
   ALLOW_FEATURES,
   allowOf,
   defineProvider,
+  onHost,
   type Provider,
   SANDBOX_BASE,
   SANDBOX_EXTRAS,
@@ -12,14 +13,20 @@ import PROVIDERS from '../src/embeds/index.ts'
 
 declare global {
   interface ImportMeta {
-    glob<T>(pattern: string, options: { eager: true; import: 'default' }): Record<string, T>
+    glob<T>(
+      pattern: string | string[],
+      options: { eager: true; import: 'default' },
+    ): Record<string, T>
   }
 }
 
-// Every provider file, by id; define.ts and index.ts are not providers.
+// Every provider file, by id; define.ts, index.ts and the tests are not providers.
 const files = Object.fromEntries(
   Object.entries(
-    import.meta.glob<Provider>('../src/embeds/*.ts', { eager: true, import: 'default' }),
+    import.meta.glob<Provider>(['../src/embeds/*.ts', '!../src/embeds/*.test.ts'], {
+      eager: true,
+      import: 'default',
+    }),
   )
     .map(([path, provider]) => [path.replace(/^.*\/|\.ts$/g, ''), provider] as const)
     .filter(([id]) => id !== 'define' && id !== 'index' && !id.endsWith('.test')),
@@ -46,6 +53,21 @@ describe('the provider registry', () => {
         expect(under, `${a.url.href} (${a.id}) under ${b.url.href} (${b.id})`).toBe(false)
       }
     }
+  })
+
+  it('frames YouTube, Vimeo, Loom, Figma, CodePen, StackBlitz, Observable, Spotify, SoundCloud and Miro', () => {
+    expect(Object.values(PROVIDERS).map((p) => p.name)).toEqual([
+      'YouTube',
+      'Vimeo',
+      'Loom',
+      'Figma',
+      'CodePen',
+      'StackBlitz',
+      'Observable',
+      'Spotify',
+      'SoundCloud',
+      'Miro',
+    ])
   })
 
   it('has unique display names', () => {
@@ -97,6 +119,32 @@ describe('frame attributes', () => {
     const tokens: readonly string[] = [...SANDBOX_BASE, ...SANDBOX_EXTRAS]
     expect(tokens.filter((t) => /top-navigation|escape-sandbox|downloads/.test(t))).toEqual([])
     expect(ALLOW_FEATURES).not.toContain('clipboard-read')
+  })
+})
+
+describe('onHost', () => {
+  it('takes only the hosts named, as they are', () => {
+    expect(onHost(new URL('https://loom.com/share/x'), 'loom.com', 'www.loom.com')).toBe(true)
+    expect(onHost(new URL('http://WWW.LOOM.COM/share/x'), 'loom.com', 'www.loom.com')).toBe(true)
+    for (const href of [
+      'https://app.loom.com/',
+      'https://loom.com.evil.example/',
+      'https://evil-loom.com/',
+      'https://loom.com./',
+    ]) {
+      expect(onHost(new URL(href), 'loom.com'), href).toBe(false)
+    }
+  })
+
+  it.each([
+    'https://user@loom.com/share/x',
+    'https://user:pass@loom.com/share/x',
+    'https://loom.com:8443/share/x',
+    'https://loom.com/share%2fx',
+    'https://loom.com/share%5Cx',
+    'https://loom.com/share/x%2Ey',
+  ])('refuses %s, which no provider link carries', (href) => {
+    expect(onHost(new URL(href), 'loom.com')).toBe(false)
   })
 })
 

@@ -112,8 +112,8 @@ Requests never carry the fragment, so the key is not sent to the relay or in
 [MDN](https://developer.mozilla.org/en-US/docs/Web/URI/Reference/Fragment)).
 The editor also sets `<meta name="referrer" content="no-referrer">`. The Worker also sends a
 Content-Security-Policy with the editor: scripts only from the relay, and
-network requests only to the relay, the avatar hosts, the YouTube and Vimeo
-players (or the embed providers a self-hosted relay is built with) and any
+network requests only to the relay, the avatar hosts, the players of the embed
+providers the relay is built with (`packages/protocol/src/embeds/index.ts`) and any
 image sources a self-hosted relay allows. A provider's frames may never cover
 the relay's own origin: a frame there with scripts and allow-same-origin could
 reach the editor and its key, so both the Worker (against the request's origin)

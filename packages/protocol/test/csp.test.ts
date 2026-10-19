@@ -139,7 +139,16 @@ describe('contentSecurityPolicy', () => {
         "style-src 'self' 'unsafe-inline'",
         "img-src 'self' blob: data: https://gravatar.com https://www.gravatar.com https://secure.gravatar.com https://avatars.githubusercontent.com https://lh3.googleusercontent.com",
         "media-src 'none'",
-        'frame-src https://www.youtube-nocookie.com/embed/ https://player.vimeo.com/video/',
+        [
+          'frame-src https://www.youtube-nocookie.com/embed/ https://player.vimeo.com/video/',
+          'https://www.loom.com/embed/',
+          'https://embed.figma.com/design/ https://embed.figma.com/board/',
+          'https://embed.figma.com/slides/ https://embed.figma.com/deck/',
+          'https://embed.figma.com/proto/ https://codepen.io/',
+          'https://stackblitz.com/edit/ https://stackblitz.com/github/',
+          'https://observablehq.com/embed/ https://open.spotify.com/embed/',
+          'https://w.soundcloud.com/player/ https://miro.com/app/live-embed/',
+        ].join(' '),
         "connect-src 'self' wss://pedit.test",
         "font-src 'self'",
         "object-src 'none'",
@@ -322,6 +331,16 @@ describe('framedProviders', () => {
     const { framed, refused } = framedProviders(new URL(provider?.frames[0] ?? ''))
     expect(framed).not.toContain(id)
     expect(refused.map((r) => r.id)).toEqual([id])
+  })
+
+  it.each([
+    ['https://codepen.io/r/x', 'codepen'],
+    ['https://stackblitz.com/edit/r/x', 'stackblitz'],
+    ['https://miro.com/app/live-embed/r/x', 'miro'],
+  ])('leaves out only the provider whose frames cover an editor at %s', (href, id) => {
+    const { framed, refused } = framedProviders(new URL(href))
+    expect(refused).toEqual([{ id, reason: "its frames cover the editor's own origin" }])
+    expect(framed).toEqual(Object.keys(PROVIDERS).filter((p) => p !== id))
   })
 })
 

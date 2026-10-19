@@ -2,6 +2,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { PROVIDERS } from '@pedit/protocol/csp'
+import { allowOf, sandboxOf } from '@pedit/protocol/embeds/define'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   boxOf,
@@ -20,6 +21,21 @@ const PLAYER = {
   allow: 'fullscreen; picture-in-picture; encrypted-media',
 }
 const page = new URL('https://pedit.test/r/x')
+
+// A player URL of each provider in the registry, as its embed() builds it.
+const PLAYERS: Record<string, string> = {
+  youtube: 'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ',
+  vimeo: 'https://player.vimeo.com/video/1',
+  loom: 'https://www.loom.com/embed/0123456789abcdef0123456789abcdef',
+  figma: 'https://embed.figma.com/board/AbCdEfGhIjKlMnOpQrStUv?embed-host=pedit',
+  codepen: 'https://codepen.io/u/embed/AbC123?default-tab=result',
+  stackblitz: 'https://stackblitz.com/github/user/repo?embed=1',
+  observable: 'https://observablehq.com/embed/@d3/bar-chart',
+  spotify: 'https://open.spotify.com/embed/track/4uLU6hMCjMI75M1A2tKUQC',
+  soundcloud:
+    'https://w.soundcloud.com/player/?url=https%3A%2F%2Fapi.soundcloud.com%2Ftracks%2F293&auto_play=false',
+  miro: 'https://miro.com/app/live-embed/uXjVOabcdEF=/',
+}
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -178,10 +194,130 @@ describe('frameFor', () => {
   })
 
   it('takes the attributes from the registry', () => {
+    expect(Object.keys(PLAYERS).sort()).toEqual(Object.keys(PROVIDERS).sort())
     for (const [id, provider] of Object.entries(PROVIDERS)) {
-      for (const prefix of provider.frames) {
-        expect(frameFor(`${prefix}1`)).toMatchObject({ provider: id })
-      }
+      expect(frameFor(PLAYERS[id] ?? '')).toEqual({
+        src: PLAYERS[id],
+        provider: id,
+        title: provider.name,
+        sandbox: sandboxOf(provider),
+        allow: allowOf(provider),
+      })
+    }
+  })
+
+  it.each([
+    // Under CodePen's frames, which are all of codepen.io, but no player.
+    'https://codepen.io/login',
+    'https://codepen.io/u/pen/AbC123',
+    'https://codepen.io/u/embed/AbC123',
+    // A SoundCloud player for something that is not SoundCloud's.
+    'https://w.soundcloud.com/player/?url=https%3A//evil.example/1',
+    // Parameters the provider's embed() would not pass on.
+    'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1',
+    'https://player.vimeo.com/video/1?h=ab&autoplay=1',
+    'https://www.loom.com/embed/0123456789abcdef0123456789abcdef?autoplay=1',
+    'https://embed.figma.com/board/AbCdEfGhIjKlMnOpQrStUv',
+    'https://stackblitz.com/edit/x?embed=1&terminal=dev',
+    'https://open.spotify.com/embed/track/4uLU6hMCjMI75M1A2tKUQC?utm_source=x',
+    'https://miro.com/app/live-embed/uXjVOabcdEF=',
+  ])('frames only player URLs the provider would build itself, not %s', (src) => {
+    expect(frameFor(src)).toBeNull()
+    expect(providerOf(src)).toBeNull()
+  })
+})
+
+describe('the providers in the registry', () => {
+  // A link someone shares, the player it becomes and the box it gets.
+  it.each([
+    [
+      'https://www.loom.com/share/0123456789abcdef0123456789abcdef?sid=x',
+      'loom',
+      'https://www.loom.com/embed/0123456789abcdef0123456789abcdef',
+      { width: null, ratio: [16, 9] },
+    ],
+    [
+      'https://www.figma.com/design/AbCdEfGhIjKlMnOpQrStUv/File?node-id=1-2&t=x',
+      'figma',
+      'https://embed.figma.com/design/AbCdEfGhIjKlMnOpQrStUv?embed-host=pedit&node-id=1-2',
+      { width: null, ratio: [4, 3] },
+    ],
+    [
+      'https://codepen.io/u/pen/AbC123',
+      'codepen',
+      'https://codepen.io/u/embed/AbC123?default-tab=result',
+      { width: null, ratio: [4, 3] },
+    ],
+    [
+      'https://stackblitz.com/edit/vitejs-vite-abc?file=src/main.ts',
+      'stackblitz',
+      'https://stackblitz.com/edit/vitejs-vite-abc?embed=1&file=src/main.ts',
+      { width: null, ratio: [4, 3] },
+    ],
+    [
+      'https://observablehq.com/@d3/bar-chart',
+      'observable',
+      'https://observablehq.com/embed/@d3/bar-chart',
+      { width: null, ratio: [4, 3] },
+    ],
+    [
+      'https://open.spotify.com/intl-de/track/4uLU6hMCjMI75M1A2tKUQC?si=x',
+      'spotify',
+      'https://open.spotify.com/embed/track/4uLU6hMCjMI75M1A2tKUQC',
+      { width: null, height: 152 },
+    ],
+    [
+      'https://w.soundcloud.com/player/?url=https%3A//api.soundcloud.com/tracks/293&auto_play=true',
+      'soundcloud',
+      'https://w.soundcloud.com/player/?url=https%3A%2F%2Fapi.soundcloud.com%2Ftracks%2F293&auto_play=false',
+      { width: null, height: 166 },
+    ],
+    [
+      'https://miro.com/app/board/uXjVOabcdEF=/?share_link_id=1',
+      'miro',
+      'https://miro.com/app/live-embed/uXjVOabcdEF=/',
+      { width: null, ratio: [4, 3] },
+    ],
+  ])('frames %s as a %s player', (href, provider, src, box) => {
+    const p = PROVIDERS[provider as keyof typeof PROVIDERS]
+    expect(embedFor(href)).toEqual({
+      kind: 'frame',
+      src,
+      provider,
+      title: p.name,
+      sandbox: sandboxOf(p),
+      allow: allowOf(p),
+      box,
+    })
+  })
+
+  it('sizes them by a hint, which never reaches the provider', () => {
+    expect(
+      embedFor('https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC#height=352'),
+    ).toMatchObject({
+      src: 'https://open.spotify.com/embed/track/4uLU6hMCjMI75M1A2tKUQC',
+      box: { width: null, height: 352 },
+    })
+    expect(embedFor('https://www.figma.com/board/AbCdEfGhIjKlMnOpQrStUv#width=800')).toMatchObject({
+      src: 'https://embed.figma.com/board/AbCdEfGhIjKlMnOpQrStUv?embed-host=pedit',
+      box: { width: 800, ratio: [800, 600] },
+    })
+  })
+
+  it.each([
+    'https://codepen.io.evil.example/u/pen/AbC123',
+    'https://w.soundcloud.com/player/?url=https%3A//evil.example/tracks/293',
+    'https://www.figma.com@evil.example/design/AbCdEfGhIjKlMnOpQrStUv',
+    'https://codepen.io/login',
+    'https://stackblitz.com/edit/x%2f..',
+  ])('leaves %s a link', (href) => {
+    expect(embedFor(href)).toBeNull()
+  })
+
+  it('never gives a frame top navigation, an escape from the sandbox or downloads', () => {
+    for (const provider of Object.values(PROVIDERS)) {
+      expect(sandboxOf(provider)).not.toMatch(/top-navigation|escape-sandbox|downloads/)
+      expect(allowOf(provider)).not.toContain('clipboard-read')
     }
   })
 })
@@ -502,10 +638,8 @@ describe('providerOf', () => {
     expect(providerOf('https://player.vimeo.com/video/1?h=ab')).toBe('vimeo')
   })
 
-  it("names a frame under any provider's frames with its key", () => {
-    for (const [id, provider] of Object.entries(PROVIDERS)) {
-      for (const frame of provider.frames) expect(providerOf(`${frame}123`)).toBe(id)
-    }
+  it("names each provider's players with its key", () => {
+    for (const id of Object.keys(PROVIDERS)) expect(providerOf(PLAYERS[id] ?? '')).toBe(id)
   })
 
   it.each([

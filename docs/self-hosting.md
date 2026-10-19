@@ -169,8 +169,23 @@ provider takes it. The providers are built into the relay: each is one file in
 lists the ones the relay frames. To add one, write `<id>.ts` there and add its
 line to `index.ts`; to drop one, remove both. The id is the key in `index.ts`.
 
+The relay is built with these, in the order the preview tries them:
+
+| Id | Name | Takes | Default box |
+| --- | --- | --- | --- |
+| `youtube` | YouTube | videos, shorts and live streams, from `youtube-nocookie.com` | 16:9 (shorts 9:16) |
+| `vimeo` | Vimeo | videos, unlisted ones with their hash | 16:9 |
+| `loom` | Loom | shared videos | 16:9 |
+| `figma` | Figma | designs, boards, slides, decks and prototypes | 4:3 |
+| `codepen` | CodePen | pens | 4:3 |
+| `stackblitz` | StackBlitz | projects and GitHub repositories | 4:3 |
+| `observable` | Observable | notebooks, or some of their cells | 4:3 |
+| `spotify` | Spotify | tracks, albums, playlists, artists, episodes and shows | 152 px high |
+| `soundcloud` | SoundCloud | the player Share > Embed gives, for a track or playlist | 166 px high |
+| `miro` | Miro | boards | 4:3 |
+
 ```ts
-import { defineProvider } from './define.ts'
+import { defineProvider, onHost } from './define.ts'
 
 export default defineProvider({
   name: 'Example', // the name people see, and the frame's title
@@ -179,8 +194,9 @@ export default defineProvider({
   // The player URL for a pasted URL, rebuilt from the parts it checked, or
   // null. Without it, only URLs already under `frames` are framed, as they are.
   embed(url) {
-    const id = /^\/v\/(\d{1,20})$/.exec(url.pathname)?.[1]
-    return url.hostname === 'example.com' && id ? `https://embed.example.com/player/${id}` : null
+    const id = /^\/(?:v|player)\/(\d{1,20})$/.exec(url.pathname)?.[1]
+    if (!id || !onHost(url, 'example.com', 'embed.example.com')) return null
+    return `https://embed.example.com/player/${id}`
   },
   sandbox: ['allow-forms'], // on top of allow-scripts allow-same-origin allow-popups
   allow: ['fullscreen'], // permissions policy features
@@ -194,6 +210,16 @@ types refuse what a frame may not have, such as `allow-top-navigation` or
 (and logs) a provider that fails, or whose frames would cover the relay's own
 origin, where the frame could read the page. `pnpm test` checks that every
 file is listed and that no two providers' frames overlap.
+
+`embed()` gets every URL someone writes on a line of its own, so it should take
+only what it can check and rebuild the player URL from those parts rather than
+pass the URL on. `onHost` compares the host exactly and refuses user-info, a
+port or an encoded `/`, `\` or `.` in the path. Given a player URL it built,
+`embed()` must return the same URL: the preview frames only player URLs the
+provider would build itself, which lets a provider's `frames` be wider than its
+players (CodePen's are all of `https://codepen.io/`). Put the provider's tests
+next to it, as `<id>.test.ts`: the URLs it takes and what it makes of them,
+and the ones it leaves alone, such as look-alike hosts.
 
 Browsers that ticked "Always load" for a provider remember it by its id, the
 key in `index.ts`. Renaming a key, or dropping a provider, forgets that choice

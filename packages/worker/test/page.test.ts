@@ -102,8 +102,15 @@ describe('pages', () => {
   it("frames the registry's players", async () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
     const res = await call('https://pedit.test/')
-    expect(res.headers.get('Content-Security-Policy')).toContain(
-      'frame-src https://www.youtube-nocookie.com/embed/ https://player.vimeo.com/video/;',
+    expect(res.headers.get('Content-Security-Policy')).toContain(`frame-src ${FRAMES.join(' ')};`)
+    expect(FRAMES).toEqual(
+      expect.arrayContaining([
+        'https://www.youtube-nocookie.com/embed/',
+        'https://player.vimeo.com/video/',
+        'https://www.loom.com/embed/',
+        'https://codepen.io/',
+        'https://w.soundcloud.com/player/',
+      ]),
     )
     expect(spy).not.toHaveBeenCalled()
   })
@@ -119,8 +126,9 @@ describe('pages', () => {
   it("leaves out a provider whose frames cover the request's origin", async () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
     const res = await call('https://player.vimeo.com/')
+    const others = Object.entries(PROVIDERS).filter(([id]) => id !== 'vimeo')
     expect(res.headers.get('Content-Security-Policy')).toContain(
-      'frame-src https://www.youtube-nocookie.com/embed/;',
+      `frame-src ${others.flatMap(([, p]) => p.frames).join(' ')};`,
     )
     expect(spy).toHaveBeenCalledWith(
       "Embed provider vimeo ignored: its frames cover the editor's own origin",

@@ -39,7 +39,7 @@ describe('isProviderId', () => {
 
   it.each([
     'YouTube',
-    'soundcloud',
+    'dailymotion',
     'custom:https://embed.example.com',
     'custom:',
     'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
@@ -72,9 +72,9 @@ describe('parseAlwaysLoad', () => {
   })
 
   it('drops ids this relay has no provider for, such as an older custom site', () => {
-    expect(parseAlwaysLoad(['custom:https://embed.example.com', 'soundcloud', 'youtube'])).toEqual([
-      'youtube',
-    ])
+    expect(parseAlwaysLoad(['custom:https://embed.example.com', 'dailymotion', 'youtube'])).toEqual(
+      ['youtube'],
+    )
   })
 
   it.each([null, 'youtube', { youtube: true }, 42])('reads %j as nothing remembered', (value) => {
@@ -159,7 +159,7 @@ describe('AlwaysLoad', () => {
     store.setItem(ALWAYS_LOAD_KEY, '["youtube","custom:https://embed.example.com"]')
     always.refresh()
     expect(seen).toEqual([])
-    store.setItem(ALWAYS_LOAD_KEY, '["soundcloud","vimeo"]')
+    store.setItem(ALWAYS_LOAD_KEY, '["dailymotion","vimeo"]')
     always.refresh()
     expect(seen).toEqual([['vimeo']])
   })
