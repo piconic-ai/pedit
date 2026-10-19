@@ -22,8 +22,9 @@ const PLAYER = {
 }
 const page = new URL('https://pedit.test/r/x')
 
-// A player URL of each provider in the registry, as its embed() builds it.
-const PLAYERS: Record<string, string> = {
+// A player URL of each provider pedit ships, as its embed() builds it. A relay
+// may add or drop providers, so the tests take the ones it registers.
+const SHIPPED: Record<string, string> = {
   youtube: 'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ',
   vimeo: 'https://player.vimeo.com/video/1',
   loom: 'https://www.loom.com/embed/0123456789abcdef0123456789abcdef',
@@ -36,6 +37,7 @@ const PLAYERS: Record<string, string> = {
     'https://w.soundcloud.com/player/?url=https%3A%2F%2Fapi.soundcloud.com%2Ftracks%2F293&auto_play=false',
   miro: 'https://miro.com/app/live-embed/uXjVOabcdEF=/',
 }
+const PLAYERS = Object.entries(SHIPPED).filter(([id]) => id in PROVIDERS)
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -89,6 +91,11 @@ describe('embedFor', () => {
       expect(embedFor(href, page)).toBeNull()
     },
   )
+
+  it('frames a YouTube link whose start is too long to read, without the start', () => {
+    const out = embedFor('https://youtu.be/dQw4w9WgXcQ?t=99999999999999999999999', page)
+    expect(out?.kind === 'frame' && out.src).toBe(yt)
+  })
 
   it.each([
     'https://example.com/clip.mp4',
@@ -194,10 +201,10 @@ describe('frameFor', () => {
   })
 
   it('takes the attributes from the registry', () => {
-    expect(Object.keys(PLAYERS).sort()).toEqual(Object.keys(PROVIDERS).sort())
-    for (const [id, provider] of Object.entries(PROVIDERS)) {
-      expect(frameFor(PLAYERS[id] ?? '')).toEqual({
-        src: PLAYERS[id],
+    for (const [id, src] of PLAYERS) {
+      const provider = PROVIDERS[id as keyof typeof PROVIDERS]
+      expect(frameFor(src)).toEqual({
+        src,
         provider: id,
         title: provider.name,
         sandbox: sandboxOf(provider),
@@ -639,7 +646,7 @@ describe('providerOf', () => {
   })
 
   it("names each provider's players with its key", () => {
-    for (const id of Object.keys(PROVIDERS)) expect(providerOf(PLAYERS[id] ?? '')).toBe(id)
+    for (const [id, src] of PLAYERS) expect(providerOf(src)).toBe(id)
   })
 
   it.each([

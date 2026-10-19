@@ -131,7 +131,13 @@ describe('contentSecurityPolicy', () => {
 
   it('builds the strict policy', () => {
     expect(
-      contentSecurityPolicy({ scriptHashes: ['abc'], media: [], frames: FRAMES, origin }),
+      contentSecurityPolicy({
+        scriptHashes: ['abc'],
+        media: [],
+        // Not the registry's frames, which a relay chooses for itself.
+        frames: ['https://www.youtube-nocookie.com/embed/', 'https://player.vimeo.com/video/'],
+        origin,
+      }),
     ).toBe(
       [
         "default-src 'none'",
@@ -139,16 +145,7 @@ describe('contentSecurityPolicy', () => {
         "style-src 'self' 'unsafe-inline'",
         "img-src 'self' blob: data: https://gravatar.com https://www.gravatar.com https://secure.gravatar.com https://avatars.githubusercontent.com https://lh3.googleusercontent.com",
         "media-src 'none'",
-        [
-          'frame-src https://www.youtube-nocookie.com/embed/ https://player.vimeo.com/video/',
-          'https://www.loom.com/embed/',
-          'https://embed.figma.com/design/ https://embed.figma.com/board/',
-          'https://embed.figma.com/slides/ https://embed.figma.com/deck/',
-          'https://embed.figma.com/proto/ https://codepen.io/',
-          'https://stackblitz.com/edit/ https://stackblitz.com/github/',
-          'https://observablehq.com/embed/ https://open.spotify.com/embed/',
-          'https://w.soundcloud.com/player/ https://miro.com/app/live-embed/',
-        ].join(' '),
+        'frame-src https://www.youtube-nocookie.com/embed/ https://player.vimeo.com/video/',
         "connect-src 'self' wss://pedit.test",
         "font-src 'self'",
         "object-src 'none'",

@@ -749,8 +749,8 @@ describe('always load', () => {
   })
 
   it('offers it for a player of every registered provider', () => {
-    // A URL each provider frames; a provider added to the registry needs one here.
-    const samples: Record<ProviderId, string> = {
+    // A URL each provider pedit ships frames, of those this relay registers.
+    const samples: Record<string, string> = {
       youtube: 'https://youtu.be/dQw4w9WgXcQ',
       vimeo: 'https://vimeo.com/76979871',
       loom: 'https://www.loom.com/share/0123456789abcdef0123456789abcdef',
@@ -763,7 +763,7 @@ describe('always load', () => {
         'https://w.soundcloud.com/player/?url=https%3A//api.soundcloud.com/playlists/soundcloud%3Aplaylists%3A7',
       miro: 'https://miro.com/app/board/o9J_abcdefgh/',
     }
-    for (const [id, url] of Object.entries(samples)) {
+    for (const [id, url] of Object.entries(samples).filter(([id]) => id in PROVIDERS)) {
       const out = dom(url)
       expect(embedProvider(out.querySelector('[data-embed-src]') as Element)).toBe(id)
       expect(out.querySelector('.embed-remember')?.textContent).toBe(

@@ -116,10 +116,12 @@ describe('pages', () => {
   })
 
   it('no longer reads FRAME_SOURCES', async () => {
-    const res = await call('https://pedit.test/', { FRAME_SOURCES: 'https://embed.example.com/' })
+    const res = await call('https://pedit.test/', {
+      FRAME_SOURCES: 'https://frame-sources.invalid/',
+    })
     const csp = res.headers.get('Content-Security-Policy') ?? ''
     expect(csp).toContain(`frame-src ${FRAMES.join(' ')};`)
-    expect(csp).not.toContain('embed.example.com')
+    expect(csp).not.toContain('frame-sources.invalid')
     expect(await res.text()).not.toContain('pedit-frame-sources')
   })
 

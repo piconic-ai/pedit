@@ -55,19 +55,9 @@ describe('the provider registry', () => {
     }
   })
 
-  it('frames YouTube, Vimeo, Loom, Figma, CodePen, StackBlitz, Observable, Spotify, SoundCloud and Miro', () => {
-    expect(Object.values(PROVIDERS).map((p) => p.name)).toEqual([
-      'YouTube',
-      'Vimeo',
-      'Loom',
-      'Figma',
-      'CodePen',
-      'StackBlitz',
-      'Observable',
-      'Spotify',
-      'SoundCloud',
-      'Miro',
-    ])
+  it('names every provider', () => {
+    // Which providers a relay frames is its own choice; every one needs a name.
+    for (const provider of Object.values(PROVIDERS)) expect(provider.name.trim()).not.toBe('')
   })
 
   it('has unique display names', () => {
