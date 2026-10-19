@@ -1,5 +1,10 @@
 # Changelog
 
+## [v0.1.11](https://github.com/piconic-ai/pedit/compare/v0.1.10...v0.1.11) - 2026-10-19
+
+- Make the busy-relay room test robust on slow runners by @kfly8 in https://github.com/piconic-ai/pedit/pull/167
+- Embed CodePen team pens by @kfly8 in https://github.com/piconic-ai/pedit/pull/166
+
 ## [v0.1.10](https://github.com/piconic-ai/pedit/compare/v0.1.9...v0.1.10) - 2026-10-19
 
 - Embed GitHub source files in the preview by @kfly8 in https://github.com/piconic-ai/pedit/pull/164
