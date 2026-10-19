@@ -319,7 +319,8 @@ describe('RoomClient', () => {
       awareness: new Awareness(doc),
       createSocket: relay.create,
       minBackoffMs: 1,
-      busyBackoffMs: 200,
+      // Jittered to 500-1000 ms: far beyond the 50 ms below, even on a slow runner.
+      busyBackoffMs: 1000,
       onStatus: (s) => seen.push(s),
     })
     clients.push(client)
@@ -328,7 +329,7 @@ describe('RoomClient', () => {
     // A drop would be retried within a few milliseconds; a busy relay is not.
     await new Promise((r) => setTimeout(r, 50))
     expect(relay.urls).toHaveLength(1)
-    await vi.waitFor(() => expect(client.status).toBe('connected'))
+    await vi.waitFor(() => expect(client.status).toBe('connected'), { timeout: 3000 })
     expect(relay.urls).toHaveLength(2)
     expect(seen).toEqual(['connecting', 'busy', 'connecting', 'connected'])
   })
