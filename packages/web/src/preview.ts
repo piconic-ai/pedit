@@ -125,11 +125,14 @@ const snippetKey = (src: string | null, lines: string | null) => `${src} ${lines
 // move the page. "Always load" is a checkbox drawn with a role, since the
 // sanitiser drops inputs.
 // A snippet's placeholder is the same, with the lines it shows and no box: once
-// loaded, it is as tall as its lines (up to a limit).
+// loaded, it is as tall as its lines (up to a limit). Its status is there, empty,
+// from the start, as screen readers announce a change in a live region they know.
 function embedHtml(embed: Embed, href: string, line: unknown): string {
   if (embed.kind === 'video') return videoHtml(embed.src, '', line)
   let attributes: string
+  let status = ''
   if (embed.kind === 'snippet') {
+    status = '<span class="embed-error" role="status"></span>'
     const lines = embed.lines ? linesAttr(embed.lines) : null
     renderedSnippets.add(snippetKey(embed.src, lines))
     attributes =
@@ -145,7 +148,7 @@ function embedHtml(embed: Embed, href: string, line: unknown): string {
   const remember = `<span class="embed-remember" role="checkbox" aria-checked="false" tabindex="0">Always load ${escape(providerLabel(embed.provider))}</span>`
   return (
     `<div${attributes}>` +
-    `<span class="embed-provider">${escape(embed.title)}</span>` +
+    `<span class="embed-provider">${escape(embed.title)}</span>${status}` +
     `<span class="embed-actions"><span class="embed-load" role="button" tabindex="0">Load from ${escape(host)}</span>${remember}</span>` +
     `<a class="embed-link" href="${escape(href)}">${escape(href)}</a></div>`
   )
@@ -386,7 +389,8 @@ export function loadSnippet(placeholder: Element, focus = true): Promise<boolean
   // Marked loaded from the start, so "Always load" never starts it again.
   placeholder.classList.add('embed--loaded', 'embed--loading')
   placeholder.classList.remove('embed--failed')
-  placeholder.querySelector('.embed-error')?.remove()
+  const status = placeholder.querySelector('.embed-error')
+  if (status) status.textContent = ''
   const control = placeholder.querySelector('.embed-load')
   if (control) {
     control.textContent = 'Loading…'
@@ -397,11 +401,7 @@ export function loadSnippet(placeholder: Element, focus = true): Promise<boolean
     placeholder.classList.remove('embed--loading')
     if (!result.ok) {
       placeholder.classList.add('embed--failed')
-      const error = placeholder.ownerDocument.createElement('span')
-      error.className = 'embed-error'
-      error.setAttribute('role', 'status')
-      error.textContent = failureMessage(result)
-      placeholder.querySelector('.embed-actions')?.before(error)
+      if (status) status.textContent = failureMessage(result)
       if (control) {
         control.textContent = 'Try again'
         control.removeAttribute('aria-disabled')
@@ -415,8 +415,9 @@ export function loadSnippet(placeholder: Element, focus = true): Promise<boolean
   return done
 }
 
-// The lines as text in a <pre>, numbered from the first one shown in a gutter
-// beside them, then a note if lines were left out, and the link to the file.
+// The lines as text in a <pre>, then a note if lines were left out, and the link
+// to the file. Each line is its own element and draws its number before it
+// (style.css), so a number stays on its line whatever font the line needs.
 function showSnippet(
   placeholder: Element,
   snippet: SnippetSource,
@@ -429,14 +430,22 @@ function showSnippet(
   // It scrolls, so it takes focus for the keyboard to scroll it.
   pre.tabIndex = 0
   const last = text.from + text.lines.length - 1
+  // A <pre> is generic, which takes no label; a group does.
+  pre.setAttribute('role', 'group')
   pre.setAttribute('aria-label', `${snippet.title}, lines ${text.from} to ${last}`)
-  const gutter = doc.createElement('span')
-  gutter.className = 'embed-snippet-lines'
-  gutter.setAttribute('aria-hidden', 'true')
-  gutter.textContent = text.lines.map((_, i) => text.from + i).join('\n')
+  // The numbers are as wide as the last one, so every line starts in one column.
+  pre.style.setProperty('--snippet-digits', String(String(last).length))
   const code = doc.createElement('code')
-  code.textContent = text.lines.join('\n')
-  pre.append(gutter, code)
+  code.append(
+    ...text.lines.map((line, i) => {
+      const span = doc.createElement('span')
+      span.className = 'embed-snippet-line'
+      span.setAttribute('data-n', String(text.from + i))
+      span.textContent = i < text.lines.length - 1 ? `${line}\n` : line
+      return span
+    }),
+  )
+  pre.append(code)
   const parts: Node[] = [pre]
   if (text.truncated) {
     const note = doc.createElement('span')

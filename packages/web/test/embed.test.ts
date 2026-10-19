@@ -112,6 +112,13 @@ describe('embedFor', () => {
   })
 
   it.each([
+    'https://raw.githubusercontent.com/o/r/main/demo.mp4',
+    'https://github.com/o/r/blob/main/demo.webm',
+  ])('plays a video file on GitHub as a video, not a snippet: %s', (href) => {
+    expect(embedFor(href, page)).toEqual({ kind: 'video', src: href })
+  })
+
+  it.each([
     'https://example.com/',
     'https://www.youtube.com/',
     'https://www.youtube.com/watch?v=short',

@@ -16,6 +16,7 @@ import {
   defineProvider,
   type FetchProvider,
   type FrameProvider,
+  isFetchProvider,
   type Provider,
 } from '../src/embeds/define.ts'
 
@@ -242,6 +243,19 @@ describe('embedSources', () => {
       fetches: ['https://b.example/', 'https://a.example/'],
     })
     expect(embedSources([], providers)).toEqual({ frames: [], fetches: [] })
+  })
+
+  it('takes a frame provider with fetches: undefined as the frame provider the checks pass', () => {
+    // The type allows `fetches: undefined`; it must not read as a fetch provider.
+    const providers = {
+      x: defineProvider({ ...(good as FrameProvider), fetches: undefined }),
+    }
+    expect(isFetchProvider(providers.x)).toBe(false)
+    expect(framedProviders(page, providers)).toEqual({ framed: ['x'], refused: [] })
+    expect(embedSources(['x'], providers)).toEqual({
+      frames: ['https://embed.example.com/v/'],
+      fetches: [],
+    })
   })
 })
 

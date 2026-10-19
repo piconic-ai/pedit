@@ -387,6 +387,8 @@ export function embedFor(href: string, page: URL = here()): Embed | null {
   if (hint) url.hash = ''
   for (const provider of framedOn(page).ids) {
     if (isFetchProvider(PROVIDERS[provider])) {
+      // A video file plays as a video, as it did before snippets: it is no text.
+      if (isVideoFile(url)) continue
       const s = snippetOf(provider, written, page)
       // What snippet() built must be one it would fetch, from its own fetches.
       const known = s && snippetFor(s.src, s.lines ? linesAttr(s.lines) : null, page)

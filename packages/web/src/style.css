@@ -1047,8 +1047,8 @@ main.editor[data-resizing] iframe {
 }
 /*
  * A snippet has no box of its own: it is as tall as its lines, and they scroll
- * beyond 60vh. The line numbers are a gutter beside the code that a selection
- * leaves out.
+ * beyond 60vh. Each line draws its number before it, in the line's own box so
+ * the two never drift apart; a selection leaves the numbers out.
  */
 .preview .embed--snippet {
   max-height: none;
@@ -1061,18 +1061,24 @@ main.editor[data-resizing] iframe {
   color: var(--ink);
   font-size: 0.875em;
 }
+/* Empty until a load fails, and then no gap in the placeholder. */
+.preview .embed-error:empty {
+  position: absolute;
+}
 .preview .embed-snippet {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 16px;
   max-height: 60vh;
   margin-bottom: 4px;
   border: 1px solid var(--line);
 }
-.preview .embed-snippet-lines {
+.preview .embed-snippet-line::before {
+  content: attr(data-n);
+  content: attr(data-n) / "";
+  display: inline-block;
+  box-sizing: content-box;
+  width: calc(var(--snippet-digits, 1) * 1ch);
+  margin-right: 16px;
   color: var(--muted);
   text-align: right;
-  white-space: pre;
   user-select: none;
 }
 .preview .embed-snippet:focus-visible {

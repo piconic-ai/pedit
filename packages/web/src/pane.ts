@@ -8,6 +8,9 @@ type Renderer = Pick<
   'render' | 'patch' | 'loadEmbed' | 'embedProvider' | 'toggleRemember'
 >
 
+/** The most snippets "Always load" loads on one page; the rest load on a click. */
+export const MAX_REMEMBERED_SNIPPETS = 20
+
 /** A source line and where its block starts in the preview's scroll area. */
 export interface Anchor {
   line: number
@@ -158,17 +161,24 @@ export class PreviewPane {
     if (remember === 'true' && provider) this.#alwaysLoad?.remember(provider)
   }
 
-  /** Loads the players of the providers this browser always loads, leaving focus where it is. */
+  /**
+   * Loads the players of the providers this browser always loads, leaving focus
+   * where it is. Snippets only up to MAX_REMEMBERED_SNIPPETS on the page: each
+   * may hold a large file, and a file of many links would have them all fetched.
+   * The rest wait for a click.
+   */
   #loadRemembered(): void {
     const always = this.#alwaysLoad
     const renderer = this.#renderer
     if (!always || !renderer) return
+    let snippets = this.element.querySelectorAll('.embed--snippet.embed--loaded').length
     for (const placeholder of this.element.querySelectorAll(
       '[data-embed-src]:not(.embed--loaded)',
     )) {
-      if (always.has(renderer.embedProvider(placeholder))) {
-        renderer.loadEmbed(placeholder, false)
-      }
+      if (!always.has(renderer.embedProvider(placeholder))) continue
+      const snippet = placeholder.classList.contains('embed--snippet')
+      if (snippet && snippets >= MAX_REMEMBERED_SNIPPETS) continue
+      if (renderer.loadEmbed(placeholder, false) && snippet) snippets++
     }
   }
 

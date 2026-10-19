@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vite
 import * as Y from 'yjs'
 import { ALWAYS_LOAD_KEY, AlwaysLoad } from '../src/alwaysload.ts'
 import type { ImageResolver } from '../src/attachments.ts'
-import { PreviewPane } from '../src/pane.ts'
+import { MAX_REMEMBERED_SNIPPETS, PreviewPane } from '../src/pane.ts'
 import * as preview from '../src/preview.ts'
 import {
   embedProvider,
@@ -1139,6 +1139,7 @@ describe('snippets', () => {
     expect(el.outerHTML).toBe(
       `<div class="embed embed--snippet" data-line="2" data-embed-src="${RAW}" data-embed-lines="3-7">` +
         '<span class="embed-provider">GitHub</span>' +
+        '<span class="embed-error" role="status"></span>' +
         '<span class="embed-actions">' +
         '<span class="embed-load" role="button" tabindex="0">Load from raw.githubusercontent.com</span>' +
         '<span class="embed-remember" role="checkbox" aria-checked="false" tabindex="0">Always load GitHub</span></span>' +
@@ -1171,9 +1172,16 @@ describe('snippets', () => {
     expect(await loadSnippet(el)).toBe(true)
     expect(el.classList.contains('embed--loaded')).toBe(true)
     const pre = el.querySelector('pre.embed-snippet') as HTMLElement
-    expect(pre.querySelector('.embed-snippet-lines')?.textContent).toBe('2\n3')
-    expect(pre.querySelector('.embed-snippet-lines')?.getAttribute('aria-hidden')).toBe('true')
+    // One element per line, numbered by itself, so a number cannot drift off its line.
+    const lines = [...pre.querySelectorAll('code > .embed-snippet-line')]
+    expect(lines.map((l) => [l.getAttribute('data-n'), l.textContent])).toEqual([
+      ['2', 'line 2\n'],
+      ['3', 'line 3'],
+    ])
+    expect(pre.style.getPropertyValue('--snippet-digits')).toBe('1')
     expect(pre.querySelector('code')?.textContent).toBe('line 2\nline 3')
+    // A <pre> is generic and may not be labelled; a group may.
+    expect(pre.getAttribute('role')).toBe('group')
     expect(pre.getAttribute('aria-label')).toBe('GitHub, lines 2 to 3')
     expect(el.querySelector('.embed-link')?.getAttribute('href')).toBe(`${BLOB}#L2-L3`)
     expect(el.querySelector('.embed-load, .embed-remember')).toBeNull()
@@ -1187,7 +1195,11 @@ describe('snippets', () => {
       '<script>alert(1)</script>\n<img src=x onerror="alert(1)">',
     )
     expect(el.querySelector('script, img')).toBeNull()
-    expect(el.querySelector('code')?.children).toHaveLength(0)
+    const lines = [...(el.querySelector('code')?.children ?? [])]
+    expect(lines.map((l) => [l.className, l.children.length])).toEqual([
+      ['embed-snippet-line', 0],
+      ['embed-snippet-line', 0],
+    ])
     expect(el.innerHTML).toContain('&lt;script&gt;alert(1)&lt;/script&gt;')
   })
 
@@ -1197,9 +1209,14 @@ describe('snippets', () => {
     )
     const el = placeholderOf(mounted(`${BLOB}#L2-L5010`))
     await loadSnippet(el)
-    const gutter = el.querySelector('.embed-snippet-lines')?.textContent?.split('\n') ?? []
+    const gutter = [...el.querySelectorAll('.embed-snippet-line')].map((l) =>
+      l.getAttribute('data-n'),
+    )
     expect(gutter).toHaveLength(5000)
     expect([gutter[0], gutter.at(-1)]).toEqual(['2', '5001'])
+    expect(
+      (el.querySelector('pre') as HTMLElement).style.getPropertyValue('--snippet-digits'),
+    ).toBe('4')
     expect(el.querySelector('.embed-note')?.textContent).toBe('Showing the first 5000 lines.')
   })
 
@@ -1253,11 +1270,13 @@ describe('snippets', () => {
   it('says why it failed, keeps the link and offers to try again', async () => {
     fetch.mockImplementationOnce(() => Promise.resolve(new Response('', { status: 404 })))
     const el = placeholderOf(mounted(BLOB))
+    // The live region is there, empty, before anything fails, so the change is announced.
+    const status = el.querySelector('.embed-error[role="status"]')
+    expect(status?.textContent).toBe('')
     expect(await loadSnippet(el)).toBe(false)
     expect(el.classList.contains('embed--failed')).toBe(true)
-    expect(el.querySelector('.embed-error')?.textContent).toBe(
-      'The file was not found. Only public files can be shown.',
-    )
+    expect(el.querySelector('.embed-error')).toBe(status)
+    expect(status?.textContent).toBe('The file was not found. Only public files can be shown.')
     expect(el.querySelector('.embed-load')?.textContent).toBe('Try again')
     expect(el.querySelector('.embed-link')?.getAttribute('href')).toBe(BLOB)
     expect(await loadSnippet(el)).toBe(true)
@@ -1375,10 +1394,32 @@ describe('snippets', () => {
       expect(document.activeElement).toBe(before)
     })
 
+    it('loads only so many snippets on its own, and the rest on a click', async () => {
+      fetch.mockImplementation(() => new Promise(() => {}))
+      const count = MAX_REMEMBERED_SNIPPETS + 5
+      const links = Array.from(
+        { length: count },
+        (_, i) => `https://github.com/o/r/blob/main/f${i}.ts`,
+      )
+      const { element, text } = await pane(links.join('\n\n'), new AlwaysLoad(memory(['github'])))
+      await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(MAX_REMEMBERED_SNIPPETS))
+      expect(element.querySelectorAll('.embed--snippet:not(.embed--loaded)')).toHaveLength(5)
+      // Later renders do not load more either.
+      text.insert(text.length, '\n\nmore')
+      await vi.waitFor(() => expect(element.textContent).toContain('more'))
+      expect(fetch).toHaveBeenCalledTimes(MAX_REMEMBERED_SNIPPETS)
+      ;(
+        element.querySelector('.embed--snippet:not(.embed--loaded) .embed-load') as HTMLElement
+      ).click()
+      expect(fetch).toHaveBeenCalledTimes(MAX_REMEMBERED_SNIPPETS + 1)
+    })
+
     it('does not try a failed snippet again on its own as the file changes', async () => {
       fetch.mockImplementation(() => Promise.resolve(new Response('', { status: 500 })))
       const { element, text } = await pane(BLOB, new AlwaysLoad(memory(['github'])))
-      await vi.waitFor(() => expect(element.querySelector('.embed-error')).not.toBeNull())
+      await vi.waitFor(() =>
+        expect(element.querySelector('.embed-error')?.textContent).not.toBe(''),
+      )
       text.insert(text.length, '\n\nmore')
       await vi.waitFor(() => expect(element.textContent).toContain('more'))
       text.insert(0, 'above\n\n')

@@ -114,9 +114,12 @@ export type FetchProvider = {
 
 export type Provider = FrameProvider | FetchProvider
 
-/** Whether `provider` is shown by fetching text rather than in a frame. */
+/**
+ * Whether `provider` is shown by fetching text rather than in a frame. As
+ * providerProblem decides: `fetches: undefined` is no fetch provider.
+ */
 export function isFetchProvider(provider: Provider): provider is FetchProvider {
-  return 'fetches' in provider
+  return provider.fetches !== undefined
 }
 
 /** The providers a relay shows, by id. The id is what "Always load" remembers. */
