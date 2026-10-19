@@ -78,7 +78,7 @@ describe('Settings', () => {
 
   it('lists the remembered providers and forgets each one', () => {
     const { container, q, calls, stores } = mount({
-      alwaysLoad: ['youtube', 'custom:https://embed.example.com'],
+      alwaysLoad: ['youtube', 'vimeo'],
     })
     const rows = () =>
       [...container.querySelectorAll('.settings-provider')].map(
@@ -86,11 +86,11 @@ describe('Settings', () => {
       )
     expect(q('.settings-note').hidden).toBe(true)
     expect(q('.settings-providers').hidden).toBe(false)
-    expect(rows()).toEqual(['Always load YouTube', 'Always load embed.example.com'])
-    const forget = q<HTMLButtonElement>('button[aria-label="Forget embed.example.com"]')
+    expect(rows()).toEqual(['Always load YouTube', 'Always load Vimeo'])
+    const forget = q<HTMLButtonElement>('button[aria-label="Forget Vimeo"]')
     expect(forget.textContent?.trim()).toBe('Forget')
     forget.click()
-    expect(calls).toEqual([['forgetAlwaysLoad', 'custom:https://embed.example.com']])
+    expect(calls).toEqual([['forgetAlwaysLoad', 'vimeo']])
     expect(rows()).toEqual(['Always load YouTube'])
     q<HTMLButtonElement>('button[aria-label="Forget YouTube"]').click()
     expect(rows()).toEqual([])

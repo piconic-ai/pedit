@@ -1,21 +1,15 @@
-import {
-  allowsMedia,
-  coversOrigin,
-  FRAME_META,
-  MEDIA_META,
-  parseFrameSources,
-  parseMediaSources,
-} from '@pedit/protocol/csp'
+import { allowsMedia, MEDIA_META, parseMediaSources } from '@pedit/protocol/csp'
 import DOMPurify from 'dompurify'
 import MarkdownIt from 'markdown-it'
 import { parseDocument } from 'yaml'
-import { providerLabel } from './alwaysload.ts'
+import { type ProviderId, providerLabel } from './alwaysload.ts'
 import type { ImageResolver } from './attachments.ts'
 import {
+  boxStyle,
+  checkBoxStyle,
   type Embed,
   embedFor,
   FRAME_REFERRER_POLICY,
-  type FrameSources,
   frameFor,
   httpUrl,
   isAllowedFrame,
@@ -97,26 +91,8 @@ export function pageMediaSources(doc?: Document): string[] {
   return sources
 }
 
-let pageFrames: string[] | undefined
-
-/**
- * The extra frame sources this relay allows (FRAME_SOURCES), as the Worker wrote
- * them into the page. Without the tag, with a bad value, or with one that covers
- * the page's own origin, only the built-in players are framed.
- */
-export function pageFrameSources(doc?: Document, page = new URL(location.href)): string[] {
-  if (!doc && pageFrames) return pageFrames
-  const d = doc ?? document
-  const content = d.querySelector(`meta[name="${FRAME_META}"]`)?.getAttribute('content') ?? ''
-  const parsed = parseFrameSources(content)
-  const sources = parsed && !coversOrigin(parsed, page) ? parsed : []
-  if (!doc) pageFrames = sources
-  return sources
-}
-
 // Set for the duration of one render, like images.
 let media: readonly string[] = []
-let frames: FrameSources | undefined
 
 const allowed = (url: URL) => allowsMedia(media, url, new URL(location.href))
 
@@ -136,27 +112,26 @@ const rendered = new Map<string, string>()
 
 // A frame is not loaded until someone asks: nobody in the room should contact a
 // third party just because someone wrote its URL in the file. The placeholder
-// carries only the frame's src; loadEmbed derives everything else from it again.
-// "Always load" is a checkbox drawn with a role, since the sanitiser drops inputs.
+// carries only the frame's src and its box; loadEmbed derives everything else
+// from the src again, and the frame fills the same box, so loading it does not
+// move the page. "Always load" is a checkbox drawn with a role, since the
+// sanitiser drops inputs.
 function embedHtml(embed: Embed, href: string, line: unknown): string {
   if (embed.kind === 'video') return videoHtml(embed.src, '', line)
   rendered.set(embed.src, embed.src)
   const host = new URL(embed.src).host
-  const provider = providerOf(embed.src, frames)
-  const remember = provider
-    ? `<span class="embed-remember" role="checkbox" aria-checked="false" tabindex="0">Always load ${escape(providerLabel(provider))}</span>`
-    : ''
+  const remember = `<span class="embed-remember" role="checkbox" aria-checked="false" tabindex="0">Always load ${escape(providerLabel(embed.provider))}</span>`
   return (
-    `<div class="embed embed--${embed.shape}"${lineAttr(line)} data-embed-src="${escape(embed.src)}">` +
+    `<div class="embed"${lineAttr(line)} data-embed-src="${escape(embed.src)}"` +
+    ` style="${boxStyle(embed.box)}">` +
     `<span class="embed-provider">${escape(embed.title)}</span>` +
     `<span class="embed-actions"><span class="embed-load" role="button" tabindex="0">Load from ${escape(host)}</span>${remember}</span>` +
     `<a class="embed-link" href="${escape(href)}">${escape(href)}</a></div>`
   )
 }
 
-// A paragraph that is nothing but a player's link (YouTube, Figma and so on), a
-// FRAME_SOURCES URL or a video file URL
-// becomes a player (a video) or a placeholder that loads one on request (a frame).
+// A paragraph that is nothing but a URL an embed provider takes, or a video file
+// URL, becomes a player (a video) or a placeholder that loads one on request (a frame).
 md.core.ruler.after('linkify', 'embeds', (state) => {
   const tokens = state.tokens
   for (let i = 0; i + 2 < tokens.length; i++) {
@@ -167,7 +142,7 @@ md.core.ruler.after('linkify', 'embeds', (state) => {
     if (linkOpen?.type !== 'link_open' || linkOpen.info !== 'auto') continue
     if (text?.type !== 'text' || linkClose?.type !== 'link_close' || rest.length > 0) continue
     const href = String(linkOpen.attrGet('href') ?? '')
-    const embed = embedFor(href, frames)
+    const embed = embedFor(href)
     if (!embed) continue
     // A video file the relay would not load stays an ordinary link.
     if (embed.kind === 'video' && !allowed(new URL(embed.src))) continue
@@ -240,13 +215,14 @@ purify.addHook('uponSanitizeAttribute', (node, data) => {
 
 purify.addHook('afterSanitizeAttributes', (node) => {
   const el = node as Element
-  // A placeholder may only ever load a frame pedit would frame for that src.
-  if (
-    el.hasAttribute?.('data-embed-src') &&
-    !isAllowedFrame(el.getAttribute('data-embed-src'), frames)
-  ) {
-    el.remove()
-    return
+  if (el.hasAttribute?.('data-embed-src')) {
+    // A placeholder may only ever load a frame pedit would frame for that src.
+    if (!isAllowedFrame(el.getAttribute('data-embed-src'))) {
+      el.remove()
+      return
+    }
+    // Its style may only be a box boxStyle writes, never other CSS.
+    if (checkBoxStyle(el.getAttribute('style')) === null) el.removeAttribute('style')
   }
   switch (node.nodeName) {
     case 'A': {
@@ -290,24 +266,21 @@ export function sanitize(html: string): DocumentFragment {
 
 /**
  * Renders Markdown to sanitised nodes, ready for {@link patch}. `resolver`
- * finds the images added during the session; `sources` and `frameSources` are
- * the relay's MEDIA_SOURCES and FRAME_SOURCES.
+ * finds the images added during the session; `sources` are the relay's
+ * MEDIA_SOURCES.
  */
 export function render(
   source: string,
   resolver?: ImageResolver,
   sources: readonly string[] = pageMediaSources(),
-  frameSources: readonly string[] = pageFrameSources(),
 ): DocumentFragment {
   images = resolver
   media = sources
-  frames = { sources: frameSources, page: new URL(location.href) }
   try {
     return sanitize(md.render(source))
   } finally {
     images = undefined
     media = []
-    frames = undefined
   }
 }
 
@@ -315,14 +288,8 @@ export function render(
  * Who serves the frame of an embed placeholder, derived from its src alone as
  * loadEmbed does, or null if pedit would not frame it.
  */
-export function embedProvider(
-  placeholder: Element,
-  frameSources: readonly string[] = pageFrameSources(),
-): string | null {
-  return providerOf(placeholder.getAttribute('data-embed-src'), {
-    sources: frameSources,
-    page: new URL(location.href),
-  })
+export function embedProvider(placeholder: Element): ProviderId | null {
+  return providerOf(placeholder.getAttribute('data-embed-src'))
 }
 
 // patch() compares blocks by the key noted for them as rendered. Note the keys
@@ -347,15 +314,11 @@ export function toggleRemember(control: Element): boolean {
  * Loads the frame of an embed placeholder, deriving its provider and attributes
  * from its src alone, and moves focus into it unless `focus` is false. Returns
  * null for a placeholder the preview did not render or whose src pedit would
- * not frame. `frameSources` are the relay's FRAME_SOURCES.
+ * not frame.
  */
-export function loadEmbed(
-  placeholder: Element,
-  frameSources: readonly string[] = pageFrameSources(),
-  focus = true,
-): HTMLIFrameElement | null {
+export function loadEmbed(placeholder: Element, focus = true): HTMLIFrameElement | null {
   const src = rendered.get(placeholder.getAttribute('data-embed-src') ?? '') ?? null
-  const frame = frameFor(src, { sources: frameSources, page: new URL(location.href) })
+  const frame = frameFor(src)
   if (!frame) return null
   const iframe = placeholder.ownerDocument.createElement('iframe')
   // The sandbox has to be in place before the frame is attached and navigates.

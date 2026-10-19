@@ -1,9 +1,8 @@
 import {
   contentSecurityPolicy,
-  coversOrigin,
-  FRAME_META,
+  framedProviders,
   MEDIA_META,
-  parseFrameSources,
+  PROVIDERS,
   parseMediaSources,
 } from '@pedit/protocol/csp'
 
@@ -32,21 +31,15 @@ export function mediaSourcesFrom(value: string | undefined): string[] {
 }
 
 /**
- * FRAME_SOURCES as a list, for a page at `origin`. An invalid value, or one that
- * would let the relay's own pages be framed (allow-same-origin there escapes the
- * sandbox), is ignored (and logged): only the built-in players are framed.
+ * The frame-src prefixes of the embed providers framed on a page at `origin`. A
+ * provider that fails the checks, such as one whose frames would cover the
+ * relay's own pages (allow-same-origin there escapes the sandbox), is left out
+ * (and logged); the editor leaves it out too.
  */
-export function frameSourcesFrom(value: string | undefined, origin: URL): string[] {
-  const parsed = parseFrameSources(value)
-  if (parsed === null) {
-    console.error('FRAME_SOURCES ignored: not a space-separated list of http(s) hosts')
-    return []
-  }
-  if (coversOrigin(parsed, origin)) {
-    console.error("FRAME_SOURCES ignored: it covers the relay's own origin")
-    return []
-  }
-  return parsed
+export function frameSourcesFor(origin: URL): string[] {
+  const { framed, refused } = framedProviders(origin)
+  for (const { id, reason } of refused) console.error(`Embed provider ${id} ignored: ${reason}`)
+  return framed.flatMap((id) => PROVIDERS[id].frames)
 }
 
 // A navigation, or a request that takes HTML: what may come back is a page.
@@ -57,10 +50,10 @@ function wantsPage(request: Request): boolean {
   )
 }
 
-/** Serves an asset; HTML responses get the CSP, the source metas and the companion headers. */
+/** Serves an asset; HTML responses get the CSP, the media meta and the companion headers. */
 export async function servePage(
   request: Request,
-  env: { ASSETS: Fetcher; MEDIA_SOURCES?: string; FRAME_SOURCES?: string },
+  env: { ASSETS: Fetcher; MEDIA_SOURCES?: string },
 ): Promise<Response> {
   // No 304 for a page: a cached one would keep an old policy after a var change or
   // deploy. Built files keep their revalidation.
@@ -90,7 +83,7 @@ export async function servePage(
   const html = await asset.text()
   const origin = new URL(request.url)
   const media = mediaSourcesFrom(env.MEDIA_SOURCES)
-  const frames = frameSourcesFrom(env.FRAME_SOURCES, origin)
+  const frames = frameSourcesFor(origin)
   out.set(
     'Content-Security-Policy',
     contentSecurityPolicy({ scriptHashes: await scriptHashes(html), media, frames, origin }),
@@ -98,10 +91,8 @@ export async function servePage(
   out.delete('ETag')
   out.delete('Last-Modified')
   out.set('Cache-Control', 'no-cache')
-  // Tokens cannot contain quotes, '<', '>' or '&' (parseMediaSources, parseFrameSources).
-  const meta =
-    `<meta name="${MEDIA_META}" content="${media.join(' ')}" />` +
-    `<meta name="${FRAME_META}" content="${frames.join(' ')}" />`
+  // Tokens cannot contain quotes, '<', '>' or '&' (parseMediaSources).
+  const meta = `<meta name="${MEDIA_META}" content="${media.join(' ')}" />`
   return new HTMLRewriter()
     .on('head', {
       element: (e) => {

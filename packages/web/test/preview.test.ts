@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+
+import { PROVIDERS, type ProviderId } from '@pedit/protocol/csp'
 import { describe, expect, it, vi } from 'vitest'
 import * as Y from 'yjs'
 import { ALWAYS_LOAD_KEY, AlwaysLoad } from '../src/alwaysload.ts'
@@ -8,7 +10,6 @@ import * as preview from '../src/preview.ts'
 import {
   embedProvider,
   loadEmbed,
-  pageFrameSources,
   pageMediaSources,
   patch,
   render,
@@ -22,13 +23,9 @@ function html(source: string): string {
   return div.innerHTML
 }
 
-function dom(
-  source: string,
-  sources?: readonly string[],
-  frameSources?: readonly string[],
-): HTMLElement {
+function dom(source: string, sources?: readonly string[]): HTMLElement {
   const div = document.createElement('div')
-  div.append(render(source, undefined, sources, frameSources))
+  div.append(render(source, undefined, sources))
   return div
 }
 
@@ -40,14 +37,14 @@ function placeholder(
   src: string,
   title: string,
   href: string,
-  provider: string,
+  style = '--embed-rw:16;--embed-rh:9',
 ): string {
   return (
-    `<div class="embed embed--video" data-line="${line}" data-embed-src="${src}">` +
+    `<div class="embed" data-line="${line}" data-embed-src="${src}" style="${style}">` +
     `<span class="embed-provider">${title}</span>` +
     `<span class="embed-actions">` +
     `<span class="embed-load" role="button" tabindex="0">Load from ${new URL(src).host}</span>` +
-    `<span class="embed-remember" role="checkbox" aria-checked="false" tabindex="0">Always load ${provider}</span></span>` +
+    `<span class="embed-remember" role="checkbox" aria-checked="false" tabindex="0">Always load ${title}</span></span>` +
     `<a class="embed-link" href="${href}" target="_blank" rel="noopener noreferrer">${href}</a></div>`
   )
 }
@@ -96,13 +93,46 @@ describe('sanitize', () => {
     const div = document.createElement('div')
     div.append(
       sanitize(
-        '<div class="embed embed--video" data-embed-src="https://player.vimeo.com/video/1">' +
+        '<div class="embed" data-embed-src="https://player.vimeo.com/video/1" style="--embed-rw:16;--embed-rh:9">' +
           '<span class="embed-load" role="button" tabindex="0">Load from player.vimeo.com</span></div>',
       ),
     )
     const load = div.querySelector('[data-embed-src] .embed-load')
     expect(load?.getAttribute('role')).toBe('button')
     expect(load?.getAttribute('tabindex')).toBe('0')
+  })
+
+  it.each([
+    '--embed-rw:16;--embed-rh:9',
+    '--embed-w:560;--embed-rw:560;--embed-rh:315',
+    '--embed-h:152',
+  ])("keeps a placeholder's box %s", (style) => {
+    const div = document.createElement('div')
+    div.append(
+      sanitize(
+        `<div class="embed" data-embed-src="https://player.vimeo.com/video/1" style="${style}"></div>`,
+      ),
+    )
+    expect(div.querySelector('[data-embed-src]')?.getAttribute('style')).toBe(style)
+  })
+
+  it.each([
+    'color:red',
+    '--embed-rw:16;--embed-rh:9;color:red',
+    '--embed-rw:16;--embed-rh:9;background:url(https://evil.example/)',
+    '--embed-w:560',
+    '--embed-h:99999',
+    '--embed-rw:100;--embed-rh:1',
+  ])("drops a placeholder's style %j that is no box", (style) => {
+    const div = document.createElement('div')
+    div.append(
+      sanitize(
+        `<div class="embed" data-embed-src="https://player.vimeo.com/video/1" style="${style}"></div>`,
+      ),
+    )
+    const el = div.querySelector('[data-embed-src]')
+    expect(el).not.toBeNull()
+    expect(el?.hasAttribute('style')).toBe(false)
   })
 
   it.each([
@@ -124,7 +154,7 @@ describe('sanitize', () => {
     expect(div.innerHTML).toBe('<p>before</p>')
   })
 
-  it('drops placeholders for frame sources outside render', () => {
+  it('drops placeholders for sites no provider names', () => {
     const div = document.createElement('div')
     div.append(sanitize('<div class="embed" data-embed-src="https://embed.example.com/1"></div>'))
     expect(div.innerHTML).toBe('')
@@ -306,18 +336,52 @@ describe('render', () => {
       placeholder(
         0,
         'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?start=90',
-        'YouTube video',
-        'https://youtu.be/dQw4w9WgXcQ?t=90',
         'YouTube',
+        'https://youtu.be/dQw4w9WgXcQ?t=90',
       ) +
         placeholder(
           2,
           'https://player.vimeo.com/video/76979871?h=abc123',
-          'Vimeo video',
-          'https://vimeo.com/76979871/abc123',
           'Vimeo',
+          'https://vimeo.com/76979871/abc123',
         ),
     )
+  })
+
+  it('sizes a placeholder by the hint after its URL, which the frame never gets', () => {
+    const href = 'https://youtu.be/dQw4w9WgXcQ?t=90#height=300&width=400'
+    expect(html(href)).toBe(
+      placeholder(
+        0,
+        'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?start=90',
+        'YouTube',
+        href.replace('&', '&amp;'),
+        '--embed-w:400;--embed-rw:400;--embed-rh:300',
+      ),
+    )
+    const full = dom('https://vimeo.com/76979871#width=100%&height=480')
+    expect(full.querySelector('[data-embed-src]')?.getAttribute('style')).toBe('--embed-h:480')
+  })
+
+  it("gives a placeholder its provider's box for the URL", () => {
+    const out = dom('https://www.youtube.com/shorts/dQw4w9WgXcQ\n\nhttps://vimeo.com/76979871')
+    expect(
+      [...out.querySelectorAll('[data-embed-src]')].map((el) => el.getAttribute('style')),
+    ).toEqual(['--embed-rw:9;--embed-rh:16', '--embed-rw:16;--embed-rh:9'])
+  })
+
+  it.each([
+    'https://youtu.be/dQw4w9WgXcQ#width=560;color:red',
+    'https://youtu.be/dQw4w9WgXcQ#width=560&height=315;color:red',
+    'https://youtu.be/dQw4w9WgXcQ#width=560%22%20onclick=%22alert(1)',
+    'https://youtu.be/dQw4w9WgXcQ#width=560&height=315&style=color:red',
+  ])('ignores a fragment %s that is not a hint', (href) => {
+    const el = dom(href).querySelector('[data-embed-src]')
+    expect(el?.getAttribute('style')).toBe('--embed-rw:16;--embed-rh:9')
+    expect(el?.getAttribute('data-embed-src')).toBe(
+      'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ',
+    )
+    expect(el?.hasAttribute('onclick')).toBe(false)
   })
 
   it('renders no iframe for any provider', () => {
@@ -327,55 +391,25 @@ describe('render', () => {
       'https://youtu.be/dQw4w9WgXcQ',
       'https://vimeo.com/76979871',
       'https://player.vimeo.com/video/76979871',
-      'https://embed.example.com/v/1',
     ].join('\n\n')
-    const out = dom(source, [], ['https://embed.example.com/v/'])
-    expect(out.querySelectorAll('[data-embed-src]')).toHaveLength(6)
+    const out = dom(source, [])
+    expect(out.querySelectorAll('[data-embed-src]')).toHaveLength(5)
     expect(out.innerHTML).not.toContain('<iframe')
   })
 
   it.each(['https://player.vimeo.com/video/abc/xyz', 'https://www.youtube-nocookie.com/embed/'])(
     'keeps player URL %s that names no video a link',
     (href) => {
-      const out = dom(href, [], [])
+      const out = dom(href, [])
       expect(out.querySelector('[data-embed-src]')).toBeNull()
       expect(out.querySelector('a')?.getAttribute('href')).toBe(href)
     },
   )
 
-  describe('with frame sources', () => {
-    it('offers a bare URL they match as a generic frame', () => {
-      const out = dom('https://embed.example.com/v/1?x=2', [], ['https://embed.example.com/v/'])
-      expect(out.innerHTML).toBe(
-        placeholder(
-          0,
-          'https://embed.example.com/v/1?x=2',
-          'embed.example.com',
-          'https://embed.example.com/v/1?x=2',
-          'embed.example.com',
-        ),
-      )
-    })
-
-    it('keeps other URLs, and the same URL in a sentence, as links', () => {
-      const out = dom(
-        'https://embed.example.com/other\n\nSee https://embed.example.com/v/1 here\n\n[x](https://embed.example.com/v/1)',
-        [],
-        ['https://embed.example.com/v/'],
-      )
-      expect(out.querySelector('[data-embed-src]')).toBeNull()
-      expect(out.querySelectorAll('a[href]')).toHaveLength(3)
-    })
-
-    it('never frames the page itself', () => {
-      const out = dom(`${location.origin}/r/x`, [], [location.host])
-      expect(out.querySelector('[data-embed-src]')).toBeNull()
-      expect(out.querySelector('a')).not.toBeNull()
-    })
-
-    it('frames nothing extra without them', () => {
-      expect(dom('https://embed.example.com/v/1').querySelector('[data-embed-src]')).toBeNull()
-    })
+  it('keeps a URL no provider takes a link', () => {
+    const out = dom('https://embed.example.com/v/1')
+    expect(out.querySelector('[data-embed-src]')).toBeNull()
+    expect(out.querySelector('a')?.getAttribute('href')).toBe('https://embed.example.com/v/1')
   })
 
   it('keeps video URLs inside a sentence or with link text as links', () => {
@@ -424,10 +458,10 @@ describe('render', () => {
 })
 
 describe('loadEmbed', () => {
-  function mounted(source: string, frameSources?: readonly string[]): HTMLElement {
+  function mounted(source: string): HTMLElement {
     const div = document.createElement('div')
     document.body.append(div)
-    patch(div, render(source, undefined, [], frameSources))
+    patch(div, render(source, undefined, []))
     return div
   }
 
@@ -435,13 +469,13 @@ describe('loadEmbed', () => {
     [
       'https://youtu.be/dQw4w9WgXcQ',
       'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ',
-      'YouTube video',
+      'YouTube',
     ],
-    ['https://vimeo.com/76979871', 'https://player.vimeo.com/video/76979871', 'Vimeo video'],
+    ['https://vimeo.com/76979871', 'https://player.vimeo.com/video/76979871', 'Vimeo'],
   ])('loads the player for %s with only its own attributes', (url, src, title) => {
     const div = mounted(url)
     const placeholder = div.querySelector('[data-embed-src]') as Element
-    const frame = loadEmbed(placeholder, [])
+    const frame = loadEmbed(placeholder)
     expect(frame).toBe(div.querySelector('iframe'))
     expect(placeholder.children).toHaveLength(1)
     expect(placeholder.classList.contains('embed--loaded')).toBe(true)
@@ -462,22 +496,21 @@ describe('loadEmbed', () => {
     const div = document.createElement('div')
     div.innerHTML =
       '<div class="embed" data-embed-src="https://www.youtube-nocookie.com/embed/aaaaaaaaaaa"></div>'
-    expect(loadEmbed(div.firstElementChild as Element, [])).toBeNull()
+    expect(loadEmbed(div.firstElementChild as Element)).toBeNull()
     expect(div.querySelector('iframe')).toBeNull()
   })
 
-  it('loads a frame source as a generic frame', () => {
-    const sources = ['https://embed.example.com/v/']
-    const div = mounted('https://embed.example.com/v/1?x=2', sources)
-    const frame = loadEmbed(div.querySelector('[data-embed-src]') as Element, sources)
-    expect(
-      Object.fromEntries([...(frame?.attributes ?? [])].map((a) => [a.name, a.value])),
-    ).toEqual({
-      src: 'https://embed.example.com/v/1?x=2',
-      title: 'embed.example.com',
-      sandbox: 'allow-scripts allow-same-origin allow-popups',
-      referrerpolicy: 'strict-origin-when-cross-origin',
-    })
+  it('keeps the box when the player loads, and loads without the hint', () => {
+    const div = mounted('https://vimeo.com/76979871#width=640&height=360')
+    const placeholder = div.querySelector('[data-embed-src]') as HTMLElement
+    const style = placeholder.getAttribute('style')
+    expect(style).toBe('--embed-w:640;--embed-rw:640;--embed-rh:360')
+    const frame = loadEmbed(placeholder)
+    expect(frame?.parentElement).toBe(placeholder)
+    expect(div.querySelector('.embed')).toBe(placeholder)
+    expect(placeholder.getAttribute('style')).toBe(style)
+    expect(frame?.getAttribute('src')).toBe('https://player.vimeo.com/video/76979871')
+    expect(frame?.hasAttribute('style')).toBe(false)
     div.remove()
   })
 
@@ -486,9 +519,9 @@ describe('loadEmbed', () => {
     const placeholder = div.querySelector('[data-embed-src]') as Element
     placeholder.setAttribute('data-embed-sandbox', 'allow-top-navigation')
     placeholder.setAttribute('data-title', 'x')
-    const frame = loadEmbed(placeholder, [])
+    const frame = loadEmbed(placeholder)
     expect(frame?.getAttribute('sandbox')).not.toContain('allow-top-navigation')
-    expect(frame?.title).toBe('Vimeo video')
+    expect(frame?.title).toBe('Vimeo')
     div.remove()
   })
 
@@ -501,7 +534,7 @@ describe('loadEmbed', () => {
     const div = mounted('https://vimeo.com/76979871')
     const placeholder = div.querySelector('[data-embed-src]') as Element
     placeholder.setAttribute('data-embed-src', src)
-    expect(loadEmbed(placeholder, [])).toBeNull()
+    expect(loadEmbed(placeholder)).toBeNull()
     expect(div.querySelector('iframe')).toBeNull()
     expect(placeholder.querySelector('.embed-load')).not.toBeNull()
     div.remove()
@@ -560,155 +593,6 @@ describe('loadEmbed', () => {
   })
 })
 
-describe('provider embeds', () => {
-  const POPUPS = 'allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox'
-  // A link someone shares, the player it becomes, and how pedit names, lays out and sandboxes it.
-  const cases = [
-    [
-      'https://www.loom.com/share/0123456789abcdef0123456789abcdef?sid=x',
-      'https://www.loom.com/embed/0123456789abcdef0123456789abcdef',
-      'Loom video',
-      'loom',
-      'Loom',
-      'video',
-      `${POPUPS} allow-presentation`,
-      'fullscreen; autoplay',
-    ],
-    [
-      'https://www.figma.com/design/AbCdEfGhIjKlMnOpQrStUv/File?node-id=1-2&t=x',
-      'https://embed.figma.com/design/AbCdEfGhIjKlMnOpQrStUv?embed-host=pedit&node-id=1-2',
-      'Figma file',
-      'figma',
-      'Figma',
-      'doc',
-      `${POPUPS} allow-forms`,
-      'fullscreen; clipboard-write',
-    ],
-    [
-      'https://codepen.io/u/pen/AbC123',
-      'https://codepen.io/u/embed/AbC123?default-tab=result',
-      'CodePen pen',
-      'codepen',
-      'CodePen',
-      'doc',
-      `${POPUPS} allow-forms allow-modals`,
-      'fullscreen; clipboard-write',
-    ],
-    [
-      'https://stackblitz.com/edit/vitejs-vite-abc?file=src/main.ts',
-      'https://stackblitz.com/edit/vitejs-vite-abc?embed=1&file=src/main.ts',
-      'StackBlitz project',
-      'stackblitz',
-      'StackBlitz',
-      'doc',
-      `${POPUPS} allow-forms allow-modals`,
-      'cross-origin-isolated; clipboard-write; fullscreen',
-    ],
-    [
-      'https://observablehq.com/@d3/bar-chart',
-      'https://observablehq.com/embed/@d3/bar-chart',
-      'Observable notebook',
-      'observable',
-      'Observable',
-      'doc',
-      POPUPS,
-      'fullscreen; clipboard-write',
-    ],
-    [
-      'https://open.spotify.com/intl-de/track/4uLU6hMCjMI75M1A2tKUQC?si=x',
-      'https://open.spotify.com/embed/track/4uLU6hMCjMI75M1A2tKUQC',
-      'Spotify player',
-      'spotify',
-      'Spotify',
-      'audio',
-      `${POPUPS} allow-presentation`,
-      'autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture',
-    ],
-    [
-      'https://w.soundcloud.com/player/?url=https%3A//api.soundcloud.com/tracks/293&auto_play=true',
-      'https://w.soundcloud.com/player/?url=https%3A%2F%2Fapi.soundcloud.com%2Ftracks%2F293&auto_play=false',
-      'SoundCloud player',
-      'soundcloud',
-      'SoundCloud',
-      'audio',
-      POPUPS,
-      'autoplay',
-    ],
-    [
-      'https://miro.com/app/board/uXjVOabcdEF=/?share_link_id=1',
-      'https://miro.com/app/live-embed/uXjVOabcdEF=/',
-      'Miro board',
-      'miro',
-      'Miro',
-      'doc',
-      `${POPUPS} allow-forms`,
-      'fullscreen',
-    ],
-  ] as const
-
-  it.each(cases)(
-    'offers %s as a placeholder for its player',
-    (href, src, title, _, label, shape) => {
-      const out = dom(href, [], [])
-      const el = out.querySelector('[data-embed-src]') as Element
-      expect(el.getAttribute('data-embed-src')).toBe(src)
-      expect(el.className).toBe(`embed embed--${shape}`)
-      expect(el.querySelector('.embed-provider')?.textContent).toBe(title)
-      expect(el.querySelector('.embed-load')?.textContent).toBe(`Load from ${new URL(src).host}`)
-      expect(el.querySelector('.embed-remember')?.textContent).toBe(`Always load ${label}`)
-      expect(el.querySelector('.embed-link')?.getAttribute('href')).toBe(href)
-      expect(out.querySelector('iframe')).toBeNull()
-    },
-  )
-
-  it('renders no iframe for any of them before someone asks', () => {
-    const out = dom(cases.map(([href]) => href).join('\n\n'), [], [])
-    expect(out.querySelectorAll('[data-embed-src]')).toHaveLength(cases.length)
-    expect(out.innerHTML).not.toContain('<iframe')
-  })
-
-  it.each(cases)(
-    'loads %s with only its own attributes',
-    (href, src, title, id, _, __, sandbox, allow) => {
-      const div = document.createElement('div')
-      document.body.append(div)
-      patch(div, render(href, undefined, [], []))
-      const placeholder = div.querySelector('[data-embed-src]') as Element
-      expect(embedProvider(placeholder, [])).toBe(id)
-      const frame = loadEmbed(placeholder, [])
-      expect(
-        Object.fromEntries([...(frame?.attributes ?? [])].map((a) => [a.name, a.value])),
-      ).toEqual({ src, title, sandbox, allow, referrerpolicy: 'strict-origin-when-cross-origin' })
-      div.remove()
-    },
-  )
-
-  it('keeps a look-alike or a SoundCloud player for another site a link', () => {
-    const out = dom(
-      [
-        'https://codepen.io.evil.example/u/pen/AbC123',
-        'https://w.soundcloud.com/player/?url=https%3A//evil.example/tracks/293',
-        'https://www.figma.com@evil.example/design/AbCdEfGhIjKlMnOpQrStUv',
-      ].join('\n\n'),
-      [],
-      [],
-    )
-    expect(out.querySelector('[data-embed-src]')).toBeNull()
-    expect(out.querySelectorAll('a[href]')).toHaveLength(3)
-  })
-
-  it('drops a placeholder whose src pedit would not frame, such as a CodePen page that is not a player', () => {
-    expect(
-      sanitize('<div class="embed" data-embed-src="https://codepen.io/login">x</div>').childNodes,
-    ).toHaveLength(0)
-    expect(
-      sanitize(
-        '<div class="embed" data-embed-src="https://w.soundcloud.com/player/?url=https%3A//evil.example/1">x</div>',
-      ).childNodes,
-    ).toHaveLength(0)
-  })
-})
-
 describe('always load', () => {
   function memory(initial: string[] = []) {
     const data = new Map<string, string>([[ALWAYS_LOAD_KEY, JSON.stringify(initial)]])
@@ -734,17 +618,12 @@ describe('always load', () => {
     return { element: p.element, text }
   }
 
-  it('offers to always load the provider of each placeholder', () => {
-    const out = dom(
-      'https://youtu.be/dQw4w9WgXcQ\n\nhttps://vimeo.com/1\n\nhttps://embed.example.com:8443/v/1',
-      [],
-      ['https://embed.example.com:8443/v/'],
-    )
+  it('offers to always load the provider of each placeholder, by its name in the registry', () => {
+    const out = dom('https://youtu.be/dQw4w9WgXcQ\n\nhttps://vimeo.com/1')
     const boxes = [...out.querySelectorAll('.embed-remember')]
     expect(boxes.map((b) => b.textContent)).toEqual([
-      'Always load YouTube',
-      'Always load Vimeo',
-      'Always load embed.example.com:8443',
+      `Always load ${PROVIDERS.youtube.name}`,
+      `Always load ${PROVIDERS.vimeo.name}`,
     ])
     for (const b of boxes) {
       expect(b.getAttribute('role')).toBe('checkbox')
@@ -753,15 +632,30 @@ describe('always load', () => {
     }
   })
 
-  it('names the provider of a placeholder from its src alone', () => {
-    const sources = ['https://embed.example.com/v/']
-    const out = dom('https://vimeo.com/1\n\nhttps://embed.example.com/v/1?x=2', [], sources)
-    const [vimeo, custom] = [...out.querySelectorAll('[data-embed-src]')] as Element[]
-    expect(embedProvider(vimeo as Element, sources)).toBe('vimeo')
-    expect(embedProvider(custom as Element, sources)).toBe('custom:https://embed.example.com')
-    expect(embedProvider(custom as Element, [])).toBeNull()
+  it('offers it for a player of every registered provider', () => {
+    // A URL each provider frames; a provider added to the registry needs one here.
+    const samples: Record<ProviderId, string> = {
+      youtube: 'https://youtu.be/dQw4w9WgXcQ',
+      vimeo: 'https://vimeo.com/76979871',
+    }
+    for (const [id, url] of Object.entries(samples)) {
+      const out = dom(url)
+      expect(embedProvider(out.querySelector('[data-embed-src]') as Element)).toBe(id)
+      expect(out.querySelector('.embed-remember')?.textContent).toBe(
+        `Always load ${PROVIDERS[id as ProviderId].name}`,
+      )
+    }
+  })
+
+  it('names the provider of a placeholder from its src alone, by its registry key', () => {
+    const out = dom('https://youtu.be/dQw4w9WgXcQ\n\nhttps://vimeo.com/1')
+    const [youtube, vimeo] = [...out.querySelectorAll('[data-embed-src]')] as Element[]
+    expect(embedProvider(youtube as Element)).toBe('youtube')
+    expect(embedProvider(vimeo as Element)).toBe('vimeo')
     vimeo?.setAttribute('data-embed-src', 'https://evil.example/')
-    expect(embedProvider(vimeo as Element, sources)).toBeNull()
+    expect(embedProvider(vimeo as Element)).toBeNull()
+    vimeo?.removeAttribute('data-embed-src')
+    expect(embedProvider(vimeo as Element)).toBeNull()
   })
 
   it('loads a remembered provider after rendering, leaving focus where it is', async () => {
@@ -860,8 +754,23 @@ describe('always load', () => {
       .querySelector('[data-embed-src]')
       ?.setAttribute('data-embed-src', 'https://evil.example/')
     always.remember('vimeo')
-    always.remember('custom:https://evil.example')
+    always.remember('custom:https://evil.example' as never)
     expect(element.querySelector('iframe')).toBeNull()
+    element.remove()
+  })
+
+  it('remembers nothing when loading with the box ticked is refused', async () => {
+    const storage = memory()
+    const always = new AlwaysLoad(storage)
+    const { element } = await pane('https://vimeo.com/76979871', always)
+    // A src pedit frames for Vimeo, but not one this preview rendered.
+    const placeholder = element.querySelector('[data-embed-src]') as Element
+    placeholder.setAttribute('data-embed-src', 'https://player.vimeo.com/video/999')
+    ;(placeholder.querySelector('.embed-remember') as HTMLElement).click()
+    ;(placeholder.querySelector('.embed-load') as HTMLElement).click()
+    expect(element.querySelector('iframe')).toBeNull()
+    expect(always.ids.get()).toEqual([])
+    expect(storage.data.get(ALWAYS_LOAD_KEY)).toBe('[]')
     element.remove()
   })
 
@@ -883,7 +792,7 @@ describe('patch', () => {
   it('keeps a loaded player while someone types elsewhere, not once its URL changes', () => {
     const container = document.createElement('div')
     patch(container, render('# A\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nold\n'))
-    const frame = loadEmbed(container.querySelector('[data-embed-src]') as Element, [])
+    const frame = loadEmbed(container.querySelector('[data-embed-src]') as Element)
     expect(frame).not.toBeNull()
 
     patch(container, render('# A, edited\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nnew\n'))
@@ -900,7 +809,7 @@ describe('patch', () => {
   it('keeps a loaded player when a block is added above it and another changes below', () => {
     const container = document.createElement('div')
     patch(container, render('a\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nb\n'))
-    const frame = loadEmbed(container.querySelector('[data-embed-src]') as Element, [])
+    const frame = loadEmbed(container.querySelector('[data-embed-src]') as Element)
     expect(frame).not.toBeNull()
 
     patch(container, render('a\n\nnew\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nB\n'))
@@ -914,10 +823,30 @@ describe('patch', () => {
     expect(container.querySelector('.embed')?.getAttribute('data-line')).toBe('6')
   })
 
+  it('keeps a sized player while someone types elsewhere, not once its size changes', () => {
+    const container = document.createElement('div')
+    const url = 'https://youtu.be/dQw4w9WgXcQ#width=400'
+    patch(container, render(`a\n\n${url}\n\nb\n`))
+    const frame = loadEmbed(container.querySelector('[data-embed-src]') as Element)
+    expect(frame).not.toBeNull()
+
+    patch(container, render(`a\n\nnew\n\n${url}\n\nB\n`))
+    expect(container.querySelector('iframe')).toBe(frame)
+    expect(container.querySelector('.embed')?.getAttribute('style')).toBe(
+      '--embed-w:400;--embed-rw:400;--embed-rh:225',
+    )
+
+    patch(container, render('a\n\nnew\n\nhttps://youtu.be/dQw4w9WgXcQ#width=500\n\nB\n'))
+    expect(container.querySelector('iframe')).toBeNull()
+    expect(container.querySelector('.embed')?.getAttribute('style')).toBe(
+      '--embed-w:500;--embed-rw:500;--embed-rh:281',
+    )
+  })
+
   it('keeps a loaded player in a list while its other items change', () => {
     const container = document.createElement('div')
     patch(container, render('a\n\n- https://youtu.be/dQw4w9WgXcQ\n- x\n\nb\n'))
-    const frame = loadEmbed(container.querySelector('[data-embed-src]') as Element, [])
+    const frame = loadEmbed(container.querySelector('[data-embed-src]') as Element)
     expect(frame).not.toBeNull()
 
     patch(container, render('a\n\n- https://youtu.be/dQw4w9WgXcQ\n- xy\n\nb\n'))
@@ -948,7 +877,7 @@ describe('patch', () => {
     ] as const) {
       const container = document.createElement('div')
       patch(container, render('> https://youtu.be/dQw4w9WgXcQ\n>\n> old\n'))
-      const frame = loadEmbed(container.querySelector('[data-embed-src]') as Element, [])
+      const frame = loadEmbed(container.querySelector('[data-embed-src]') as Element)
       expect(frame).not.toBeNull()
 
       patch(container, render(edited))
@@ -980,7 +909,7 @@ describe('patch', () => {
   it('updates the lines after a loaded player in a list', () => {
     const container = document.createElement('div')
     patch(container, render('a\n\n- https://youtu.be/dQw4w9WgXcQ\n- next\n'))
-    loadEmbed(container.querySelector('[data-embed-src]') as Element, [])
+    loadEmbed(container.querySelector('[data-embed-src]') as Element)
 
     patch(container, render('a\n\nb\n\n- https://youtu.be/dQw4w9WgXcQ\n- next\n'))
     expect([...container.querySelectorAll('li')].map((li) => li.getAttribute('data-line'))).toEqual(
@@ -1040,41 +969,6 @@ describe('patch', () => {
     expect(container.innerHTML).toBe(html('z\n\na\n\nb\n'))
     patch(container, render(''))
     expect(container.innerHTML).toBe('')
-  })
-})
-
-describe('pageFrameSources', () => {
-  const page = (head: string) =>
-    new DOMParser().parseFromString(`<head>${head}</head>`, 'text/html')
-  const meta = (content: string) => page(`<meta name="pedit-frame-sources" content="${content}">`)
-  const at = new URL('https://pedit.test/r/x')
-
-  it('reads the list the Worker wrote into the page', () => {
-    expect(pageFrameSources(meta('https://embed.example.com b.example'), at)).toEqual([
-      'https://embed.example.com',
-      'b.example',
-    ])
-  })
-
-  it.each([
-    'https:',
-    '*',
-    "'self'",
-    'pedit.test',
-    'https://pedit.test/elsewhere/',
-    'b.example http://pedit.test',
-    'http://pedit.test:80',
-  ])('frames only the players for %j', (content) => {
-    expect(pageFrameSources(meta(content), at)).toEqual([])
-  })
-
-  it('allows nothing extra without the tag', () => {
-    expect(pageFrameSources(page(''), at)).toEqual([])
-  })
-
-  it('compares with the location by default', () => {
-    expect(pageFrameSources(meta(location.host))).toEqual([])
-    expect(pageFrameSources(meta('b.example'))).toEqual(['b.example'])
   })
 })
 

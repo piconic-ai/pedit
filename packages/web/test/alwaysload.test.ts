@@ -1,8 +1,9 @@
-import { FRAMES } from '@pedit/protocol/csp'
+import { PROVIDERS, type ProviderId } from '@pedit/protocol/csp'
 import { describe, expect, it } from 'vitest'
 import {
   ALWAYS_LOAD_KEY,
   AlwaysLoad,
+  followOtherTabs,
   isProviderId,
   loadAlwaysLoad,
   parseAlwaysLoad,
@@ -32,24 +33,21 @@ const throwing: Store = {
 }
 
 describe('isProviderId', () => {
-  it.each(['youtube', 'vimeo', 'custom:https://embed.example.com', 'custom:http://localhost:8080'])(
-    'accepts %s',
-    (id) => expect(isProviderId(id)).toBe(true),
-  )
+  it.each(Object.keys(PROVIDERS))('accepts the registry key %s', (id) => {
+    expect(isProviderId(id)).toBe(true)
+  })
 
   it.each([
     'YouTube',
+    'soundcloud',
+    'custom:https://embed.example.com',
     'custom:',
-    'custom:https://embed.example.com/',
-    'custom:https://embed.example.com/v/1',
-    'custom:https://embed.example.com?x=1',
-    'custom:https://embed.example.com#k',
-    'custom:https://u:p@embed.example.com',
-    'custom:javascript:alert(1)',
-    'custom:blob:https://embed.example.com/x',
     'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    'https://www.youtube-nocookie.com/embed/',
     'toString',
     'constructor',
+    '__proto__',
+    '',
     1,
     null,
     {},
@@ -57,59 +55,26 @@ describe('isProviderId', () => {
 })
 
 describe('providerLabel', () => {
-  it('names known providers and a custom site by its host', () => {
+  it('names each provider by its name in the registry', () => {
     expect(providerLabel('youtube')).toBe('YouTube')
     expect(providerLabel('vimeo')).toBe('Vimeo')
-    expect(providerLabel('custom:https://embed.example.com:8443')).toBe('embed.example.com:8443')
-  })
-
-  it('spells out plain HTTP', () => {
-    expect(providerLabel('custom:http://embed.example.com')).toBe('http://embed.example.com')
-  })
-})
-
-describe('the built-in providers', () => {
-  const labels = {
-    youtube: 'YouTube',
-    vimeo: 'Vimeo',
-    loom: 'Loom',
-    figma: 'Figma',
-    codepen: 'CodePen',
-    stackblitz: 'StackBlitz',
-    observable: 'Observable',
-    spotify: 'Spotify',
-    soundcloud: 'SoundCloud',
-    miro: 'Miro',
-  }
-
-  it('has an id and a label for every provider in FRAMES', () => {
-    expect(Object.keys(labels).sort()).toEqual(Object.keys(FRAMES).sort())
-    for (const [id, label] of Object.entries(labels)) {
-      expect(isProviderId(id)).toBe(true)
-      expect(providerLabel(id)).toBe(label)
+    for (const [id, provider] of Object.entries(PROVIDERS)) {
+      expect(providerLabel(id as ProviderId)).toBe(provider.name)
     }
-  })
-
-  it.each(['Figma', 'figma ', 'codepen.io', 'custom:figma', 'hasOwnProperty'])('rejects %j', (id) =>
-    expect(isProviderId(id)).toBe(false),
-  )
-
-  it('remembers and stores them like the others', () => {
-    const store = memory()
-    const always = new AlwaysLoad(store)
-    always.remember('figma')
-    always.remember('soundcloud')
-    expect(always.has('figma')).toBe(true)
-    expect(store.data.get(ALWAYS_LOAD_KEY)).toBe('["figma","soundcloud"]')
-    expect(loadAlwaysLoad(store)).toEqual(['figma', 'soundcloud'])
   })
 })
 
 describe('parseAlwaysLoad', () => {
-  it('keeps the valid ids once, in order', () => {
+  it('keeps the registry keys once, in order', () => {
     expect(
       parseAlwaysLoad(['vimeo', 'bad', 'youtube', 'vimeo', 3, 'custom:https://a.example']),
-    ).toEqual(['vimeo', 'youtube', 'custom:https://a.example'])
+    ).toEqual(['vimeo', 'youtube'])
+  })
+
+  it('drops ids this relay has no provider for, such as an older custom site', () => {
+    expect(parseAlwaysLoad(['custom:https://embed.example.com', 'soundcloud', 'youtube'])).toEqual([
+      'youtube',
+    ])
   })
 
   it.each([null, 'youtube', { youtube: true }, 42])('reads %j as nothing remembered', (value) => {
@@ -120,14 +85,19 @@ describe('parseAlwaysLoad', () => {
 describe('loadAlwaysLoad and saveAlwaysLoad', () => {
   it('round-trips the ids as JSON', () => {
     const store = memory()
-    saveAlwaysLoad(['youtube', 'custom:https://embed.example.com'], store)
-    expect(store.data.get(ALWAYS_LOAD_KEY)).toBe('["youtube","custom:https://embed.example.com"]')
-    expect(loadAlwaysLoad(store)).toEqual(['youtube', 'custom:https://embed.example.com'])
+    saveAlwaysLoad(['youtube', 'vimeo'], store)
+    expect(store.data.get(ALWAYS_LOAD_KEY)).toBe('["youtube","vimeo"]')
+    expect(loadAlwaysLoad(store)).toEqual(['youtube', 'vimeo'])
+  })
+
+  it('drops stored ids this relay has no provider for on read', () => {
+    const store = memory({ [ALWAYS_LOAD_KEY]: '["custom:https://embed.example.com","vimeo"]' })
+    expect(loadAlwaysLoad(store)).toEqual(['vimeo'])
   })
 
   it('never stores anything but provider ids', () => {
     const store = memory()
-    saveAlwaysLoad(['youtube', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ#key'], store)
+    saveAlwaysLoad(['youtube', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ#key' as never], store)
     expect(store.data.get(ALWAYS_LOAD_KEY)).toBe('["youtube"]')
   })
 
@@ -141,8 +111,9 @@ describe('loadAlwaysLoad and saveAlwaysLoad', () => {
   it('remembers nothing without storage, or when it throws', () => {
     expect(loadAlwaysLoad(null)).toEqual([])
     expect(loadAlwaysLoad(throwing)).toEqual([])
-    expect(() => saveAlwaysLoad(['youtube'], null)).not.toThrow()
-    expect(() => saveAlwaysLoad(['youtube'], throwing)).not.toThrow()
+    expect(saveAlwaysLoad(['youtube'], null)).toBe(false)
+    expect(saveAlwaysLoad(['youtube'], throwing)).toBe(false)
+    expect(saveAlwaysLoad(['youtube'], memory())).toBe(true)
   })
 })
 
@@ -162,16 +133,35 @@ describe('AlwaysLoad', () => {
     always.ids.subscribe((ids) => seen.push(ids))
     always.remember('youtube')
     always.remember('youtube')
-    always.remember('https://evil.example/')
+    always.remember('https://evil.example/' as never)
+    always.remember('custom:https://embed.example.com' as never)
     always.forget('vimeo')
-    always.remember('custom:https://embed.example.com')
+    always.remember('vimeo')
     always.forget('youtube')
-    expect(seen).toEqual([
-      ['youtube'],
-      ['youtube', 'custom:https://embed.example.com'],
-      ['custom:https://embed.example.com'],
-    ])
-    expect(store.data.get(ALWAYS_LOAD_KEY)).toBe('["custom:https://embed.example.com"]')
+    expect(seen).toEqual([['youtube'], ['youtube', 'vimeo'], ['vimeo']])
+    expect(store.data.get(ALWAYS_LOAD_KEY)).toBe('["vimeo"]')
+  })
+
+  it('leaves out stored ids it has no provider for, and stores the list without them', () => {
+    const store = memory({ [ALWAYS_LOAD_KEY]: '["custom:https://embed.example.com","youtube"]' })
+    const always = new AlwaysLoad(store)
+    expect(always.ids.get()).toEqual(['youtube'])
+    expect(always.has('custom:https://embed.example.com' as never)).toBe(false)
+    always.remember('vimeo')
+    expect(store.data.get(ALWAYS_LOAD_KEY)).toBe('["youtube","vimeo"]')
+  })
+
+  it('leaves out an unknown id another tab stored when taking in its change', () => {
+    const store = memory({ [ALWAYS_LOAD_KEY]: '["youtube"]' })
+    const always = new AlwaysLoad(store)
+    const seen: (readonly string[])[] = []
+    always.ids.subscribe((ids) => seen.push(ids))
+    store.setItem(ALWAYS_LOAD_KEY, '["youtube","custom:https://embed.example.com"]')
+    always.refresh()
+    expect(seen).toEqual([])
+    store.setItem(ALWAYS_LOAD_KEY, '["soundcloud","vimeo"]')
+    always.refresh()
+    expect(seen).toEqual([['vimeo']])
   })
 
   it('works for the page when storage is unavailable', () => {
@@ -180,6 +170,26 @@ describe('AlwaysLoad', () => {
     always.remember('vimeo')
     expect(always.has('vimeo')).toBe(true)
     expect(new AlwaysLoad(throwing).has('vimeo')).toBe(false)
+  })
+
+  it("keeps this page's choice when storage reads but refuses writes (full, or private mode)", () => {
+    const data = new Map<string, string>()
+    const full: Store = {
+      getItem: (k) => data.get(k) ?? null,
+      setItem: () => {
+        throw new Error('QuotaExceededError')
+      },
+    }
+    const always = new AlwaysLoad(full)
+    always.remember('youtube')
+    always.remember('vimeo')
+    expect(always.ids.get()).toEqual(['youtube', 'vimeo'])
+    // What another tab stores no longer takes this page's choice away.
+    data.set(ALWAYS_LOAD_KEY, '[]')
+    always.refresh()
+    expect(always.ids.get()).toEqual(['youtube', 'vimeo'])
+    always.forget('youtube')
+    expect(always.ids.get()).toEqual(['vimeo'])
   })
 
   it('starts each change from what other tabs stored, so a forgotten provider stays forgotten', () => {
@@ -206,5 +216,26 @@ describe('AlwaysLoad', () => {
     b.refresh()
     expect(b.has('youtube')).toBe(false)
     expect(seen).toEqual([[]])
+  })
+})
+
+describe('followOtherTabs', () => {
+  function storageEvent(key: string | null): Event {
+    return Object.assign(new Event('storage'), { key })
+  }
+
+  it('refreshes on a storage event for its key, or for cleared storage, and on no other', () => {
+    const store = memory({ [ALWAYS_LOAD_KEY]: '["youtube"]' })
+    const always = new AlwaysLoad(store)
+    const target = new EventTarget()
+    followOtherTabs(always, target as unknown as Window)
+    store.setItem(ALWAYS_LOAD_KEY, '["vimeo"]')
+    target.dispatchEvent(storageEvent('pedit:theme'))
+    expect(always.ids.get()).toEqual(['youtube'])
+    target.dispatchEvent(storageEvent(ALWAYS_LOAD_KEY))
+    expect(always.ids.get()).toEqual(['vimeo'])
+    store.data.clear()
+    target.dispatchEvent(storageEvent(null))
+    expect(always.ids.get()).toEqual([])
   })
 })

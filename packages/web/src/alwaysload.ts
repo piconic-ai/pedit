@@ -1,63 +1,30 @@
-import type { FrameProvider } from '@pedit/protocol/csp'
+import { PROVIDERS, type ProviderId } from '@pedit/protocol/csp'
 import { defaultStore, type Store as Storage } from './storage.ts'
 import { Store } from './store.ts'
 
 export const ALWAYS_LOAD_KEY = 'pedit:always-load'
 
+export type { ProviderId }
+
 /**
- * Who serves a preview frame, as this browser remembers it: a built-in
- * provider such as 'youtube' or 'figma', or 'custom:' and the origin of a
- * FRAME_SOURCES site. Never a URL:
- * the list holds nothing about a room or what someone wrote in it.
+ * Whether `id` names a provider this relay was built with: a key of the
+ * registry (packages/protocol/src/embeds/index.ts). That is all the list holds,
+ * never a URL: nothing about a room or what someone wrote in it.
  */
-export type ProviderId = string
-
-const KNOWN: Record<FrameProvider, string> = {
-  youtube: 'YouTube',
-  vimeo: 'Vimeo',
-  loom: 'Loom',
-  figma: 'Figma',
-  codepen: 'CodePen',
-  stackblitz: 'StackBlitz',
-  observable: 'Observable',
-  spotify: 'Spotify',
-  soundcloud: 'SoundCloud',
-  miro: 'Miro',
-}
-const CUSTOM = 'custom:'
-
-/** The origin of a custom provider id, or null if it is not a well-formed one. */
-function customOrigin(id: string): URL | null {
-  if (!id.startsWith(CUSTOM)) return null
-  const origin = id.slice(CUSTOM.length)
-  try {
-    const url = new URL(origin)
-    const web = url.protocol === 'https:' || url.protocol === 'http:'
-    return web && url.origin === origin ? url : null
-  } catch {
-    return null
-  }
-}
-
 export function isProviderId(id: unknown): id is ProviderId {
-  return typeof id === 'string' && (Object.hasOwn(KNOWN, id) || customOrigin(id) !== null)
+  return typeof id === 'string' && Object.hasOwn(PROVIDERS, id)
 }
 
-/** The id of a custom provider for a frame src, from its origin alone. */
-export function customProvider(src: URL): ProviderId {
-  return `${CUSTOM}${src.origin}`
-}
-
-/** How the preview and the settings name a provider: its name, or a custom site's host. */
+/** How the preview and the settings name a provider: its name in the registry. */
 export function providerLabel(id: ProviderId): string {
-  if (Object.hasOwn(KNOWN, id)) return KNOWN[id as FrameProvider]
-  const url = customOrigin(id)
-  if (!url) return id
-  // Spell out plain HTTP, so it cannot pass for the HTTPS site of the same host.
-  return url.protocol === 'https:' ? url.host : url.origin
+  return PROVIDERS[id].name
 }
 
-/** The providers this browser always loads; anything malformed is left out. */
+/**
+ * The providers this browser always loads. Anything malformed is left out, and
+ * so is an id this relay has no provider for (one dropped from the registry
+ * since, or an id from an older pedit).
+ */
 export function parseAlwaysLoad(value: unknown): ProviderId[] {
   if (!Array.isArray(value)) return []
   return [...new Set(value.filter(isProviderId))]
@@ -72,14 +39,18 @@ export function loadAlwaysLoad(store: Storage | null = defaultStore()): Provider
   }
 }
 
+/** Stores `ids`; false when storage is missing or refuses the write. */
 export function saveAlwaysLoad(
   ids: readonly ProviderId[],
   store: Storage | null = defaultStore(),
-): void {
+): boolean {
+  if (!store) return false
   try {
-    store?.setItem(ALWAYS_LOAD_KEY, JSON.stringify(parseAlwaysLoad(ids)))
+    store.setItem(ALWAYS_LOAD_KEY, JSON.stringify(parseAlwaysLoad(ids)))
+    return true
   } catch {
-    // Private mode or storage disabled: the choice lasts for this page only.
+    // Private mode, storage disabled or full: the choice lasts for this page only.
+    return false
   }
 }
 
@@ -96,6 +67,8 @@ export function saveAlwaysLoad(
 export class AlwaysLoad {
   readonly ids: Store<readonly ProviderId[]>
   #store: Storage | null
+  /** Set once a write failed: storage then lags this page's choice, so this page's copy wins. */
+  #pageOnly = false
 
   constructor(store: Storage | null = defaultStore()) {
     this.#store = store
@@ -111,14 +84,14 @@ export class AlwaysLoad {
     const ids = this.#current()
     if (ids.includes(id)) return this.#publish(ids)
     this.#publish([...ids, id])
-    saveAlwaysLoad(this.ids.get(), this.#store)
+    this.#save()
   }
 
   forget(id: ProviderId): void {
     const ids = this.#current()
     if (!ids.includes(id)) return this.#publish(ids)
     this.#publish(ids.filter((i) => i !== id))
-    saveAlwaysLoad(this.ids.get(), this.#store)
+    this.#save()
   }
 
   /** Takes in what another tab stored, e.g. on a `storage` event for ALWAYS_LOAD_KEY. */
@@ -126,9 +99,16 @@ export class AlwaysLoad {
     this.#publish(this.#current())
   }
 
-  /** What is stored now, or this page's copy when storage cannot be read. */
+  #save(): void {
+    if (!saveAlwaysLoad(this.ids.get(), this.#store)) this.#pageOnly = true
+  }
+
+  /**
+   * What is stored now, or this page's copy when storage cannot be read or
+   * has refused one of this page's writes (reads may still work then).
+   */
   #current(): readonly ProviderId[] {
-    if (!this.#store) return this.ids.get()
+    if (!this.#store || this.#pageOnly) return this.ids.get()
     try {
       const raw = this.#store.getItem(ALWAYS_LOAD_KEY)
       return parseAlwaysLoad(raw ? JSON.parse(raw) : null)
@@ -142,4 +122,17 @@ export class AlwaysLoad {
     if (ids.length === now.length && ids.every((id, i) => id === now[i])) return
     this.ids.set(ids)
   }
+}
+
+/**
+ * Follows the changes other pedit tabs store: a `storage` event for
+ * ALWAYS_LOAD_KEY, or one with no key (storage cleared), refreshes `always`.
+ */
+export function followOtherTabs(
+  always: AlwaysLoad,
+  target: Pick<Window, 'addEventListener'> = window,
+): void {
+  target.addEventListener('storage', (e) => {
+    if (e.key === ALWAYS_LOAD_KEY || e.key === null) always.refresh()
+  })
 }
