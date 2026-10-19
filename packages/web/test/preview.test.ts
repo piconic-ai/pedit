@@ -342,7 +342,7 @@ describe('render', () => {
         0,
         'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?start=90',
         'YouTube',
-        href.replace('&', '&amp;'),
+        href.replaceAll('&', '&amp;'),
         '--embed-w:400;--embed-rw:400;--embed-rh:300',
       ),
     )
