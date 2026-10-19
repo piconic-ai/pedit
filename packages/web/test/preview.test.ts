@@ -759,6 +759,21 @@ describe('always load', () => {
     element.remove()
   })
 
+  it('remembers nothing when loading with the box ticked is refused', async () => {
+    const storage = memory()
+    const always = new AlwaysLoad(storage)
+    const { element } = await pane('https://vimeo.com/76979871', always)
+    // A src pedit frames for Vimeo, but not one this preview rendered.
+    const placeholder = element.querySelector('[data-embed-src]') as Element
+    placeholder.setAttribute('data-embed-src', 'https://player.vimeo.com/video/999')
+    ;(placeholder.querySelector('.embed-remember') as HTMLElement).click()
+    ;(placeholder.querySelector('.embed-load') as HTMLElement).click()
+    expect(element.querySelector('iframe')).toBeNull()
+    expect(always.ids.get()).toEqual([])
+    expect(storage.data.get(ALWAYS_LOAD_KEY)).toBe('[]')
+    element.remove()
+  })
+
   it('keeps players loaded when their provider is forgotten, and asks again for new ones', async () => {
     const always = new AlwaysLoad(memory(['vimeo']))
     const { element, text } = await pane('https://vimeo.com/76979871', always)

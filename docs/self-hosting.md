@@ -195,6 +195,11 @@ types refuse what a frame may not have, such as `allow-top-navigation` or
 origin, where the frame could read the page. `pnpm test` checks that every
 file is listed and that no two providers' frames overlap.
 
+Browsers that ticked "Always load" for a provider remember it by its id, the
+key in `index.ts`. Renaming a key, or dropping a provider, forgets that choice
+in every browser: an id the relay no longer lists is ignored, so people are
+asked again before its players load.
+
 `size` is the player's box when its URL names none. Someone can still size one
 player by ending its URL with `#width=560&height=315`, `#width=100%&height=480`,
 `#width=560` or `#height=400`; that fragment is taken off before `embed()` sees

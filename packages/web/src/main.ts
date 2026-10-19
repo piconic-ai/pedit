@@ -13,7 +13,7 @@ import { basicSetup } from 'codemirror'
 import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next'
 import { Awareness } from 'y-protocols/awareness'
 import * as Y from 'yjs'
-import { ALWAYS_LOAD_KEY, AlwaysLoad } from './alwaysload.ts'
+import { AlwaysLoad, followOtherTabs } from './alwaysload.ts'
 import {
   type Appearance,
   applyText,
@@ -312,9 +312,7 @@ async function joinRoom(
   }
   const alwaysLoad = new AlwaysLoad()
   // Another pedit tab remembered or forgot a provider: follow it here too.
-  window.addEventListener('storage', (e) => {
-    if (e.key === ALWAYS_LOAD_KEY || e.key === null) alwaysLoad.refresh()
-  })
+  followOtherTabs(alwaysLoad)
   const preview = new PreviewPane(text, {
     onRender: followEditor,
     images: attachments,

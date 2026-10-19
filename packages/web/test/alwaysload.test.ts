@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   ALWAYS_LOAD_KEY,
   AlwaysLoad,
+  followOtherTabs,
   isProviderId,
   loadAlwaysLoad,
   parseAlwaysLoad,
@@ -110,8 +111,9 @@ describe('loadAlwaysLoad and saveAlwaysLoad', () => {
   it('remembers nothing without storage, or when it throws', () => {
     expect(loadAlwaysLoad(null)).toEqual([])
     expect(loadAlwaysLoad(throwing)).toEqual([])
-    expect(() => saveAlwaysLoad(['youtube'], null)).not.toThrow()
-    expect(() => saveAlwaysLoad(['youtube'], throwing)).not.toThrow()
+    expect(saveAlwaysLoad(['youtube'], null)).toBe(false)
+    expect(saveAlwaysLoad(['youtube'], throwing)).toBe(false)
+    expect(saveAlwaysLoad(['youtube'], memory())).toBe(true)
   })
 })
 
@@ -170,6 +172,26 @@ describe('AlwaysLoad', () => {
     expect(new AlwaysLoad(throwing).has('vimeo')).toBe(false)
   })
 
+  it("keeps this page's choice when storage reads but refuses writes (full, or private mode)", () => {
+    const data = new Map<string, string>()
+    const full: Store = {
+      getItem: (k) => data.get(k) ?? null,
+      setItem: () => {
+        throw new Error('QuotaExceededError')
+      },
+    }
+    const always = new AlwaysLoad(full)
+    always.remember('youtube')
+    always.remember('vimeo')
+    expect(always.ids.get()).toEqual(['youtube', 'vimeo'])
+    // What another tab stores no longer takes this page's choice away.
+    data.set(ALWAYS_LOAD_KEY, '[]')
+    always.refresh()
+    expect(always.ids.get()).toEqual(['youtube', 'vimeo'])
+    always.forget('youtube')
+    expect(always.ids.get()).toEqual(['vimeo'])
+  })
+
   it('starts each change from what other tabs stored, so a forgotten provider stays forgotten', () => {
     const store = memory({ [ALWAYS_LOAD_KEY]: '["youtube"]' })
     const a = new AlwaysLoad(store)
@@ -194,5 +216,26 @@ describe('AlwaysLoad', () => {
     b.refresh()
     expect(b.has('youtube')).toBe(false)
     expect(seen).toEqual([[]])
+  })
+})
+
+describe('followOtherTabs', () => {
+  function storageEvent(key: string | null): Event {
+    return Object.assign(new Event('storage'), { key })
+  }
+
+  it('refreshes on a storage event for its key, or for cleared storage, and on no other', () => {
+    const store = memory({ [ALWAYS_LOAD_KEY]: '["youtube"]' })
+    const always = new AlwaysLoad(store)
+    const target = new EventTarget()
+    followOtherTabs(always, target as unknown as Window)
+    store.setItem(ALWAYS_LOAD_KEY, '["vimeo"]')
+    target.dispatchEvent(storageEvent('pedit:theme'))
+    expect(always.ids.get()).toEqual(['youtube'])
+    target.dispatchEvent(storageEvent(ALWAYS_LOAD_KEY))
+    expect(always.ids.get()).toEqual(['vimeo'])
+    store.data.clear()
+    target.dispatchEvent(storageEvent(null))
+    expect(always.ids.get()).toEqual([])
   })
 })

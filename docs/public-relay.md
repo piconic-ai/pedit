@@ -87,7 +87,7 @@ own shows a placeholder naming the host it would load from; the player loads
 only when you click it, so a URL in the file alone does not make anyone's
 browser contact that site. If you tick "Always load" for a provider, your
 browser loads that provider's players without asking; the choice is stored in
-your browser only (just the provider's name, no URL), is never sent to the
+your browser only (just the provider's id, such as `youtube`, no URL), is never sent to the
 relay, and can be undone in Settings. This is for privacy, not a sandbox: once loaded, the
 players run their own scripts, can set their own cookies, and get only the
 origin as `Referer`. The page's
