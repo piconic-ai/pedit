@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
 import type { ImageResolver } from '../src/attachments.ts'
-import { pageFrameSources, pageMediaSources, patch, render, sanitize } from '../src/preview.ts'
+import { pageMediaSources, patch, render, sanitize } from '../src/preview.ts'
 
 function html(source: string): string {
   const div = document.createElement('div')
@@ -9,13 +9,9 @@ function html(source: string): string {
   return div.innerHTML
 }
 
-function dom(
-  source: string,
-  sources?: readonly string[],
-  frameSources?: readonly string[],
-): HTMLElement {
+function dom(source: string, sources?: readonly string[]): HTMLElement {
   const div = document.createElement('div')
-  div.append(render(source, undefined, sources, frameSources))
+  div.append(render(source, undefined, sources))
   return div
 }
 
@@ -100,7 +96,7 @@ describe('sanitize', () => {
     expect(div.querySelector('iframe')).toBeNull()
   })
 
-  it('drops frames from frame sources outside render', () => {
+  it('drops frames from sites no provider names', () => {
     const div = document.createElement('div')
     div.append(sanitize('<iframe src="https://embed.example.com/1"></iframe>'))
     expect(div.querySelector('iframe')).toBeNull()
@@ -290,41 +286,16 @@ describe('render', () => {
   it.each(['https://player.vimeo.com/video/abc/xyz', 'https://www.youtube-nocookie.com/embed/'])(
     'keeps player URL %s that names no video a link',
     (href) => {
-      const out = dom(href, [], [])
+      const out = dom(href, [])
       expect(out.querySelector('iframe')).toBeNull()
       expect(out.querySelector('a')?.getAttribute('href')).toBe(href)
     },
   )
 
-  describe('with frame sources', () => {
-    it('frames a bare URL they match as a generic frame', () => {
-      const out = dom('https://embed.example.com/v/1?x=2', [], ['https://embed.example.com/v/'])
-      expect(out.innerHTML).toBe(
-        '<div class="embed" data-line="0"><iframe src="https://embed.example.com/v/1?x=2" title="embed.example.com"' +
-          ' loading="lazy" sandbox="allow-scripts allow-same-origin allow-popups"' +
-          ' referrerpolicy="strict-origin-when-cross-origin"></iframe></div>',
-      )
-    })
-
-    it('keeps other URLs, and the same URL in a sentence, as links', () => {
-      const out = dom(
-        'https://embed.example.com/other\n\nSee https://embed.example.com/v/1 here\n\n[x](https://embed.example.com/v/1)',
-        [],
-        ['https://embed.example.com/v/'],
-      )
-      expect(out.querySelector('iframe')).toBeNull()
-      expect(out.querySelectorAll('a[href]')).toHaveLength(3)
-    })
-
-    it('never frames the page itself', () => {
-      const out = dom(`${location.origin}/r/x`, [], [location.host])
-      expect(out.querySelector('iframe')).toBeNull()
-      expect(out.querySelector('a')).not.toBeNull()
-    })
-
-    it('frames nothing extra without them', () => {
-      expect(dom('https://embed.example.com/v/1').querySelector('iframe')).toBeNull()
-    })
+  it('keeps a URL no provider takes a link', () => {
+    const out = dom('https://embed.example.com/v/1')
+    expect(out.querySelector('iframe')).toBeNull()
+    expect(out.querySelector('a')?.getAttribute('href')).toBe('https://embed.example.com/v/1')
   })
 
   it('keeps video URLs inside a sentence or with link text as links', () => {
@@ -400,41 +371,6 @@ describe('patch', () => {
     expect(container.innerHTML).toBe(html('z\n\na\n\nb\n'))
     patch(container, render(''))
     expect(container.innerHTML).toBe('')
-  })
-})
-
-describe('pageFrameSources', () => {
-  const page = (head: string) =>
-    new DOMParser().parseFromString(`<head>${head}</head>`, 'text/html')
-  const meta = (content: string) => page(`<meta name="pedit-frame-sources" content="${content}">`)
-  const at = new URL('https://pedit.test/r/x')
-
-  it('reads the list the Worker wrote into the page', () => {
-    expect(pageFrameSources(meta('https://embed.example.com b.example'), at)).toEqual([
-      'https://embed.example.com',
-      'b.example',
-    ])
-  })
-
-  it.each([
-    'https:',
-    '*',
-    "'self'",
-    'pedit.test',
-    'https://pedit.test/elsewhere/',
-    'b.example http://pedit.test',
-    'http://pedit.test:80',
-  ])('frames only the players for %j', (content) => {
-    expect(pageFrameSources(meta(content), at)).toEqual([])
-  })
-
-  it('allows nothing extra without the tag', () => {
-    expect(pageFrameSources(page(''), at)).toEqual([])
-  })
-
-  it('compares with the location by default', () => {
-    expect(pageFrameSources(meta(location.host))).toEqual([])
-    expect(pageFrameSources(meta('b.example'))).toEqual(['b.example'])
   })
 })
 

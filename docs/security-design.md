@@ -113,9 +113,11 @@ Requests never carry the fragment, so the key is not sent to the relay or in
 The editor also sets `<meta name="referrer" content="no-referrer">`. The Worker also sends a
 Content-Security-Policy with the editor: scripts only from the relay, and
 network requests only to the relay, the avatar hosts, the YouTube and Vimeo
-players and any image or frame sources a self-hosted relay allows. A frame
-source may never be the relay's own origin: a frame there with scripts and
-allow-same-origin could reach the editor and its key. A script injected
+players (or the embed providers a self-hosted relay is built with) and any
+image sources a self-hosted relay allows. A provider's frames may never cover
+the relay's own origin: a frame there with scripts and allow-same-origin could
+reach the editor and its key, so both the Worker (against the request's origin)
+and the editor (against its own) leave out such a provider. A script injected
 through a bug could not send the key to another host in an image, fetch or
 WebSocket. It could still send it through the relay itself, to a room it
 creates, navigate the page away, or use channels CSP does not cover, such as

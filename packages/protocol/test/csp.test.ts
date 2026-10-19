@@ -1,14 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import {
   AVATAR_HOSTS,
-  allowsFrame,
   allowsMedia,
   contentSecurityPolicy,
   coversOrigin,
-  FRAMES,
-  parseFrameSources,
+  framedProviders,
+  PROVIDERS,
   parseMediaSources,
+  providerProblem,
 } from '../src/csp.ts'
+import { defineProvider, type Provider } from '../src/embeds/define.ts'
+
+const FRAMES = Object.values(PROVIDERS).flatMap((p) => p.frames)
 
 describe('parseMediaSources', () => {
   it.each([
@@ -42,51 +45,6 @@ describe('parseMediaSources', () => {
   })
 })
 
-describe('parseFrameSources', () => {
-  it.each([
-    [undefined, []],
-    ['', []],
-    ['https://embed.example.com', ['https://embed.example.com']],
-    [
-      'embed.example.com https://b.example/player/',
-      ['embed.example.com', 'https://b.example/player/'],
-    ],
-    ['*.example.com', ['*.example.com']],
-    ['http://192.168.1.10:8080', ['http://192.168.1.10:8080']],
-  ])('accepts %j', (value, expected) => {
-    expect(parseFrameSources(value)).toEqual(expected)
-  })
-
-  it.each([
-    // A host is required: these would frame any site.
-    'https:',
-    'http:',
-    '*',
-    'https://*',
-    'https://a.com https:',
-    // As for MEDIA_SOURCES.
-    'https://a.com; script-src *',
-    "'self'",
-    "'unsafe-inline'",
-    'data:',
-    'blob:',
-    'javascript:',
-    'https://a.com"',
-    'https://a.com,b.com',
-    'wss://x',
-    'https://a.com/?q=1',
-    'https://[::1]',
-    Array.from({ length: 33 }, (_, i) => `h${i}.example.com`).join(' '),
-  ])('rejects %j', (value) => {
-    expect(parseFrameSources(value)).toBeNull()
-  })
-
-  it('takes as many sources as MEDIA_SOURCES', () => {
-    const list = Array.from({ length: 32 }, (_, i) => `h${i}.example.com`).join(' ')
-    expect(parseFrameSources(list)).toHaveLength(32)
-  })
-})
-
 describe('coversOrigin', () => {
   const page = new URL('https://pedit.test/r/x')
 
@@ -114,32 +72,6 @@ describe('coversOrigin', () => {
       expect(coversOrigin([value], page)).toBe(false)
     },
   )
-})
-
-describe('allowsFrame', () => {
-  const page = new URL('https://pedit.test/r/x')
-  const ok = (sources: string[], url: string) => allowsFrame(sources, new URL(url), page)
-
-  it('matches hosts and paths', () => {
-    expect(ok(['embed.example.com'], 'https://embed.example.com/v/1')).toBe(true)
-    expect(ok(['https://embed.example.com/v/'], 'https://embed.example.com/v/1')).toBe(true)
-    expect(ok(['https://embed.example.com/v/'], 'https://embed.example.com/x/1')).toBe(false)
-    expect(ok(['embed.example.com'], 'https://embed.example.com.evil.test/')).toBe(false)
-    expect(ok([], 'https://embed.example.com/')).toBe(false)
-  })
-
-  it('takes http only from a source that names it', () => {
-    expect(ok(['embed.example.com'], 'http://embed.example.com/')).toBe(false)
-    expect(ok(['https://embed.example.com'], 'http://embed.example.com/')).toBe(false)
-    expect(ok(['http://embed.example.com'], 'http://embed.example.com/')).toBe(true)
-    expect(ok(['http://embed.example.com'], 'https://embed.example.com/')).toBe(true)
-  })
-
-  it('refuses user-info and the page origin', () => {
-    expect(ok(['embed.example.com'], 'https://u:p@embed.example.com/')).toBe(false)
-    expect(ok(['embed.example.com'], 'https://u@embed.example.com/')).toBe(false)
-    expect(ok(['pedit.test'], 'https://pedit.test/r/y')).toBe(false)
-  })
 })
 
 describe('allowsMedia', () => {
@@ -193,7 +125,9 @@ describe('contentSecurityPolicy', () => {
   const origin = new URL('https://pedit.test/r/abc')
 
   it('builds the strict policy', () => {
-    expect(contentSecurityPolicy({ scriptHashes: ['abc'], media: [], origin })).toBe(
+    expect(
+      contentSecurityPolicy({ scriptHashes: ['abc'], media: [], frames: FRAMES, origin }),
+    ).toBe(
       [
         "default-src 'none'",
         "script-src 'self' 'sha256-abc'",
@@ -212,7 +146,7 @@ describe('contentSecurityPolicy', () => {
   })
 
   it('adds the media sources to img-src and media-src', () => {
-    const csp = contentSecurityPolicy({ scriptHashes: [], media: ['https:'], origin })
+    const csp = contentSecurityPolicy({ scriptHashes: [], media: ['https:'], frames: [], origin })
     expect(csp).toMatch(/img-src [^;]* https:(;|$)/)
     expect(csp).toContain('media-src https:;')
   })
@@ -221,31 +155,159 @@ describe('contentSecurityPolicy', () => {
     const csp = contentSecurityPolicy({
       scriptHashes: [],
       media: [],
+      frames: [],
       origin: new URL('http://localhost:8787/'),
     })
     expect(csp).toContain("connect-src 'self' ws://localhost:8787;")
   })
 
   it('lists every avatar host and player', () => {
-    const csp = contentSecurityPolicy({ scriptHashes: [], media: [], origin })
+    const csp = contentSecurityPolicy({ scriptHashes: [], media: [], frames: FRAMES, origin })
     const directive = (name: string) => csp.split('; ').find((d) => d.startsWith(`${name} `)) ?? ''
     for (const host of AVATAR_HOSTS) expect(directive('img-src')).toContain(`https://${host}`)
-    expect(directive('frame-src')).toBe(`frame-src ${FRAMES.youtube} ${FRAMES.vimeo}`)
+    expect(directive('frame-src')).toBe(`frame-src ${FRAMES.join(' ')}`)
   })
 
-  it('adds the frame sources to frame-src only', () => {
-    const csp = contentSecurityPolicy({
-      scriptHashes: [],
-      media: [],
-      frames: ['https://embed.example.com', 'b.example'],
-      origin,
+  it('frames nothing without frames', () => {
+    const csp = contentSecurityPolicy({ scriptHashes: [], media: [], frames: [], origin })
+    expect(csp).toContain("frame-src 'none';")
+  })
+})
+
+// A provider that passes every check, to vary one field at a time.
+const good: Provider = {
+  name: 'Example',
+  frames: ['https://embed.example.com/v/'],
+  size: { ratio: '16/9' },
+}
+const page = new URL('https://pedit.test/r/x')
+const problem = (over: Record<string, unknown>, at = page) =>
+  providerProblem({ ...good, ...over } as Provider, at)
+
+describe('providerProblem', () => {
+  it('passes a provider within the rules', () => {
+    expect(problem({})).toBeNull()
+    expect(
+      problem({
+        title: 'Example player',
+        frames: ['https://embed.example.com/', 'https://cdn.example.com:8443/a/b/'],
+        size: () => ({ height: 152 }),
+        embed: () => null,
+        sandbox: ['allow-presentation', 'allow-forms'],
+        allow: ['fullscreen', 'autoplay'],
+      }),
+    ).toBeNull()
+    expect(problem({ size: { height: 152 } })).toBeNull()
+  })
+
+  it.each(Object.keys(PROVIDERS))('passes the built-in provider %s on the public relay', (id) => {
+    const provider = PROVIDERS[id as keyof typeof PROVIDERS]
+    expect(providerProblem(provider, new URL('https://edit.piconic.ai/r/x'))).toBeNull()
+    expect(providerProblem(provider, new URL('http://localhost:8787/r/x'))).toBeNull()
+  })
+
+  it.each([
+    { name: '' },
+    { name: '  ' },
+    { name: undefined },
+    { title: '' },
+    { frames: [] },
+    { frames: undefined },
+    { size: undefined },
+    { size: { ratio: '16:9' } },
+    { size: { ratio: '0/9' } },
+    { size: { height: 0 } },
+    { size: { height: 1.5 } },
+    { size: 'big' },
+    { embed: 'https://embed.example.com/v/1' },
+  ])('refuses %j', (over) => {
+    expect(problem(over)).not.toBeNull()
+  })
+
+  it.each([
+    // Not https, or no path ending in '/'.
+    'http://embed.example.com/',
+    'https://embed.example.com',
+    'https://embed.example.com/v',
+    'embed.example.com/',
+    // Anything frame-src would read as more than one prefix, or as a keyword.
+    'https://*.example.com/',
+    'https://embed.example.com:*/',
+    'https://embed.example.com/ https:/',
+    "https://embed.example.com/'self'/",
+    'https://embed.example.com/;script-src/',
+    'https://embed.example.com/a,b/',
+    // Not in the URL parser's own form.
+    'https://Embed.example.com/',
+    'https://embed.example.com:443/',
+    'https://embed.example.com/a/../',
+    'https://embed.example.com/%2e%2e/',
+    'https://embed.example.com:99999/',
+    // User-info, query and fragment.
+    'https://u@embed.example.com/',
+    'https://embed.example.com/?a=/',
+    'https://embed.example.com/#/',
+  ])('refuses frame %j', (frame) => {
+    expect(problem({ frames: [frame] })).toMatch(/is not https/)
+  })
+
+  it.each([
+    'allow-top-navigation',
+    'allow-top-navigation-by-user-activation',
+    'allow-top-navigation-to-custom-protocols',
+    'allow-downloads',
+    'allow-scripts allow-top-navigation',
+    'allow-forms ',
+  ])('refuses sandbox token %j', (token) => {
+    expect(problem({ sandbox: [token] })).toMatch(/sandbox/)
+  })
+
+  it.each(['camera', 'microphone', 'clipboard-read', 'geolocation', 'fullscreen; camera *'])(
+    'refuses allow feature %j',
+    (feature) => {
+      expect(problem({ allow: [feature] })).toMatch(/allow/)
+    },
+  )
+
+  it.each([
+    'https://pedit.test/',
+    'https://pedit.test/elsewhere/',
+    // CSP3 lets :80 match https on its default port too.
+    'https://pedit.test:80/',
+  ])("refuses frames %j that cover the editor's own origin", (frame) => {
+    expect(problem({ frames: ['https://embed.example.com/', frame] })).toMatch(/own origin/)
+  })
+
+  it('compares with the origin of the page, port and all', () => {
+    expect(problem({ frames: ['https://pedit.test:8443/'] })).toBeNull()
+    expect(problem({ frames: ['https://sub.pedit.test/'] })).toBeNull()
+    const local = new URL('https://localhost:8443/r/x')
+    expect(problem({ frames: ['https://localhost:8443/'] }, local)).toMatch(/own origin/)
+    expect(problem({ frames: ['https://localhost/'] }, local)).toBeNull()
+  })
+})
+
+describe('framedProviders', () => {
+  it('frames the built-in providers, in order', () => {
+    expect(framedProviders(page)).toEqual({ framed: Object.keys(PROVIDERS), refused: [] })
+  })
+
+  it('leaves out the providers that fail, and says why', () => {
+    const providers = {
+      a: defineProvider(good),
+      self: defineProvider({ ...good, frames: ['https://pedit.test/embed/'] }),
+      b: defineProvider({ ...good, frames: ['https://b.example/'] }),
+    }
+    expect(framedProviders(page, providers)).toEqual({
+      framed: ['a', 'b'],
+      refused: [{ id: 'self', reason: "its frames cover the editor's own origin" }],
     })
-    expect(csp).toContain(
-      `frame-src ${FRAMES.youtube} ${FRAMES.vimeo} https://embed.example.com b.example;`,
-    )
-    expect(csp).toContain("media-src 'none';")
-    expect(contentSecurityPolicy({ scriptHashes: [], media: [], frames: [], origin })).toBe(
-      contentSecurityPolicy({ scriptHashes: [], media: [], origin }),
-    )
+  })
+
+  it("leaves out a built-in provider on that provider's own origin", () => {
+    const [id = '', provider] = Object.entries(PROVIDERS)[0] ?? []
+    const { framed, refused } = framedProviders(new URL(provider?.frames[0] ?? ''))
+    expect(framed).not.toContain(id)
+    expect(refused.map((r) => r.id)).toEqual([id])
   })
 })
