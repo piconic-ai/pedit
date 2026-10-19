@@ -47,6 +47,7 @@ import {
   MessageType,
   UnknownMessageTypeError,
 } from './message.ts'
+import { Pacer, type Rate } from './pace.ts'
 
 /**
  * `closed` is final: the host ended the session. So is `full`: the room had no
@@ -134,6 +135,9 @@ export interface RoomClientOptions {
   onFileSynced?: (file: number) => void
   onFileAttachment?: (file: number, attachment: Attachment) => void
   onFileCanvas?: (file: number, message: CanvasMessage) => void
+  /** What the relay lets one connection send; RELAY_MESSAGE_RATE and RELAY_BYTE_RATE by default. */
+  messageRate?: Rate
+  byteRate?: Rate
 }
 
 /** A file's Y.Doc that a RoomClient keeps in sync. */
@@ -172,6 +176,10 @@ export class RoomClient {
   private sent = 0
   private readonly guard = new ReplayGuard(this.sender)
   private readonly files = new Map<number, FileDoc>()
+  // Paces the frames sent on the current socket; see Pacer.
+  private pacer = new Pacer()
+  // Set by destroy: the last frames go without waiting.
+  private leaving = false
   // The encoded manifest, when this client set one.
   private manifest: Uint8Array | null = null
 
@@ -195,6 +203,8 @@ export class RoomClient {
     )
     socket.binaryType = 'arraybuffer'
     this.socket = socket
+    // The relay counts each connection's allowance from its start.
+    this.pacer = new Pacer(this.opts.messageRate, this.opts.byteRate)
 
     socket.onopen = () => {
       if (this.socket !== socket) return
@@ -250,6 +260,7 @@ export class RoomClient {
   /** Announces departure, closes the socket and stops reconnecting. */
   async destroy(): Promise<void> {
     if (this.destroyed) return
+    this.leaving = true
     awarenessProtocol.removeAwarenessStates(this.awareness, [this.doc.clientID], 'local')
     await this.sendChain
     this.destroyed = true
@@ -502,8 +513,11 @@ export class RoomClient {
     }
     // Numbered now, in the order frames are produced, which the chain keeps.
     const plaintext = encodeFrame(this.sender, ++this.sent, encodeMessage(type, payload))
+    const pacer = this.pacer
     this.sendChain = this.sendChain
       .then(async () => {
+        const wait = pacer.take(frameBytes(payload.length))
+        if (wait > 0 && !this.leaving) await new Promise((r) => setTimeout(r, wait))
         const data = await encrypt(this.opts.key, plaintext)
         if (socket.readyState === OPEN) socket.send(data)
       })

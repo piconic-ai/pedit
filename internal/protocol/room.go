@@ -87,8 +87,13 @@ type ClientOptions struct {
 	MaxBackoff time.Duration
 	// BusyBackoff is the least a busy relay is waited out before trying again.
 	BusyBackoff time.Duration
-	OnStatus    func(Status)
-	OnError     func(error)
+	// Messages and Bytes are what the relay lets one connection send;
+	// RelayMessages and RelayBytes when zero. The Client paces what it sends
+	// to stay within them.
+	Messages Rate
+	Bytes    Rate
+	OnStatus func(Status)
+	OnError  func(error)
 	// OnSynced is called once, on the connection's read loop, when the first
 	// SyncStep2 from a peer has been applied: the doc now holds what the room
 	// had. Return quickly.
@@ -333,7 +338,7 @@ func (c *Client) run(done chan struct{}) {
 
 // serve runs one connection until it fails.
 func (c *Client) serve(conn Conn) error {
-	out := newOutbox(conn)
+	out := newOutbox(conn, newPacer(c.opts.Messages, c.opts.Bytes, time.Now))
 	c.mu.Lock()
 	if c.destroyed {
 		c.mu.Unlock()
@@ -574,22 +579,31 @@ func (c *Client) onError(err error) {
 	}
 }
 
-// outbox writes frames to a connection in order, without blocking the sender.
+// outbox writes frames to a connection in order, without blocking the
+// sender, and paces them within the relay's rates.
 type outbox struct {
 	conn   Conn
+	pace   *pacer
 	mu     sync.Mutex
 	queue  [][]byte
 	closed bool
+	// hurry is set by drain: the last frames go without waiting.
+	hurry  bool
 	failed error // why this side gave the connection up
 	wake   chan struct{}
-	done   chan struct{}
+	// quit is closed when the frames still queued are dropped.
+	quit     chan struct{}
+	quitOnce sync.Once
+	done     chan struct{}
 }
 
-func newOutbox(conn Conn) *outbox {
-	o := &outbox{conn: conn, wake: make(chan struct{}, 1), done: make(chan struct{})}
+func newOutbox(conn Conn, pace *pacer) *outbox {
+	o := &outbox{conn: conn, pace: pace, wake: make(chan struct{}, 1), quit: make(chan struct{}), done: make(chan struct{})}
 	go o.loop()
 	return o
 }
+
+func (o *outbox) quitNow() { o.quitOnce.Do(func() { close(o.quit) }) }
 
 func (o *outbox) push(frame []byte) {
 	o.mu.Lock()
@@ -620,6 +634,7 @@ func (o *outbox) fail(err error) {
 	o.closed = true
 	o.queue = nil
 	o.mu.Unlock()
+	o.quitNow()
 	o.signal()
 }
 
@@ -643,6 +658,9 @@ func (o *outbox) loop() {
 			return
 		}
 		for _, frame := range queue {
+			if !o.wait(o.pace.take(len(frame))) {
+				return
+			}
 			if err := o.conn.Write(context.Background(), frame); err != nil {
 				o.mu.Lock()
 				o.closed = true
@@ -660,10 +678,34 @@ func (o *outbox) loop() {
 	}
 }
 
+// wait waits d before the next frame, unless the queue is dropped meanwhile,
+// and tells whether to go on. Once draining, nothing waits.
+func (o *outbox) wait(d time.Duration) bool {
+	o.mu.Lock()
+	hurry := o.hurry
+	o.mu.Unlock()
+	if d <= 0 || hurry {
+		return true
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-o.quit:
+		// Given up: close the connection, which ends the read loop.
+		if o.failure() != nil {
+			_ = o.conn.Close()
+		}
+		return false
+	}
+}
+
 // drain stops accepting frames and waits (for a while) until the queued ones are written.
 func (o *outbox) drain() {
 	o.mu.Lock()
 	o.closed = true
+	o.hurry = true
 	o.mu.Unlock()
 	o.signal()
 	select {
@@ -678,5 +720,6 @@ func (o *outbox) stop() {
 	o.closed = true
 	o.queue = nil
 	o.mu.Unlock()
+	o.quitNow()
 	o.signal()
 }

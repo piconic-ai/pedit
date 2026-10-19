@@ -2,6 +2,7 @@ package protocol_test
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -266,5 +267,57 @@ func TestAddFileFailsOnceDestroyed(t *testing.T) {
 	p.Destroy()
 	if err := p.AddFile(1, crdt.New()); err == nil {
 		t.Fatal("added a file to a destroyed client")
+	}
+}
+
+// A small allowance, so a few files go over it as forty large ones go over
+// the real relay's.
+var testBytes = protocol.Rate{Burst: 64 << 10, PerSecond: 256 << 10}
+
+func TestKeepsSeveralLargeFilesWithinTheRelayAllowance(t *testing.T) {
+	for _, paced := range []bool{true, false} {
+		relay := prototest.NewRelay(false)
+		relay.Bytes = testBytes
+		key := protocol.GenerateKey()
+		var mu sync.Mutex
+		var statuses []protocol.Status
+		hostBytes := testBytes
+		if !paced {
+			hostBytes = protocol.Rate{Burst: 1e12, PerSecond: 1e12}
+		}
+		host := join(t, relay, key, joinOpts{bytes: hostBytes, onStatus: func(s protocol.Status) {
+			mu.Lock()
+			defer mu.Unlock()
+			statuses = append(statuses, s)
+		}})
+		for id := uint64(1); id <= 3; id++ {
+			addFile(t, host, id, newFileText(strings.Repeat("x", 40<<10)))
+		}
+		dropped := func() bool {
+			mu.Lock()
+			defer mu.Unlock()
+			return slices.Contains(statuses, protocol.StatusDisconnected)
+		}
+		if !paced {
+			prototest.WaitFor(t, wait, dropped, "the relay to close the unpaced host")
+			continue
+		}
+		guest := join(t, relay, key, joinOpts{bytes: testBytes})
+		docs := make([]*fileText, 3)
+		for i := range docs {
+			docs[i] = newFileText("")
+			addFile(t, guest, uint64(i+1), docs[i])
+		}
+		prototest.WaitFor(t, 5*time.Second, func() bool {
+			for _, d := range docs {
+				if len(d.String()) != 40<<10 {
+					return false
+				}
+			}
+			return true
+		}, "every file, paced")
+		if dropped() {
+			t.Fatal("the relay closed the paced host")
+		}
 	}
 }
