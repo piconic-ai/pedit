@@ -48,7 +48,7 @@ These are built into the public relay, in the order the preview tries them:
 | `vimeo` | Vimeo | videos, unlisted ones with their hash | 16:9 |
 | `loom` | Loom | shared videos, with a start time (`t=`) | 16:9 |
 | `figma` | Figma | designs, boards, slides, decks and prototypes, with `node-id` | 4:3 |
-| `codepen` | CodePen | pens (`codepen.io/{user}/pen/{id}`; team pens are not supported yet) | 4:3 |
+| `codepen` | CodePen | pens (`codepen.io/{user}/pen/{id}`) and team pens (`codepen.io/team/{team}/pen/{id}`) | 4:3 |
 | `stackblitz` | StackBlitz | projects and GitHub repositories | 4:3 |
 | `observable` | Observable | notebooks, or some of their cells | 4:3 |
 | `spotify` | Spotify | tracks, albums, playlists, artists, episodes and shows | 152 px high |

@@ -18,6 +18,18 @@ describe('codepen', () => {
     ['https://codepen.io/u/pen/AbC123?default-tab=css&editable=true', `${PLAYER}?default-tab=css`],
     ['https://codepen.io/u/pen/AbC123?default-tab=evil', `${PLAYER}?default-tab=result`],
     ['https://codepen.io/team-x_1/pen/z', 'https://codepen.io/team-x_1/embed/z?default-tab=result'],
+    [
+      'https://codepen.io/team/t/pen/AbC123',
+      'https://codepen.io/team/t/embed/AbC123?default-tab=result',
+    ],
+    [
+      'https://codepen.io/team/t/full/AbC123',
+      'https://codepen.io/team/t/embed/AbC123?default-tab=result',
+    ],
+    [
+      'https://codepen.io/team/t/embed/AbC123?default-tab=js',
+      'https://codepen.io/team/t/embed/AbC123?default-tab=js',
+    ],
   ])('embeds %s as %s', (href, src) => {
     expect(embed(href)).toBe(src)
     expect(embed(src)).toBe(src)
@@ -30,7 +42,10 @@ describe('codepen', () => {
     'https://codepen.io/u',
     'https://codepen.io/u/pen/AbC123/x',
     'https://codepen.io/u/pen/Ab-C',
-    'https://codepen.io/team/u/pen/AbC123',
+    'https://codepen.io/team/pen/AbC123/x',
+    'https://codepen.io/team/a/b/pen/AbC123',
+    'https://codepen.io/u/team/t/pen/AbC123',
+    'https://codepen.io/team//pen/AbC123',
     'https://codepen.io.evil.example/u/pen/AbC123',
     'https://www.codepen.io/u/pen/AbC123',
     'https://cdpn.io/u/pen/AbC123',
