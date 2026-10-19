@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,7 +17,7 @@ func TestUIWithoutTerminal(t *testing.T) {
 	u.setStatus(protocol.StatusConnected) // not shown before sharing
 	u.signIn("pedit.example.com", "https://pedit.example.com/cdn-cgi/access/cli?token=abc")
 	u.signedIn("k@example.com")
-	u.sharing("notes.md", "https://pedit.example.com/r/AAAA#key", true, false)
+	u.sharing([]string{"notes.md"}, "https://pedit.example.com/r/AAAA#key", true, false)
 	u.setPeople([]string{"Alice"})
 	u.setPeople([]string{"Alice"}) // unchanged
 	u.setStatus(protocol.StatusDisconnected)
@@ -67,7 +68,7 @@ func TestUIWithoutTerminal(t *testing.T) {
 func TestUIOnTerminal(t *testing.T) {
 	var out strings.Builder
 	u := newUI(&out, true, false)
-	u.sharing("notes.md", "https://pedit.example.com/r/AAAA#key", false, false)
+	u.sharing([]string{"notes.md"}, "https://pedit.example.com/r/AAAA#key", false, false)
 	u.setStatus(protocol.StatusConnected)
 	u.stopLive()
 	got := out.String()
@@ -90,7 +91,7 @@ func TestUIOnTerminal(t *testing.T) {
 func TestUIImageSaved(t *testing.T) {
 	var out strings.Builder
 	u := newUI(&out, false, false)
-	u.sharing("notes.md", "https://pedit.example.com/r/AAAA#key", false, false)
+	u.sharing([]string{"notes.md"}, "https://pedit.example.com/r/AAAA#key", false, false)
 	u.setStatus(protocol.StatusConnected)
 	u.imageSaved("assets/0123.png")
 	if !strings.HasSuffix(out.String(), "  ● Just you so far\n  Saved an image to assets/0123.png\n") {
@@ -100,7 +101,7 @@ func TestUIImageSaved(t *testing.T) {
 	// On a terminal it goes above the live line, which comes back.
 	out.Reset()
 	u = newUI(&out, true, false)
-	u.sharing("notes.md", "https://pedit.example.com/r/AAAA#key", false, false)
+	u.sharing([]string{"notes.md"}, "https://pedit.example.com/r/AAAA#key", false, false)
 	u.setStatus(protocol.StatusConnected)
 	u.imageSaved("assets/0123.png")
 	want := "\r\x1b[2K  \x1b[2mSaved an image to assets/0123.png\x1b[0m\n\r\x1b[2K  \x1b[32m●\x1b[0m Just you so far"
@@ -112,7 +113,7 @@ func TestUIImageSaved(t *testing.T) {
 func TestUIWithoutColor(t *testing.T) {
 	var out strings.Builder
 	u := newUI(&out, true, true) // NO_COLOR
-	u.sharing("notes.md", "https://pedit.example.com/r/AAAA#key", true, false)
+	u.sharing([]string{"notes.md"}, "https://pedit.example.com/r/AAAA#key", true, false)
 	u.saved("notes.md")
 	if got := out.String(); strings.Contains(got, "\x1b[1m") || strings.Contains(got, "\x1b[3") {
 		t.Fatalf("colors despite NO_COLOR: %q", got)
@@ -122,7 +123,7 @@ func TestUIWithoutColor(t *testing.T) {
 func TestUIScratch(t *testing.T) {
 	var out strings.Builder
 	u := newUI(&out, false, false)
-	u.sharing("pedit-2026-09-26-143012.md", "https://pedit.example.com/r/AAAA#key", false, true)
+	u.sharing([]string{"pedit-2026-09-26-143012.md"}, "https://pedit.example.com/r/AAAA#key", false, true)
 	u.stopLive()
 	u.saved("pedit-2026-09-26-143012.md")
 	u.scratch("pedit-2026-09-26-143012.md")
@@ -295,7 +296,7 @@ func TestUINotices(t *testing.T) {
 	var out strings.Builder
 	u := newUI(&out, false, false)
 	u.setStatus(protocol.StatusConnected) // not shown before sharing
-	u.sharing("notes.md", "https://pedit.example.com/r/AAAA#key", false, false)
+	u.sharing([]string{"notes.md"}, "https://pedit.example.com/r/AAAA#key", false, false)
 	u.setPeople([]string{"Alice"})
 	u.notice("notes.md", true, session.Notice{Kind: session.SaveFailed, Reason: "it is no longer a regular file"})
 	u.notice("notes.md", true, session.Notice{Kind: session.SaveRecovered})
@@ -372,7 +373,7 @@ func TestUINoticeForAJoinedCopy(t *testing.T) {
 func TestUINoticeGoesAboveTheLiveLine(t *testing.T) {
 	var out strings.Builder
 	u := newUI(&out, true, false)
-	u.sharing("notes.md", "https://pedit.example.com/r/AAAA#key", false, false)
+	u.sharing([]string{"notes.md"}, "https://pedit.example.com/r/AAAA#key", false, false)
 	u.setStatus(protocol.StatusConnected)
 	out.Reset()
 
@@ -474,5 +475,27 @@ func TestUIExpired(t *testing.T) {
 		"  Ask the host to run pedit again for a new link.\n\n"
 	if guest.String() != guestWant {
 		t.Errorf("guest: got %q, want %q", guest.String(), guestWant)
+	}
+}
+
+func TestUISharingSeveralFiles(t *testing.T) {
+	var out strings.Builder
+	u := newUI(&out, false, false)
+	u.resumable = true
+	u.sharing([]string{"agenda.md", "docs/spec.md"}, "https://pedit.example.com/r/AAAA#key", false, false)
+	u.added("board.canvas")
+	u.notAdded("big.md", errors.New("big.md is 2.0 MiB; pedit shares files up to about 1 MiB for now"))
+	u.notAdded("x\x1b[2Jy.md", errors.New("cannot open x\x1b[2Jy.md"))
+	for _, want := range []string{
+		"agenda.md, docs/spec.md are ready to write together.",
+		"Everything is saved to the files.",
+		"To share another file in this room, type its path and press Enter.",
+		"✓ Sharing board.canvas too.",
+		"Could not share big.md: big.md is 2.0 MiB; pedit shares files up to about 1 MiB for now.",
+		"Could not share x[2Jy.md: cannot open x[2Jy.md.",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("missing %q in:\n%s", want, out.String())
+		}
 	}
 }

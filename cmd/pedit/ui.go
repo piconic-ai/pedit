@@ -123,10 +123,17 @@ func (u *ui) signedIn(email string) {
 
 // sharing shows the link to send, then starts the live line.
 // With scratch set, it also says how to come back to the new file.
-func (u *ui) sharing(file, url string, copied, scratch bool) {
+func (u *ui) sharing(files []string, url string, copied, scratch bool) {
+	file := files[0]
+	ready := u.bold(file + " is ready to write together.")
+	saved := "Everything is saved to " + file + "."
+	if len(files) > 1 {
+		ready = u.bold(strings.Join(files, ", ") + " are ready to write together.")
+		saved = "Everything is saved to the files."
+	}
 	lines := []string{
 		"",
-		u.bold(file + " is ready to write together."),
+		ready,
 		"",
 		"Send this link to the people you want to invite:",
 		"  " + u.link(url),
@@ -134,7 +141,11 @@ func (u *ui) sharing(file, url string, copied, scratch bool) {
 	if copied {
 		lines = append(lines, "  "+u.dim("Copied to your clipboard."))
 	}
-	lines = append(lines, "", u.dim("Press Ctrl+C when you are done. Everything is saved to "+file+"."), "")
+	lines = append(lines, "", u.dim("Press Ctrl+C when you are done. "+saved))
+	if u.resumable {
+		lines = append(lines, u.dim("To share another file in this room, type its path and press Enter."))
+	}
+	lines = append(lines, "")
 	if scratch {
 		lines = append(lines, u.resume(file), "")
 	}
@@ -281,6 +292,16 @@ func (u *ui) above(lines ...string) {
 		}
 	}
 	u.render()
+}
+
+// added says that a file typed in is now shared in the room.
+func (u *ui) added(path string) {
+	u.above(u.green("✓") + " Sharing " + printable(path) + " too.")
+}
+
+// notAdded says why a file typed in is not shared.
+func (u *ui) notAdded(path string, err error) {
+	u.above(u.yellow("Could not share " + printable(path) + ": " + printable(err.Error()) + "."))
 }
 
 // imageSaved says that an image someone pasted was written to the host's

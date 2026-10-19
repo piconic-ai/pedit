@@ -43,7 +43,7 @@ func getVersion() string {
 
 const defaultServer = "https://edit.piconic.ai"
 
-const usage = `Usage: pedit [file] [-t template] [-d directory]
+const usage = `Usage: pedit [file ...] [-t template] [-d directory]
        pedit <share link> [-d directory]
 
 Share an existing UTF-8 text file. Send the printed link to collaborators;
@@ -51,6 +51,8 @@ open it yourself to edit together in the browser. No install needed for guests.
 Edits are written back to your local file as you work. Press Ctrl+C to save
 the final state and close the room. Changes from your local editor sync too.
 Without a file, pedit creates pedit-<time>.md in the configured output directory.
+Given several files, pedit shares them in one room, and guests switch between
+them. While sharing, type the path of another file and press Enter to add it.
 
 Given a share link instead of a file, pedit joins that room from the command
 line: it writes a copy of the shared file to a temporary directory and keeps it
@@ -59,6 +61,8 @@ or the host closes the room, like closing a browser tab. To keep it, pass -d.
 
 Examples:
   pedit notes.md       Share an existing Markdown file
+  pedit agenda.md spec.md
+                       Share two files in one room
   pedit                Create and share a new Markdown file
   pedit -t minutes.md  Create minutes-<time>.md from a template
   pedit -t minutes.md -d meetings  Create the file in meetings/
@@ -146,9 +150,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "pedit:", err)
 		return 1
 	}
-	if msg := checkFile(arg); msg != "" {
-		fmt.Fprintln(stderr, msg)
-		return 1
+	for _, a := range append([]string{arg}, opts.More...) {
+		if msg := checkFile(a); msg != "" {
+			fmt.Fprintln(stderr, msg)
+			return 1
+		}
 	}
 
 	server := cfg.Server
@@ -176,8 +182,19 @@ func run(args []string, stdout, stderr io.Writer) int {
 	resumable := isTerminal(os.Stdin)
 	out.resumable = resumable
 	var ended atomic.Value // the final protocol.Status, once the server turned us away
+	// Notices name the file they are about, as the user named it.
+	shown := func(path string) string {
+		if path == file {
+			return arg
+		}
+		if rel, err := filepath.Rel(cwd, path); err == nil && filepath.IsLocal(rel) {
+			return rel
+		}
+		return path
+	}
 	s, err := start(ctx, signIn, session.Options{
 		File:   file,
+		Root:   cwd,
 		Server: server,
 		Name:   username(),
 		Watch:  true,
@@ -197,7 +214,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		},
 		OnNotice: func(n session.Notice) {
 			debug(n.Err)
-			out.notice(arg, true, n)
+			out.notice(shown(n.File), true, n)
 		},
 		OnError: debug,
 	})
@@ -213,10 +230,27 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	out.sharing(arg, s.URL, clipboard.Copy(s.URL), scratch)
+	for _, more := range opts.More {
+		if _, err := s.AddFile(more); err != nil {
+			fmt.Fprintln(stderr, "pedit:", err)
+			_ = s.Stop()
+			return 1
+		}
+	}
+	files := []string{arg}
+	for _, f := range s.Files()[1:] {
+		files = append(files, f.Path)
+	}
+	out.sharing(files, s.URL, clipboard.Copy(s.URL), scratch)
 	shared = true
 	if resumable {
-		go resumeOnEnter(os.Stdin, s.Client.Resume)
+		go readLines(os.Stdin, s.Client.Resume, func(path string) {
+			if entry, err := s.AddFile(path); err != nil {
+				out.notAdded(path, err)
+			} else {
+				out.added(entry.Path)
+			}
+		})
 	}
 
 	<-ctx.Done()
@@ -405,17 +439,32 @@ func finish(out *ui, stderr io.Writer, arg string, scratch bool, stop func() err
 	return 0
 }
 
-// resumeOnEnter calls resume for each line read from in, until in ends.
-// Resume does nothing unless the session stopped, so an Enter at any other
-// time is harmless.
-func resumeOnEnter(in io.Reader, resume func()) {
+// readLines reads what the host types, until in ends. An empty line calls
+// resume, which does nothing unless the session stopped, so an Enter at any
+// other time is harmless. Any other line is the path of a file to add.
+func readLines(in io.Reader, resume func(), add func(path string)) {
 	r := bufio.NewReader(in)
 	for {
-		if _, err := r.ReadString('\n'); err != nil {
+		line, err := r.ReadString('\n')
+		if err != nil {
 			return
 		}
-		resume()
+		if path := typedPath(line); path == "" {
+			resume()
+		} else {
+			add(path)
+		}
 	}
+}
+
+// typedPath reads a path typed or dropped into the terminal, which may quote
+// it ('a b.md', "a b.md") or escape its spaces (a\ b.md).
+func typedPath(line string) string {
+	line = strings.TrimSpace(line)
+	if len(line) >= 2 && (line[0] == '\'' || line[0] == '"') && line[len(line)-1] == line[0] {
+		return line[1 : len(line)-1]
+	}
+	return strings.ReplaceAll(line, "\\ ", " ")
 }
 
 func isTerminal(w io.Writer) bool {

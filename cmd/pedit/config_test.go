@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -408,6 +409,23 @@ func TestParseArgs(t *testing.T) {
 			t.Fatalf("%q: %+v %v", tc.args, opts, err)
 		}
 	}
+	// Several files share one room.
+	for _, tc := range []struct {
+		args []string
+		file string
+		more []string
+	}{
+		{[]string{"a.md", "b.md"}, "a.md", []string{"b.md"}},
+		{[]string{"a.md", "docs/b.md", "c.csv"}, "a.md", []string{"docs/b.md", "c.csv"}},
+		{[]string{"--", "-a.md", "-b.md"}, "-a.md", []string{"-b.md"}},
+		{[]string{"a.md", "--", "-b.md"}, "a.md", []string{"-b.md"}},
+		{[]string{"-t", "minutes.md", "a.md", "b.md"}, "a.md", []string{"b.md"}},
+	} {
+		opts, err := parseArgs(tc.args)
+		if err != nil || opts.File != tc.file || !slices.Equal(opts.More, tc.more) || opts.Room != "" {
+			t.Fatalf("%q: %+v %v", tc.args, opts, err)
+		}
+	}
 	const link = "https://edit.piconic.ai/r/ROOM#key"
 	for _, tc := range []struct {
 		args      []string
@@ -427,7 +445,8 @@ func TestParseArgs(t *testing.T) {
 	}
 	for _, args := range [][]string{
 		{"--template"}, {"--template="}, {"--template=a", "-t", "b"}, {"-t", ""}, {"-unknown"},
-		{"--csv", "--canvas"}, {"--canvas", "-t", "csv"}, {"-t", "--csv"}, {"a", "b"},
+		{"--csv", "--canvas"}, {"--canvas", "-t", "csv"}, {"-t", "--csv"}, {"--"}, {"a", "--", ""},
+		{"a", "-d", "x", "b"}, {"a", "b", "https://edit.piconic.ai/r/ROOM#key"},
 		{"-d"}, {"-d", ""}, {"--directory="}, {"-d", "--csv"}, {"-d", "a", "-d", "b"},
 		{"notes.md", "-d", "reports"}, {"-d", "reports", "--", "notes.md"},
 		{"https://edit.piconic.ai/r/ROOM#key", "notes.md"}, {"notes.md", "https://edit.piconic.ai/r/ROOM#key"},

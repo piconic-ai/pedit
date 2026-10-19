@@ -145,13 +145,12 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 	})
 
 	s := &Session{
-		URL:       opts.URL,
-		Doc:       doc,
-		Text:      shared.text,
-		content:   shared,
-		awareness: aw,
-		onError:   onError,
-		temp:      temp,
+		URL:        opts.URL,
+		Doc:        doc,
+		Text:       shared.text,
+		sharedFile: &sharedFile{doc: doc, content: shared, onError: onError},
+		awareness:  aw,
+		temp:       temp,
 
 		beforePublishWriter: opts.beforePublishWriter,
 	}
@@ -184,6 +183,8 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
+	s.client = s.Client
+	s.sendCanvas = s.Client.SendCanvas
 	// Until the file is known, remote edits only land in the doc; the first
 	// write below carries them all.
 	doc.OnUpdate(func(_ []byte, origin any) {

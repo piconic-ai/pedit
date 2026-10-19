@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -24,11 +25,12 @@ func TestRunArgs(t *testing.T) {
 		stdout string
 		stderr string
 	}{
-		{args: []string{"--help"}, code: 0, stdout: "Usage: pedit [file]"},
+		{args: []string{"--help"}, code: 0, stdout: "Usage: pedit [file ...]"},
 		{args: []string{"-h"}, code: 0, stdout: ".pedit/config.yaml"},
 		{args: []string{"--version"}, code: 0, stdout: "dev"},
-		{args: []string{"a.md", "b.md"}, code: 2, stderr: "Usage: pedit [file]"},
-		{args: []string{""}, code: 2, stderr: "Usage: pedit [file]"},
+		{args: []string{"a.md", "b.md"}, code: 1, stderr: "a.md does not exist."},
+		{args: []string{"a.md", "--", ""}, code: 2, stderr: "Usage: pedit [file ...]"},
+		{args: []string{""}, code: 2, stderr: "Usage: pedit [file ...]"},
 		{args: []string{"does-not-exist.md"}, code: 1, stderr: "does-not-exist.md does not exist."},
 		{args: []string{"."}, code: 1, stderr: ". is a directory."},
 		{args: []string{"https://edit.piconic.ai/r/ROOM#key", "-t", "minutes.md"}, code: 2, stderr: "a share link cannot be combined with a template"},
@@ -130,11 +132,16 @@ func TestFinish(t *testing.T) {
 	}
 }
 
-func TestResumeOnEnter(t *testing.T) {
+func TestReadLines(t *testing.T) {
 	resumed := 0
-	resumeOnEnter(strings.NewReader("\n\nnot a full line"), func() { resumed++ })
+	var added []string
+	in := "\n  \nnotes.md\n 'a b.md' \n\"c d.md\"\ne\\ f.md\nnot a full line"
+	readLines(strings.NewReader(in), func() { resumed++ }, func(path string) { added = append(added, path) })
 	if resumed != 2 {
-		t.Fatalf("resumed %d times, want once per Enter", resumed)
+		t.Fatalf("resumed %d times, want once per empty line", resumed)
+	}
+	if want := []string{"notes.md", "a b.md", "c d.md", "e f.md"}; !slices.Equal(added, want) {
+		t.Fatalf("added %q, want %q", added, want)
 	}
 }
 
