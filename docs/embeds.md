@@ -56,6 +56,11 @@ These are built into the public relay, in the order the preview tries them:
 | `miro` | Miro | boards | 4:3 |
 | `github` | GitHub | public source files, or some of their lines, shown as text | as tall as its lines, up to 60% of the window |
 
+A site can still refuse to be shown in a frame. CodePen sometimes answers a
+browser that has not visited it with a "verify you are human" check, which
+cannot run inside the preview, so the player stays blank. Open the pen in a tab
+once, pass the check, and load the embed again.
+
 ## Sizes
 
 A player's URL may end with its size. The size stays in the preview and never
