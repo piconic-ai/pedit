@@ -963,7 +963,9 @@ main.editor[data-resizing] iframe {
   aspect-ratio: var(--embed-rw) / var(--embed-rh);
   overflow: hidden;
 }
-.preview .embed:not(.embed--loaded) {
+.preview .embed:not(.embed--loaded),
+.preview .embed--loading,
+.preview .embed--failed {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1042,6 +1044,54 @@ main.editor[data-resizing] iframe {
   height: 100%;
   border: 0;
   border-radius: 6px;
+}
+/*
+ * A snippet has no box of its own: it is as tall as its lines, and they scroll
+ * beyond 60vh. Each line draws its number before it, in the line's own box so
+ * the two never drift apart; a selection leaves the numbers out.
+ */
+.preview .embed--snippet {
+  max-height: none;
+  overflow: visible;
+}
+.preview .embed-load[aria-disabled="true"] {
+  cursor: progress;
+}
+.preview .embed-error {
+  color: var(--ink);
+  font-size: 0.875em;
+}
+/* Empty until a load fails, and then no gap in the placeholder. */
+.preview .embed-error:empty {
+  position: absolute;
+}
+.preview .embed-snippet {
+  max-height: 60vh;
+  margin-bottom: 4px;
+  border: 1px solid var(--line);
+}
+.preview .embed-snippet-line::before {
+  content: attr(data-n);
+  content: attr(data-n) / "";
+  display: inline-block;
+  box-sizing: content-box;
+  width: calc(var(--snippet-digits, 1) * 1ch);
+  margin-right: 16px;
+  color: var(--muted);
+  text-align: right;
+  user-select: none;
+}
+.preview .embed-snippet:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.preview .embed-note {
+  display: block;
+  color: var(--muted);
+  font-size: 0.875em;
+}
+.preview .embed--snippet.embed--loaded:not(.embed--loading, .embed--failed) .embed-link {
+  display: block;
 }
 .preview .missing-image {
   color: var(--muted);

@@ -112,9 +112,13 @@ Requests never carry the fragment, so the key is not sent to the relay or in
 [MDN](https://developer.mozilla.org/en-US/docs/Web/URI/Reference/Fragment)).
 The editor also sets `<meta name="referrer" content="no-referrer">`. The Worker also sends a
 Content-Security-Policy with the editor: scripts only from the relay, and
-network requests only to the relay, the avatar hosts, the players of the embed
-providers the relay is built with (`packages/protocol/src/embeds/index.ts`) and any
-image sources a self-hosted relay allows. A provider's frames may never cover
+network requests only to the relay, the avatar hosts, the players and fetched
+files of the embed providers the relay is built with
+(`packages/protocol/src/embeds/index.ts`; `connect-src` holds the fetch prefixes,
+such as `https://raw.githubusercontent.com/` for GitHub source files) and any
+image sources a self-hosted relay allows. A fetched file is shown only as text
+(`textContent`), fetched without credentials or referrer, after a click or
+"Always load". A provider's frames, or fetch prefixes, may never cover
 the relay's own origin: a frame there with scripts and allow-same-origin could
 reach the editor and its key, so both the Worker (against the request's origin)
 and the editor (against its own) leave out such a provider. A script injected

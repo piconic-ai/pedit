@@ -12,8 +12,10 @@ import {
   frameFor,
   httpUrl,
   isAllowedFrame,
+  linesAttr,
   providerOf,
   sizeHint,
+  snippetFor,
 } from '../src/embed.ts'
 
 const PLAYER = {
@@ -107,6 +109,13 @@ describe('embedFor', () => {
     'http://example.com/clip.mov',
   ])('plays video file %s', (href) => {
     expect(embedFor(href)).toEqual({ kind: 'video', src: new URL(href).href })
+  })
+
+  it.each([
+    'https://raw.githubusercontent.com/o/r/main/demo.mp4',
+    'https://github.com/o/r/blob/main/demo.webm',
+  ])('plays a video file on GitHub as a video, not a snippet: %s', (href) => {
+    expect(embedFor(href, page)).toEqual({ kind: 'video', src: href })
   })
 
   it.each([
@@ -662,5 +671,123 @@ describe('providerOf', () => {
     'not a url',
   ])('names nothing pedit would not frame: %j', (src) => {
     expect(providerOf(src)).toBeNull()
+  })
+})
+
+describe('snippets', () => {
+  const RAW = 'https://raw.githubusercontent.com/o/r/main/src/a.ts'
+  const BLOB = 'https://github.com/o/r/blob/main/src/a.ts'
+  const github = PROVIDERS.github
+
+  it('takes a GitHub file as a snippet of its raw file, with no box', () => {
+    expect(embedFor(BLOB)).toEqual({
+      kind: 'snippet',
+      src: RAW,
+      lines: null,
+      provider: 'github',
+      title: 'GitHub',
+    })
+    expect(embedFor(`${BLOB}#L3-L9`)).toMatchObject({ src: RAW, lines: [3, 9] })
+    expect(embedFor(`${BLOB}#L3`)).toMatchObject({ src: RAW, lines: [3, 3] })
+    expect(embedFor(RAW)).toMatchObject({ kind: 'snippet', src: RAW, lines: null })
+  })
+
+  it('reads no size hint: GitHub names lines in the fragment', () => {
+    for (const hash of ['#width=560', '#height=400', '#L9-L3']) {
+      expect(embedFor(`${BLOB}${hash}`)).toEqual(embedFor(BLOB))
+    }
+  })
+
+  it.each([
+    'https://github.com/o/r/tree/main/src',
+    'https://gist.github.com/o/0123456789abcdef',
+    'https://github.com.evil.example/o/r/blob/main/a.ts',
+    'https://github.com/o/r/blob/main/a%2fb.ts',
+  ])('leaves %s a link', (href) => {
+    expect(embedFor(href)).toBeNull()
+  })
+
+  it('writes and reads the lines of a placeholder', () => {
+    expect(linesAttr([3, 9])).toBe('3-9')
+    expect(snippetFor(RAW, '3-9', page)).toEqual({
+      src: RAW,
+      lines: [3, 9],
+      provider: 'github',
+      title: 'GitHub',
+    })
+    expect(snippetFor(RAW, null, page)).toMatchObject({ lines: null })
+  })
+
+  it.each(['', '9-3', '0-3', '3', '3-', '03-9', '1-1000001', '3-9 ', ' 3-9', '3-9;x', 'a-b'])(
+    'refuses the lines %j',
+    (lines) => {
+      expect(snippetFor(RAW, lines, page)).toBeNull()
+    },
+  )
+
+  it('rebuilds the src to fetch from the parsed URL, never the fragment', () => {
+    expect(
+      snippetFor('HTTPS://RAW.GITHUBUSERCONTENT.COM/o/r/main/x/../a.ts#L1', null, page),
+    ).toMatchObject({ src: 'https://raw.githubusercontent.com/o/r/main/a.ts' })
+  })
+
+  it.each([
+    null,
+    'not a url',
+    // Only srcs the provider would build itself: no query, no blob page.
+    `${RAW}?token=x`,
+    BLOB,
+    'https://raw.githubusercontent.com/o/r/main',
+    'https://raw.githubusercontent.com/o/r/main/a%2fb.ts',
+    'https://u@raw.githubusercontent.com/o/r/main/a.ts',
+    'http://raw.githubusercontent.com/o/r/main/a.ts',
+    'https://raw.githubusercontent.com:444/o/r/main/a.ts',
+    'https://gist.githubusercontent.com/o/1/raw/a.ts',
+    // A player is no snippet.
+    'https://player.vimeo.com/video/1',
+  ])('fetches nothing for %j', (src) => {
+    expect(snippetFor(src, null, page)).toBeNull()
+  })
+
+  it('names the provider of a snippet src', () => {
+    expect(providerOf(RAW)).toBe('github')
+    expect(providerOf(`${RAW}?x=1`)).toBeNull()
+  })
+
+  it("never fetches on the provider's own origin", () => {
+    const raw = new URL('https://raw.githubusercontent.com/r/x')
+    expect(snippetFor(RAW, null, raw)).toBeNull()
+    expect(embedFor(BLOB, raw)).toBeNull()
+    expect(embedFor('https://vimeo.com/76979871', raw)).toMatchObject({ provider: 'vimeo' })
+  })
+
+  it.each([
+    { src: 'https://evil.example/o/r/main/a.ts' },
+    { src: 'https://player.vimeo.com/video/1' },
+    { src: RAW, lines: [3] },
+    { src: RAW, lines: [9, 3] },
+    { src: RAW, lines: [0, 3] },
+    { src: 42 },
+    'https://raw.githubusercontent.com/o/r/main/a.ts',
+    null,
+  ])('checks what snippet() answers again at runtime: %j is not fetched', (answer) => {
+    vi.spyOn(github, 'snippet').mockReturnValue(answer as never)
+    expect(embedFor(BLOB)).toBeNull()
+  })
+
+  it('may fail without breaking the preview', () => {
+    vi.spyOn(github, 'snippet').mockImplementation(() => {
+      throw new Error('bad provider')
+    })
+    expect(embedFor(BLOB)).toBeNull()
+    expect(embedFor('https://vimeo.com/76979871')).toMatchObject({ provider: 'vimeo' })
+  })
+
+  it('fetches only what the provider builds again unchanged', () => {
+    // A provider that builds a src it would not build from that src.
+    vi.spyOn(github, 'snippet').mockImplementation((url) =>
+      url.hostname === 'github.com' ? { src: `${RAW}x` } : null,
+    )
+    expect(embedFor(BLOB)).toBeNull()
   })
 })

@@ -14,8 +14,12 @@ import {
   httpUrl,
   isAllowedFrame,
   isVideoFile,
+  linesAttr,
   providerOf,
+  type SnippetSource,
+  snippetFor,
 } from './embed.ts'
+import { failureMessage, fetchSnippet } from './snippet.ts'
 
 // Raw HTML in the document is shown as text, never parsed.
 const md = new MarkdownIt({ html: false, linkify: true })
@@ -109,6 +113,10 @@ function videoHtml(src: string, label: string, line?: unknown): string {
 // The frames this preview rendered, by src. loadEmbed loads only these, so a
 // placeholder that reached the page some other way loads nothing.
 const rendered = new Map<string, string>()
+// The same for snippets, by src and lines (snippetKey).
+const renderedSnippets = new Set<string>()
+
+const snippetKey = (src: string | null, lines: string | null) => `${src} ${lines ?? ''}`
 
 // A frame is not loaded until someone asks: nobody in the room should contact a
 // third party just because someone wrote its URL in the file. The placeholder
@@ -116,22 +124,39 @@ const rendered = new Map<string, string>()
 // from the src again, and the frame fills the same box, so loading it does not
 // move the page. "Always load" is a checkbox drawn with a role, since the
 // sanitiser drops inputs.
+// A snippet's placeholder is the same, with the lines it shows and no box: once
+// loaded, it is as tall as its lines (up to a limit). Its status is there, empty,
+// from the start, as screen readers announce a change in a live region they know.
 function embedHtml(embed: Embed, href: string, line: unknown): string {
   if (embed.kind === 'video') return videoHtml(embed.src, '', line)
-  rendered.set(embed.src, embed.src)
+  let attributes: string
+  let status = ''
+  if (embed.kind === 'snippet') {
+    status = '<span class="embed-error" role="status"></span>'
+    const lines = embed.lines ? linesAttr(embed.lines) : null
+    renderedSnippets.add(snippetKey(embed.src, lines))
+    attributes =
+      ` class="embed embed--snippet"${lineAttr(line)} data-embed-src="${escape(embed.src)}"` +
+      (lines ? ` data-embed-lines="${lines}"` : '')
+  } else {
+    rendered.set(embed.src, embed.src)
+    attributes =
+      ` class="embed"${lineAttr(line)} data-embed-src="${escape(embed.src)}"` +
+      ` style="${boxStyle(embed.box)}"`
+  }
   const host = new URL(embed.src).host
   const remember = `<span class="embed-remember" role="checkbox" aria-checked="false" tabindex="0">Always load ${escape(providerLabel(embed.provider))}</span>`
   return (
-    `<div class="embed"${lineAttr(line)} data-embed-src="${escape(embed.src)}"` +
-    ` style="${boxStyle(embed.box)}">` +
-    `<span class="embed-provider">${escape(embed.title)}</span>` +
+    `<div${attributes}>` +
+    `<span class="embed-provider">${escape(embed.title)}</span>${status}` +
     `<span class="embed-actions"><span class="embed-load" role="button" tabindex="0">Load from ${escape(host)}</span>${remember}</span>` +
     `<a class="embed-link" href="${escape(href)}">${escape(href)}</a></div>`
   )
 }
 
 // A paragraph that is nothing but a URL an embed provider takes, or a video file
-// URL, becomes a player (a video) or a placeholder that loads one on request (a frame).
+// URL, becomes a player (a video) or a placeholder that loads one on request (a
+// frame, or a snippet of text).
 md.core.ruler.after('linkify', 'embeds', (state) => {
   const tokens = state.tokens
   for (let i = 0; i + 2 < tokens.length; i++) {
@@ -216,8 +241,11 @@ purify.addHook('uponSanitizeAttribute', (node, data) => {
 purify.addHook('afterSanitizeAttributes', (node) => {
   const el = node as Element
   if (el.hasAttribute?.('data-embed-src')) {
-    // A placeholder may only ever load a frame pedit would frame for that src.
-    if (!isAllowedFrame(el.getAttribute('data-embed-src'))) {
+    // A placeholder may only ever load a frame pedit would frame for that src,
+    // or a snippet pedit would fetch for it.
+    const src = el.getAttribute('data-embed-src')
+    if (isAllowedFrame(src)) el.removeAttribute('data-embed-lines')
+    else if (!snippetFor(src, el.getAttribute('data-embed-lines'))) {
       el.remove()
       return
     }
@@ -314,12 +342,15 @@ export function toggleRemember(control: Element): boolean {
  * Loads the frame of an embed placeholder, deriving its provider and attributes
  * from its src alone, and moves focus into it unless `focus` is false. Returns
  * null for a placeholder the preview did not render or whose src pedit would
- * not frame.
+ * not frame. A snippet placeholder starts loading its text (loadSnippet) and
+ * is returned itself.
  */
-export function loadEmbed(placeholder: Element, focus = true): HTMLIFrameElement | null {
+export function loadEmbed(placeholder: Element, focus = true): HTMLElement | null {
   const src = rendered.get(placeholder.getAttribute('data-embed-src') ?? '') ?? null
   const frame = frameFor(src)
-  if (!frame) return null
+  if (!frame) {
+    return loadSnippet(placeholder, focus) ? (placeholder as HTMLElement) : null
+  }
   const iframe = placeholder.ownerDocument.createElement('iframe')
   // The sandbox has to be in place before the frame is attached and navigates.
   iframe.setAttribute('sandbox', frame.sandbox)
@@ -333,6 +364,102 @@ export function loadEmbed(placeholder: Element, focus = true): HTMLIFrameElement
   placeholder.classList.add('embed--loaded')
   if (focus) iframe.focus()
   return iframe
+}
+
+// What each snippet placeholder is loading now, so a second click waits for it.
+const loading = new WeakMap<Element, Promise<boolean>>()
+
+/**
+ * Fetches and shows the text of a snippet placeholder, deriving what to fetch
+ * from its src and lines alone, and moves focus to it unless `focus` is false.
+ * Returns null for a placeholder the preview did not render or whose src pedit
+ * would not fetch; otherwise whether the text was shown. The text is only ever
+ * set as textContent: nothing in the file is parsed as markup. A placeholder
+ * that failed says why and offers to try again.
+ */
+export function loadSnippet(placeholder: Element, focus = true): Promise<boolean> | null {
+  const pending = loading.get(placeholder)
+  if (pending) return pending
+  const src = placeholder.getAttribute('data-embed-src')
+  const lines = placeholder.getAttribute('data-embed-lines')
+  if (!renderedSnippets.has(snippetKey(src, lines))) return null
+  const snippet = snippetFor(src, lines)
+  if (!snippet) return null
+  noteKeys(placeholder)
+  // Marked loaded from the start, so "Always load" never starts it again.
+  placeholder.classList.add('embed--loaded', 'embed--loading')
+  placeholder.classList.remove('embed--failed')
+  const status = placeholder.querySelector('.embed-error')
+  if (status) status.textContent = ''
+  const control = placeholder.querySelector('.embed-load')
+  if (control) {
+    control.textContent = 'Loading…'
+    control.setAttribute('aria-disabled', 'true')
+  }
+  const done = fetchSnippet(snippet.src, snippet.lines).then((result) => {
+    loading.delete(placeholder)
+    placeholder.classList.remove('embed--loading')
+    if (!result.ok) {
+      placeholder.classList.add('embed--failed')
+      if (status) status.textContent = failureMessage(result)
+      if (control) {
+        control.textContent = 'Try again'
+        control.removeAttribute('aria-disabled')
+      }
+      return false
+    }
+    showSnippet(placeholder, snippet, result, focus)
+    return true
+  })
+  loading.set(placeholder, done)
+  return done
+}
+
+// The lines as text in a <pre>, then a note if lines were left out, and the link
+// to the file. Each line is its own element and draws its number before it
+// (style.css), so a number stays on its line whatever font the line needs.
+function showSnippet(
+  placeholder: Element,
+  snippet: SnippetSource,
+  text: { from: number; lines: string[]; truncated: boolean },
+  focus: boolean,
+): void {
+  const doc = placeholder.ownerDocument
+  const pre = doc.createElement('pre')
+  pre.className = 'embed-snippet'
+  // It scrolls, so it takes focus for the keyboard to scroll it.
+  pre.tabIndex = 0
+  const last = text.from + text.lines.length - 1
+  // A <pre> is generic, which takes no label; a group does.
+  pre.setAttribute('role', 'group')
+  pre.setAttribute('aria-label', `${snippet.title}, lines ${text.from} to ${last}`)
+  // The numbers are as wide as the last one, so every line starts in one column.
+  pre.style.setProperty('--snippet-digits', String(String(last).length))
+  const code = doc.createElement('code')
+  code.append(
+    ...text.lines.map((line, i) => {
+      const span = doc.createElement('span')
+      span.className = 'embed-snippet-line'
+      span.setAttribute('data-n', String(text.from + i))
+      span.textContent = i < text.lines.length - 1 ? `${line}\n` : line
+      return span
+    }),
+  )
+  pre.append(code)
+  const parts: Node[] = [pre]
+  if (text.truncated) {
+    const note = doc.createElement('span')
+    note.className = 'embed-note'
+    note.textContent = `Showing the first ${text.lines.length} lines.`
+    parts.push(note)
+  }
+  const link = placeholder.querySelector('.embed-link')
+  if (link) parts.push(link)
+  // Focus was on the control this replaces, if anywhere in the placeholder.
+  const active = doc.activeElement
+  const had = active === null || active === doc.body || placeholder.contains(active)
+  placeholder.replaceChildren(...parts)
+  if (focus && had && placeholder.isConnected) pre.focus()
 }
 
 const keys = new WeakMap<Node, string>()
@@ -387,7 +514,10 @@ function shellOf(el: Element): string {
   return [el.tagName, ...attributes].join(' ')
 }
 
-/** The embeds under an element that hold something to keep: a loaded player or a ticked box. */
+/**
+ * The embeds under an element that hold something to keep: a loaded player or
+ * snippet (also one loading or failed), or a ticked box.
+ */
 function heldEmbeds(el: Element): Element[] {
   const ticked = [...el.querySelectorAll('.embed-remember[aria-checked="true"]')]
   return [

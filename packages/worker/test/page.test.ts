@@ -39,7 +39,8 @@ function call(
   )
 }
 
-const FRAMES = Object.values(PROVIDERS).flatMap((p) => p.frames)
+const FRAMES = Object.values(PROVIDERS).flatMap((p) => p.frames ?? [])
+const FETCHES = Object.values(PROVIDERS).flatMap((p) => p.fetches ?? [])
 
 afterEach(() => vi.restoreAllMocks())
 
@@ -53,6 +54,7 @@ describe('pages', () => {
         scriptHashes: [hash],
         media: [],
         frames: FRAMES,
+        fetches: FETCHES,
         origin: new URL('https://pedit.test/'),
       }),
     )
@@ -130,10 +132,31 @@ describe('pages', () => {
     const res = await call('https://player.vimeo.com/')
     const others = Object.entries(PROVIDERS).filter(([id]) => id !== 'vimeo')
     expect(res.headers.get('Content-Security-Policy')).toContain(
-      `frame-src ${others.flatMap(([, p]) => p.frames).join(' ')};`,
+      `frame-src ${others.flatMap(([, p]) => p.frames ?? []).join(' ')};`,
     )
     expect(spy).toHaveBeenCalledWith(
       "Embed provider vimeo ignored: its frames cover the editor's own origin",
+    )
+  })
+
+  it("lets the editor fetch only the registry's files besides the relay", async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const res = await call('https://pedit.test/')
+    expect(res.headers.get('Content-Security-Policy')).toContain(
+      "connect-src 'self' wss://pedit.test https://raw.githubusercontent.com/;",
+    )
+    expect(FETCHES).toEqual(['https://raw.githubusercontent.com/'])
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  it("leaves out a provider whose fetches cover the request's origin", async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const res = await call('https://raw.githubusercontent.com/')
+    const csp = res.headers.get('Content-Security-Policy') ?? ''
+    expect(csp).toContain("connect-src 'self' wss://raw.githubusercontent.com;")
+    expect(csp).toContain(`frame-src ${FRAMES.join(' ')};`)
+    expect(spy).toHaveBeenCalledWith(
+      "Embed provider github ignored: its fetches cover the editor's own origin",
     )
   })
 
@@ -198,7 +221,7 @@ describe('pages', () => {
   it('allows the WebSocket of an http origin', async () => {
     const res = await call('http://localhost:8787/')
     expect(res.headers.get('Content-Security-Policy')).toContain(
-      "connect-src 'self' ws://localhost:8787;",
+      "connect-src 'self' ws://localhost:8787 https://raw.githubusercontent.com/;",
     )
   })
 })

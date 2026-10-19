@@ -1,9 +1,10 @@
-// The embed providers this relay frames, in the order the preview tries them.
+// The embed providers this relay shows, in the order the preview tries them.
 // To add one, write <id>.ts next to this file with defineProvider and list it
 // here; the id is the key. To drop one, remove its line and its file.
 import codepen from './codepen.ts'
 import type { Providers } from './define.ts'
 import figma from './figma.ts'
+import github from './github.ts'
 import loom from './loom.ts'
 import miro from './miro.ts'
 import observable from './observable.ts'
@@ -24,4 +25,5 @@ export default {
   spotify,
   soundcloud,
   miro,
+  github,
 } satisfies Providers

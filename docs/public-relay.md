@@ -100,7 +100,20 @@ frames only player URLs of that shape: the browser refuses any other image,
 video, frame or connection. A self-hosted relay can allow external images and
 videos with `MEDIA_SOURCES` ([self-hosting](self-hosting.md#room-limits)), and
 be built with other sites' players
-([self-hosting](self-hosting.md#embed-providers)); the public relay does neither.
+([embeds](embeds.md#customizing-the-providers)); the public relay does neither.
+
+A link on a line of its own to a file on GitHub
+(`https://github.com/{owner}/{repo}/blob/{ref}/{path}`, with `#L10` or
+`#L10-L20` for some of its lines) shows the same kind of placeholder, naming
+`raw.githubusercontent.com`. Only once you click it, or if you ticked "Always
+load GitHub", your browser fetches
+`https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}` itself, without
+cookies or a `Referer`, so GitHub sees your IP address and which file, but not
+the room or its key; the relay sees nothing of it. Only public files can be
+shown. The text is shown as text, never as markup or script, and only up to
+1 MB and 5000 lines; anything else shows a short message and the link. The
+Content-Security-Policy allows connections to `https://raw.githubusercontent.com/`
+for this, and to no other host but the relay.
 
 ## What Cloudflare sees
 
