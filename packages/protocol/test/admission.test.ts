@@ -36,23 +36,25 @@ describe('room admission', () => {
   })
 
   it('compares the offered protocol versions with its own', () => {
-    // Version 2 numbered frames against replays (frame.ts).
-    expect(PROTOCOL_VERSION).toBe(2)
-    expect(SOCKET_PROTOCOL).toBe('pedit-v2')
+    // Version 2 numbered frames against replays (frame.ts). Version 3: a
+    // command line guest names its copies itself, so older ones, which take
+    // the names a room gives, are turned away.
+    expect(PROTOCOL_VERSION).toBe(3)
+    expect(SOCKET_PROTOCOL).toBe('pedit-v3')
     const token = `pedit-admission.${'A'.repeat(43)}`
-    expect(checkProtocolVersion(`pedit-v2, ${token}`)).toEqual({ result: 'current' })
-    expect(checkProtocolVersion('pedit-v3, pedit-v2')).toEqual({ result: 'current' })
-    expect(checkProtocolVersion(`pedit-v3, ${token}`)).toEqual({
-      result: 'server-outdated',
-      offered: 'pedit-v3',
-    })
-    expect(checkProtocolVersion('pedit-v4, pedit-v3')).toEqual({
+    expect(checkProtocolVersion(`pedit-v3, ${token}`)).toEqual({ result: 'current' })
+    expect(checkProtocolVersion('pedit-v4, pedit-v3')).toEqual({ result: 'current' })
+    expect(checkProtocolVersion(`pedit-v4, ${token}`)).toEqual({
       result: 'server-outdated',
       offered: 'pedit-v4',
     })
-    expect(checkProtocolVersion(`pedit-v1, ${token}`)).toEqual({
+    expect(checkProtocolVersion('pedit-v5, pedit-v4')).toEqual({
+      result: 'server-outdated',
+      offered: 'pedit-v5',
+    })
+    expect(checkProtocolVersion(`pedit-v2, ${token}`)).toEqual({
       result: 'client-outdated',
-      offered: 'pedit-v1',
+      offered: 'pedit-v2',
     })
     for (const value of [null, '', token, 'pedit-v', 'pedit-v01', 'pedit-vx', 'pedit-v1.0']) {
       expect(checkProtocolVersion(value)).toEqual({ result: 'none' })

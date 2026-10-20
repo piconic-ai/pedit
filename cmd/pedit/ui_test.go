@@ -284,9 +284,9 @@ func TestUITooLarge(t *testing.T) {
 	if host.String() != hostWant {
 		t.Errorf("host: got %q, want %q", host.String(), hostWant)
 	}
-	newUI(&guest, false, false).tooLarge(false, "notes.md")
+	newUI(&guest, false, false).tooLarge(false, filepath.Join("pedit-x", "00-notes.md"))
 	want := "  pedit left the room: the shared file grew too large to share. pedit shares files up to about 1 MiB for now.\n" +
-		"  Your latest changes may not have reached the others.\n\n"
+		"  Your latest changes may not have reached the others. Your copies stay in pedit-x.\n\n"
 	if guest.String() != want {
 		t.Errorf("guest: got %q, want %q", guest.String(), want)
 	}
@@ -503,11 +503,14 @@ func TestUISharingSeveralFiles(t *testing.T) {
 func TestUIMirroredFiles(t *testing.T) {
 	var out strings.Builder
 	u := newUI(&out, false, false)
-	u.mirrored("/tmp/pedit-x/docs/spec.md")
-	u.notMirrored("/tmp/pedit-x/board.canvas", errors.New("it is a canvas, which only a browser can open; open the link in a browser"))
+	u.mirrored("docs/spec.md", "/tmp/pedit-x/01-docs-spec.md")
+	u.notMirrored("board.canvas", errors.New("it is a canvas, which only a browser can open; open the link in a browser"))
+	// Anyone in the room can name a file: the name cannot pass for pedit's words.
+	u.mirrored("a.md) → \u200b01-b.md\u3000\x1b[2J", "/tmp/pedit-x/02-a-md-01-b-md-2J.md")
 	for _, want := range []string{
-		"✓ Also syncing /tmp/pedit-x/docs/spec.md",
-		"Not syncing /tmp/pedit-x/board.canvas: it is a canvas, which only a browser can open; open the link in a browser.",
+		`✓ Also syncing /tmp/pedit-x/01-docs-spec.md ("docs/spec.md")`,
+		`Not syncing "board.canvas": it is a canvas, which only a browser can open; open the link in a browser.`,
+		`✓ Also syncing /tmp/pedit-x/02-a-md-01-b-md-2J.md ("a.md) → \u200b01-b.md\u3000\x1b[2J")`,
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("missing %q in:\n%s", want, out.String())

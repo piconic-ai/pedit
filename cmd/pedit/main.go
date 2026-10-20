@@ -45,7 +45,7 @@ func getVersion() string {
 const defaultServer = "https://edit.piconic.ai"
 
 const usage = `Usage: pedit [file ...] [-t template] [-d directory]
-       pedit <share link> [-d directory]
+       pedit <share link>
 
 Share an existing UTF-8 text file. Send the printed link to collaborators;
 open it yourself to edit together in the browser. No install needed for guests.
@@ -56,10 +56,10 @@ Given several files, pedit shares them in one room, and guests switch between
 them. While sharing, type the path of another file and press Enter to add it.
 
 Given a share link instead of a file, pedit joins that room from the command
-line: it writes a copy of the shared file to a temporary directory and keeps it
-in sync, so you can edit it with any editor. In a room that shares several files,
-each text file is copied there too, at the path the host shows. The copy is removed when you leave
-or the host closes the room, like closing a browser tab. To keep it, pass -d.
+line: it writes a copy of each text file the room shares to a new temporary
+directory and keeps them in sync, so you can edit them with any editor. pedit
+names the copies itself, such as 01-docs-spec.md for docs/spec.md. They are
+removed when you leave or the host closes the room, like closing a browser tab.
 
 Examples:
   pedit notes.md       Share an existing Markdown file
@@ -358,10 +358,9 @@ func runJoin(opts commandArgs, out *ui, stderr io.Writer) int {
 	var ended atomic.Value // the final protocol.Status, once the room ended for us
 	debug := debugLog(stderr, os.Getenv("PEDIT_DEBUG") != "")
 	s, err := session.Join(ctx, session.JoinOptions{
-		URL:       opts.Room,
-		Directory: opts.Directory,
-		Name:      username(),
-		Watch:     true,
+		URL:   opts.Room,
+		Name:  username(),
+		Watch: true,
 		OnStatus: func(st protocol.Status) {
 			out.setStatus(st)
 			if st.Final() {
@@ -374,12 +373,12 @@ func runJoin(opts commandArgs, out *ui, stderr io.Writer) int {
 			debug(n.Err)
 			out.notice(displayPath(n.File), false, n)
 		},
-		OnMirrored: func(path string, err error) {
+		OnMirrored: func(hostPath, path string, err error) {
 			if err != nil {
 				debug(err)
-				out.notMirrored(displayPath(path), err)
+				out.notMirrored(hostPath, err)
 			} else {
-				out.mirrored(displayPath(path))
+				out.mirrored(hostPath, displayPath(path))
 			}
 		},
 		OnError: debug,

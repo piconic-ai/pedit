@@ -12,8 +12,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/piconic-ai/pedit/internal/filewriter"
 	"github.com/piconic-ai/pedit/internal/protocol"
@@ -22,15 +20,13 @@ import (
 )
 
 // JoinOptions joins a room someone else hosts, as a browser would, and keeps a
-// local copy of the shared file so any editor can work on it.
+// local copy of each text file it shares so any editor can work on it. The
+// copies go in a new temporary directory, removed when the session stops,
+// leaving nothing behind, like a browser tab. They are named by the guest
+// (copyName), never as the host names them.
 type JoinOptions struct {
 	// URL is the share link, with the key in its fragment.
-	URL string
-	// Directory is where the copy is written, under the name the host shares,
-	// and where it stays after the session. Empty: a temporary directory that
-	// is removed when the session stops, leaving nothing behind, like a
-	// browser tab.
-	Directory  string
+	URL        string
 	Name       string
 	WriteDelay time.Duration
 	// Watch streams edits made to the copy outside pedit into the room.
@@ -44,10 +40,14 @@ type JoinOptions struct {
 	// OnNotice and OnError are as in Options.
 	OnNotice func(Notice)
 	OnError  func(error)
-	// OnMirrored is called with the path of each other file the room shares
-	// as it is mirrored beside the first, with why not when it is not. Called
-	// one at a time.
-	OnMirrored func(path string, err error)
+	// OnMirrored is called for each other file the room shares, with the path
+	// the host shows it at and the path of its copy beside the first, and why
+	// it is not copied when it is not. Called one at a time.
+	OnMirrored func(hostPath, path string, err error)
+
+	// dir is a test seam: the copies go there, and stay, instead of in a new
+	// temporary directory.
+	dir string
 
 	// beforePublishWriter is a test seam; see Session.beforePublishWriter.
 	beforePublishWriter func()
@@ -99,16 +99,16 @@ func endedErr(st protocol.Status) error {
 	return ErrRoomClosed
 }
 
-// ErrFileExists means the copy was not written because a file of that name is
-// already in Directory.
+// ErrFileExists means the copy was not written because a file of that name
+// appeared in its directory, which pedit made empty.
 type ErrFileExists struct{ Path string }
 
 func (e *ErrFileExists) Error() string {
-	return fmt.Sprintf("%s already exists; move it away, or join from another directory", e.Path)
+	return fmt.Sprintf("%s already exists, and pedit does not write over it", e.Path)
 }
 
 // Join enters the room at opts.URL, waits for its content and writes it to a
-// file named as the host's. The returned Session mirrors the copy and the room
+// copy (copyName). The returned Session mirrors the copy and the room
 // both ways until Stop; Session.URL is the link joined.
 func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 	onError := opts.OnError
@@ -122,10 +122,11 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	dir, temp := opts.Directory, ""
+	dir, temp := opts.dir, ""
 	if dir == "" {
-		if temp, err = os.MkdirTemp("", "pedit-"+roomID+"-"); err != nil {
-			return nil, fmt.Errorf("cannot create a temporary directory for the copy: %w", err)
+		// The room ID only tells the directories apart; a short part does.
+		if temp, err = os.MkdirTemp("", "pedit-"+roomID[:min(len(roomID), maxRoomInDir)]+"-"); err != nil {
+			return nil, fmt.Errorf("cannot create a temporary directory for the copies: %w", err)
 		}
 		dir = temp
 	}
@@ -134,10 +135,13 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 		_ = removeTemp(temp)
 		return nil, err
 	}
-	// The room's other files go only where nothing was: the host names
-	// their paths, which may hold directories, such as .config/autostart.
-	entries, err := os.ReadDir(dir)
-	fresh := temp != "" || err == nil && len(entries) == 0
+	// Every copy is made through this handle, so the directory stays the one
+	// made here, whatever its name comes to lead to.
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		_ = removeTemp(temp)
+		return nil, err
+	}
 
 	doc := crdt.New()
 	shared := newTextContent(doc, "")
@@ -162,7 +166,7 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 
 		beforePublishWriter: opts.beforePublishWriter,
 	}
-	s.mirror = &mirror{dir: dir, fresh: fresh, opts: opts, keys: map[string]bool{}, dirs: map[string]bool{}, done: map[uint64]bool{}}
+	s.mirror = &mirror{dir: dir, root: root, opts: opts, done: map[uint64]bool{}}
 	synced := make(chan struct{})
 	closed := make(chan struct{})
 	var ended atomic.Value // the final protocol.Status, set before closed is
@@ -191,6 +195,8 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 		OnManifest: s.takeManifest,
 	})
 	if err != nil {
+		_ = root.Close()
+		_ = removeTemp(temp)
 		return nil, err
 	}
 	s.client = s.Client
@@ -238,6 +244,7 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 		s.Client.Destroy()
 		s.stopAlive()
 		aw.Destroy()
+		_ = root.Close()
 		_ = removeTemp(temp)
 		return nil, err
 	}
@@ -278,18 +285,16 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 	if format, _ := host["format"].(string); format == formatCanvas {
 		return fail(errors.New("this room shares a canvas as nodes and edges, which pedit cannot join from the command line yet; open the link in a browser"))
 	}
-	base, ok := sharedFileName(host)
-	if !ok {
-		return fail(errors.New("the host did not share a usable file name"))
-	}
+	hostName, _ := host["file"].(string)
+	base := copyName(0, hostName)
 	s.file = filepath.Join(dir, base)
 	s.notices = newNotices(s.file, opts.OnNotice, onError)
-	if _, err := os.Lstat(s.file); err == nil {
+	if _, err := root.Lstat(base); err == nil {
 		return fail(&ErrFileExists{Path: s.file})
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fail(err)
 	}
-	s.bound, err = filewriter.OpenBound(s.file)
+	s.bound, err = filewriter.OpenBoundIn(root, base)
 	if err != nil {
 		return fail(err)
 	}
@@ -339,11 +344,8 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 	}
 	// The room's other files go beside the first, as the host lists them.
 	s.mirrorMu.Lock()
-	err = s.startMirror(base)
+	s.startMirror()
 	s.mirrorMu.Unlock()
-	if err != nil {
-		onError(err)
-	}
 	return s, nil
 }
 
@@ -354,8 +356,8 @@ func (s *Session) File() string { return s.file }
 // Temporary reports whether the copy is removed when the session stops.
 func (s *Session) Temporary() bool { return s.temp != "" }
 
-// KeepCopy makes Stop keep a temporary copy, as a copy placed in a
-// directory is kept. Call it before Stop.
+// KeepCopy makes Stop keep the temporary directory of the copies. Call it
+// before Stop.
 func (s *Session) KeepCopy() { s.temp = "" }
 
 // removeTemp removes the temporary directory of a copy, if there is one.
@@ -393,47 +395,6 @@ func hostState(aw *awareness.Awareness) (map[string]any, bool) {
 	return nil, false
 }
 
-// sharedFileName takes the file name the host shares, which comes from the
-// room: only a plain name is accepted, never a path, and nothing that changes
-// how the name prints. "invoice\u202ecod.md" would show as invoicedm.doc.
-// The path of the copy is put on the clipboard to paste after an editor's
-// name in a shell, so it must stay one plain argument there: in sh, cmd and
-// PowerShell alike. Of ASCII, only letters, digits and "._-+,@=" are kept,
-// and anything else becomes "_", so a name cannot add a word, quote, option,
-// expansion or operator: "notes -c '!sh' x.md" is saved as
-// notes_-c___sh__x.md. Other characters are kept, but for the spaces, and
-// the quotes and dashes PowerShell reads like ASCII ones.
-func sharedFileName(host map[string]any) (string, bool) {
-	name, _ := host["file"].(string)
-	if name == "" || name == "." || name == ".." || len(name) > 255 {
-		return "", false
-	}
-	if strings.ContainsAny(name, `/\`+"\x00") {
-		return "", false
-	}
-	for _, r := range name {
-		if unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) {
-			return "", false
-		}
-	}
-	return strings.Map(func(r rune) rune {
-		if plainInShells(r) {
-			return r
-		}
-		return '_'
-	}, name), true
-}
-
-// plainInShells tells a character that means nothing but itself in sh, cmd
-// and PowerShell, outside quotes.
-func plainInShells(r rune) bool {
-	if r < utf8.RuneSelf {
-		return 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || '0' <= r && r <= '9' || strings.ContainsRune("._-+,@=", r)
-	}
-	// PowerShell takes these dashes and quotes for "-", ' and ".
-	return !unicode.IsSpace(r) && !unicode.Is(unicode.Zs, r) && (r < '\u2013' || r > '\u201e' || r == '\u2016' || r == '\u2017')
-}
-
 // parseShareURL returns the room's WebSocket URL, its ID and the key from a
 // share link. The key is in the fragment and never leaves this process. The
 // ID is used in a directory name, so only the characters of a generated room
@@ -457,6 +418,10 @@ func parseShareURL(link string) (wsURL, roomID string, key []byte, err error) {
 	wsURL = "ws" + strings.TrimPrefix(u.Scheme, "http") + "://" + u.Host + "/api/rooms/" + id + "/ws"
 	return wsURL, id, key, nil
 }
+
+// maxRoomInDir bounds the part of the room ID in the name of the copies'
+// directory, so their paths stay short on Windows.
+const maxRoomInDir = 16
 
 // isRoomID accepts the base64url alphabet room IDs are made of, at a sane length.
 func isRoomID(id string) bool {

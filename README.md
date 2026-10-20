@@ -53,22 +53,24 @@ No install or account needed for collaborators on the public server.
 Collaborators who would rather stay in their own editor join from the command
 line instead. Given the link, `pedit` mirrors the shared file to a temporary
 copy and keeps it in sync both ways until they leave or the host closes the
-room; the copy is removed then, like closing a browser tab:
+room; the copy is removed then, like closing a browser tab. `pedit` names the
+copy itself, from a number and the letters and digits of the host's name for
+it, never as the room names it:
 
 ```text
 ❯ pedit 'https://edit.piconic.ai/r/<room-id>#<key>'
 
   Joined. Your copy of the shared file:
-    /tmp/pedit-<room-id>-2271/notes.md
+    /tmp/pedit-<room-id>-2271/00-notes.md
     Copied to your clipboard.
 
   Edit it with any editor; changes sync both ways while you are in the room.
-  Press Ctrl+C to leave. The copy is temporary and removed then; -d <dir> keeps one.
+  Press Ctrl+C to leave. The copies are temporary and removed then.
 ```
 
-Quote the link in the shell: `#` starts a comment otherwise. `-d <dir>` keeps
-the copy in that directory instead, where `pedit` refuses to overwrite a file
-already there. Canvas rooms can only be joined in a browser for now.
+Quote the link in the shell: `#` starts a comment otherwise. Copy out what you
+want to keep before you leave. Canvas rooms can only be joined in a browser
+for now.
 
 ### Several files in one room
 
@@ -85,12 +87,10 @@ spec when it comes up. Only the host adds files; nobody in the room can ask for
 one. A room shares up to 20 files, each a regular UTF-8 file, as when sharing
 one. Paths are shown relative to the directory `pedit` runs in.
 
-A guest who joins from the command line gets a copy of the first file under
-its name alone, as when sharing one, and a copy of each other text file beside
-it, at the path the host shows, including files the host adds later.
-With `-d`, the other files are copied only into a directory that is new or
-empty when joining, since their paths come from the host. Canvases are for
-the browser.
+A guest who joins from the command line gets a copy of each text file in the
+same temporary directory, including files the host adds later, named after
+the host's path: `docs/spec.md` is copied to `01-docs-spec.md`. Canvases are
+for the browser.
 
 ## Why pedit?
 

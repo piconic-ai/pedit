@@ -4,8 +4,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
-	"sort"
 	"sync"
 	"testing"
 
@@ -13,26 +13,37 @@ import (
 	"github.com/piconic-ai/pedit/internal/protocol/prototest"
 )
 
-// mirrorLog records what OnMirrored reports.
+// mirrorLog records what OnMirrored reports, by the path the host lists.
 type mirrorLog struct {
 	mu   sync.Mutex
-	seen map[string]error
+	seen map[string]mirrored
 }
 
-func (l *mirrorLog) add(path string, err error) {
+type mirrored struct {
+	path string
+	err  error
+}
+
+func (l *mirrorLog) add(hostPath, path string, err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.seen == nil {
-		l.seen = map[string]error{}
+		l.seen = map[string]mirrored{}
 	}
-	l.seen[path] = err
+	l.seen[hostPath] = mirrored{path, err}
 }
 
-func (l *mirrorLog) get(path string) (error, bool) {
+func (l *mirrorLog) get(hostPath string) (mirrored, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	err, ok := l.seen[path]
-	return err, ok
+	m, ok := l.seen[hostPath]
+	return m, ok
+}
+
+func (l *mirrorLog) count() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.seen)
 }
 
 func TestJoinMirrorsTheRoomsOtherFiles(t *testing.T) {
@@ -46,21 +57,24 @@ func TestJoinMirrorsTheRoomsOtherFiles(t *testing.T) {
 	}
 	var log mirrorLog
 	dir := t.TempDir()
-	g, err := joinFromCLI(t, f, joinCLIOpts{JoinOptions: JoinOptions{Directory: dir, Watch: true, OnMirrored: log.add}})
+	g, err := joinFromCLI(t, f, joinCLIOpts{JoinOptions: JoinOptions{dir: dir, Watch: true, OnMirrored: log.add}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	copySpec := filepath.Join(dir, "docs", "spec.md")
+	if g.File() != filepath.Join(dir, "00-notes.md") {
+		t.Fatalf("first copy at %s", g.File())
+	}
+	copySpec := filepath.Join(dir, "01-docs-spec.md")
 	prototest.WaitFor(t, wait, func() bool { return readFileOr(copySpec) == "# spec\n" }, "the spec, mirrored")
-	if err, ok := log.get(copySpec); !ok || err != nil {
-		t.Fatalf("OnMirrored(spec) = %v, %v", err, ok)
+	if m, ok := log.get("docs/spec.md"); !ok || m.err != nil || m.path != copySpec {
+		t.Fatalf("OnMirrored(docs/spec.md) = %+v, %v", m, ok)
 	}
 	// A canvas is for the browser.
-	prototest.WaitFor(t, wait, func() bool { _, ok := log.get(filepath.Join(dir, "board.canvas")); return ok }, "the canvas, reported")
-	if err, _ := log.get(filepath.Join(dir, "board.canvas")); !errors.Is(err, errNotText) {
-		t.Fatalf("canvas: %v", err)
+	prototest.WaitFor(t, wait, func() bool { _, ok := log.get("board.canvas"); return ok }, "the canvas, reported")
+	if m, _ := log.get("board.canvas"); !errors.Is(m.err, errNotText) {
+		t.Fatalf("canvas: %+v", m)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "board.canvas")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, "02-board.txt")); !os.IsNotExist(err) {
 		t.Fatalf("the canvas was written: %v", err)
 	}
 
@@ -78,10 +92,11 @@ func TestJoinMirrorsTheRoomsOtherFiles(t *testing.T) {
 	if _, err := f.session.AddFile(later); err != nil {
 		t.Fatal(err)
 	}
-	prototest.WaitFor(t, wait, func() bool { return readFileOr(filepath.Join(dir, "later.md")) == "later\n" }, "the later file")
+	copyLater := filepath.Join(dir, "03-later.md")
+	prototest.WaitFor(t, wait, func() bool { return readFileOr(copyLater) == "later\n" }, "the later file")
 
 	// Leaving saves every copy.
-	if err := os.WriteFile(filepath.Join(dir, "later.md"), []byte("later, edited\n"), 0o600); err != nil {
+	if err := os.WriteFile(copyLater, []byte("later, edited\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := g.Stop(); err != nil {
@@ -101,7 +116,7 @@ func TestJoinRemovesEveryTemporaryCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := filepath.Dir(g.File())
-	prototest.WaitFor(t, wait, func() bool { return readFileOr(filepath.Join(dir, "docs", "b.md")) == "b\n" }, "the second file")
+	prototest.WaitFor(t, wait, func() bool { return readFileOr(filepath.Join(dir, "01-docs-b.md")) == "b\n" }, "the second file")
 	if err := g.Stop(); err != nil {
 		t.Fatal(err)
 	}
@@ -110,55 +125,75 @@ func TestJoinRemovesEveryTemporaryCopy(t *testing.T) {
 	}
 }
 
-// The paths come from the room: a hostile host can list any, so the guest
-// checks them again and never writes over or out of its directory.
-func TestMirrorRefusesWhatAHostileHostLists(t *testing.T) {
+// Anyone in the room can send a list of its files, so the paths in it are
+// only labels: whatever they say, the copies are plain files with plain names
+// in the copies' directory, and no directory is made.
+func TestMirrorNamesWhatAHostileListNames(t *testing.T) {
 	f := setup(t, "a\n", setupOpts{})
 	var log mirrorLog
 	dir := t.TempDir()
 	outside := t.TempDir()
-	g, err := joinFromCLI(t, f, joinCLIOpts{JoinOptions: JoinOptions{Directory: dir, OnMirrored: log.add}})
+	g, err := joinFromCLI(t, f, joinCLIOpts{JoinOptions: JoinOptions{dir: dir, OnMirrored: log.add}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Made while in the room, as anything the guest does there.
-	if err := os.WriteFile(filepath.Join(dir, "taken.md"), []byte("mine\n"), 0o600); err != nil {
+	if runtime.GOOS != "windows" {
+		if err := os.Symlink(outside, filepath.Join(dir, "link")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Made while in the room, at the name a copy would take.
+	if err := os.WriteFile(filepath.Join(dir, "12-taken.md"), []byte("mine\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(outside, filepath.Join(dir, "link")); err != nil {
-		t.Fatal(err)
+	hostile := []protocol.FileEntry{
+		{ID: 1, Path: ".git/HEAD", Format: "text"},
+		{ID: 2, Path: ".git/config", Format: "text"},
+		{ID: 3, Path: ".git/objects/x", Format: "text"},
+		{ID: 4, Path: "GIT~1/config", Format: "text"},
+		{ID: 5, Path: ".hg/hgrc", Format: "text"},
+		{ID: 6, Path: ".pedit/config.yaml", Format: "text"},
+		{ID: 7, Path: "desktop.ini", Format: "text"},
+		{ID: 8, Path: "a.scf", Format: "text"},
+		{ID: 9, Path: "notes.md.bat", Format: "text"},
+		{ID: 10, Path: "../escape.md", Format: "text"},
+		{ID: 11, Path: "link/inside.md", Format: "text"},
+		{ID: 12, Path: "taken.md", Format: "text"},
+		{ID: protocol.MaxFileID + 1, Path: "big.md", Format: "text"},
 	}
 	g.mirrorMu.Lock()
-	g.mirrorFiles([]protocol.FileEntry{
-		{ID: 1, Path: "Notes.md", Format: "text"}, // the first file is notes.md
-		{ID: 2, Path: "../escape.md", Format: "text"},
-		{ID: 3, Path: "taken.md", Format: "text"},
-		{ID: 4, Path: "link/inside.md", Format: "text"},
-		{ID: 5, Path: "a", Format: "text"},
-		{ID: 6, Path: "a/b.md", Format: "text"}, // "a" is a file now
-		{ID: 7, Path: "c/d.md", Format: "text"},
-		{ID: 8, Path: "C", Format: "text"}, // "c" is a directory now
-		{ID: 9, Path: "con.md", Format: "text"},
-	})
+	g.mirrorFiles(hostile)
 	g.mirrorMu.Unlock()
-	refused := map[string]bool{}
-	for _, p := range []string{"Notes.md", "../escape.md", "taken.md", "link/inside.md", "a/b.md", "C", "con.md"} {
-		err, ok := log.get(filepath.Join(dir, filepath.FromSlash(p)))
-		if !ok || err == nil {
-			t.Errorf("%s: mirrored (%v, %v)", p, err, ok)
-		}
-		refused[p] = true
+
+	if m, _ := log.get("taken.md"); !errors.As(m.err, new(*ErrFileExists)) {
+		t.Fatalf("taken.md: %+v", m)
 	}
-	for _, p := range []string{"a", "c/d.md"} {
-		if err, ok := log.get(filepath.Join(dir, filepath.FromSlash(p))); !ok || err != nil {
-			t.Errorf("%s: not mirrored (%v, %v)", p, err, ok)
-		}
-	}
-	if readFile(t, filepath.Join(dir, "taken.md")) != "mine\n" {
+	if readFile(t, filepath.Join(dir, "12-taken.md")) != "mine\n" {
 		t.Fatal("wrote over a file that was there")
 	}
-	entries, _ := os.ReadDir(outside)
-	if len(entries) != 0 {
+	if m, _ := log.get("big.md"); !errors.Is(m.err, errBadID) {
+		t.Fatalf("big.md: %+v", m)
+	}
+	plain := regexp.MustCompile(`^[0-9]{2,}(-[A-Za-z0-9]+)*\.(md|txt|yaml)$`)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Name() == "link" {
+			continue
+		}
+		if !e.Type().IsRegular() || !plain.MatchString(e.Name()) {
+			t.Errorf("made %s (%v)", e.Name(), e.Type())
+		}
+	}
+	for _, name := range []string{"01-git-HEAD.txt", "02-git-config.txt", "03-git-objects-x.txt", "04-GIT-1-config.txt",
+		"05-hg-hgrc.txt", "06-pedit-config.yaml", "07-desktop.txt", "08-a.txt", "09-notes-md.txt", "10-escape.md", "11-link-inside.md"} {
+		if _, err := os.Lstat(filepath.Join(dir, name)); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
 		t.Fatalf("wrote out of the directory: %v", entries)
 	}
 	if _, err := os.Stat(filepath.Join(filepath.Dir(dir), "escape.md")); !os.IsNotExist(err) {
@@ -166,77 +201,15 @@ func TestMirrorRefusesWhatAHostileHostLists(t *testing.T) {
 	}
 	// Each id is reported once.
 	g.mirrorMu.Lock()
-	g.mirrorFiles([]protocol.FileEntry{{ID: 5, Path: "a", Format: "text"}})
+	g.mirrorFiles([]protocol.FileEntry{{ID: 2, Path: "again.md", Format: "text"}})
 	g.mirrorMu.Unlock()
-	var names []string
-	log.mu.Lock()
-	for p := range log.seen {
-		names = append(names, p)
-	}
-	log.mu.Unlock()
-	sort.Strings(names)
-	if len(names) != 9 {
-		t.Fatalf("reported %q", names)
+	if n := log.count(); n != len(hostile) {
+		t.Fatalf("reported %d files", n)
 	}
 }
 
-func TestParentKeys(t *testing.T) {
-	for key, want := range map[string][]string{
-		"a.md":     nil,
-		"a/b.md":   {"a"},
-		"a/b/c.md": {"a", "a/b"},
-	} {
-		got := parentKeys(key)
-		if len(got) != len(want) {
-			t.Fatalf("parentKeys(%q) = %q", key, got)
-		}
-		for i := range got {
-			if got[i] != want[i] {
-				t.Fatalf("parentKeys(%q) = %q", key, got)
-			}
-		}
-	}
-}
-
-func readFileOr(path string) string {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	return string(b)
-}
-
-// The host names the other files' paths, which may hold directories such as
-// .config/autostart: they go only into a directory that was new or empty.
-func TestMirrorsOnlyIntoANewOrEmptyDirectory(t *testing.T) {
-	f := setup(t, "a\n", setupOpts{})
-	if _, err := f.session.AddFile(writeBeside(t, f, ".config/autostart/x.desktop", "[Desktop Entry]\n")); err != nil {
-		t.Fatal(err)
-	}
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "mine.txt"), []byte("mine\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	var log mirrorLog
-	g, err := joinFromCLI(t, f, joinCLIOpts{JoinOptions: JoinOptions{Directory: dir, OnMirrored: log.add}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	desktop := filepath.Join(dir, ".config", "autostart", "x.desktop")
-	prototest.WaitFor(t, wait, func() bool { _, ok := log.get(desktop); return ok }, "the other file, reported")
-	if err, _ := log.get(desktop); !errors.Is(err, errNotFresh) {
-		t.Fatalf("other file: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, ".config")); !os.IsNotExist(err) {
-		t.Fatalf("made a directory in a directory that was not empty: %v", err)
-	}
-	if readFile(t, g.File()) != "a\n" {
-		t.Fatal("the first file is still copied")
-	}
-}
-
-// The guest's directory is held open from the join on: renamed, with a link
-// to elsewhere put at its old name, the files still go into it.
+// The copies' directory is held open from the join on: renamed, with a link
+// to elsewhere put at its old name, the copies still go into it.
 func TestMirrorStaysInTheDirectoryItJoined(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink creation needs privileges on Windows")
@@ -249,7 +222,7 @@ func TestMirrorStaysInTheDirectoryItJoined(t *testing.T) {
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	g, err := joinFromCLI(t, f, joinCLIOpts{JoinOptions: JoinOptions{Directory: dir, OnMirrored: log.add}})
+	g, err := joinFromCLI(t, f, joinCLIOpts{JoinOptions: JoinOptions{dir: dir, OnMirrored: log.add}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,9 +242,17 @@ func TestMirrorStaysInTheDirectoryItJoined(t *testing.T) {
 	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
 		t.Fatalf("wrote out of the directory: %v", entries)
 	}
-	for _, p := range []string{"later.md", "docs/spec.md"} {
-		if _, err := os.Lstat(filepath.Join(moved, filepath.FromSlash(p))); err != nil {
-			t.Errorf("%s: not in the directory joined: %v", p, err)
+	for _, name := range []string{"01-later.md", "02-docs-spec.md"} {
+		if _, err := os.Lstat(filepath.Join(moved, name)); err != nil {
+			t.Errorf("%s: not in the directory joined: %v", name, err)
 		}
 	}
+}
+
+func readFileOr(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }

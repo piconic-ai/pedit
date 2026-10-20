@@ -59,7 +59,7 @@ func TestNewFilesFollowTheUmask(t *testing.T) {
 			dir := t.TempDir()
 			old := unix.Umask(int(mask))
 			defer unix.Umask(old)
-			g, err := joinFromCLI(t, f, joinCLIOpts{JoinOptions: JoinOptions{Directory: dir}})
+			g, err := joinFromCLI(t, f, joinCLIOpts{JoinOptions: JoinOptions{dir: dir}})
 			if err != nil {
 				t.Fatal(err)
 			}

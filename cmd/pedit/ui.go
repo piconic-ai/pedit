@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -178,7 +179,7 @@ func (u *ui) joined(file string, temporary, copied bool) {
 	}
 	lines = append(lines, "", "Edit it with any editor; changes sync both ways while you are in the room.")
 	if temporary {
-		lines = append(lines, u.dim("Press Ctrl+C to leave. The copy is temporary and removed then; -d <dir> keeps one."))
+		lines = append(lines, u.dim("Press Ctrl+C to leave. The copies are temporary and removed then."))
 	} else {
 		lines = append(lines, u.dim("Press Ctrl+C to leave. Your copy stays in "+file+"."))
 	}
@@ -230,7 +231,7 @@ func (u *ui) tooLarge(host bool, file string) {
 	}
 	limit := "pedit shares files up to " + session.SizeLimit + " for now."
 	u.print(u.yellow("pedit left the room: the shared file grew too large to share. "+limit),
-		"Your latest changes may not have reached the others.", "")
+		"Your latest changes may not have reached the others. Your copies stay in "+filepath.Dir(file)+".", "")
 }
 
 // timeLimitText names a relay's room time limit, or just "time limit" when the
@@ -266,7 +267,7 @@ func (u *ui) left(file string) {
 
 // leftTemporary confirms nothing is left behind after leaving a room.
 func (u *ui) leftTemporary() {
-	u.print("", u.green("✓")+" Left the room. The temporary copy was removed.", "")
+	u.print("", u.green("✓")+" Left the room. The temporary copies were removed.", "")
 }
 
 func (u *ui) setStatus(s protocol.Status) {
@@ -317,13 +318,20 @@ func (u *ui) notAdded(path string, err error) {
 }
 
 // mirrored says that another file of the room is copied beside the first.
-func (u *ui) mirrored(path string) {
-	u.above(u.green("✓") + " Also syncing " + printable(path))
+func (u *ui) mirrored(hostPath, path string) {
+	u.above(u.green("✓") + " Also syncing " + printable(path) + " " + u.dim("("+hostLabel(hostPath)+")"))
 }
 
 // notMirrored says why another file of the room is not copied.
-func (u *ui) notMirrored(path string, err error) {
-	u.above(u.yellow("Not syncing " + printable(path) + ": " + printable(err.Error()) + "."))
+func (u *ui) notMirrored(hostPath string, err error) {
+	u.above(u.yellow("Not syncing " + hostLabel(hostPath) + ": " + printable(err.Error()) + "."))
+}
+
+// hostLabel shows a path the room names a file by. Anyone in the room can
+// name one, so it is quoted, with what does not print as itself escaped: it
+// cannot pass for pedit's own words.
+func hostLabel(path string) string {
+	return strconv.Quote(path)
 }
 
 // imageSaved says that an image someone pasted was written to the host's

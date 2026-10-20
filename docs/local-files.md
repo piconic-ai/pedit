@@ -40,14 +40,19 @@ By using it you accept that:
   back and merged in. Elsewhere (Windows; NFS, SMB and FUSE; exFAT, and FAT on
   macOS) it is renamed over yours after one more check, and a save that lands
   just after that check can be lost.
-- **When you join with `-d <dir>`, the host names the copies.** The first is
-  one new file with a plain name, never a path. In a room that shares several
-  files, the others go at the paths the host shows, in directories pedit
-  makes inside `<dir>`, and only when `<dir>` was new or empty when you
-  joined. None is ever one that already exists, but the host chooses the names
-  and their content: `.bashrc` is a plain name, and
-  `.config/autostart/x.desktop` a path, which is why the others never go into
-  a directory that held anything, such as your home.
+- **When you join, the room chooses what your copies hold, not what they are
+  called.** Anyone in the room can name a file, and a name can mean something
+  to your computer: `.git/config` makes a folder a repository whose commands
+  your shell prompt runs, `desktop.ini` and `x.scf` make Explorer fetch from
+  another computer, `notes.md.bat` runs when opened. So pedit names each copy
+  itself: a number, then the ASCII letters and digits of the host's path,
+  then an extension kept only from a short list of text formats (md,
+  markdown, txt, csv, tsv, json, yaml, yml, toml), `.txt` otherwise. All go in
+  one new temporary directory, with no directory of their own:
+  `docs/spec.md` is copied to `01-docs-spec.md`, `.git/config` to
+  `02-git-config.txt`. Their content is the room's, as in a browser: a CSV
+  opened in a spreadsheet can hold formulas, and Markdown or JSON opened in an
+  editor can point to pictures or schemas on the web.
 - **Images your file refers to when you start are yours.** A guest can ask
   for them, including references a guest added in an earlier session that
   were saved to the file.
@@ -95,9 +100,7 @@ shows only with `PEDIT_DEBUG=1`.
 
 | | What | What keeps it in bounds |
 | --- | --- | --- |
-| Writes | A copy of the shared file, in a new private directory such as `$TMPDIR/pedit-<room>-<random>/` | The directory is `0700` and the copy `0600`, both before your umask. Both are removed when you leave or the host closes the room, with anything else you put in that directory. |
-| Writes | With `-d <dir>`, the copy in `<dir>` | The name comes from the host: a plain name, without `/`, `\`, control characters or characters that reorder how it prints; refused if a file of that name exists or appears while pedit creates it. Created `0600` before your umask, and kept when you leave. |
-| Writes | In a room that shares several files, a copy of each other text file, beside the first | Only in the temporary directory, or a `-d` directory that was new or empty when joining. At the path the host shows, checked again: relative, no `..`, no name Windows reserves or reads differently, none that folds into a name already copied (`Notes.md` and `notes.md`) or crosses one (a file `a` and a file `a/b.md`). Directories are made `0700`, and the files opened, through a handle on the copy's directory held since joining, so neither a link in it nor the directory moved and replaced by a link can lead out. Never over a file that is there; a file refused is not copied, and pedit says why. Canvases are not copied. At most 20 files. |
+| Writes | A copy of each text file the room shares, in a new private directory such as `$TMPDIR/pedit-<room>-<random>/` | Named by pedit, as above, never as the room names it, and never in a directory of its own. The directory is `0700` and each copy `0600`, both before your umask; every copy is made through a handle on the directory held since joining, so the directory moved and replaced by a link cannot lead elsewhere. Never over a file that is there. Canvases are not copied. At most 20 files. All are removed when you leave or the host closes the room, with anything else you put in that directory; when the room closes because a file grew too large, they stay, and pedit says where. |
 | Reads | The copies, when you edit them | The same guards as the host's file: never through a symlink, only UTF-8. |
 
 A joined session saves no images and reads no configuration. Besides the
@@ -132,8 +135,8 @@ picture from Gravatar, which receives a hash of your email address.
   `pedit '<link>'` command while it runs.
 - Before running pedit in a repository you did not write, look at
   `.pedit/config.yaml`: `server` is where the link points.
-- Join with the default temporary copy, or give `-d` a new, empty directory
-  meant for it.
+- Copy out of the temporary directory what you want to keep before you leave
+  a room you joined from the command line.
 - Keep a file you care about under version control, as pedit saves edits as
   they come. Convert a file that is not UTF-8 before sharing it; pedit refuses
   it otherwise.

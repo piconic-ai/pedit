@@ -427,17 +427,13 @@ func TestParseArgs(t *testing.T) {
 		}
 	}
 	const link = "https://edit.piconic.ai/r/ROOM#key"
-	for _, tc := range []struct {
-		args      []string
-		directory string
-	}{
-		{[]string{link}, ""},
-		{[]string{"-d", "shared", link}, "shared"},
-		{[]string{link, "--directory=shared"}, "shared"},
-	} {
-		opts, err := parseArgs(tc.args)
-		if err != nil || opts.Room != link || opts.File != "" || opts.Template != "" || opts.Directory != tc.directory {
-			t.Fatalf("%q: %+v %v", tc.args, opts, err)
+	if opts, err := parseArgs([]string{link}); err != nil || opts.Room != link || opts.File != "" || opts.Template != "" || opts.Directory != "" {
+		t.Fatalf("link: %+v %v", opts, err)
+	}
+	// The copies always go in a new temporary directory.
+	for _, args := range [][]string{{"-d", "shared", link}, {link, "--directory=shared"}} {
+		if _, err := parseArgs(args); err == nil || !strings.Contains(err.Error(), "-d is not used when joining") {
+			t.Fatalf("%q: err = %v", args, err)
 		}
 	}
 	if opts, err := parseArgs([]string{"http://localhost:8787/r/ROOM#key"}); err != nil || opts.Room == "" {

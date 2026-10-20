@@ -308,7 +308,7 @@ func TestJoinDoesNotClobberAFileCreatedWhileItWritesTheCopy(t *testing.T) {
 			t.Run(host.name+", "+plant.name, func(t *testing.T) {
 				f := setup(t, host.text, setupOpts{})
 				dir := t.TempDir()
-				file := filepath.Join(dir, "notes.md")
+				file := filepath.Join(dir, "00-notes.md")
 				var planted os.FileInfo
 				create := func() {
 					if err := os.WriteFile(file, []byte(plant.content), 0o644); err != nil {
@@ -330,7 +330,7 @@ func TestJoinDoesNotClobberAFileCreatedWhileItWritesTheCopy(t *testing.T) {
 					planted = info
 				}
 				// A long delay keeps the writer's timer from taking the first write.
-				opts := joinCLIOpts{JoinOptions: JoinOptions{Directory: dir, WriteDelay: time.Minute}}
+				opts := joinCLIOpts{JoinOptions: JoinOptions{dir: dir, WriteDelay: time.Minute}}
 				if plant.early {
 					opts.beforePublishWriter = create
 				} else {
