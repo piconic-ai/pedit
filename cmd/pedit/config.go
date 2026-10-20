@@ -374,11 +374,8 @@ func parseArgs(args []string) (commandArgs, error) {
 	if opts.File != "" && opts.Directory != "" {
 		return fail("use either a file path or -d, not both")
 	}
-	if opts.Room != "" && opts.Directory != "" {
-		return fail("-d is not used when joining: the copies go in a new temporary directory, removed when you leave")
-	}
-	if opts.Room != "" && opts.Template != "" {
-		return fail("a share link cannot be combined with a template")
+	if opts.Room != "" && (opts.Template != "" || opts.Directory != "") {
+		return fail("a share link cannot be combined with a template or -d")
 	}
 	return opts, nil
 }

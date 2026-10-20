@@ -430,10 +430,9 @@ func TestParseArgs(t *testing.T) {
 	if opts, err := parseArgs([]string{link}); err != nil || opts.Room != link || opts.File != "" || opts.Template != "" || opts.Directory != "" {
 		t.Fatalf("link: %+v %v", opts, err)
 	}
-	// The copies always go in a new temporary directory.
 	for _, args := range [][]string{{"-d", "shared", link}, {link, "--directory=shared"}} {
-		if _, err := parseArgs(args); err == nil || !strings.Contains(err.Error(), "-d is not used when joining") {
-			t.Fatalf("%q: err = %v", args, err)
+		if _, err := parseArgs(args); err == nil {
+			t.Fatalf("accepted %q", args)
 		}
 	}
 	if opts, err := parseArgs([]string{"http://localhost:8787/r/ROOM#key"}); err != nil || opts.Room == "" {
