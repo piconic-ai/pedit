@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/reearth/ygo/awareness"
+	"github.com/reearth/ygo/crdt"
 )
 
 // relayServer accepts one connection and hands it to serve.
@@ -122,5 +124,54 @@ func TestLeaveClosesWithHostLeft(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("the relay never heard the close")
+	}
+}
+
+// A host destroyed with its read loop running still tells the relay it left
+// on purpose: the read is cancelled only after.
+func TestHostClientLeavesWithHostLeft(t *testing.T) {
+	codes := make(chan websocket.StatusCode, 1)
+	url := relayServer(t, func(ctx context.Context, c *websocket.Conn) {
+		for {
+			if _, _, err := c.Read(ctx); err != nil {
+				codes <- websocket.CloseStatus(err)
+				return
+			}
+		}
+	})
+	key, err := DecodeKey(GenerateKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 30; i++ {
+		doc := crdt.New()
+		aw := awareness.New(uint64(doc.ClientID()))
+		aw.SetLocalState(map[string]any{})
+		connected := make(chan struct{}, 1)
+		c, err := NewClient(ClientOptions{
+			URL: url, Key: key, Doc: doc, Awareness: aw, Host: true,
+			OnStatus: func(s Status) {
+				if s == StatusConnected {
+					select {
+					case connected <- struct{}{}:
+					default:
+					}
+				}
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.Connect()
+		<-connected
+		c.Destroy()
+		select {
+		case code := <-codes:
+			if code != HostLeft {
+				t.Fatalf("round %d: closed with %d, want HostLeft", i, code)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("round %d: the relay never heard the close", i)
+		}
 	}
 }
