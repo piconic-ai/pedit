@@ -61,7 +61,12 @@ func TestCloseCodesMatchTheSharedVectors(t *testing.T) {
 
 func TestRelaySignalsMatchTheSharedVectors(t *testing.T) {
 	v := loadCloseVectors(t)
-	have := map[string]string{"HOST_AWAY": HostAway, "HOST_BACK": HostBack}
+	have := map[string]string{
+		"HOST_AWAY":  HostAway,
+		"HOST_BACK":  HostBack,
+		"RELAY_PING": RelayPing,
+		"RELAY_PONG": RelayPong,
+	}
 	if len(v.Signals) != len(have) {
 		t.Errorf("vectors name %d signals, this test %d", len(v.Signals), len(have))
 	}

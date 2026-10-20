@@ -342,6 +342,18 @@ describe('rooms', () => {
     expect(closedEarly).toBe(false)
   })
 
+  it('answers a ping of the room itself, the one text frame it takes', async () => {
+    const room = await createRoom()
+    const h = await host(room)
+    h.ws.send('pedit ping')
+    await until(() => h.signals.includes('pedit pong'))
+    const closedEarly = await Promise.race([
+      h.closed.then(() => true),
+      new Promise((r) => setTimeout(() => r(false), 50)),
+    ])
+    expect(closedEarly).toBe(false)
+  })
+
   it('closes sockets that send text or oversized frames', async () => {
     const room = await createRoom()
     const h = await host(room)

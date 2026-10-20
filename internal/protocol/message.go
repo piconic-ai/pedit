@@ -69,6 +69,17 @@ const (
 	HostBack = "host back"
 )
 
+// RelayPing and RelayPong check that the room still has a connection: a
+// client sends RelayPing as a text frame, and the room's Durable Object
+// answers RelayPong itself, without waking up. A WebSocket ping does not
+// tell as much: Cloudflare's edge answers it even when the room has lost the
+// connection. Keep them equal to RELAY_PING and RELAY_PONG in
+// packages/protocol.
+const (
+	RelayPing = "pedit ping"
+	RelayPong = "pedit pong"
+)
+
 // MessageTooBig is the WebSocket close code (the standard 1009) the relay
 // sends a connection whose frame is over MaxFrameBytes. Clients must not
 // reconnect on it: they would send the same frame again.

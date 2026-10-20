@@ -61,8 +61,16 @@ func TestDialWebSocketEndsASilentConnection(t *testing.T) {
 func TestDialWebSocketKeepsAnAnsweringConnection(t *testing.T) {
 	fastPings(t)
 	url := relayServer(t, func(ctx context.Context, c *websocket.Conn) {
-		// Reading answers pings.
-		_, _, _ = c.Read(ctx)
+		// As the room's Durable Object does.
+		for {
+			typ, data, err := c.Read(ctx)
+			if err != nil {
+				return
+			}
+			if typ == websocket.MessageText && string(data) == RelayPing {
+				_ = c.Write(ctx, websocket.MessageText, []byte(RelayPong))
+			}
+		}
 	})
 	conn, err := DialWebSocket(context.Background(), url, http.Header{})
 	if err != nil {
@@ -78,6 +86,38 @@ func TestDialWebSocketKeepsAnAnsweringConnection(t *testing.T) {
 	case err := <-read:
 		t.Fatalf("Read = %v, want it still waiting after many pings", err)
 	case <-time.After(500 * time.Millisecond):
+	}
+}
+
+// Cloudflare's edge answers WebSocket pings even when the room has lost the
+// connection, so only the room's own answer keeps a connection.
+func TestDialWebSocketEndsAConnectionTheRoomLost(t *testing.T) {
+	fastPings(t)
+	// Reading answers WebSocket pings, but RelayPing goes unanswered.
+	url := relayServer(t, func(ctx context.Context, c *websocket.Conn) {
+		for {
+			if _, _, err := c.Read(ctx); err != nil {
+				return
+			}
+		}
+	})
+	conn, err := DialWebSocket(context.Background(), url, http.Header{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	read := make(chan error, 1)
+	go func() {
+		_, err := conn.Read(context.Background())
+		read <- err
+	}()
+	select {
+	case err := <-read:
+		if err == nil {
+			t.Fatal("Read returned a frame")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Read still waiting on a room that stopped answering")
 	}
 }
 

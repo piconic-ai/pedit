@@ -21,6 +21,15 @@ export const HOST_AWAY = 'host away'
 export const HOST_BACK = 'host back'
 
 /**
+ * A client checks that the room still has its connection by sending RELAY_PING
+ * as a text frame: the room's Durable Object answers RELAY_PONG itself,
+ * without waking up. A WebSocket ping does not tell as much: Cloudflare's
+ * edge answers it even when the room has lost the connection.
+ */
+export const RELAY_PING = 'pedit ping'
+export const RELAY_PONG = 'pedit pong'
+
+/**
  * WebSocket close code for a client that speaks an older protocol version
  * than the server. Clients must not reconnect on it: the client has to be
  * updated (or the page reloaded) first.

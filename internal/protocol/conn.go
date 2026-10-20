@@ -77,7 +77,7 @@ func DialWebSocket(ctx context.Context, url string, header http.Header) (Conn, e
 	}
 	c.SetReadLimit(readLimit)
 	ctx, stop := context.WithCancel(context.Background())
-	w := &wsConn{c: c, stop: stop}
+	w := &wsConn{c: c, stop: stop, pong: make(chan struct{}, 1)}
 	go w.keepAlive(ctx)
 	return w, nil
 }
@@ -85,10 +85,12 @@ func DialWebSocket(ctx context.Context, url string, header http.Header) (Conn, e
 // A connection can be dropped without a close reaching us: a laptop goes to
 // sleep, a network is switched, a router forgets the connection. Reads then
 // wait for good and writes may still succeed for many minutes, while the
-// relay has long closed the room. So the connection is pinged, and closed
-// when the relay stops answering, which ends the read and has the Client
-// reconnect. The relay answers pings without waking the room, so they cost
-// nothing there.
+// relay has long closed the room. The room can also lose a connection that
+// Cloudflare's edge keeps up with us. So the room is pinged (RelayPing, which
+// its Durable Object answers itself, where the edge would answer a WebSocket
+// ping), and the connection closed when no answer comes, which ends the read
+// and has the Client reconnect. The room answers without waking up, so the
+// pings cost no duration.
 var (
 	pingInterval = 15 * time.Second
 	pingTimeout  = 10 * time.Second
@@ -97,9 +99,11 @@ var (
 type wsConn struct {
 	c    *websocket.Conn
 	stop context.CancelFunc
+	// pong gets the room's answers, from the read loop.
+	pong chan struct{}
 }
 
-// keepAlive pings the relay until ctx is done or a ping goes unanswered. A
+// keepAlive pings the room until ctx is done or a ping goes unanswered. A
 // pong is read by the Client's read loop, which always runs.
 func (w *wsConn) keepAlive(ctx context.Context) {
 	ticker := time.NewTicker(pingInterval)
@@ -110,14 +114,30 @@ func (w *wsConn) keepAlive(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		}
-		pctx, cancel := context.WithTimeout(ctx, pingTimeout)
-		err := w.c.Ping(pctx)
-		cancel()
-		if err != nil {
+		if err := w.ping(ctx); err != nil {
 			// No close handshake: it would wait on the same silence.
 			_ = w.c.CloseNow()
 			return
 		}
+	}
+}
+
+func (w *wsConn) ping(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, pingTimeout)
+	defer cancel()
+	// An answer to an earlier ping that came late does not count.
+	select {
+	case <-w.pong:
+	default:
+	}
+	if err := w.c.Write(ctx, websocket.MessageText, []byte(RelayPing)); err != nil {
+		return err
+	}
+	select {
+	case <-w.pong:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -136,6 +156,13 @@ func (w *wsConn) Read(ctx context.Context) ([]byte, error) {
 			return data, nil
 		}
 		if typ == websocket.MessageText {
+			if string(data) == RelayPong {
+				select {
+				case w.pong <- struct{}{}:
+				default:
+				}
+				continue
+			}
 			return nil, Signal(data)
 		}
 	}

@@ -14,6 +14,8 @@ import {
   HOST_LEFT,
   MESSAGE_TOO_BIG,
   RELAY_MAINTENANCE,
+  RELAY_PING,
+  RELAY_PONG,
   ROOM_CLOSED,
   ROOM_EXPIRED,
   ROOM_FULL,
@@ -192,6 +194,13 @@ export class Room extends DurableObject<Env> {
   private generation = 0
   // Host connections between the start of fetch and the accept or refusal.
   private hostHandshakes = 0
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env)
+    // Answered without waking the room, so a client can check that the room
+    // still has its connection at no cost.
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(RELAY_PING, RELAY_PONG))
+  }
 
   override async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname
