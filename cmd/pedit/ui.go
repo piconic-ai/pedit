@@ -33,6 +33,14 @@ type ui struct {
 	signingIn bool
 	// resumable is set when Enter picks a session up again after maintenance.
 	resumable bool
+	// typing is set while the host types on a line of its own below the live
+	// line, in a raw terminal; typed is that line so far.
+	typing bool
+	typed  []rune
+	// liveRows is how many rows the live line takes above the typed line.
+	liveRows int
+	// width is the terminal's width in columns.
+	width func() int
 }
 
 func newUI(out io.Writer, tty, noColor bool) *ui {
@@ -280,6 +288,10 @@ func (u *ui) setPeople(names []string) {
 func (u *ui) above(lines ...string) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	if u.typing {
+		u.drawTyping(lines)
+		return
+	}
 	if u.live && u.tty {
 		fmt.Fprint(u.out, "\r\x1b[2K")
 		u.lastLine = ""
@@ -422,6 +434,10 @@ func (u *ui) render() {
 		return
 	}
 	u.lastLine = line
+	if u.typing {
+		u.drawTyping(nil)
+		return
+	}
 	if u.tty {
 		fmt.Fprint(u.out, "\r\x1b[2K  "+line)
 	} else {
@@ -479,4 +495,102 @@ func whoIsHere(names []string) string {
 func hostOf(server string) string {
 	s := strings.TrimPrefix(strings.TrimPrefix(server, "https://"), "http://")
 	return strings.TrimRight(s, "/")
+}
+
+// typedPrompt starts the line the host types paths on.
+const typedPrompt = "Add a file: "
+
+// startTyping puts the line the host types on below the live line. The
+// terminal must be raw by then: pedit draws what is typed.
+func (u *ui) startTyping() {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if !u.live || !u.tty {
+		return
+	}
+	u.typing = true
+	u.liveRows = 0
+	u.drawTyping(nil)
+}
+
+// stopTyping removes the typed line, leaving the live line last on screen as
+// before startTyping.
+func (u *ui) stopTyping() {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if !u.typing {
+		return
+	}
+	u.typing = false
+	u.typed = nil
+	line := "  " + u.liveLine()
+	u.lastLine = u.liveLine()
+	fmt.Fprint(u.out, u.toBlockStart()+line)
+}
+
+// setTyped shows the line typed so far.
+func (u *ui) setTyped(line []rune) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.typed = append(u.typed[:0], line...)
+	if u.typing {
+		u.drawTyping(nil)
+	}
+}
+
+// toBlockStart goes back to the start of the live line and clears it and what
+// is below it. Callers hold u.mu.
+func (u *ui) toBlockStart() string {
+	s := "\r"
+	if u.liveRows > 0 {
+		s += fmt.Sprintf("\x1b[%dA", u.liveRows)
+	}
+	return s + "\x1b[J"
+}
+
+// drawTyping prints lines, then the live line and the typed line below them,
+// leaving the cursor where the next character typed goes. Callers hold u.mu.
+func (u *ui) drawTyping(lines []string) {
+	w := u.columns()
+	var b strings.Builder
+	b.WriteString(u.toBlockStart())
+	for _, line := range lines {
+		if line != "" {
+			b.WriteString("  " + line)
+		}
+		b.WriteString("\r\n")
+	}
+	live := "  " + u.liveLine()
+	b.WriteString(live + "\r\n")
+	b.WriteString(u.typedLine(w))
+	u.liveRows = max(1, (visualWidth(live)+w-1)/w)
+	fmt.Fprint(u.out, b.String())
+}
+
+// typedLine is the prompt and what is typed, cut at the start to fit on one
+// row, so that the cursor stays on it.
+func (u *ui) typedLine(w int) string {
+	prompt := "  " + u.dim(typedPrompt)
+	room := w - 1 - visualWidth(prompt)
+	text := printable(string(u.typed))
+	if visualWidth(text) <= room {
+		return prompt + text
+	}
+	runes := []rune(text)
+	used := 1 // the ellipsis
+	start := len(runes)
+	for start > 0 && used+runeWidth(runes[start-1]) <= room {
+		start--
+		used += runeWidth(runes[start])
+	}
+	return prompt + "…" + string(runes[start:])
+}
+
+func (u *ui) columns() int {
+	if u.width != nil {
+		if w := u.width(); w > 0 {
+			return w
+		}
+	}
+	return 80
 }
