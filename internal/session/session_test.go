@@ -1054,12 +1054,16 @@ func TestStopReportsFailedFinalWrite(t *testing.T) {
 	prototest.WaitFor(t, wait, func() bool { return g.String() == "a" }, "guest to sync")
 	g.insert(1, "b")
 	prototest.WaitFor(t, wait, func() bool { return f.session.Text.ToString() == "ab" }, "host to see the edit")
-	// The atomic write needs a temp file next to the target.
-	dir := filepath.Dir(f.file)
-	if err := os.Chmod(dir, 0o555); err != nil {
-		t.Fatal(err)
+	// A directory where the file was cannot be written over, even by root,
+	// which a read-only directory would not stop.
+	f.session.beforeFinalWrite = func(int) {
+		if err := os.Remove(f.file); err != nil {
+			t.Error(err)
+		}
+		if err := os.Mkdir(f.file, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
+			t.Error(err)
+		}
 	}
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
 	if err := f.session.Stop(); err == nil {
 		t.Fatal("Stop should report the failed write")
 	}

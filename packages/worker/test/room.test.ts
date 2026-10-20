@@ -429,10 +429,11 @@ describe('rooms', () => {
     await stopClock(room)
     for (let i = 0; i <= MESSAGE_RATE.burst; i++) guest.ws.send(new Uint8Array(1))
     expect((await guest.closed).code).toBe(RATE_LIMITED)
-    // The burst itself was relayed, and nobody else was cut off.
-    await until(() => h.received.length === MESSAGE_RATE.burst)
+    // The burst itself was relayed, and nobody else was cut off. Relaying a
+    // whole burst can take seconds on a busy machine, as in the test below.
+    await vi.waitFor(() => expect(h.received.length).toBe(MESSAGE_RATE.burst), { timeout: 10_000 })
     expect(h.ws.readyState).toBe(WebSocket.OPEN)
-  })
+  }, 30_000)
 
   it('closes a connection that sends too many bytes', async () => {
     const room = await createRoom()
