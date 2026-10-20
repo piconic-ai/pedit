@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"sync/atomic"
+	"time"
 	"unicode/utf8"
 
 	"golang.org/x/text/width"
@@ -74,9 +75,6 @@ func (e *editor) feed(b []byte, on func(edit, string)) {
 				changed = true
 			}
 			i++
-		case c == 27 && i == len(data)-1:
-			// The Esc key alone: a key that sends a sequence sends it whole.
-			i++
 		case c == 27:
 			n, complete := escapeLength(data[i:])
 			if !complete {
@@ -102,6 +100,12 @@ func (e *editor) feed(b []byte, on func(edit, string)) {
 		}
 	}
 	flush()
+}
+
+// lonelyEsc reports whether all that is pending is an Esc: the Esc key, or
+// the start of a key whose sequence has yet to arrive.
+func (e *editor) lonelyEsc() bool {
+	return len(e.pending) == 1 && e.pending[0] == 27
 }
 
 // escapeLength is how many bytes the escape sequence at the start of b takes,
@@ -138,34 +142,66 @@ func escapeLength(b []byte) (int, bool) {
 // ctx is done. The line goes to the ui as it changes. An empty line calls
 // resume and any other is the path of a file to add, as with readLines;
 // Ctrl+C calls interrupt, since a raw terminal sends no signal for it.
+//
+// A read may end in the middle of a key, so an Esc last in a read waits for
+// the rest of its sequence; when nothing follows within escWait, it was the
+// Esc key alone, which does nothing.
 func readTyped(ctx context.Context, in io.Reader, out *ui, resume func(), add func(path string), interrupt func()) {
-	var e editor
-	buf := make([]byte, 256)
-	for {
-		n, err := in.Read(buf)
-		if ctx.Err() != nil {
-			return
-		}
-		e.feed(buf[:n], func(ev edit, line string) {
-			switch ev {
-			case edited:
-				out.setTyped(e.line)
-			case entered:
-				out.setTyped(nil)
-				if path := typedPath(line); path == "" {
-					resume()
-				} else {
-					add(path)
+	chunks := make(chan []byte)
+	go func() {
+		defer close(chunks)
+		buf := make([]byte, 256)
+		for {
+			n, err := in.Read(buf)
+			if n > 0 {
+				select {
+				case chunks <- append([]byte(nil), buf[:n]...):
+				case <-ctx.Done():
+					return
 				}
-			case interrupted:
-				interrupt()
 			}
-		})
-		if err != nil {
+			if err != nil {
+				return
+			}
+		}
+	}()
+	var e editor
+	on := func(ev edit, line string) {
+		switch ev {
+		case edited:
+			out.setTyped(e.line)
+		case entered:
+			out.setTyped(nil)
+			if path := typedPath(line); path == "" {
+				resume()
+			} else {
+				add(path)
+			}
+		case interrupted:
+			interrupt()
+		}
+	}
+	for {
+		var esc <-chan time.Time
+		if e.lonelyEsc() {
+			esc = time.After(escWait)
+		}
+		select {
+		case b, ok := <-chunks:
+			if !ok || ctx.Err() != nil {
+				return
+			}
+			e.feed(b, on)
+		case <-esc:
+			e.pending = nil
+		case <-ctx.Done():
 			return
 		}
 	}
 }
+
+// escWait is how long an Esc waits for the rest of a key's sequence.
+var escWait = 50 * time.Millisecond
 
 // crlfWriter ends lines with CRLF while raw is set: a raw terminal moves down
 // on LF without going back to the start of the line.
