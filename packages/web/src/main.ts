@@ -28,14 +28,14 @@ import {
 import { Attachments, hostAttachments, whyNoImages } from './attachments.ts'
 import { BoardView } from './board.ts'
 import { read as readCanvas, toJSON } from './canvas.ts'
-import { type CsvError, delimiterFor } from './csv.ts'
+import { delimiterFor } from './csv.ts'
 import { avatarFor, fetchIdentity } from './identity.ts'
 import { JsonPane } from './jsonpane.ts'
 import { resolveLanguage } from './language.ts'
 import { NoticeBoard } from './notice.ts'
 import { applyPalette } from './palette.ts'
 import { PreviewPane } from './pane.ts'
-import { imagePaste } from './paste.ts'
+import { imagePaste, textAnchor } from './paste.ts'
 import {
   colorFor,
   type Participant,
@@ -48,7 +48,7 @@ import {
 import type { SettingsModel } from './settings.ts'
 import { Splitter } from './splitter.ts'
 import { Store } from './store.ts'
-import { describeError, TableView } from './table.ts'
+import { describeError, TableErrors, TableView } from './table.ts'
 import { fallbackTheme, loadTheme, readerTheme, THEMES, ThemeSwitcher } from './themes.ts'
 import { NARROW_QUERY, type ViewMode, ViewSwitch } from './view.ts'
 import { trackViewport } from './viewport.ts'
@@ -265,9 +265,10 @@ async function joinRoom(
   const attachments = new Attachments({
     roomId: id,
     keys: blobKeys,
-    // About the file on screen: its host directory takes the image.
-    send: (a) =>
-      shown.id === 0 ? client?.sendAttachment(a) : client?.sendFileAttachment(shown.id, a),
+    // About the file an image was added to, or the one on screen: its
+    // directory on the host takes the image.
+    send: (a, file = shown.id) =>
+      file === 0 ? client?.sendAttachment(a) : client?.sendFileAttachment(file, a),
   })
   const notices = new NoticeBoard()
   render(parts.notice, 'Notice', {
@@ -303,6 +304,7 @@ async function joinRoom(
   // The editor's extensions for a file's text. Switching files keeps the
   // settings: each compartment takes what it holds in `from`.
   const editorExtensions = (
+    fileId: number,
     fileText: Y.Text,
     undo: Y.UndoManager,
     from?: EditorState,
@@ -327,12 +329,18 @@ async function joinRoom(
             people.get().some((p) => p.isHost),
             attachments.host,
           ),
-        upload: (file) => attachments.upload(file),
+        // To the file it was added to, and into it, though another
+        // file may be on screen by then.
+        upload: (file) => attachments.upload(file, fileId),
+        anchor: (pos) => textAnchor(fileText, pos),
         onError: (message) => notices.show(message),
       }),
     ]
   }
-  const editor = new EditorView({ parent: source, extensions: editorExtensions(text, undoManager) })
+  const editor = new EditorView({
+    parent: source,
+    extensions: editorExtensions(0, text, undoManager),
+  })
 
   const followEditor = () => {
     if (main.dataset.view === 'split') preview.follow(editor)
@@ -348,9 +356,14 @@ async function joinRoom(
   })
   attachments.version.subscribe(() => preview.refresh())
   const splitter = new Splitter(main, { onResize: followEditor })
-  const tableErrors = {
-    onError: (error: CsvError | null) => view.setTableError(error && describeError(error)),
-  }
+  // Each file's table error; the view shows the one of the file on screen.
+  const tableErrors = new TableErrors(0, (error) =>
+    view.setTableError(error && describeError(error)),
+  )
+  const tableFor = (id: number, fileText: Y.Text, undo: Y.UndoManager) =>
+    new TableView(fileText, awareness, undo, {
+      onError: (error) => tableErrors.report(id, error),
+    })
   // Other editors that follow the settings: each canvas's JSON.
   const fontFollowers: { view: EditorView; compartment: Compartment }[] = []
   const themeFollowers: { view: EditorView; compartment: Compartment }[] = []
@@ -382,7 +395,7 @@ async function joinRoom(
     text,
     undo: undoManager,
     canvas: false,
-    table: new TableView(text, awareness, undoManager, tableErrors),
+    table: tableFor(0, text, undoManager),
     ...canvasFor(0, doc),
   }
   // The file on screen, and every file opened so far, which stay in sync.
@@ -499,7 +512,7 @@ async function joinRoom(
       text: fileText,
       undo,
       canvas: entry.format === 'canvas',
-      table: new TableView(fileText, awareness, undo, tableErrors),
+      table: tableFor(entry.id, fileText, undo),
       ...canvasFor(entry.id, fileDoc),
     }
     if (isFinalStatus(roomStatus.get())) f.board.readOnly = true
@@ -520,12 +533,13 @@ async function joinRoom(
     editor.setState(
       EditorState.create({
         doc: shown.text.toString(),
-        extensions: editorExtensions(shown.text, shown.undo, editor.state),
+        extensions: editorExtensions(shown.id, shown.text, shown.undo, editor.state),
       }),
     )
     preview.setText(shown.text)
     table.replaceChildren(shown.table.element)
     canvas.replaceChildren(shown.board.element)
+    tableErrors.show(id)
     showName(entry.path)
     showView(view.mode)
   }

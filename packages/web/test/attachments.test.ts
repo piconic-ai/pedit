@@ -155,6 +155,23 @@ describe('Attachments', () => {
     expect(sent).toHaveLength(0)
   })
 
+  it('sends about the file an image was added to, again after reconnecting', async () => {
+    const files: (number | undefined)[] = []
+    const { attachments, sent } = await setup([201], {
+      send: (a, f) => (sent.push(a), files.push(f)),
+    })
+    const upload = attachments.upload(file(), 7)
+    await vi.waitFor(() => expect(sent).toHaveLength(1))
+    attachments.reconnected()
+    expect(files).toEqual([7, 7])
+    attachments.handle({
+      kind: 'stored',
+      hash: (sent[0] as { hash: string }).hash,
+      path: 'assets/x.png',
+    })
+    await upload
+  })
+
   it('adds the same image twice at once', async () => {
     const { attachments, sent } = await setup([201, 201])
     const first = attachments.upload(file())
