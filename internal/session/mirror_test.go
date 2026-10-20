@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"sync"
 	"testing"
@@ -231,5 +232,46 @@ func TestMirrorsOnlyIntoANewOrEmptyDirectory(t *testing.T) {
 	}
 	if readFile(t, g.File()) != "a\n" {
 		t.Fatal("the first file is still copied")
+	}
+}
+
+// The guest's directory is held open from the join on: renamed, with a link
+// to elsewhere put at its old name, the files still go into it.
+func TestMirrorStaysInTheDirectoryItJoined(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on Windows")
+	}
+	f := setup(t, "a\n", setupOpts{})
+	var log mirrorLog
+	base := t.TempDir()
+	dir := filepath.Join(base, "guest")
+	outside := t.TempDir()
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	g, err := joinFromCLI(t, f, joinCLIOpts{JoinOptions: JoinOptions{Directory: dir, OnMirrored: log.add}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved := filepath.Join(base, "moved")
+	if err := os.Rename(dir, moved); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, dir); err != nil {
+		t.Fatal(err)
+	}
+	g.mirrorMu.Lock()
+	g.mirrorFiles([]protocol.FileEntry{
+		{ID: 1, Path: "later.md", Format: "text"},
+		{ID: 2, Path: "docs/spec.md", Format: "text"},
+	})
+	g.mirrorMu.Unlock()
+	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+		t.Fatalf("wrote out of the directory: %v", entries)
+	}
+	for _, p := range []string{"later.md", "docs/spec.md"} {
+		if _, err := os.Lstat(filepath.Join(moved, filepath.FromSlash(p))); err != nil {
+			t.Errorf("%s: not in the directory joined: %v", p, err)
+		}
 	}
 }

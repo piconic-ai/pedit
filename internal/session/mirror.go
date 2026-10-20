@@ -140,7 +140,8 @@ func (s *Session) mirrorFile(entry protocol.FileEntry) error {
 		return err
 	}
 	file := filepath.Join(m.dir, filepath.FromSlash(entry.Path))
-	bound, err := filewriter.OpenBound(file)
+	// Through the handle too: the directory's name may lead elsewhere by now.
+	bound, err := filewriter.OpenBoundIn(m.root, filepath.FromSlash(entry.Path))
 	if err != nil {
 		return err
 	}
