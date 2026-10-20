@@ -133,6 +133,20 @@ func TestReportsSyncedOnceWithTheDocument(t *testing.T) {
 	}
 }
 
+// A connection dropped without a close reaching us still ends on the first
+// write that fails, and the client reconnects instead of waiting on it.
+func TestReconnectsWhenAWriteFails(t *testing.T) {
+	relay := prototest.NewRelay(false)
+	key := protocol.GenerateKey()
+	host := join(t, relay, key, joinOpts{init: "a"})
+	prototest.WaitFor(t, wait, func() bool { return host.Status() == protocol.StatusConnected }, "host connected")
+	relay.SeverAll()
+	host.insert(1, "b")
+	prototest.WaitFor(t, wait, func() bool { return len(relay.URLs()) == 2 }, "a reconnect")
+	guest := join(t, relay, key, joinOpts{})
+	prototest.WaitFor(t, wait, func() bool { return guest.String() == "ab" }, "the edit, after the reconnect")
+}
+
 func TestConcurrentEditsBothWays(t *testing.T) {
 	relay := prototest.NewRelay(false)
 	key := protocol.GenerateKey()

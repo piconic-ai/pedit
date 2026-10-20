@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/coder/websocket"
 )
@@ -65,11 +66,49 @@ func DialWebSocket(ctx context.Context, url string, header http.Header) (Conn, e
 		return nil, err
 	}
 	c.SetReadLimit(readLimit)
-	return &wsConn{c: c}, nil
+	ctx, stop := context.WithCancel(context.Background())
+	w := &wsConn{c: c, stop: stop}
+	go w.keepAlive(ctx)
+	return w, nil
 }
 
+// A connection can be dropped without a close reaching us: a laptop goes to
+// sleep, a network is switched, a router forgets the connection. Reads then
+// wait for good and writes may still succeed for many minutes, while the
+// relay has long closed the room. So the connection is pinged, and closed
+// when the relay stops answering, which ends the read and has the Client
+// reconnect. The relay answers pings without waking the room, so they cost
+// nothing there.
+var (
+	pingInterval = 15 * time.Second
+	pingTimeout  = 10 * time.Second
+)
+
 type wsConn struct {
-	c *websocket.Conn
+	c    *websocket.Conn
+	stop context.CancelFunc
+}
+
+// keepAlive pings the relay until ctx is done or a ping goes unanswered. A
+// pong is read by the Client's read loop, which always runs.
+func (w *wsConn) keepAlive(ctx context.Context) {
+	ticker := time.NewTicker(pingInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			return
+		}
+		pctx, cancel := context.WithTimeout(ctx, pingTimeout)
+		err := w.c.Ping(pctx)
+		cancel()
+		if err != nil {
+			// No close handshake: it would wait on the same silence.
+			_ = w.c.CloseNow()
+			return
+		}
+	}
 }
 
 func (w *wsConn) Read(ctx context.Context) ([]byte, error) {
@@ -94,5 +133,6 @@ func (w *wsConn) Write(ctx context.Context, data []byte) error {
 }
 
 func (w *wsConn) Close() error {
+	w.stop()
 	return w.c.Close(websocket.StatusNormalClosure, "")
 }

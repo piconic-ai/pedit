@@ -134,6 +134,16 @@ func (r *Relay) DropAll() {
 	}
 }
 
+// SeverAll forgets every connection without telling it, as a connection
+// dropped without a close reaching us: writes fail and reads go on waiting.
+func (r *Relay) SeverAll() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for c := range r.conns {
+		r.left(c)
+	}
+}
+
 func (r *Relay) hasHost() bool {
 	for c := range r.conns {
 		if c.isHost {

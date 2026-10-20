@@ -664,6 +664,11 @@ func (o *outbox) loop() {
 				o.closed = true
 				o.queue = nil
 				o.mu.Unlock()
+				// The read loop may never hear of it (a connection dropped
+				// without a close reaching us), so end the connection, and
+				// with it the read loop. Not a failure: a close the relay
+				// sent first still says why the connection ended.
+				_ = o.conn.Close()
 				return
 			}
 		}
