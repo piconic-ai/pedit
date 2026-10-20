@@ -438,50 +438,64 @@ func (c *Client) receive(data []byte) error {
 	if err != nil {
 		return err
 	}
-	if t == MessageFiles {
+	switch t {
+	case MessageFiles:
 		return c.receiveFiles(payload)
+	case MessageAttachment:
+		return c.receiveAttachment(payload)
+	case MessageCanvas:
+		return c.receiveCanvas(payload)
+	case MessageSync:
+		return c.receiveSync(payload)
 	}
-	if t == MessageAttachment {
-		a, err := DecodeAttachment(payload)
-		if errors.Is(err, ErrUnknownAttachmentKind) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if c.opts.OnAttachment != nil {
-			c.opts.OnAttachment(a)
-		}
+	return c.receiveAwareness(payload)
+}
+
+func (c *Client) receiveAttachment(payload []byte) error {
+	a, err := DecodeAttachment(payload)
+	if errors.Is(err, ErrUnknownAttachmentKind) {
 		return nil
 	}
-	if t == MessageCanvas {
-		m, err := DecodeCanvas(payload)
-		if errors.Is(err, ErrUnknownCanvasKind) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if c.opts.OnCanvas != nil {
-			c.opts.OnCanvas(m)
-		}
+	if err != nil {
+		return err
+	}
+	if c.opts.OnAttachment != nil {
+		c.opts.OnAttachment(a)
+	}
+	return nil
+}
+
+func (c *Client) receiveCanvas(payload []byte) error {
+	m, err := DecodeCanvas(payload)
+	if errors.Is(err, ErrUnknownCanvasKind) {
 		return nil
 	}
-	if t == MessageSync {
-		c.applying.Lock()
-		reply, err := ysync.ApplySyncMessage(c.doc, payload, c)
-		c.applying.Unlock()
-		if err != nil {
-			return err
-		}
-		if len(reply) > 0 {
-			c.send(MessageSync, reply)
-		}
-		if kind, _, err := ysync.ReadSyncMessage(payload); err == nil && kind == ysync.MsgSyncStep2 {
-			c.markSynced()
-		}
-		return nil
+	if err != nil {
+		return err
 	}
+	if c.opts.OnCanvas != nil {
+		c.opts.OnCanvas(m)
+	}
+	return nil
+}
+
+func (c *Client) receiveSync(payload []byte) error {
+	c.applying.Lock()
+	reply, err := ysync.ApplySyncMessage(c.doc, payload, c)
+	c.applying.Unlock()
+	if err != nil {
+		return err
+	}
+	if len(reply) > 0 {
+		c.send(MessageSync, reply)
+	}
+	if kind, _, err := ysync.ReadSyncMessage(payload); err == nil && kind == ysync.MsgSyncStep2 {
+		c.markSynced()
+	}
+	return nil
+}
+
+func (c *Client) receiveAwareness(payload []byte) error {
 	update, err := encoding.NewDecoder(payload).ReadVarBytes()
 	if err != nil {
 		return err
