@@ -42,6 +42,7 @@ type Relay struct {
 	Bytes protocol.Rate
 
 	mu      sync.Mutex
+	limited int
 	conns   map[*Conn]bool
 	urls    []string
 	headers []http.Header
@@ -74,6 +75,13 @@ func (r *Relay) Dial(_ context.Context, url string, header http.Header) (protoco
 	}
 	r.conns[c] = true
 	return c, nil
+}
+
+// Limited counts the connections closed for going over Bytes.
+func (r *Relay) Limited() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.limited
 }
 
 // SetRefuse changes Refuse while connections may be dialing, as a relay
@@ -218,6 +226,7 @@ func (c *Conn) Write(_ context.Context, data []byte) error {
 		}
 		c.counted = now
 		if c.bytes < float64(len(data)) {
+			r.limited++
 			r.left(c)
 			c.closeWith(RateLimited)
 			return errors.New("rate limited")
