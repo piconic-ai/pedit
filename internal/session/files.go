@@ -118,6 +118,17 @@ func (s *Session) AddFile(file string) (protocol.FileEntry, error) {
 		}
 	}
 
+	// Every file goes in the list the room gets, the first one too, which
+	// Start does not check: one name it refuses would keep the room from
+	// getting any list.
+	format := protocol.FormatText
+	if isCanvas(file) {
+		format = protocol.FormatCanvas
+	}
+	if _, err := protocol.EncodeManifest(append(s.manifest(), protocol.FileEntry{ID: s.nextID, Path: path, Format: format})); err != nil {
+		return protocol.FileEntry{}, fmt.Errorf("no other file can be shared with %s, whose name macOS or Windows would read differently: %w", s.path, err)
+	}
+
 	bound, initial, err := openShared(file)
 	if err != nil {
 		return protocol.FileEntry{}, err

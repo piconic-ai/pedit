@@ -294,3 +294,18 @@ func TestNoticesNameTheAddedFile(t *testing.T) {
 		t.Fatalf("notice = %+v", told)
 	}
 }
+
+// The first file is shared as before whatever its name, but the room's list
+// of files names it too: a name the list refuses keeps others out, rather
+// than leave the room without a list.
+func TestAddFileRefusesWhenTheFirstFileCannotBeListed(t *testing.T) {
+	for _, name := range []string{"a:b.md", "con.md"} {
+		f := setup(t, "first\n", setupOpts{name: name})
+		if _, err := f.session.AddFile(writeBeside(t, f, "second.md", "s\n")); err == nil || !strings.Contains(err.Error(), name) {
+			t.Fatalf("%s: AddFile = %v", name, err)
+		}
+		if got := f.session.Files(); len(got) != 1 {
+			t.Fatalf("%s: files = %+v", name, got)
+		}
+	}
+}
