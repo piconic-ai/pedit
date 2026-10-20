@@ -81,6 +81,15 @@ export class Relay {
     for (const socket of sockets) socket.close(code, reason)
   }
 
+  /** Sends every guest a text frame of the relay's own, such as HOST_AWAY. */
+  signal(text: string): void {
+    for (const socket of this.sockets) {
+      if (!socket.isHost && socket.readyState === 1) {
+        queueMicrotask(() => socket.onmessage?.({ data: text }))
+      }
+    }
+  }
+
   /** Called by a socket as it closes. */
   left(socket: FakeSocket): void {
     this.sockets.delete(socket)

@@ -12,6 +12,13 @@ describe('close codes', () => {
     expect(exported).toEqual(vectors.codes)
   })
 
+  it('match the shared relay signals, name for name', () => {
+    const exported = Object.fromEntries(
+      Object.entries(close).filter(([, value]) => typeof value === 'string'),
+    )
+    expect(exported).toEqual(vectors.signals)
+  })
+
   it('writes and reads the reason of an expired room', () => {
     for (const c of vectors.expiredReasons) {
       expect(expiredReason(c.seconds)).toBe(c.reason)

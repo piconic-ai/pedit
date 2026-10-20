@@ -22,7 +22,9 @@ import (
 // newer protocol version. So is StatusTooLarge: a frame we had to send was over
 // MaxFrameBytes, the most the relay takes. So is StatusExpired: the room
 // reached the relay's time limit. StatusBusy is not: the relay turned
-// us away for now, and the Client tries again later than after a drop.
+// us away for now, and the Client tries again later than after a drop. Nor is
+// StatusWaiting: we are connected, but the host dropped and the relay waits
+// for it to come back; nobody edits meanwhile.
 type Status string
 
 // errDestroyed ends the connection loop when the Client was destroyed mid-dial.
@@ -31,6 +33,7 @@ var errDestroyed = errors.New("client destroyed")
 const (
 	StatusConnecting   Status = "connecting"
 	StatusConnected    Status = "connected"
+	StatusWaiting      Status = "waiting"
 	StatusDisconnected Status = "disconnected"
 	StatusBusy         Status = "busy"
 	StatusClosed       Status = "closed"
@@ -81,7 +84,10 @@ type ClientOptions struct {
 	Doc       *crdt.Doc
 	Awareness *awareness.Awareness
 	// Header holds extra handshake headers.
-	Header     http.Header
+	Header http.Header
+	// Host is set for the room's host, which tells the relay when it leaves
+	// on purpose (HostLeft) rather than dropping.
+	Host       bool
 	Dial       Dialer
 	MinBackoff time.Duration
 	MaxBackoff time.Duration
@@ -260,6 +266,12 @@ func (c *Client) Do(fn func()) {
 	fn()
 }
 
+func (c *Client) isDestroyed() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.destroyed
+}
+
 // Destroy announces departure, closes the connection and stops reconnecting.
 func (c *Client) Destroy() {
 	c.mu.Lock()
@@ -286,11 +298,15 @@ func (c *Client) Destroy() {
 	c.unsubscribeFiles()
 	if out != nil {
 		out.drain()
+		// Before the read is cancelled: that closes the connection at once,
+		// without the code that tells the relay the host left on purpose.
+		if c.opts.Host {
+			_ = out.conn.Leave()
+		} else {
+			_ = out.conn.Close()
+		}
 	}
 	c.cancel()
-	if out != nil {
-		_ = out.conn.Close()
-	}
 	if started {
 		<-done
 	}
@@ -307,7 +323,7 @@ func (c *Client) run(done chan struct{}) {
 			attempts = 0
 			err = c.serve(conn)
 		}
-		if c.ctx.Err() != nil || errors.Is(err, errDestroyed) {
+		if c.ctx.Err() != nil || errors.Is(err, errDestroyed) || c.isDestroyed() {
 			return
 		}
 		c.dropRemoteAwareness()
@@ -365,6 +381,11 @@ func (c *Client) serve(conn Conn) error {
 
 	for {
 		data, err := conn.Read(c.ctx)
+		var sig Signal
+		if errors.As(err, &sig) {
+			c.relaySignal(sig)
+			continue
+		}
 		if err != nil {
 			c.mu.Lock()
 			if c.out == out {
@@ -381,6 +402,19 @@ func (c *Client) serve(conn Conn) error {
 		if err := c.receive(data); err != nil {
 			c.onError(err)
 		}
+	}
+}
+
+// relaySignal takes the relay's own word on the host.
+func (c *Client) relaySignal(sig Signal) {
+	c.mu.Lock()
+	status := c.status
+	c.mu.Unlock()
+	switch {
+	case sig == HostAway && status == StatusConnected:
+		c.setStatus(StatusWaiting)
+	case sig == HostBack && status == StatusWaiting:
+		c.setStatus(StatusConnected)
 	}
 }
 

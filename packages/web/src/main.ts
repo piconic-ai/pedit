@@ -60,6 +60,7 @@ import './components/Header.tsx'
 import './components/Layout.tsx'
 import './components/Notice.tsx'
 import type { LayoutParts } from './components/Layout.tsx'
+import { lockedUndo } from './lockedundo.ts'
 import './style.css'
 
 const NAME_KEY = 'pedit:name'
@@ -298,6 +299,11 @@ async function joinRoom(
   // Reused so switching back to Markdown does not reparse the document.
   const markdownSupport = markdown()
   const readOnly = [EditorState.readOnly.of(true), EditorView.editable.of(false)]
+  // Nobody edits while the host is away, nor once the room has ended.
+  const editLocked = () => {
+    const s = roomStatus.get()
+    return s === 'waiting' || isFinalStatus(s)
+  }
   // One instance for every editor on the page: readerTheme() alternates.
   const reader = readerTheme()
   const undoManager = new Y.UndoManager(text)
@@ -315,7 +321,7 @@ async function joinRoom(
       vimMode.of(held(vimMode, [])),
       basicSetup,
       // Undo only this browser's edits, not everyone's.
-      Prec.high(keymap.of(yUndoManagerKeymap)),
+      Prec.high(keymap.of(lockedUndo(yUndoManagerKeymap, editLocked))),
       language.of(held(language, markdownSupport)),
       themeMode.of(held(themeMode, theme.extension)),
       fontMode.of(held(fontMode, reader)),
@@ -428,7 +434,10 @@ async function joinRoom(
   })
 
   // Vim's u and Ctrl-r undo in the file on screen.
-  const undoShown = { undo: () => shown.undo.undo(), redo: () => shown.undo.redo() }
+  const undoShown = {
+    undo: () => (editLocked() ? null : shown.undo.undo()),
+    redo: () => (editLocked() ? null : shown.undo.redo()),
+  }
   const vim = new VimToggle(editor, vimMode, () => vimExtension(undoShown))
   themes = new ThemeSwitcher(editor, themeMode, theme.id)
   for (const f of themeFollowers) themes.follow(f.view, f.compartment)
@@ -452,11 +461,24 @@ async function joinRoom(
     settings,
   })
 
+  // Nobody edits while the host is away: nobody would save it. Once the room
+  // has ended, for good.
   const setStatus = (s: RoomStatus) => {
+    const was = roomStatus.get()
     roomStatus.set(s)
     if (isFinalStatus(s)) {
       editor.dispatch({ effects: editable.reconfigure(readOnly) })
-      for (const f of opened.values()) f.board.readOnly = true
+      for (const f of opened.values()) {
+        f.board.readOnly = true
+        f.table.readOnly = true
+      }
+    } else if ((s === 'waiting') !== (was === 'waiting')) {
+      const away = s === 'waiting'
+      editor.dispatch({ effects: editable.reconfigure(away ? readOnly : []) })
+      for (const f of opened.values()) {
+        f.board.paused = away
+        f.table.readOnly = away
+      }
     }
   }
 
@@ -515,7 +537,13 @@ async function joinRoom(
       table: tableFor(entry.id, fileText, undo),
       ...canvasFor(entry.id, fileDoc),
     }
-    if (isFinalStatus(roomStatus.get())) f.board.readOnly = true
+    if (isFinalStatus(roomStatus.get())) {
+      f.board.readOnly = true
+      f.table.readOnly = true
+    } else if (roomStatus.get() === 'waiting') {
+      f.board.paused = true
+      f.table.readOnly = true
+    }
     opened.set(entry.id, f)
     client?.addFile(entry.id, fileDoc)
     return f

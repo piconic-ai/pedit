@@ -202,6 +202,16 @@ export class JsonPane {
     if (this.#inFlight) this.#send({ kind: 'edit', ...this.#inFlight })
   }
 
+  /** While the host is away: nobody would apply an edit. */
+  set readOnly(on: boolean) {
+    if (this.#closed) return
+    this.#view.dispatch({
+      effects: this.#readOnly.reconfigure(
+        on ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : [],
+      ),
+    })
+  }
+
   /** Once the room has closed: nothing can be sent, so nothing can be typed. */
   close(): void {
     this.#closed = true

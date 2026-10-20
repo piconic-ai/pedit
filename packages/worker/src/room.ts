@@ -9,8 +9,13 @@ import {
 import {
   CLIENT_OUTDATED,
   expiredReason,
+  HOST_AWAY,
+  HOST_BACK,
+  HOST_LEFT,
   MESSAGE_TOO_BIG,
   RELAY_MAINTENANCE,
+  RELAY_PING,
+  RELAY_PONG,
   ROOM_CLOSED,
   ROOM_EXPIRED,
   ROOM_FULL,
@@ -49,8 +54,9 @@ export const MAX_UPLOADS = 4
  * which a room that shares several files needs on connecting.
  *
  * A guest over it is closed, and its client reconnects and resyncs, which
- * loses nothing. A host over it ends the session, as any host leaving does,
- * so the limits stay far above what editing needs.
+ * loses nothing. A host over it is closed too, and the room waits for it to
+ * come back as for any host that drops, so the limits stay far above what
+ * editing needs.
  */
 export const MESSAGE_RATE = RELAY_MESSAGE_RATE
 export const BYTE_RATE = RELAY_BYTE_RATE
@@ -81,6 +87,8 @@ export interface Limits {
   quotaCount: number
   /** How long a room lasts, from its host's first connection. */
   roomSeconds: number
+  /** How long a room waits for a host that dropped before it closes. */
+  hostGraceSeconds: number
 }
 
 export const DEFAULT_LIMITS: Limits = {
@@ -92,6 +100,8 @@ export const DEFAULT_LIMITS: Limits = {
   // serves its operator's own team, who may keep a session open for days, and
   // the operator can set ROOM_MAX_SECONDS.
   roomSeconds: Number.POSITIVE_INFINITY,
+  // Long enough for the CLI's backoff (30 s at most) and a network switch.
+  hostGraceSeconds: 120,
 }
 
 /** Worker vars that lower or raise the limits; unset or invalid ones keep the default. */
@@ -101,6 +111,7 @@ export interface LimitVars {
   BLOB_QUOTA_BYTES?: string
   BLOB_QUOTA_COUNT?: string
   ROOM_MAX_SECONDS?: string
+  HOST_GRACE_SECONDS?: string
 }
 
 export function limits(env: LimitVars): Limits {
@@ -114,6 +125,7 @@ export function limits(env: LimitVars): Limits {
     quotaBytes: positive(env.BLOB_QUOTA_BYTES, DEFAULT_LIMITS.quotaBytes),
     quotaCount: positive(env.BLOB_QUOTA_COUNT, DEFAULT_LIMITS.quotaCount),
     roomSeconds: positive(env.ROOM_MAX_SECONDS, DEFAULT_LIMITS.roomSeconds),
+    hostGraceSeconds: positive(env.HOST_GRACE_SECONDS, DEFAULT_LIMITS.hostGraceSeconds),
   }
 }
 
@@ -135,6 +147,8 @@ const ADMISSION_KEY = 'admissionHash'
 // When the host first connected, in ms since the epoch. Never deleted: once
 // the room is over it is the tombstone that stops its ID being used again.
 const OPENED_KEY = 'openedAt'
+// Until when, in ms since the epoch, the room waits for a host that dropped.
+const AWAY_KEY = 'hostAwayUntil'
 
 interface Usage {
   bytes: number
@@ -148,7 +162,11 @@ interface Usage {
  * A room lives only as long as its host is connected: guests are turned away
  * while there is no host, and everyone is disconnected with ROOM_CLOSED as soon
  * as the host leaves, so nothing lingers (and nothing keeps waking the room up)
- * after a session ends.
+ * after a session ends. A host that drops instead of leaving (its connection
+ * ends without HOST_LEFT: a network switch, Cloudflare resetting a connection)
+ * gets hostGraceSeconds to come back. Meanwhile the room is told HOST_AWAY,
+ * keeps its guests and lets new ones in, and nobody edits; it closes if the
+ * host does not come back in time.
  *
  * A room also ends at most ROOM_MAX_SECONDS after its host first connected
  * (`openedAt`, kept after the room ends so that its ID cannot be reused), with
@@ -176,6 +194,13 @@ export class Room extends DurableObject<Env> {
   private generation = 0
   // Host connections between the start of fetch and the accept or refusal.
   private hostHandshakes = 0
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env)
+    // Answered without waking the room, so a client can check that the room
+    // still has its connection at no cost.
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(RELAY_PING, RELAY_PONG))
+  }
 
   override async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname
@@ -223,7 +248,9 @@ export class Room extends DurableObject<Env> {
       if (this.sessionOpen()) await this.expire()
       return refuse(ROOM_EXPIRED, expiredReason(limits(this.env).roomSeconds))
     }
-    if (!isHost && this.hosts().length === 0) {
+    if (!isHost && this.hosts().length === 0 && !this.hostAway()) {
+      // A grace period that ran out with its alarm late.
+      if (this.awayUntil() !== undefined) await this.closeAfterGrace()
       this.log('turned a guest away', { code: ROOM_CLOSED })
       return refuse(ROOM_CLOSED, 'room is closed')
     }
@@ -242,7 +269,10 @@ export class Room extends DurableObject<Env> {
     this.ctx.acceptWebSocket(server, isHost ? [HOST_TAG] : [])
     if (isHost) {
       this.log('host connected')
+      if (this.awayUntil() !== undefined) this.hostReturned()
       await this.ctx.storage.setAlarm(this.nextAlarm())
+    } else if (this.hostAway()) {
+      safeSend(server, HOST_AWAY)
     }
     return new Response(null, {
       status: 101,
@@ -278,9 +308,24 @@ export class Room extends DurableObject<Env> {
     return Date.now() >= this.deadline()
   }
 
-  // The hourly check, or the deadline if that comes sooner.
+  // The hourly check, or the deadline or the end of a grace period if one
+  // comes sooner.
   private nextAlarm(): number {
-    return Math.min(this.deadline(), Date.now() + ALARM_INTERVAL_MS)
+    return Math.min(
+      this.deadline(),
+      this.awayUntil() ?? Number.POSITIVE_INFINITY,
+      Date.now() + ALARM_INTERVAL_MS,
+    )
+  }
+
+  private awayUntil(): number | undefined {
+    return this.ctx.storage.kv.get<number>(AWAY_KEY)
+  }
+
+  // Whether the room is waiting for a host that dropped.
+  private hostAway(): boolean {
+    const until = this.awayUntil()
+    return until !== undefined && Date.now() < until
   }
 
   // Whether there is anything of a session left to clean up.
@@ -304,6 +349,14 @@ export class Room extends DurableObject<Env> {
       // look again at the next interval if it does not get in.
       if (this.hostHandshakes > 0) {
         await this.ctx.storage.setAlarm(this.nextAlarm())
+        return
+      }
+      if (this.hostAway()) {
+        await this.ctx.storage.setAlarm(this.nextAlarm())
+        return
+      }
+      if (this.awayUntil() !== undefined) {
+        await this.closeAfterGrace()
         return
       }
       // The host left without a close we saw (a deploy), or normally, when
@@ -366,13 +419,13 @@ export class Room extends DurableObject<Env> {
     safeClose(ws, code, reason)
     if (this.isHost(ws))
       this.log('host closed', { code, wasClean, otherHosts: this.hosts(ws).length })
-    await this.closeIfHostLeft(ws)
+    await this.closeIfHostLeft(ws, code)
   }
 
   override async webSocketError(ws: WebSocket): Promise<void> {
     safeClose(ws, 1011, 'error')
     if (this.isHost(ws)) this.log('host errored', { otherHosts: this.hosts(ws).length })
-    await this.closeIfHostLeft(ws)
+    await this.closeIfHostLeft(ws, 1011)
   }
 
   // Closes one connection on the relay's own account.
@@ -430,9 +483,44 @@ export class Room extends DurableObject<Env> {
     return this.ctx.getWebSockets(HOST_TAG).filter((s) => s !== except)
   }
 
-  private async closeIfHostLeft(ws: WebSocket): Promise<void> {
-    if (!this.isHost(ws) || this.hosts(ws).length > 0) return
-    await this.endSession(ROOM_CLOSED, 'the host left', ws)
+  private async closeIfHostLeft(ws: WebSocket, code: number): Promise<void> {
+    if (!this.isHost(ws)) return
+    // Leaving on purpose ends the session, even while the relay still counts
+    // older connections of the host it has not seen close yet.
+    // Under maintenance no host can come back.
+    if (code === HOST_LEFT || maintenance(this.env as { MAINTENANCE?: string }) === 'closed') {
+      await this.endSession(ROOM_CLOSED, 'the host left', ws)
+      return
+    }
+    if (this.hosts(ws).length > 0 || this.awayUntil() !== undefined) return
+    await this.waitForHost()
+  }
+
+  // The last host dropped: wait for it to come back, without editing.
+  private async waitForHost(): Promise<void> {
+    // The session ended already (it expired, or the host left on purpose):
+    // this is its last host closing.
+    if (this.ctx.storage.kv.get(ADMISSION_KEY) === undefined) return
+    const seconds = limits(this.env).hostGraceSeconds
+    this.ctx.storage.kv.put(AWAY_KEY, Date.now() + seconds * 1000)
+    this.log('host away', { graceSeconds: seconds })
+    for (const peer of this.ctx.getWebSockets()) {
+      if (!this.isHost(peer)) safeSend(peer, HOST_AWAY)
+    }
+    await this.ctx.storage.setAlarm(this.nextAlarm())
+  }
+
+  private hostReturned(): void {
+    this.ctx.storage.kv.delete(AWAY_KEY)
+    this.log('host returned')
+    for (const peer of this.ctx.getWebSockets()) {
+      if (!this.isHost(peer)) safeSend(peer, HOST_BACK)
+    }
+  }
+
+  private async closeAfterGrace(): Promise<void> {
+    this.log('host did not come back')
+    await this.endSession(ROOM_CLOSED, 'the host left')
   }
 
   // The room reached its time limit: everyone goes, with the session's data.
@@ -456,6 +544,7 @@ export class Room extends DurableObject<Env> {
     this.generation++
     this.ctx.storage.kv.delete(USAGE_KEY)
     this.ctx.storage.kv.delete(ADMISSION_KEY)
+    this.ctx.storage.kv.delete(AWAY_KEY)
     this.cleaning = this.cleaning.then(() => this.deleteBlobs())
     await this.cleaning
   }
@@ -471,7 +560,11 @@ export class Room extends DurableObject<Env> {
       await cleaning
     } while (cleaning !== this.cleaning)
     if (this.expired()) return new Response('room has expired', { status: 410 })
-    if (this.hosts().length === 0) return new Response('room is closed', { status: 410 })
+    if (this.hosts().length === 0) {
+      if (!this.hostAway()) return new Response('room is closed', { status: 410 })
+      // What was attached can still be seen; nothing new goes in.
+      if (request.method !== 'GET') return new Response('the host is away', { status: 503 })
+    }
     // Hashed first, so the verifier is read after any await.
     if (!this.authorize(await sha256(token)))
       return new Response('invalid room admission', { status: 403 })
@@ -592,6 +685,14 @@ interface Allowance {
   messages: number
   bytes: number
   at: number
+}
+
+function safeSend(ws: WebSocket, message: string): void {
+  try {
+    ws.send(message)
+  } catch {
+    // Going away; its close handler cleans up.
+  }
 }
 
 function safeClose(ws: WebSocket, code: number, reason: string): void {

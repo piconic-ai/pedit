@@ -32,6 +32,17 @@ describe('EndedBanner', () => {
     expect(copy.hidden).toBe(false)
   })
 
+  it('says it waits for the host, with the text to copy and no Reconnect', () => {
+    const { status, banner, copy, reconnect } = mount()
+    status.set('waiting')
+    expect(banner.hidden).toBe(false)
+    expect(banner.textContent).toMatch(/Waiting for them to come back.*read, but not edit/)
+    expect(copy.hidden).toBe(false)
+    expect(reconnect.hidden).toBe(true)
+    status.set('connected')
+    expect(banner.hidden).toBe(true)
+  })
+
   it('says the relay is closed for maintenance, with the text to copy and Reconnect', () => {
     const { status, banner, copy, reconnect, onReconnect } = mount()
     status.set('maintenance')

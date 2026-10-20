@@ -8,7 +8,8 @@ import (
 
 // vectors are shared with packages/protocol, which tests the same file.
 type closeVectors struct {
-	Codes          map[string]int `json:"codes"`
+	Codes          map[string]int    `json:"codes"`
+	Signals        map[string]string `json:"signals"`
 	ExpiredReasons []struct {
 		Seconds int    `json:"seconds"`
 		Reason  string `json:"reason"`
@@ -40,6 +41,7 @@ func TestCloseCodesMatchTheSharedVectors(t *testing.T) {
 		"RELAY_BUSY":        RelayBusy,
 		"RELAY_MAINTENANCE": RelayMaintenance,
 		"ROOM_EXPIRED":      RoomExpired,
+		"HOST_LEFT":         HostLeft,
 		"MESSAGE_TOO_BIG":   MessageTooBig,
 	}
 	for name, code := range v.Codes {
@@ -53,6 +55,24 @@ func TestCloseCodesMatchTheSharedVectors(t *testing.T) {
 	for name := range have {
 		if _, ok := v.Codes[name]; !ok {
 			t.Errorf("%s is missing from the vectors", name)
+		}
+	}
+}
+
+func TestRelaySignalsMatchTheSharedVectors(t *testing.T) {
+	v := loadCloseVectors(t)
+	have := map[string]string{
+		"HOST_AWAY":  HostAway,
+		"HOST_BACK":  HostBack,
+		"RELAY_PING": RelayPing,
+		"RELAY_PONG": RelayPong,
+	}
+	if len(v.Signals) != len(have) {
+		t.Errorf("vectors name %d signals, this test %d", len(v.Signals), len(have))
+	}
+	for name, text := range have {
+		if v.Signals[name] != text {
+			t.Errorf("%s = %q, vectors say %q", name, text, v.Signals[name])
 		}
 	}
 }

@@ -14,6 +14,8 @@ import { type CanvasMessage, decodeCanvas, encodeCanvas, UnknownCanvasKindError 
 import { decrypt, encrypt } from './cipher.ts'
 import {
   CLIENT_OUTDATED,
+  HOST_AWAY,
+  HOST_BACK,
   MESSAGE_TOO_BIG,
   parseExpiredReason,
   RELAY_BUSY,
@@ -57,11 +59,13 @@ import { Pacer, type Rate } from './pace.ts'
  * frame we had to send was over MAX_FRAME_BYTES, the most the relay takes.
  * So is `expired`: the room reached the relay's time limit.
  * `busy` is not: the relay turned us away for now, and the client tries again
- * later than after a drop.
+ * later than after a drop. Nor is `waiting`: we are connected, but the host
+ * dropped and the relay waits for it to come back; nobody edits meanwhile.
  */
 export type RoomStatus =
   | 'connecting'
   | 'connected'
+  | 'waiting'
   | 'disconnected'
   | 'busy'
   | 'closed'
@@ -228,6 +232,15 @@ export class RoomClient {
     }
     socket.onmessage = (ev) => {
       if (this.socket !== socket) return
+      // The relay's own word on the host, the only text it sends.
+      if (ev.data === HOST_AWAY) {
+        if (this.status === 'connected') this.setStatus('waiting')
+        return
+      }
+      if (ev.data === HOST_BACK) {
+        if (this.status === 'waiting') this.setStatus('connected')
+        return
+      }
       const data = toBytes(ev.data)
       if (!data) return
       this.receiveChain = this.receiveChain
@@ -317,7 +330,8 @@ export class RoomClient {
     }
     doc.on('update', onUpdate)
     this.files.set(id, { doc, onUpdate, synced: false })
-    if (this.socket?.readyState === OPEN && this.status === 'connected') this.syncFile(id, doc)
+    const open = this.status === 'connected' || this.status === 'waiting'
+    if (this.socket?.readyState === OPEN && open) this.syncFile(id, doc)
   }
 
   /** Tells the room which files it shares, now and to everyone who connects later. */

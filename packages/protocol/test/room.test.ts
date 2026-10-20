@@ -11,6 +11,8 @@ import {
   encrypt,
   expiredReason,
   generateKey,
+  HOST_AWAY,
+  HOST_BACK,
   importKey,
   isFinalStatus,
   MAX_FRAME_BYTES,
@@ -289,7 +291,7 @@ describe('RoomClient', () => {
     const relay = new Relay()
     await join(relay, await importKey(generateKey()), '', undefined, { Authorization: 'Bearer t' })
     expect(relay.headers).toEqual([{ Authorization: 'Bearer t' }])
-    expect(relay.protocols).toEqual([['pedit-v3', `pedit-admission.${'A'.repeat(43)}`]])
+    expect(relay.protocols).toEqual([['pedit-v4', `pedit-admission.${'A'.repeat(43)}`]])
     expect(relay.urls).toEqual(['ws://test'])
   })
 
@@ -305,6 +307,22 @@ describe('RoomClient', () => {
     await new Promise((r) => setTimeout(r, 1500))
     expect(guest.status).toBe('closed')
     expect(relay.urls).toHaveLength(2)
+  })
+
+  it('waits, without being closed, while the relay says the host is away', async () => {
+    const relay = new Relay()
+    const key = await importKey(generateKey())
+    const guest = await join(relay, key)
+    await vi.waitFor(() => expect(guest.status).toBe('connected'))
+    relay.signal(HOST_AWAY)
+    await vi.waitFor(() => expect(guest.status).toBe('waiting'))
+    expect(isFinalStatus('waiting')).toBe(false)
+    relay.signal(HOST_BACK)
+    await vi.waitFor(() => expect(guest.status).toBe('connected'))
+    // A word on the host while not waiting changes nothing.
+    relay.signal(HOST_BACK)
+    await new Promise((r) => setTimeout(r, 10))
+    expect(guest.status).toBe('connected')
   })
 
   it('waits out a busy relay longer than a dropped connection, then gets in', async () => {

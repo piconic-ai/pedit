@@ -144,7 +144,10 @@ export class BoardView {
   #resizers = new Map<string, () => void>()
   #editor: EditorView | null = null
   #scheduled = false
+  // Read-only once the room has closed, or while the host is away.
   #readOnly = false
+  #closed = false
+  #paused = false
   /** Bumped when the edges change in a way only edges.ts draws. */
   #edgesChanged = new Store(0)
   #drawnEdges = ''
@@ -230,13 +233,23 @@ export class BoardView {
 
   /** Once the room has closed: the board shows the canvas, and nothing changes it. */
   set readOnly(on: boolean) {
-    this.#readOnly = on
-    if (on) {
-      this.finishEditing()
-      this.json?.close()
-    }
-    this.#store?.setNodesDraggable(!on)
-    this.#store?.setNodesConnectable(!on)
+    this.#closed = on
+    if (on) this.json?.close()
+    this.#lock()
+  }
+
+  /** While the host is away: nothing changes the board until it is back. */
+  set paused(on: boolean) {
+    this.#paused = on
+    if (this.json && !this.#closed) this.json.readOnly = on
+    this.#lock()
+  }
+
+  #lock(): void {
+    this.#readOnly = this.#closed || this.#paused
+    if (this.#readOnly) this.finishEditing()
+    this.#store?.setNodesDraggable(!this.#readOnly)
+    this.#store?.setNodesConnectable(!this.#readOnly)
   }
 
   toggleJson(): void {
@@ -251,7 +264,7 @@ export class BoardView {
   /** Called by the flow once it exists. */
   onInit(store: FlowStore): void {
     this.#store = store
-    if (this.#readOnly) this.readOnly = true
+    if (this.#readOnly) this.#lock()
     this.#publish()
     this.#drawEdges(store)
   }

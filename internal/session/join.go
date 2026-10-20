@@ -170,6 +170,7 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 	synced := make(chan struct{})
 	closed := make(chan struct{})
 	var ended atomic.Value // the final protocol.Status, set before closed is
+	var waited atomic.Bool // the host was away
 	s.Client, err = protocol.NewClient(protocol.ClientOptions{
 		URL:       wsURL,
 		Key:       rawKey,
@@ -178,6 +179,11 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 		Header:    opts.Header,
 		Dial:      opts.Dial,
 		OnStatus: func(st protocol.Status) {
+			if st == protocol.StatusWaiting {
+				waited.Store(true)
+			} else if st == protocol.StatusConnected && waited.Swap(false) {
+				s.resumeFromDisk()
+			}
 			if st.Final() {
 				select {
 				case <-closed:
@@ -445,4 +451,20 @@ func redactFragment(link string) string {
 		return before + "#…"
 	}
 	return link
+}
+
+// resumeFromDisk merges what changed in the copies while the host was away,
+// when nothing was taken from them (sharedFile.syncFromDisk).
+func (s *Session) resumeFromDisk() {
+	s.filesMu.Lock()
+	files := s.files()
+	s.filesMu.Unlock()
+	for _, f := range files {
+		f.mu.Lock()
+		ready := f.Writer != nil
+		f.mu.Unlock()
+		if ready {
+			f.scheduleSyncFromDisk()
+		}
+	}
 }

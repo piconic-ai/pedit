@@ -474,6 +474,21 @@ describe('BoardView', () => {
     expect(card.querySelector('.canvas-peer')?.textContent).toBe('Ann')
   })
 
+  it('changes nothing while paused, and can be changed again after', async () => {
+    const doc = docOf([node('a')])
+    const view = setup(doc)
+    await tick()
+    view.paused = true
+    view.edit('a')
+    expect(view.editing.get()).toBeNull()
+    expect(storeOf(view).nodesDraggable()).toBe(false)
+    view.paused = false
+    expect(storeOf(view).nodesDraggable()).toBe(true)
+    view.edit('a')
+    expect(view.editing.get()).toBe('a')
+    view.finishEditing()
+  })
+
   it('changes nothing once the room has closed', async () => {
     const doc = docOf([node('a')])
     const view = setup(doc)

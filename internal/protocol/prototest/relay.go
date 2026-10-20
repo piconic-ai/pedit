@@ -144,6 +144,22 @@ func (r *Relay) SeverAll() {
 	}
 }
 
+// Signal sends every guest a text frame of the relay's own, such as
+// protocol.HostAway.
+func (r *Relay) Signal(sig protocol.Signal) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for c := range r.conns {
+		if c.isHost {
+			continue
+		}
+		c.mu.Lock()
+		c.signals = append(c.signals, sig)
+		c.mu.Unlock()
+		c.signal()
+	}
+}
+
 func (r *Relay) hasHost() bool {
 	for c := range r.conns {
 		if c.isHost {
@@ -179,10 +195,11 @@ type Conn struct {
 	relay  *Relay
 	isHost bool
 
-	mu     sync.Mutex
-	inbox  [][]byte
-	closed error
-	wake   chan struct{}
+	mu      sync.Mutex
+	inbox   [][]byte
+	signals []protocol.Signal
+	closed  error
+	wake    chan struct{}
 
 	// The byte allowance under Relay.Bytes, and when it was counted. Guarded
 	// by the relay's mu.
@@ -196,6 +213,12 @@ const RateLimited = 1008
 func (c *Conn) Read(ctx context.Context) ([]byte, error) {
 	for {
 		c.mu.Lock()
+		if len(c.signals) > 0 {
+			sig := c.signals[0]
+			c.signals = c.signals[1:]
+			c.mu.Unlock()
+			return nil, sig
+		}
 		if len(c.inbox) > 0 {
 			data := c.inbox[0]
 			c.inbox = c.inbox[1:]
@@ -262,6 +285,9 @@ func (c *Conn) Close() error {
 	c.closeWith(1000)
 	return nil
 }
+
+// Leave is Close as a host leaving on purpose.
+func (c *Conn) Leave() error { return c.Close() }
 
 func (c *Conn) deliver(data []byte) {
 	c.mu.Lock()

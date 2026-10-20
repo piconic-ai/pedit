@@ -22,6 +22,8 @@ func TestUIWithoutTerminal(t *testing.T) {
 	u.setPeople([]string{"Alice"}) // unchanged
 	u.setStatus(protocol.StatusDisconnected)
 	u.setStatus(protocol.StatusConnected)
+	u.setStatus(protocol.StatusWaiting)
+	u.setStatus(protocol.StatusConnected)
 	u.setPeople([]string{"Alice", "Bob"})
 	u.stopLive()
 	u.setPeople(nil) // not shown after stopping
@@ -50,6 +52,8 @@ func TestUIWithoutTerminal(t *testing.T) {
   ● Just you so far
   ● Alice is here
   ○ Offline. Reconnecting…
+  ● Alice is here
+  ○ The host's connection dropped. Waiting for them to come back…
   ● Alice is here
   ● Alice and Bob are here
 

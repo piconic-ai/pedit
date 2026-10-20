@@ -17,10 +17,10 @@ key as the capability.
 WebSocket clients offer two subprotocols:
 
 ```text
-Sec-WebSocket-Protocol: pedit-v3, pedit-admission.<token>
+Sec-WebSocket-Protocol: pedit-v4, pedit-admission.<token>
 ```
 
-The server selects only `pedit-v3`, never echoes the capability, and rejects
+The server selects only `pedit-v4`, never echoes the capability, and rejects
 missing, malformed, or multiple admission tokens. Browsers use the standard
 WebSocket protocols argument; the Go client uses its handshake options.
 Blob GET and PUT requests send `X-Pedit-Admission: <token>`. The capability
@@ -46,7 +46,12 @@ sent to sockets open at the deadline) before admission, so it never
 registers a verifier again. Clients released before 4007 existed treat it as
 an ordinary drop and reconnect with backoff; every current client stops.
 The verifier survives hibernation and is removed with the quota when the
-last host leaves. Document updates retain their existing encryption and
+last host leaves. A host that leaves on purpose closes with 4008 and the room
+ends at once; a host whose connection drops otherwise gets a grace period
+(`HOST_GRACE_SECONDS`, two minutes by default): the relay keeps the session,
+admits guests, sends them the text frame `host away` (and `host back` when the
+host returns), and ends the room with 4001 only if the host does not come back
+in time. Guests do not edit meanwhile. Document updates retain their existing encryption and
 wire format. A capability does not confer the host role and does not enable
 decryption; possession does allow use of the relay's room resources.
 

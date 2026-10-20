@@ -7,7 +7,14 @@
     "RELAY_BUSY": 4005,
     "RELAY_MAINTENANCE": 4006,
     "ROOM_EXPIRED": 4007,
+    "HOST_LEFT": 4008,
     "MESSAGE_TOO_BIG": 1009
+  },
+  "signals": {
+    "HOST_AWAY": "host away",
+    "HOST_BACK": "host back",
+    "RELAY_PING": "pedit ping",
+    "RELAY_PONG": "pedit pong"
   },
   "expiredReasons": [
     { "seconds": 86400, "reason": "the room reached its time limit of 86400 seconds" },
