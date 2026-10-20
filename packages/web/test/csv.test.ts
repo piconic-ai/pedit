@@ -96,6 +96,35 @@ describe('parse', () => {
     expect(values('5" disk,x\n')).toEqual([['5" disk', 'x']])
   })
 
+  it('ends a row at a lone CR, as at LF or CRLF', () => {
+    const text = 'a,b\rc\r\nd\ne'
+    const table = parse(text)
+    expect(table.eol).toBe('\r\n')
+    expect(table.rows.map((r) => [r.from, r.to, r.end])).toEqual([
+      [0, 3, 4],
+      [4, 5, 7],
+      [7, 8, 9],
+      [9, 10, 10],
+    ])
+    expect(values('"x"\r"y"\r')).toEqual([['x'], ['y']])
+  })
+
+  it('keeps an empty last cell after a trailing delimiter', () => {
+    const [row] = parse('a,\n').rows
+    expect(row?.cells.map((c) => [c.value, c.from, c.to])).toEqual([
+      ['a', 0, 1],
+      ['', 2, 2],
+    ])
+    expect(values('"",""')).toEqual([['', '']])
+  })
+
+  it('reads a quote-only value and a doubled quote at the end of the file', () => {
+    expect(values('""""')).toEqual([['"']])
+    expect(values('a,"b"""')).toEqual([['a', 'b"']])
+    expect(() => parse('"a""')).toThrow('A quoted value is never closed')
+    expect(() => parse('"a" ,b')).toThrow('Text follows a closing quote')
+  })
+
   it('reports an unclosed quote and text after a closing quote with their line', () => {
     expect(() => parse('a\n"open,b\nc')).toThrow(CsvError)
     const unclosed = tryParse('a\n"open,b\nc', ',')
