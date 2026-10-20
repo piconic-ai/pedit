@@ -213,7 +213,7 @@ describe('RoomClient', () => {
     await vi.waitFor(() => expect(b.status).toBe('connected'))
     const newer = relay.create('ws://test')
     await vi.waitFor(() => expect(newer.readyState).toBe(1))
-    // A message type, then an attachment kind, that b does not know.
+    // A message type, then an attachment and a canvas kind, that b does not know.
     const sender = new Uint8Array(SENDER_BYTES).fill(1)
     newer.send(await encrypt(key, encodeFrame(sender, 1, new Uint8Array([9, 1, 2, 3]))))
     newer.send(
@@ -221,6 +221,9 @@ describe('RoomClient', () => {
         key,
         encodeFrame(sender, 2, new Uint8Array([MessageType.Attachment, 9, 1, 2, 3])),
       ),
+    )
+    newer.send(
+      await encrypt(key, encodeFrame(sender, 3, new Uint8Array([MessageType.Canvas, 9, 1, 2, 3]))),
     )
     await join(relay, key, 'after')
     await vi.waitFor(() => expect(text(b)).toBe('after'))
