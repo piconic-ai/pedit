@@ -317,17 +317,8 @@ func (f *BoundFile) kept(tmpName string) string {
 func (f *BoundFile) Write(expected, content string) error {
 	// An existing file keeps its permissions. A new one keeps those it is
 	// created with below: 0600, restricted further by the umask.
-	var mode os.FileMode
-	existed := false
-	if info, err := f.root.Lstat(f.name); err == nil {
-		if !info.Mode().IsRegular() {
-			return f.errNotRegular()
-		}
-		if f.createOnly.Load() {
-			return ErrExternalChange
-		}
-		mode, existed = info.Mode().Perm(), true
-	} else if !errors.Is(err, os.ErrNotExist) {
+	mode, existed, err := f.existing()
+	if err != nil {
 		return err
 	}
 	tmpName := randomName()
@@ -341,7 +332,37 @@ func (f *BoundFile) Write(expected, content string) error {
 			_ = f.root.Remove(tmpName)
 		}
 	}()
-	_, err = tmp.WriteString(content)
+	written, err := fillTemp(tmp, content, mode, existed)
+	if err != nil {
+		return err
+	}
+	f.step(StepTempWritten)
+	keep, err = f.replace(expected, content, tmpName, written, existed)
+	return err
+}
+
+// existing returns the permissions of the file Write replaces, and whether
+// there is one.
+func (f *BoundFile) existing() (mode os.FileMode, existed bool, err error) {
+	info, err := f.root.Lstat(f.name)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	if !info.Mode().IsRegular() {
+		return 0, false, f.errNotRegular()
+	}
+	if f.createOnly.Load() {
+		return 0, false, ErrExternalChange
+	}
+	return info.Mode().Perm(), true, nil
+}
+
+// fillTemp writes content to tmp and closes it, and returns what it wrote.
+func fillTemp(tmp *os.File, content string, mode os.FileMode, existed bool) (os.FileInfo, error) {
+	_, err := tmp.WriteString(content)
 	if err == nil && existed {
 		// Never for a new file: chmod ignores the umask.
 		err = tmp.Chmod(mode)
@@ -352,52 +373,84 @@ func (f *BoundFile) Write(expected, content string) error {
 		written, err = tmp.Stat()
 	}
 	if err = errors.Join(err, tmp.Close()); err != nil {
-		return err
+		return nil, err
 	}
-	f.step(StepTempWritten)
+	return written, nil
+}
 
+// replace puts the file written under tmpName in place of the file. keep
+// reports whether a save is left under tmpName.
+func (f *BoundFile) replace(expected, content, tmpName string, written os.FileInfo, existed bool) (keep bool, err error) {
 	// Exchange would move a planted link aside and rename would replace it;
 	// refuse it instead, so the caller sees an error rather than a silent
 	// replacement.
-	if info, err := f.root.Lstat(f.name); errors.Is(err, os.ErrNotExist) {
-		f.step(StepBeforeReplace)
-		// A file created at the name meanwhile is not pedit's to replace,
-		// even one that holds expected.
-		if err := f.createChecked(tmpName); err != nil {
-			return err
-		}
-		f.createOnly.Store(false)
-		return nil
-	} else if err != nil {
-		return err
-	} else if !info.Mode().IsRegular() {
-		return f.errNotRegular()
-	} else if !existed {
-		// Missing at the first look: whatever is there now is someone else's.
-		return ErrExternalChange
+	info, err := f.root.Lstat(f.name)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, f.createNew(tmpName)
+	}
+	if err := f.replaceable(info, err, existed); err != nil {
+		return false, err
 	}
 
 	if f.noExchange.Load() {
-		return f.renameChecked(expected, tmpName)
+		return false, f.renameChecked(expected, tmpName)
 	}
 	f.step(StepBeforeReplace)
 	if err := f.calls.exchange(f.root, tmpName, f.name); err != nil {
-		switch {
-		case errors.Is(err, errUnsupported):
-			f.noExchange.Store(true)
-			return f.renameChecked(expected, tmpName)
-		case errors.Is(err, os.ErrNotExist):
-			return f.createChecked(tmpName)
-		default:
-			// Not known to mean unsupported (EPERM from a sandbox, say): rename
-			// this time only.
-			return f.renameChecked(expected, tmpName)
-		}
+		return false, f.exchangeFailed(err, expected, tmpName)
 	}
 	f.step(StepExchanged)
+	return f.checkExchanged(expected, content, tmpName, written)
+}
 
-	// What the exchange moved aside is under tmpName now. If it is still what
-	// pedit expected, nobody saved in between.
+// createNew puts the file written under tmpName at the file's name, which
+// was missing.
+func (f *BoundFile) createNew(tmpName string) error {
+	f.step(StepBeforeReplace)
+	// A file created at the name meanwhile is not pedit's to replace, even
+	// one that holds expected.
+	if err := f.createChecked(tmpName); err != nil {
+		return err
+	}
+	f.createOnly.Store(false)
+	return nil
+}
+
+// replaceable checks what Lstat found at the file's name just before
+// replacing it.
+func (f *BoundFile) replaceable(info os.FileInfo, err error, existed bool) error {
+	switch {
+	case err != nil:
+		return err
+	case !info.Mode().IsRegular():
+		return f.errNotRegular()
+	case !existed:
+		// Missing at the first look: whatever is there now is someone else's.
+		return ErrExternalChange
+	}
+	return nil
+}
+
+// exchangeFailed falls back from an exchange that failed with err.
+func (f *BoundFile) exchangeFailed(err error, expected, tmpName string) error {
+	switch {
+	case errors.Is(err, errUnsupported):
+		f.noExchange.Store(true)
+		return f.renameChecked(expected, tmpName)
+	case errors.Is(err, os.ErrNotExist):
+		return f.createChecked(tmpName)
+	default:
+		// Not known to mean unsupported (EPERM from a sandbox, say): rename
+		// this time only.
+		return f.renameChecked(expected, tmpName)
+	}
+}
+
+// checkExchanged checks what the exchange moved aside, which is under tmpName
+// now. If it is still what pedit expected, nobody saved in between.
+// Otherwise it goes back under the name. keep reports whether a save is left
+// under tmpName.
+func (f *BoundFile) checkExchanged(expected, content, tmpName string, written os.FileInfo) (keep bool, err error) {
 	out, err := f.inspect(tmpName)
 	if err == nil && out.holds(expected) {
 		time.Sleep(lateWriteDelay)
@@ -405,16 +458,14 @@ func (f *BoundFile) Write(expected, content string) error {
 		var late entry
 		late, err = f.inspect(tmpName)
 		if err == nil && late.same(out) {
-			return nil
+			return false, nil
 		}
 		out = late
 	}
 	if err != nil {
-		keep = true
-		return landedError{&KeptError{Name: tmpName, Err: fmt.Errorf("cannot check what pedit replaced in %s; it is kept in %s: %w", f.name, f.kept(tmpName), err)}}
+		return true, landedError{&KeptError{Name: tmpName, Err: fmt.Errorf("cannot check what pedit replaced in %s; it is kept in %s: %w", f.name, f.kept(tmpName), err)}}
 	}
-	keep, err = f.restore(tmpName, entry{info: written, content: content, readable: true}, out)
-	return err
+	return f.restore(tmpName, entry{info: written, content: content, readable: true}, out)
 }
 
 // restore puts back what an exchange moved aside to tmpName, which was not what
