@@ -53,8 +53,16 @@ token (`Sec-WebSocket-Protocol`, `X-Pedit-Admission`). Neither token can
 decrypt anything.
 <!-- TODO(operator): confirm in the dashboard that webSocketMessage events of the Room Durable Object appear as invocation logs, and whether they name the room. If per-frame logs are not wanted, set observability.logs.invocation_logs to false or lower head_sampling_rate, and update the comment in wrangler.jsonc. -->
 The room ID is in the path; the key never reaches the relay. The Worker's own
-log lines are `rate limited <route>`, without the address, and
-`failed to delete blobs` with the error.
+log lines are `rate limited <route>`, without the address,
+`failed to delete blobs` with the error, and one JSON line per event that
+ends a session or turns someone away, so a room that closed unexpectedly can
+be explained: `room: host connected`, `room: host closed` (with its close
+code), `room: host errored`, `room: alarm found no host`,
+`room: closed a peer` (rate limited, a frame too big, or text),
+`room: closed for maintenance`, `room: session ended` (with the close code
+and reason) and `room: turned a guest away`. Each names the room's Durable
+Object ID rather than the room ID, and gives how many hosts and guests were
+connected and how long ago the host first came.
 
 This relay runs on Workers Paid, where Workers Logs keeps logs for 7 days
 ([pricing](https://developers.cloudflare.com/workers/observability/logs/workers-logs/#pricing),

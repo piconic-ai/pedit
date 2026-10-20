@@ -223,7 +223,10 @@ export class Room extends DurableObject<Env> {
       if (this.sessionOpen()) await this.expire()
       return refuse(ROOM_EXPIRED, expiredReason(limits(this.env).roomSeconds))
     }
-    if (!isHost && this.hosts().length === 0) return refuse(ROOM_CLOSED, 'room is closed')
+    if (!isHost && this.hosts().length === 0) {
+      this.log('turned a guest away', { code: ROOM_CLOSED })
+      return refuse(ROOM_CLOSED, 'room is closed')
+    }
     // Authenticate before taking a peer slot. Only the authenticated host may
     // register the verifier; a guest cannot claim an unopened room's token.
     if (!this.authorize(digest, isHost))
@@ -237,7 +240,10 @@ export class Room extends DurableObject<Env> {
     if (isHost && this.openedAt() === undefined) this.ctx.storage.kv.put(OPENED_KEY, Date.now())
     const { 0: client, 1: server } = new WebSocketPair()
     this.ctx.acceptWebSocket(server, isHost ? [HOST_TAG] : [])
-    if (isHost) await this.ctx.storage.setAlarm(this.nextAlarm())
+    if (isHost) {
+      this.log('host connected')
+      await this.ctx.storage.setAlarm(this.nextAlarm())
+    }
     return new Response(null, {
       status: 101,
       webSocket: client,
@@ -302,7 +308,10 @@ export class Room extends DurableObject<Env> {
       }
       // The host left without a close we saw (a deploy), or normally, when
       // there is nothing left to do. Not armed again until a host connects.
-      if (this.sessionOpen()) await this.endSession(ROOM_CLOSED, 'the host left')
+      if (this.sessionOpen()) {
+        this.log('alarm found no host')
+        await this.endSession(ROOM_CLOSED, 'the host left')
+      }
       return
     }
     await this.ctx.storage.setAlarm(this.nextAlarm())
@@ -310,11 +319,11 @@ export class Room extends DurableObject<Env> {
 
   override async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     if (typeof message === 'string') {
-      ws.close(1003, 'binary frames only')
+      this.closePeer(ws, 1003, 'binary frames only')
       return
     }
     if (message.byteLength > MAX_FRAME_BYTES) {
-      ws.close(MESSAGE_TOO_BIG, 'message too big')
+      this.closePeer(ws, MESSAGE_TOO_BIG, 'message too big')
       return
     }
     // Before maintenance: expiry is permanent, so reporting maintenance would
@@ -328,13 +337,14 @@ export class Room extends DurableObject<Env> {
     // change of vars only. Then its next message, at the latest a client's
     // awareness renewal every 15 s, closes it.
     if (maintenance(this.env as { MAINTENANCE?: string }) === 'closed') {
+      this.log('closed for maintenance')
       for (const peer of this.ctx.getWebSockets()) {
         safeClose(peer, RELAY_MAINTENANCE, 'closed for maintenance')
       }
       return
     }
     if (!this.allow(ws, message.byteLength)) {
-      ws.close(RATE_LIMITED, 'rate limited')
+      this.closePeer(ws, RATE_LIMITED, 'rate limited')
       return
     }
     for (const peer of this.ctx.getWebSockets()) {
@@ -347,14 +357,53 @@ export class Room extends DurableObject<Env> {
     }
   }
 
-  override async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
+  override async webSocketClose(
+    ws: WebSocket,
+    code: number,
+    reason: string,
+    wasClean: boolean,
+  ): Promise<void> {
     safeClose(ws, code, reason)
+    if (this.isHost(ws))
+      this.log('host closed', { code, wasClean, otherHosts: this.hosts(ws).length })
     await this.closeIfHostLeft(ws)
   }
 
   override async webSocketError(ws: WebSocket): Promise<void> {
     safeClose(ws, 1011, 'error')
+    if (this.isHost(ws)) this.log('host errored', { otherHosts: this.hosts(ws).length })
     await this.closeIfHostLeft(ws)
+  }
+
+  // Closes one connection on the relay's own account.
+  private closePeer(ws: WebSocket, code: number, reason: string): void {
+    this.log('closed a peer', { code, host: this.isHost(ws) })
+    ws.close(code, reason)
+  }
+
+  /**
+   * Writes one line to Workers Logs, so a session that ended when nobody
+   * expected it can be explained afterwards: who left, how, and what the room
+   * had then. It names the Durable Object, never the room ID of a link, and
+   * nothing a client sent.
+   */
+  private log(event: string, fields: Record<string, string | number | boolean> = {}): void {
+    const opened = this.openedAt()
+    const hosts = this.hosts().length
+    console.log(
+      JSON.stringify({
+        message: `room: ${event}`,
+        room: this.ctx.id.toString(),
+        hosts,
+        guests: this.ctx.getWebSockets().length - hosts,
+        openSeconds: opened === undefined ? null : Math.round((Date.now() - opened) / 1000),
+        ...fields,
+      }),
+    )
+  }
+
+  private isHost(ws: WebSocket): boolean {
+    return this.ctx.getTags(ws).includes(HOST_TAG)
   }
 
   // Takes one message of `bytes` from the connection's allowance, refilled
@@ -382,7 +431,7 @@ export class Room extends DurableObject<Env> {
   }
 
   private async closeIfHostLeft(ws: WebSocket): Promise<void> {
-    if (!this.ctx.getTags(ws).includes(HOST_TAG) || this.hosts(ws).length > 0) return
+    if (!this.isHost(ws) || this.hosts(ws).length > 0) return
     await this.endSession(ROOM_CLOSED, 'the host left', ws)
   }
 
@@ -395,6 +444,11 @@ export class Room extends DurableObject<Env> {
   // Everything before the first await runs synchronously, which the
   // generation and cleaning invariants rely on.
   private async endSession(code: number, reason: string, except?: WebSocket): Promise<void> {
+    // Logged once per session: the close callbacks and alarms that follow
+    // clean up again, but the session already ended, for this reason.
+    if (this.ctx.storage.kv.get(ADMISSION_KEY) !== undefined) {
+      this.log('session ended', { code, reason })
+    }
     for (const peer of this.ctx.getWebSockets()) {
       if (peer !== except) safeClose(peer, code, reason)
     }

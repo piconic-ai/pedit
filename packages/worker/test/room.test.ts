@@ -270,6 +270,58 @@ describe('rooms', () => {
     expect((await late.closed).code).toBe(ROOM_CLOSED)
   })
 
+  it('logs why a session ended, without the room ID of the link or its secrets', async () => {
+    const lines: string[] = []
+    const spy = vi.spyOn(console, 'log').mockImplementation((line: string) => {
+      lines.push(line)
+    })
+    try {
+      const room = await createRoom()
+      const h = await host(room)
+      const guest = await connect(room.id)
+      h.ws.close(1000, 'bye')
+      expect((await guest.closed).code).toBe(ROOM_CLOSED)
+      const late = await connect(room.id)
+      expect((await late.closed).code).toBe(ROOM_CLOSED)
+
+      const events = lines.map((l) => JSON.parse(l)).filter((e) => e.message?.startsWith('room: '))
+      const named = (m: string) => events.find((e) => e.message === `room: ${m}`)
+      expect(named('host connected')).toMatchObject({ hosts: 1, guests: 0 })
+      expect(named('host closed')).toMatchObject({ code: 1000, wasClean: true, otherHosts: 0 })
+      expect(named('session ended')).toMatchObject({ code: ROOM_CLOSED, reason: 'the host left' })
+      expect(named('turned a guest away')).toMatchObject({ code: ROOM_CLOSED, hosts: 0 })
+      const room0 = named('host connected').room
+      expect(events.every((e) => e.room === room0)).toBe(true)
+      for (const line of lines) {
+        for (const secret of [room.id, room.hostToken, room.admission]) {
+          expect(line).not.toContain(secret)
+        }
+      }
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('logs a connection the relay closes itself', async () => {
+    const lines: string[] = []
+    const spy = vi.spyOn(console, 'log').mockImplementation((line: string) => {
+      lines.push(line)
+    })
+    try {
+      const room = await createRoom()
+      await host(room)
+      const text = await connect(room.id)
+      text.ws.send('hello')
+      expect((await text.closed).code).toBe(1003)
+      const events = lines.map((l) => JSON.parse(l))
+      expect(events).toContainEqual(
+        expect.objectContaining({ message: 'room: closed a peer', code: 1003, host: false }),
+      )
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   it('stays open while a reconnected host is still there', async () => {
     const room = await createRoom()
     const stale = await host(room)
@@ -1072,13 +1124,28 @@ describe('room lifetime', () => {
   })
 
   it('can run its alarm twice', async () => {
-    const room = await createRoom()
-    await host(room)
-    await backdate(room)
-    const run = () => runInDurableObject(stubOf(room), (instance: RoomObject) => instance.alarm())
-    await run()
-    const once = await state(room)
-    await run()
-    expect(await state(room)).toEqual(once)
+    const lines: string[] = []
+    const spy = vi.spyOn(console, 'log').mockImplementation((line: string) => {
+      lines.push(line)
+    })
+    try {
+      const room = await createRoom()
+      const h = await host(room)
+      await backdate(room)
+      const run = () => runInDurableObject(stubOf(room), (instance: RoomObject) => instance.alarm())
+      await run()
+      expect((await h.closed).code).toBe(ROOM_EXPIRED)
+      const once = await state(room)
+      await run()
+      expect(await state(room)).toEqual(once)
+      // The host's close and the second alarm clean up again, but the
+      // session ended once, when it expired.
+      const ended = lines
+        .map((l) => JSON.parse(l))
+        .filter((e) => e.message === 'room: session ended')
+      expect(ended).toEqual([expect.objectContaining({ code: ROOM_EXPIRED })])
+    } finally {
+      spy.mockRestore()
+    }
   })
 })
