@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.1.13](https://github.com/piconic-ai/pedit/compare/v0.1.12...v0.1.13) - 2026-10-20
+
+- Log why a room's session ended by @kfly8 in https://github.com/piconic-ai/pedit/pull/180
+- Wait for a host that drops instead of closing the room by @kfly8 in https://github.com/piconic-ai/pedit/pull/182
+- Check that the room itself still holds the CLI's connection by @kfly8 in https://github.com/piconic-ai/pedit/pull/183
+
 ## [v0.1.12](https://github.com/piconic-ai/pedit/compare/v0.1.11...v0.1.12) - 2026-10-20
 
 - Note CodePen's human check in the embeds doc by @kfly8 in https://github.com/piconic-ai/pedit/pull/169
