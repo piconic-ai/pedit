@@ -1,2 +1,3 @@
 [tools]
 go = "latest"
+"github:moznion/cccc" = "1.8.3"

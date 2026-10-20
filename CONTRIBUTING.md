@@ -28,7 +28,12 @@ pnpm lint
 pnpm test:deploy # self-host deployment orchestration
 PEDIT_INTEROP=1 go test -race ./...    # the CLI; its interop test drives the web client's RoomClient with Node.js
 go vet ./...
+cccc .           # cognitive complexity per function; cccc.toml sets the limit CI enforces
 ```
+
+[cccc](https://github.com/moznion/cccc) comes with `mise install` (`mise.toml`)
+or from its releases. When a function goes over the limit, split it into
+steps with names rather than raising the limit.
 
 Run everything locally:
 

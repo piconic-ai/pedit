@@ -9,6 +9,29 @@ permissions:
   contents: read
 
 jobs:
+  complexity:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      attestations: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Cognitive complexity
+        # cccc.toml sets the limit. The archive is checked against the build
+        # provenance of moznion/cccc's release workflow before it runs.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CCCC_VERSION: v1.8.3
+        run: |
+          asset="cccc-$CCCC_VERSION-x86_64-unknown-linux-musl.tar.gz"
+          gh release download "$CCCC_VERSION" --repo moznion/cccc --pattern "$asset" --dir "$RUNNER_TEMP"
+          gh attestation verify "$RUNNER_TEMP/$asset" --repo moznion/cccc \
+            --signer-workflow moznion/cccc/.github/workflows/release-build.yml
+          mkdir "$RUNNER_TEMP/cccc"
+          tar -xzf "$RUNNER_TEMP/$asset" -C "$RUNNER_TEMP/cccc"
+          "$(find "$RUNNER_TEMP/cccc" -type f -name cccc | head -n 1)" . --table --top-cognitive 10
+
   test:
     runs-on: ubuntu-latest
     steps:

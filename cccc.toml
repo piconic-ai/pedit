@@ -1,0 +1,12 @@
+# Cognitive complexity gate (https://github.com/moznion/cccc), run in CI.
+# Tests are left out: a test reads as a straight scenario even when long.
+languages = ["es", "go"]
+exclude = [
+  "**/node_modules/**",
+  "**/dist/**",
+  "**/*_test.go",
+  "**/*.test.ts",
+  "**/test/**",
+  "packages/web/src/components/xyflow/**",
+]
+max-cognitive = 67
