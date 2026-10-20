@@ -85,8 +85,9 @@ spec when it comes up. Only the host adds files; nobody in the room can ask for
 one. A room shares up to 20 files, each a regular UTF-8 file, as when sharing
 one. Paths are shown relative to the directory `pedit` runs in.
 
-A guest who joins from the command line gets a copy of each text file in the
-same directory, at the path the host shows, and of files the host adds later.
+A guest who joins from the command line gets a copy of the first file under
+its name alone, as when sharing one, and a copy of each other text file beside
+it, at the path the host shows, including files the host adds later.
 With `-d`, the other files are copied only into a directory that is new or
 empty when joining, since their paths come from the host. Canvases are for
 the browser.
