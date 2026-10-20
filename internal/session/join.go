@@ -134,6 +134,10 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 		_ = removeTemp(temp)
 		return nil, err
 	}
+	// The room's other files go only where nothing was: the host names
+	// their paths, which may hold directories, such as .config/autostart.
+	entries, err := os.ReadDir(dir)
+	fresh := temp != "" || err == nil && len(entries) == 0
 
 	doc := crdt.New()
 	shared := newTextContent(doc, "")
@@ -158,7 +162,7 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 
 		beforePublishWriter: opts.beforePublishWriter,
 	}
-	s.mirror = &mirror{dir: dir, opts: opts, keys: map[string]bool{}, dirs: map[string]bool{}, done: map[uint64]bool{}}
+	s.mirror = &mirror{dir: dir, fresh: fresh, opts: opts, keys: map[string]bool{}, dirs: map[string]bool{}, done: map[uint64]bool{}}
 	synced := make(chan struct{})
 	closed := make(chan struct{})
 	var ended atomic.Value // the final protocol.Status, set before closed is

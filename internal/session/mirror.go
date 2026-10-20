@@ -26,13 +26,17 @@ var (
 	errCollides   = errors.New("its name is taken by another file of the room on this computer")
 	errFileExists = errors.New("a file of that name is already there; join from another directory")
 	errTooMany    = fmt.Errorf("a room mirrors up to %d files", MaxFiles)
+	errNotFresh   = errors.New("pedit copies the room's other files only into a new, empty directory; join again with -d and one")
 )
 
 // mirror is what a joined session needs to mirror the room's other files.
 type mirror struct {
 	dir  string
 	root *os.Root
-	opts JoinOptions
+	// fresh is whether dir was new or empty when joining: the host names the
+	// other files' paths, so they go only where nothing was.
+	fresh bool
+	opts  JoinOptions
 	// keys are the PathKey of every mirrored file, and dirs of every
 	// directory holding one: a new file must take neither.
 	keys map[string]bool
@@ -99,6 +103,9 @@ func (s *Session) mirrorFile(entry protocol.FileEntry) error {
 	}
 	if entry.Format != protocol.FormatText {
 		return errNotText
+	}
+	if !m.fresh {
+		return errNotFresh
 	}
 	key := protocol.PathKey(entry.Path)
 	if m.keys[key] || m.dirs[key] {

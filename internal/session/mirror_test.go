@@ -116,14 +116,15 @@ func TestMirrorRefusesWhatAHostileHostLists(t *testing.T) {
 	var log mirrorLog
 	dir := t.TempDir()
 	outside := t.TempDir()
+	g, err := joinFromCLI(t, f, joinCLIOpts{JoinOptions: JoinOptions{Directory: dir, OnMirrored: log.add}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Made while in the room, as anything the guest does there.
 	if err := os.WriteFile(filepath.Join(dir, "taken.md"), []byte("mine\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(outside, filepath.Join(dir, "link")); err != nil {
-		t.Fatal(err)
-	}
-	g, err := joinFromCLI(t, f, joinCLIOpts{JoinOptions: JoinOptions{Directory: dir, OnMirrored: log.add}})
-	if err != nil {
 		t.Fatal(err)
 	}
 	g.mirrorMu.Lock()
@@ -202,4 +203,33 @@ func readFileOr(path string) string {
 		return ""
 	}
 	return string(b)
+}
+
+// The host names the other files' paths, which may hold directories such as
+// .config/autostart: they go only into a directory that was new or empty.
+func TestMirrorsOnlyIntoANewOrEmptyDirectory(t *testing.T) {
+	f := setup(t, "a\n", setupOpts{})
+	if _, err := f.session.AddFile(writeBeside(t, f, ".config/autostart/x.desktop", "[Desktop Entry]\n")); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "mine.txt"), []byte("mine\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var log mirrorLog
+	g, err := joinFromCLI(t, f, joinCLIOpts{JoinOptions: JoinOptions{Directory: dir, OnMirrored: log.add}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	desktop := filepath.Join(dir, ".config", "autostart", "x.desktop")
+	prototest.WaitFor(t, wait, func() bool { _, ok := log.get(desktop); return ok }, "the other file, reported")
+	if err, _ := log.get(desktop); !errors.Is(err, errNotFresh) {
+		t.Fatalf("other file: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".config")); !os.IsNotExist(err) {
+		t.Fatalf("made a directory in a directory that was not empty: %v", err)
+	}
+	if readFile(t, g.File()) != "a\n" {
+		t.Fatal("the first file is still copied")
+	}
 }
