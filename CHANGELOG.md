@@ -1,5 +1,17 @@
 # Changelog
 
+## [v0.1.12](https://github.com/piconic-ai/pedit/compare/v0.1.11...v0.1.12) - 2026-10-20
+
+- Note CodePen's human check in the embeds doc by @kfly8 in https://github.com/piconic-ai/pedit/pull/169
+- Check shared paths the same way in Go and TypeScript by @kfly8 in https://github.com/piconic-ai/pedit/pull/171
+- Sync several files in one room, each in a doc of its own by @kfly8 in https://github.com/piconic-ai/pedit/pull/172
+- Share several files from the host, and add more while sharing by @kfly8 in https://github.com/piconic-ai/pedit/pull/173
+- Switch between a room's files in the editor by @kfly8 in https://github.com/piconic-ai/pedit/pull/174
+- Mirror a room's other files when joining from the command line by @kfly8 in https://github.com/piconic-ai/pedit/pull/175
+- Document sharing several files in one room by @kfly8 in https://github.com/piconic-ai/pedit/pull/176
+- Name a command line guest's copies itself, in one temporary directory by @kfly8 in https://github.com/piconic-ai/pedit/pull/178
+- Reconnect the CLI when its connection dies without a close by @kfly8 in https://github.com/piconic-ai/pedit/pull/179
+
 ## [v0.1.11](https://github.com/piconic-ai/pedit/compare/v0.1.10...v0.1.11) - 2026-10-19
 
 - Make the busy-relay room test robust on slow runners by @kfly8 in https://github.com/piconic-ai/pedit/pull/167
