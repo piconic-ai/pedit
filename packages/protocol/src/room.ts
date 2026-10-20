@@ -570,8 +570,6 @@ interface AwarenessChanges {
   removed: number[]
 }
 
-// Node.js (undici) accepts `{ headers }` as the second argument; browsers take
-// subprotocols there, so only pass it when headers are given.
 /**
  * Decodes a payload, or returns null when it throws one of `unknown`: a kind
  * this version does not know yet, from a newer peer, which is skipped.
@@ -602,6 +600,8 @@ function readSync(
   return { kind, reply: encoding.length(encoder) > 0 ? encoding.toUint8Array(encoder) : null }
 }
 
+// Node.js (undici) accepts `{ headers }` as the second argument; browsers take
+// subprotocols there, so only pass it when headers are given.
 function defaultCreateSocket(
   url: string,
   headers?: Record<string, string>,
