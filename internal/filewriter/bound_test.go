@@ -137,3 +137,54 @@ func TestBoundFileSavesLongFilename(t *testing.T) {
 		t.Fatalf("content: %q, %v", got, ok)
 	}
 }
+
+// A file bound through a directory handle stays in that directory, whatever
+// its name or the names on the way to it lead to.
+func TestOpenBoundInStaysInTheDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on Windows")
+	}
+	base := t.TempDir()
+	dir := filepath.Join(base, "guest")
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "docs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	if err := os.Symlink(outside, filepath.Join(dir, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if f, err := OpenBoundIn(root, filepath.Join("link", "x.md")); err == nil {
+		_ = f.Close()
+		t.Fatal("followed a link out of the directory")
+	}
+
+	// The directory's name now leads elsewhere; the handle does not.
+	if err := os.Rename(dir, filepath.Join(base, "moved")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(outside, "docs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	f, err := OpenBoundIn(root, filepath.Join("docs", "x.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := f.Write("", "content"); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(filepath.Join(base, "moved", "docs", "x.md")); err != nil || string(b) != "content" {
+		t.Fatalf("in the directory: %q, %v", b, err)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(outside, "docs")); len(entries) != 0 {
+		t.Fatalf("wrote out of the directory: %v", entries)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -33,6 +34,14 @@ type ui struct {
 	signingIn bool
 	// resumable is set when Enter picks a session up again after maintenance.
 	resumable bool
+	// typing is set while the host types on a line of its own below the live
+	// line, in a raw terminal; typed is that line so far.
+	typing bool
+	typed  []rune
+	// liveRows is how many rows the live line takes above the typed line.
+	liveRows int
+	// width is the terminal's width in columns.
+	width func() int
 }
 
 func newUI(out io.Writer, tty, noColor bool) *ui {
@@ -123,10 +132,17 @@ func (u *ui) signedIn(email string) {
 
 // sharing shows the link to send, then starts the live line.
 // With scratch set, it also says how to come back to the new file.
-func (u *ui) sharing(file, url string, copied, scratch bool) {
+func (u *ui) sharing(files []string, url string, copied, scratch bool) {
+	file := files[0]
+	ready := u.bold(file + " is ready to write together.")
+	saved := "Everything is saved to " + file + "."
+	if len(files) > 1 {
+		ready = u.bold(strings.Join(files, ", ") + " are ready to write together.")
+		saved = "Everything is saved to the files."
+	}
 	lines := []string{
 		"",
-		u.bold(file + " is ready to write together."),
+		ready,
 		"",
 		"Send this link to the people you want to invite:",
 		"  " + u.link(url),
@@ -134,7 +150,11 @@ func (u *ui) sharing(file, url string, copied, scratch bool) {
 	if copied {
 		lines = append(lines, "  "+u.dim("Copied to your clipboard."))
 	}
-	lines = append(lines, "", u.dim("Press Ctrl+C when you are done. Everything is saved to "+file+"."), "")
+	lines = append(lines, "", u.dim("Press Ctrl+C when you are done. "+saved))
+	if u.resumable {
+		lines = append(lines, u.dim("To share another file in this room, type its path and press Enter."))
+	}
+	lines = append(lines, "")
 	if scratch {
 		lines = append(lines, u.resume(file), "")
 	}
@@ -159,7 +179,7 @@ func (u *ui) joined(file string, temporary, copied bool) {
 	}
 	lines = append(lines, "", "Edit it with any editor; changes sync both ways while you are in the room.")
 	if temporary {
-		lines = append(lines, u.dim("Press Ctrl+C to leave. The copy is temporary and removed then; -d <dir> keeps one."))
+		lines = append(lines, u.dim("Press Ctrl+C to leave. The copies are temporary and removed then."))
 	} else {
 		lines = append(lines, u.dim("Press Ctrl+C to leave. Your copy stays in "+file+"."))
 	}
@@ -211,7 +231,7 @@ func (u *ui) tooLarge(host bool, file string) {
 	}
 	limit := "pedit shares files up to " + session.SizeLimit + " for now."
 	u.print(u.yellow("pedit left the room: the shared file grew too large to share. "+limit),
-		"Your latest changes may not have reached the others.", "")
+		"Your latest changes may not have reached the others. Your copies stay in "+filepath.Dir(file)+".", "")
 }
 
 // timeLimitText names a relay's room time limit, or just "time limit" when the
@@ -247,7 +267,7 @@ func (u *ui) left(file string) {
 
 // leftTemporary confirms nothing is left behind after leaving a room.
 func (u *ui) leftTemporary() {
-	u.print("", u.green("✓")+" Left the room. The temporary copy was removed.", "")
+	u.print("", u.green("✓")+" Left the room. The temporary copies were removed.", "")
 }
 
 func (u *ui) setStatus(s protocol.Status) {
@@ -269,6 +289,10 @@ func (u *ui) setPeople(names []string) {
 func (u *ui) above(lines ...string) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	if u.typing {
+		u.drawTyping(lines)
+		return
+	}
 	if u.live && u.tty {
 		fmt.Fprint(u.out, "\r\x1b[2K")
 		u.lastLine = ""
@@ -281,6 +305,33 @@ func (u *ui) above(lines ...string) {
 		}
 	}
 	u.render()
+}
+
+// added says that a file typed in is now shared in the room.
+func (u *ui) added(path string) {
+	u.above(u.green("✓") + " Sharing " + printable(path) + " too.")
+}
+
+// notAdded says why a file typed in is not shared.
+func (u *ui) notAdded(path string, err error) {
+	u.above(u.yellow("Could not share " + printable(path) + ": " + printable(err.Error()) + "."))
+}
+
+// mirrored says that another file of the room is copied beside the first.
+func (u *ui) mirrored(hostPath, path string) {
+	u.above(u.green("✓") + " Also syncing " + printable(path) + " " + u.dim("("+hostLabel(hostPath)+")"))
+}
+
+// notMirrored says why another file of the room is not copied.
+func (u *ui) notMirrored(hostPath string, err error) {
+	u.above(u.yellow("Not syncing " + hostLabel(hostPath) + ": " + printable(err.Error()) + "."))
+}
+
+// hostLabel shows a path the room names a file by. Anyone in the room can
+// name one, so it is quoted, with what does not print as itself escaped: it
+// cannot pass for pedit's own words.
+func hostLabel(path string) string {
+	return strconv.Quote(path)
 }
 
 // imageSaved says that an image someone pasted was written to the host's
@@ -391,6 +442,10 @@ func (u *ui) render() {
 		return
 	}
 	u.lastLine = line
+	if u.typing {
+		u.drawTyping(nil)
+		return
+	}
 	if u.tty {
 		fmt.Fprint(u.out, "\r\x1b[2K  "+line)
 	} else {
@@ -448,4 +503,102 @@ func whoIsHere(names []string) string {
 func hostOf(server string) string {
 	s := strings.TrimPrefix(strings.TrimPrefix(server, "https://"), "http://")
 	return strings.TrimRight(s, "/")
+}
+
+// typedPrompt starts the line the host types paths on.
+const typedPrompt = "Add a file: "
+
+// startTyping puts the line the host types on below the live line. The
+// terminal must be raw by then: pedit draws what is typed.
+func (u *ui) startTyping() {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if !u.live || !u.tty {
+		return
+	}
+	u.typing = true
+	u.liveRows = 0
+	u.drawTyping(nil)
+}
+
+// stopTyping removes the typed line, leaving the live line last on screen as
+// before startTyping.
+func (u *ui) stopTyping() {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if !u.typing {
+		return
+	}
+	u.typing = false
+	u.typed = nil
+	line := "  " + u.liveLine()
+	u.lastLine = u.liveLine()
+	fmt.Fprint(u.out, u.toBlockStart()+line)
+}
+
+// setTyped shows the line typed so far.
+func (u *ui) setTyped(line []rune) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.typed = append(u.typed[:0], line...)
+	if u.typing {
+		u.drawTyping(nil)
+	}
+}
+
+// toBlockStart goes back to the start of the live line and clears it and what
+// is below it. Callers hold u.mu.
+func (u *ui) toBlockStart() string {
+	s := "\r"
+	if u.liveRows > 0 {
+		s += fmt.Sprintf("\x1b[%dA", u.liveRows)
+	}
+	return s + "\x1b[J"
+}
+
+// drawTyping prints lines, then the live line and the typed line below them,
+// leaving the cursor where the next character typed goes. Callers hold u.mu.
+func (u *ui) drawTyping(lines []string) {
+	w := u.columns()
+	var b strings.Builder
+	b.WriteString(u.toBlockStart())
+	for _, line := range lines {
+		if line != "" {
+			b.WriteString("  " + line)
+		}
+		b.WriteString("\r\n")
+	}
+	live := "  " + u.liveLine()
+	b.WriteString(live + "\r\n")
+	b.WriteString(u.typedLine(w))
+	u.liveRows = max(1, (visualWidth(live)+w-1)/w)
+	fmt.Fprint(u.out, b.String())
+}
+
+// typedLine is the prompt and what is typed, cut at the start to fit on one
+// row, so that the cursor stays on it.
+func (u *ui) typedLine(w int) string {
+	prompt := "  " + u.dim(typedPrompt)
+	room := w - 1 - visualWidth(prompt)
+	text := printable(string(u.typed))
+	if visualWidth(text) <= room {
+		return prompt + text
+	}
+	runes := []rune(text)
+	used := 1 // the ellipsis
+	start := len(runes)
+	for start > 0 && used+runeWidth(runes[start-1]) <= room {
+		start--
+		used += runeWidth(runes[start])
+	}
+	return prompt + "…" + string(runes[start:])
+}
+
+func (u *ui) columns() int {
+	if u.width != nil {
+		if w := u.width(); w > 0 {
+			return w
+		}
+	}
+	return 80
 }

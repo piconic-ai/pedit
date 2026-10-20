@@ -9,9 +9,9 @@ refer to the changes made with this page.
 
 ## In short
 
-pedit touches the file you name, an `assets/` directory beside it, its own
-`.pedit/` configuration and a small cache; when you join a room, only the copy
-it keeps. If what you name is a directory or does not exist, it also looks
+pedit touches the files you name, and those you add while sharing, an
+`assets/` directory beside each, its own `.pedit/` configuration and a small
+cache; when you join a room, only the copies it keeps. If what you name is a directory or does not exist, it also looks
 through that directory to suggest a file, and shares none of what it reads
 there. It runs a clipboard tool and, only
 for servers behind Cloudflare Access, `cloudflared`. It never runs anything
@@ -19,10 +19,11 @@ that comes from a document, a guest or the relay, and never updates itself.
 
 By using it you accept that:
 
-- **Anyone with the full link** reads and edits the file while you share it,
-  and their edits are saved to your file. They can also save images into
-  `assets/` beside it. They cannot choose a path, read or write any other
-  file, or make pedit run anything.
+- **Anyone with the full link** reads and edits the files while you share
+  them, and their edits are saved to your files. They can also save images
+  into `assets/` beside each. They cannot choose a path, add a file to the
+  room, read or write any other file, or make pedit run anything: only you add
+  files, by naming them or typing their paths into pedit.
 - **The link is the key.** pedit copies it to your clipboard and prints it in
   your terminal. A link you join with, `pedit '<link>'`, is in that command
   line, which other users of the same machine can see while it runs (`ps`),
@@ -39,21 +40,33 @@ By using it you accept that:
   back and merged in. Elsewhere (Windows; NFS, SMB and FUSE; exFAT, and FAT on
   macOS) it is renamed over yours after one more check, and a save that lands
   just after that check can be lost.
-- **When you join with `-d <dir>`, the host names the copy.** It is one new
-  file with a plain name, never a path, and never one that already exists, but
-  the host chooses the name and its content: `.bashrc` is a plain name.
+- **When you join, the room chooses what your copies hold, not what they are
+  called.** Anyone in the room can name a file, and a name can mean something
+  to your computer: `.git/config` makes a folder a repository whose commands
+  your shell prompt runs, `desktop.ini` and `x.scf` make Explorer fetch from
+  another computer, `notes.md.bat` runs when opened. So pedit names each copy
+  itself: a number, then the ASCII letters and digits of the host's path,
+  then an extension kept only from a short list of text formats (md,
+  markdown, txt, csv, tsv, json, yaml, yml, toml), `.txt` otherwise. All go in
+  one new temporary directory, with no directory of their own:
+  `docs/spec.md` is copied to `01-docs-spec.md`, `.git/config` to
+  `02-git-config.txt`. Their content is the room's, as in a browser: a CSV
+  opened in a spreadsheet can hold formulas, and Markdown or JSON opened in an
+  editor can point to pictures or schemas on the web.
 - **Images your file refers to when you start are yours.** A guest can ask
   for them, including references a guest added in an earlier session that
   were saved to the file.
 - **Your user name is shown to the others** as your name in the room, with the
-  file's name (not its path).
+  file's name (not its path). In a room that shares several files, the others
+  see each file's path relative to the directory pedit runs in, or its name
+  alone for a file outside it.
 
 ## Sharing a file: `pedit <file>`
 
 | | What | What keeps it in bounds |
 | --- | --- | --- |
 | Reads | `.pedit/config.yaml`, in the current directory or the nearest one above it, up to the Git root (outside a repository, up to `/`, or the drive root on Windows) | Used only if you or root own it (on Windows: you, SYSTEM or the Administrators group); otherwise pedit stops and names the file. pedit follows a link here; if it, or `.pedit`, is a link whose target does not exist, pedit stops and names it rather than use the default server. |
-| Reads | The shared file | Must be a regular file, not a symlink, and UTF-8 text. Opened through a handle on its directory taken at start, and never through a symlink that replaces it later. |
+| Reads | The shared file, and each file named after it or typed in while sharing | Must be a regular file, not a symlink, and UTF-8 text. Opened through a handle on its directory taken when it is added, and never through a symlink that replaces it later. A file already shared under another name (a hard link), one whose name macOS or Windows would take for one already shared (`Notes.md` and `notes.md`), and a 21st file are refused. |
 | Reads | When `<file>` is a directory: the names in it, and the first 8 KiB of each regular file whose name does not start with `.`, following symlinks, until six look like text | Only to print up to five names to pick from. No room is made and nothing is sent. |
 | Reads | When `<file>` does not exist: the names in its directory | Names only, to suggest close ones. |
 | Reads | `.pedit/templates/<name>`, only when pedit creates the file | Only inside the project: a template that is a symlink out of it is refused. |
@@ -63,7 +76,7 @@ By using it you accept that:
 | Writes | `.pedit/config.yaml` and `.pedit/templates/default.{md,csv,canvas}` | Only on the first run at a Git repository root, and only files that do not exist yet. |
 | Writes | A new file, with `pedit`, `pedit -t <template>` or `--<type>` | In `output` from the configuration, or `-d`. Created `0644` before your umask, only if no file has that name; the directory is created if needed. |
 | Writes | The update check cache, `pedit/update.json` in your [user cache directory](https://pkg.go.dev/os#UserCacheDir) | Only for release builds writing to a terminal, at most once a day. |
-| Watches | The shared file's directory | Reacts to changes to the shared file's name only. |
+| Watches | Each shared file's directory | Reacts to changes to the shared files' names only. |
 
 While sharing, the only name pedit removes is its own temporary file: the new
 content when a save fails, your old file once pedit has checked it holds what
@@ -87,9 +100,8 @@ shows only with `PEDIT_DEBUG=1`.
 
 | | What | What keeps it in bounds |
 | --- | --- | --- |
-| Writes | A copy of the shared file, in a new private directory such as `$TMPDIR/pedit-<room>-<random>/` | The directory is `0700` and the copy `0600`, both before your umask. Both are removed when you leave or the host closes the room, with anything else you put in that directory. |
-| Writes | With `-d <dir>`, the copy in `<dir>` | The name comes from the host: a plain name, without `/`, `\`, control characters or characters that reorder how it prints; refused if a file of that name exists or appears while pedit creates it. Created `0600` before your umask, and kept when you leave. |
-| Reads | The copy, when you edit it | The same guards as the host's file: never through a symlink, only UTF-8. |
+| Writes | A copy of each text file the room shares, in a new private directory such as `$TMPDIR/pedit-<room>-<random>/` | Named by pedit, as above, never as the room names it, and never in a directory of its own. The directory is `0700` and each copy `0600`, both before your umask; every copy is made through a handle on the directory held since joining, so the directory moved and replaced by a link cannot lead elsewhere. Never over a file that is there. Canvases are not copied. At most 20 files. All are removed when you leave or the host closes the room, with anything else you put in that directory; when the room closes because a file grew too large, they stay, and pedit says where. |
+| Reads | The copies, when you edit them | The same guards as the host's file: never through a symlink, only UTF-8. |
 
 A joined session saves no images and reads no configuration. Besides the
 copy, it writes only the update check cache. A save of the copy that fails is
@@ -123,7 +135,8 @@ picture from Gravatar, which receives a hash of your email address.
   `pedit '<link>'` command while it runs.
 - Before running pedit in a repository you did not write, look at
   `.pedit/config.yaml`: `server` is where the link points.
-- Join with the default temporary copy, or give `-d` a directory meant for it.
+- Copy out of the temporary directory what you want to keep before you leave
+  a room you joined from the command line.
 - Keep a file you care about under version control, as pedit saves edits as
   they come. Convert a file that is not UTF-8 before sharing it; pedit refuses
   it otherwise.
@@ -160,6 +173,10 @@ certificates and name resolution.
 | An executable `./xclip` with `PATH=.:$PATH` | Not run |
 | A server that sends room creation to `/cdn-cgi/access/` | `cloudflared` run with the arguments above |
 | The relay's log | Room IDs, never the key |
+
+Sharing several files ([#113](https://github.com/piconic-ai/pedit/issues/113))
+came after this trace. Its guards are covered by tests
+(`internal/session/files_test.go` and `mirror_test.go`), not by a trace.
 
 Another user was played by the same account, with `chown` for the
 configuration file, so these checks do not cover permissions between real

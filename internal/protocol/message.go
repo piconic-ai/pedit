@@ -93,7 +93,7 @@ func DecodeMessage(data []byte) (MessageType, []byte, error) {
 	}
 	t := MessageType(data[0])
 	switch t {
-	case MessageSync, MessageAwareness, MessageAttachment, MessageCanvas:
+	case MessageSync, MessageAwareness, MessageAttachment, MessageCanvas, MessageFiles:
 		return t, data[1:], nil
 	}
 	return 0, nil, fmt.Errorf("%w: %d", ErrUnknownMessageType, data[0])

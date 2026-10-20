@@ -24,6 +24,14 @@ import {
   SERVER_OUTDATED,
 } from './close.ts'
 import {
+  decodeFiles,
+  encodeFileDoc,
+  encodeManifest,
+  type FileEntry,
+  MAX_FILE_ID,
+  UnknownFilesKindError,
+} from './files.ts'
+import {
   decodeFrame,
   encodeFrame,
   frameBytes,
@@ -39,6 +47,7 @@ import {
   MessageType,
   UnknownMessageTypeError,
 } from './message.ts'
+import { Pacer, type Rate } from './pace.ts'
 
 /**
  * `closed` is final: the host ended the session. So is `full`: the room had no
@@ -117,6 +126,25 @@ export interface RoomClientOptions {
   onError?: (error: unknown) => void
   onAttachment?: (attachment: Attachment) => void
   onCanvas?: (message: CanvasMessage) => void
+  /**
+   * In a room that shares several files (see addFile): each list of the
+   * room's files, once per added file the first SyncStep2 for it, and the
+   * messages about one file.
+   */
+  onManifest?: (files: FileEntry[]) => void
+  onFileSynced?: (file: number) => void
+  onFileAttachment?: (file: number, attachment: Attachment) => void
+  onFileCanvas?: (file: number, message: CanvasMessage) => void
+  /** What the relay lets one connection send; RELAY_MESSAGE_RATE and RELAY_BYTE_RATE by default. */
+  messageRate?: Rate
+  byteRate?: Rate
+}
+
+/** A file's Y.Doc that a RoomClient keeps in sync. */
+interface FileDoc {
+  doc: Y.Doc
+  onUpdate: (update: Uint8Array, origin: unknown) => void
+  synced: boolean
 }
 
 const OPEN = 1
@@ -147,6 +175,13 @@ export class RoomClient {
   private readonly sender = globalThis.crypto.getRandomValues(new Uint8Array(SENDER_BYTES))
   private sent = 0
   private readonly guard = new ReplayGuard(this.sender)
+  private readonly files = new Map<number, FileDoc>()
+  // Paces the frames sent on the current socket; see Pacer.
+  private pacer = new Pacer()
+  // Ends the pacing wait of the frame next in line, when its socket closes.
+  private wake: (() => void) | null = null
+  // The encoded manifest, when this client set one.
+  private manifest: Uint8Array | null = null
 
   constructor(opts: RoomClientOptions) {
     this.opts = opts
@@ -168,6 +203,8 @@ export class RoomClient {
     )
     socket.binaryType = 'arraybuffer'
     this.socket = socket
+    // The relay counts each connection's allowance from its start.
+    this.pacer = new Pacer(this.opts.messageRate, this.opts.byteRate)
 
     socket.onopen = () => {
       if (this.socket !== socket) return
@@ -186,6 +223,8 @@ export class RoomClient {
       this.sendSync((encoder) => syncProtocol.writeSyncStep1(encoder, this.doc))
       this.send(MessageType.Sync, state)
       this.sendAwareness([this.doc.clientID])
+      if (this.manifest) this.send(MessageType.Files, this.manifest)
+      for (const [id, f] of this.files) this.syncFile(id, f.doc)
     }
     socket.onmessage = (ev) => {
       if (this.socket !== socket) return
@@ -198,6 +237,8 @@ export class RoomClient {
     socket.onclose = (ev) => {
       if (this.socket !== socket) return
       this.socket = null
+      // Its frames are dropped: the next connection need not wait them out.
+      this.wake?.()
       this.dropRemoteAwareness()
       const final = ev.code === undefined ? undefined : FINAL_CLOSE.get(ev.code)
       if (final && !this.destroyed) {
@@ -228,6 +269,7 @@ export class RoomClient {
     this.doc.off('update', this.handleDocUpdate)
     this.awareness.off('update', this.handleAwarenessUpdate)
     this.awareness.off('change', this.handleAwarenessChange)
+    for (const f of this.files.values()) f.doc.off('update', f.onUpdate)
     const socket = this.socket
     this.socket = null
     socket?.close()
@@ -248,6 +290,50 @@ export class RoomClient {
    */
   sendCanvas(message: CanvasMessage): void {
     this.send(MessageType.Canvas, encodeCanvas(message))
+  }
+
+  /*
+   * A room that shares several files keeps each in a Y.Doc of its own, synced
+   * like `doc` but in files messages that name the file. `doc` is file 0, so
+   * a peer that knows nothing of files goes on editing it, and the awareness
+   * stays one for the room.
+   */
+
+  /**
+   * Keeps `doc` in sync with the room as the file with this id, from 1 up
+   * (file 0 is the client's own `doc`): sends its
+   * state now if connected, and on every connection after. Messages about a
+   * file that was not added are dropped, so a peer follows only the files it
+   * added.
+   */
+  addFile(id: number, doc: Y.Doc): void {
+    if (!Number.isInteger(id) || id < 1 || id > MAX_FILE_ID)
+      throw new Error(`invalid file id ${id}`)
+    if (this.destroyed) throw new Error('client destroyed')
+    if (this.files.has(id)) throw new Error(`file ${id} added twice`)
+    const onUpdate = (update: Uint8Array, origin: unknown) => {
+      if (origin === this) return
+      this.sendFileSync(id, (encoder) => syncProtocol.writeUpdate(encoder, update))
+    }
+    doc.on('update', onUpdate)
+    this.files.set(id, { doc, onUpdate, synced: false })
+    if (this.socket?.readyState === OPEN && this.status === 'connected') this.syncFile(id, doc)
+  }
+
+  /** Tells the room which files it shares, now and to everyone who connects later. */
+  setManifest(files: FileEntry[]): void {
+    this.manifest = encodeManifest(files)
+    this.send(MessageType.Files, this.manifest)
+  }
+
+  /** Sends an attachment message about one file. Dropped while disconnected. */
+  sendFileAttachment(file: number, attachment: Attachment): void {
+    this.sendFile(file, MessageType.Attachment, encodeAttachment(attachment))
+  }
+
+  /** Sends a canvas message about one file. Dropped while disconnected. */
+  sendFileCanvas(file: number, message: CanvasMessage): void {
+    this.sendFile(file, MessageType.Canvas, encodeCanvas(message))
   }
 
   private async receive(data: Uint8Array): Promise<void> {
@@ -274,6 +360,8 @@ export class RoomClient {
         decoding.readVarUint8Array(decoder),
         this,
       )
+    } else if (message.type === MessageType.Files) {
+      this.receiveFiles(message.payload)
     } else if (message.type === MessageType.Canvas) {
       let canvas: CanvasMessage
       try {
@@ -297,6 +385,81 @@ export class RoomClient {
     }
   }
 
+  private receiveFiles(payload: Uint8Array): void {
+    let m: ReturnType<typeof decodeFiles>
+    try {
+      m = decodeFiles(payload)
+    } catch (error) {
+      // Likewise for files kinds, and message types about a file.
+      if (error instanceof UnknownFilesKindError || error instanceof UnknownMessageTypeError) return
+      throw error
+    }
+    if (m.kind === 'manifest') {
+      this.opts.onManifest?.(m.files)
+      return
+    }
+    if (m.type === MessageType.Sync) {
+      const f = this.files.get(m.file)
+      if (!f) return
+      const encoder = encoding.createEncoder()
+      const kind = syncProtocol.readSyncMessage(
+        decoding.createDecoder(m.payload),
+        encoder,
+        f.doc,
+        this,
+      )
+      if (encoding.length(encoder) > 0)
+        this.sendFile(m.file, MessageType.Sync, encoding.toUint8Array(encoder))
+      if (kind === syncProtocol.messageYjsSyncStep2 && !f.synced) {
+        f.synced = true
+        this.opts.onFileSynced?.(m.file)
+      }
+    } else if (m.type === MessageType.Canvas) {
+      let canvas: CanvasMessage
+      try {
+        canvas = decodeCanvas(m.payload)
+      } catch (error) {
+        if (error instanceof UnknownCanvasKindError) return
+        throw error
+      }
+      this.opts.onFileCanvas?.(m.file, canvas)
+    } else {
+      let attachment: Attachment
+      try {
+        attachment = decodeAttachment(m.payload)
+      } catch (error) {
+        if (error instanceof UnknownAttachmentKindError) return
+        throw error
+      }
+      this.opts.onFileAttachment?.(m.file, attachment)
+    }
+  }
+
+  /** Sends a file's state to the room, as onopen does for `doc`. */
+  private syncFile(id: number, doc: Y.Doc): void {
+    const socket = this.socket
+    if (!socket) return
+    const step2 = encoding.createEncoder()
+    syncProtocol.writeSyncStep2(step2, doc)
+    const state = encodeFileDoc(id, MessageType.Sync, encoding.toUint8Array(step2))
+    if (frameBytes(state.length) > MAX_FRAME_BYTES) {
+      this.tooLarge(socket)
+      return
+    }
+    this.sendFileSync(id, (encoder) => syncProtocol.writeSyncStep1(encoder, doc))
+    this.send(MessageType.Files, state)
+  }
+
+  private sendFileSync(id: number, write: (encoder: encoding.Encoder) => void): void {
+    const encoder = encoding.createEncoder()
+    write(encoder)
+    this.sendFile(id, MessageType.Sync, encoding.toUint8Array(encoder))
+  }
+
+  private sendFile(id: number, type: MessageType, payload: Uint8Array): void {
+    this.send(MessageType.Files, encodeFileDoc(id, type, payload))
+  }
+
   private handleDocUpdate = (update: Uint8Array, origin: unknown) => {
     if (origin === this) return
     this.sendSync((encoder) => syncProtocol.writeUpdate(encoder, update))
@@ -311,9 +474,12 @@ export class RoomClient {
   }
 
   // Someone new showed up: tell them about us right away instead of waiting for the
-  // periodic awareness renewal.
+  // periodic awareness renewal, and which files the room shares.
   private handleAwarenessChange = ({ added }: AwarenessChanges, origin: unknown) => {
-    if (origin === this && added.length > 0) this.sendAwareness([this.doc.clientID])
+    if (origin === this && added.length > 0) {
+      this.sendAwareness([this.doc.clientID])
+      if (this.manifest) this.send(MessageType.Files, this.manifest)
+    }
   }
 
   private dropRemoteAwareness(): void {
@@ -348,8 +514,25 @@ export class RoomClient {
     }
     // Numbered now, in the order frames are produced, which the chain keeps.
     const plaintext = encodeFrame(this.sender, ++this.sent, encodeMessage(type, payload))
+    const pacer = this.pacer
     this.sendChain = this.sendChain
       .then(async () => {
+        // A closed connection's frames are dropped, as frames sent while
+        // disconnected are: the next handshake carries what they did.
+        if (socket.readyState !== OPEN) return
+        // Paced on leaving too: going over the allowance would close the
+        // socket before the edits still queued reach the room.
+        const wait = pacer.take(frameBytes(payload.length))
+        if (wait > 0) {
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, wait)
+            this.wake = () => {
+              clearTimeout(timer)
+              resolve()
+            }
+          })
+          this.wake = null
+        }
         const data = await encrypt(this.opts.key, plaintext)
         if (socket.readyState === OPEN) socket.send(data)
       })
@@ -360,6 +543,7 @@ export class RoomClient {
   private tooLarge(socket: SocketLike): void {
     if (this.socket !== socket) return
     this.socket = null // onclose then ignores this socket: no reconnect
+    this.wake?.()
     socket.close()
     // Told once the change that caused it is done: this runs inside Yjs
     // transactions and editor updates, which must not be re-entered.

@@ -4,6 +4,7 @@ import { Compartment, EditorState, type Extension, Prec } from '@codemirror/stat
 import { EditorView, keymap } from '@codemirror/view'
 import {
   deriveBlobKeys,
+  type FileEntry,
   importKey,
   isFinalStatus,
   RoomClient,
@@ -34,7 +35,7 @@ import { resolveLanguage } from './language.ts'
 import { NoticeBoard } from './notice.ts'
 import { applyPalette } from './palette.ts'
 import { PreviewPane } from './pane.ts'
-import { imagePaste } from './paste.ts'
+import { imagePaste, textAnchor } from './paste.ts'
 import {
   colorFor,
   type Participant,
@@ -47,13 +48,14 @@ import {
 import type { SettingsModel } from './settings.ts'
 import { Splitter } from './splitter.ts'
 import { Store } from './store.ts'
-import { describeError, TableView } from './table.ts'
+import { describeError, TableErrors, TableView } from './table.ts'
 import { fallbackTheme, loadTheme, readerTheme, THEMES, ThemeSwitcher } from './themes.ts'
 import { NARROW_QUERY, type ViewMode, ViewSwitch } from './view.ts'
 import { trackViewport } from './viewport.ts'
 import { loadVimMode, VimToggle, vimExtension } from './vim.ts'
 import './components/Cards.tsx'
 import './components/EndedBanner.tsx'
+import './components/FileTabs.tsx'
 import './components/Header.tsx'
 import './components/Layout.tsx'
 import './components/Notice.tsx'
@@ -203,6 +205,20 @@ function settingsModel(
   }
 }
 
+/** A file of the room this page has opened, with what edits it. */
+interface OpenFile {
+  /** Its id in the room's list of files; 0 for the room's own doc. */
+  id: number
+  doc: Y.Doc
+  text: Y.Text
+  undo: Y.UndoManager
+  /** Shared as nodes and edges rather than text. */
+  canvas: boolean
+  table: TableView
+  board: BoardView
+  json: JsonPane
+}
+
 async function joinRoom(
   id: string,
   key: string,
@@ -228,17 +244,19 @@ async function joinRoom(
   const people = new Store<readonly Participant[]>([])
   // The relay's time limit in seconds, once it has closed an expired room.
   const timeLimit = new Store<number | undefined>(undefined)
-  // Set once the host says it shares a canvas as nodes and edges, not text.
-  let canvasRoom = false
+  // The room's files, once the host shares more than one (#113). File 0 is
+  // the room's own doc; each other file opened gets a doc of its own.
+  const files = new Store<readonly FileEntry[]>([])
+  const current = new Store(0)
   // The room closes as soon as the host leaves (or was never there).
   let parts: LayoutParts | undefined
   render(app, 'Layout', { onReady: (p: LayoutParts) => (parts = p) })
   if (!parts) throw new Error('the room page did not lay out')
-  const { header, banner, main, source } = parts
+  const { header, banner, main, source, table, canvas } = parts
   render(banner, 'EndedBanner', {
     status: roomStatus,
     timeLimit,
-    text: () => (canvasRoom ? toJSON(readCanvas(doc)) : text.toString()),
+    text: () => (shown.canvas ? toJSON(readCanvas(shown.doc)) : shown.text.toString()),
     onReconnect: () => location.reload(),
   })
   // Filled in once the client exists; nothing is sent before it connects.
@@ -247,7 +265,10 @@ async function joinRoom(
   const attachments = new Attachments({
     roomId: id,
     keys: blobKeys,
-    send: (a) => client?.sendAttachment(a),
+    // About the file an image was added to, or the one on screen: its
+    // directory on the host takes the image.
+    send: (a, file = shown.id) =>
+      file === 0 ? client?.sendAttachment(a) : client?.sendFileAttachment(file, a),
   })
   const notices = new NoticeBoard()
   render(parts.notice, 'Notice', {
@@ -280,20 +301,27 @@ async function joinRoom(
   // One instance for every editor on the page: readerTheme() alternates.
   const reader = readerTheme()
   const undoManager = new Y.UndoManager(text)
-  const editor = new EditorView({
-    parent: source,
-    extensions: [
+  // The editor's extensions for a file's text. Switching files keeps the
+  // settings: each compartment takes what it holds in `from`.
+  const editorExtensions = (
+    fileId: number,
+    fileText: Y.Text,
+    undo: Y.UndoManager,
+    from?: EditorState,
+  ): Extension[] => {
+    const held = (c: Compartment, initial: Extension) => (from && c.get(from)) ?? initial
+    return [
       // The Vim keymap must see keys before basicSetup's.
-      vimMode.of([]),
+      vimMode.of(held(vimMode, [])),
       basicSetup,
       // Undo only this browser's edits, not everyone's.
       Prec.high(keymap.of(yUndoManagerKeymap)),
-      language.of(markdownSupport),
-      themeMode.of(theme.extension),
-      fontMode.of(reader),
-      wrap.of(lineWrapping(appearance.wrap)),
-      editable.of([]),
-      yCollab(text, awareness, { undoManager }),
+      language.of(held(language, markdownSupport)),
+      themeMode.of(held(themeMode, theme.extension)),
+      fontMode.of(held(fontMode, reader)),
+      wrap.of(held(wrap, lineWrapping(appearance.wrap))),
+      editable.of(held(editable, [])),
+      yCollab(fileText, awareness, { undoManager: undo }),
       imagePaste({
         blocked: () =>
           whyNoImages(
@@ -301,10 +329,17 @@ async function joinRoom(
             people.get().some((p) => p.isHost),
             attachments.host,
           ),
-        upload: (file) => attachments.upload(file),
+        // To the file it was added to, and into it, though another
+        // file may be on screen by then.
+        upload: (file) => attachments.upload(file, fileId),
+        anchor: (pos) => textAnchor(fileText, pos),
         onError: (message) => notices.show(message),
       }),
-    ],
+    ]
+  }
+  const editor = new EditorView({
+    parent: source,
+    extensions: editorExtensions(0, text, undoManager),
   })
 
   const followEditor = () => {
@@ -321,20 +356,54 @@ async function joinRoom(
   })
   attachments.version.subscribe(() => preview.refresh())
   const splitter = new Splitter(main, { onResize: followEditor })
-  const table = new TableView(text, awareness, undoManager, {
-    onError: (error) => view.setTableError(error && describeError(error)),
-  })
-  // The canvas as JSON, in the editor's theme; edits go to the host.
-  const jsonTheme = new Compartment()
-  const jsonFont = new Compartment()
-  const jsonPane = new JsonPane(doc, {
-    send: (m) => client?.sendCanvas(m),
-    extensions: [jsonTheme.of(theme.extension), jsonFont.of(reader)],
-  })
-  const board = new BoardView(doc, awareness, { json: jsonPane })
+  // Each file's table error; the view shows the one of the file on screen.
+  const tableErrors = new TableErrors(0, (error) =>
+    view.setTableError(error && describeError(error)),
+  )
+  const tableFor = (id: number, fileText: Y.Text, undo: Y.UndoManager) =>
+    new TableView(fileText, awareness, undo, {
+      onError: (error) => tableErrors.report(id, error),
+    })
+  // Other editors that follow the settings: each canvas's JSON.
+  const fontFollowers: { view: EditorView; compartment: Compartment }[] = []
+  const themeFollowers: { view: EditorView; compartment: Compartment }[] = []
+  // Whose presence is in a file: peers say which file they have open.
+  const inFile = (id: number) => (state: Record<string, unknown>) =>
+    (typeof state.file === 'number' ? state.file : 0) === id
+  // A file's canvas: the board and its JSON, in the editor's theme. Edits go
+  // to the host.
+  const canvasFor = (id: number, fileDoc: Y.Doc) => {
+    const jsonTheme = new Compartment()
+    const jsonFont = new Compartment()
+    const json = new JsonPane(fileDoc, {
+      send: (m) => (id === 0 ? client?.sendCanvas(m) : client?.sendFileCanvas(id, m)),
+      extensions: [
+        jsonTheme.of(theme.extension),
+        jsonFont.of(fontMode.get(editor.state) ?? reader),
+      ],
+    })
+    fontFollowers.push({ view: json.view, compartment: jsonFont })
+    themeFollowers.push({ view: json.view, compartment: jsonTheme })
+    themes?.follow(json.view, jsonTheme)
+    const board = new BoardView(fileDoc, awareness, { json, here: inFile(id) })
+    return { json, board }
+  }
+  let themes: ThemeSwitcher | undefined
+  const first: OpenFile = {
+    id: 0,
+    doc,
+    text,
+    undo: undoManager,
+    canvas: false,
+    table: tableFor(0, text, undoManager),
+    ...canvasFor(0, doc),
+  }
+  // The file on screen, and every file opened so far, which stay in sync.
+  let shown = first
+  const opened = new Map<number, OpenFile>([[0, first]])
   parts.splitter.replaceChildren(splitter.element)
-  parts.table.replaceChildren(table.element)
-  parts.canvas.replaceChildren(board.element)
+  parts.table.replaceChildren(first.table.element)
+  parts.canvas.replaceChildren(first.board.element)
   let following = 0
   editor.scrollDOM.addEventListener('scroll', () => {
     following ||= requestAnimationFrame(() => {
@@ -345,8 +414,8 @@ async function joinRoom(
   showView = (mode) => {
     main.dataset.view = mode
     preview.active = mode === 'split' || mode === 'preview'
-    table.active = mode === 'table'
-    board.active = mode === 'canvas'
+    shown.table.active = mode === 'table'
+    shown.board.active = mode === 'canvas'
     editor.requestMeasure()
     followEditor()
   }
@@ -358,12 +427,21 @@ async function joinRoom(
     editor.dispatch({ effects: EditorView.scrollIntoView(editor.state.selection.main.head) })
   })
 
-  const vim = new VimToggle(editor, vimMode, () => vimExtension(undoManager))
-  const themes = new ThemeSwitcher(editor, themeMode, theme.id)
-  themes.follow(jsonPane.view, jsonTheme)
-  const settings = settingsModel(editor, themes, wrap, vim, alwaysLoad, appearance, fontMode, [
-    { view: jsonPane.view, compartment: jsonFont },
-  ])
+  // Vim's u and Ctrl-r undo in the file on screen.
+  const undoShown = { undo: () => shown.undo.undo(), redo: () => shown.undo.redo() }
+  const vim = new VimToggle(editor, vimMode, () => vimExtension(undoShown))
+  themes = new ThemeSwitcher(editor, themeMode, theme.id)
+  for (const f of themeFollowers) themes.follow(f.view, f.compartment)
+  const settings = settingsModel(
+    editor,
+    themes,
+    wrap,
+    vim,
+    alwaysLoad,
+    appearance,
+    fontMode,
+    fontFollowers,
+  )
   if (loadVimMode()) settings.setVim(true)
   render(header, 'Header', {
     file: fileName,
@@ -378,22 +456,23 @@ async function joinRoom(
     roomStatus.set(s)
     if (isFinalStatus(s)) {
       editor.dispatch({ effects: editable.reconfigure(readOnly) })
-      board.readOnly = true
+      for (const f of opened.values()) f.board.readOnly = true
     }
   }
 
   // Markdown until the host tells us the file name; other languages load lazily.
   let languageFor: string | undefined
-  const applyLanguage = async (fileName: string) => {
-    if (fileName === languageFor) return
-    languageFor = fileName
-    if (canvasRoom) {
+  const applyLanguage = async (fileName: string, canvas: boolean) => {
+    const key = `${shown.id}:${fileName}`
+    if (key === languageFor) return
+    languageFor = key
+    if (canvas) {
       view.setKind('canvas')
       return
     }
     const lang = resolveLanguage(fileName)
     const delimiter = delimiterFor(fileName)
-    table.setDelimiter(delimiter)
+    shown.table.setDelimiter(delimiter)
     view.setKind(lang.kind === 'markdown' ? 'markdown' : delimiter ? 'table' : 'plain')
     let support: Extension
     try {
@@ -407,21 +486,81 @@ async function joinRoom(
       // Offline or a stale deploy: keep editing without highlighting.
       support = []
     }
-    // A newer file name may have arrived while the language was loading.
-    if (fileName !== languageFor) return
+    // Another file or name may have come while the language was loading.
+    if (key !== languageFor) return
     editor.dispatch({ effects: language.reconfigure(support) })
+  }
+
+  // Names the file on screen, and edits it as its kind.
+  const showName = (name: string) => {
+    fileName.set(name)
+    document.title = `${name} · pedit`
+    void applyLanguage(name, shown.canvas)
+  }
+
+  // Opens a file of the room, the first time: a doc of its own, kept in sync
+  // from then on, and its own undo, table and canvas.
+  const openFile = (entry: FileEntry): OpenFile => {
+    const known = opened.get(entry.id)
+    if (known) return known
+    const fileDoc = new Y.Doc()
+    const fileText = fileDoc.getText('content')
+    const undo = new Y.UndoManager(fileText)
+    const f: OpenFile = {
+      id: entry.id,
+      doc: fileDoc,
+      text: fileText,
+      undo,
+      canvas: entry.format === 'canvas',
+      table: tableFor(entry.id, fileText, undo),
+      ...canvasFor(entry.id, fileDoc),
+    }
+    if (isFinalStatus(roomStatus.get())) f.board.readOnly = true
+    opened.set(entry.id, f)
+    client?.addFile(entry.id, fileDoc)
+    return f
+  }
+
+  // Shows another file of the room. The editor keeps its settings.
+  const switchTo = (id: number) => {
+    const entry = files.get().find((f) => f.id === id)
+    if (!entry || id === shown.id) return
+    shown.table.active = false
+    shown.board.active = false
+    shown = openFile(entry)
+    current.set(id)
+    awareness.setLocalStateField('file', id)
+    editor.setState(
+      EditorState.create({
+        doc: shown.text.toString(),
+        extensions: editorExtensions(shown.id, shown.text, shown.undo, editor.state),
+      }),
+    )
+    preview.setText(shown.text)
+    table.replaceChildren(shown.table.element)
+    canvas.replaceChildren(shown.board.element)
+    tableErrors.show(id)
+    showName(entry.path)
+    showView(view.mode)
+  }
+
+  const takeManifest = (list: FileEntry[]) => {
+    // A file of a format this version does not know is left out.
+    const known = list.filter((f) => f.format === 'text' || f.format === 'canvas')
+    files.set(known)
+    const named = known.find((f) => f.id === shown.id)
+    if (named) showName(named.path)
   }
 
   const renderPeople = () => {
     people.set(participants(awareness.getStates(), doc.clientID))
     attachments.host = hostAttachments(awareness.getStates())
     const host = [...awareness.getStates().values()].find((s) => s.role === 'host')
-    if (host?.format === 'canvas') canvasRoom = true
-    // Keep showing the file name after the host has gone.
-    if (typeof host?.file === 'string') {
-      fileName.set(host.file)
-      document.title = `${host.file} · pedit`
-      void applyLanguage(host.file)
+    if (host?.format === 'canvas') first.canvas = true
+    // Keep showing the file name after the host has gone. Once the host
+    // lists the room's files, the list names them.
+    if (typeof host?.file === 'string' && shown === first && files.get().length === 0) {
+      showName(host.file)
     }
   }
 
@@ -437,12 +576,16 @@ async function joinRoom(
       renderPeople()
       if (s === 'connected') {
         attachments.reconnected()
-        jsonPane.reconnected()
+        for (const f of opened.values()) f.json.reconnected()
       }
     },
     onAttachment: (a) => attachments.handle(a),
-    onCanvas: (m) => jsonPane.handle(m),
+    onCanvas: (m) => first.json.handle(m),
+    onManifest: takeManifest,
+    onFileAttachment: (_, a) => attachments.handle(a),
+    onFileCanvas: (fileId, m) => opened.get(fileId)?.json.handle(m),
   })
+  render(parts.files, 'FileTabs', { files, current, onOpen: switchTo })
   awareness.on('change', renderPeople)
 
   setStatus('connecting')

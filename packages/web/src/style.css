@@ -60,6 +60,7 @@ body {
 /* Wrappers and mount points around components: they add no box of their own. */
 .layout,
 .header-slot,
+.files-slot,
 .banner-slot,
 .notice-slot,
 .settings-slot,
@@ -84,6 +85,40 @@ header {
   border-bottom: 1px solid var(--line);
   background: var(--panel);
   flex-wrap: wrap;
+}
+.file-tabs {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  padding: 0 16px;
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-right: max(16px, env(safe-area-inset-right));
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  scrollbar-width: thin;
+}
+.file-tabs[hidden] {
+  display: none;
+}
+.file-tabs button {
+  flex: none;
+  max-width: 24ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 6px 10px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.file-tabs button[aria-current="page"] {
+  color: inherit;
+  border-bottom-color: var(--accent);
 }
 .brand {
   font-weight: 700;

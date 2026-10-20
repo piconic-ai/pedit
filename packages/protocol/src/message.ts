@@ -3,6 +3,7 @@ export const MessageType = {
   Awareness: 1,
   Attachment: 2,
   Canvas: 3,
+  Files: 4,
 } as const
 export type MessageType = (typeof MessageType)[keyof typeof MessageType]
 

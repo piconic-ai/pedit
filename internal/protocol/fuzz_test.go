@@ -2,8 +2,13 @@ package protocol_test
 
 import (
 	"bytes"
+	"path"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/piconic-ai/pedit/internal/protocol"
 )
@@ -139,5 +144,64 @@ func FuzzParseExpiredReason(f *testing.F) {
 	f.Add(protocol.ExpiredReason(86400))
 	f.Fuzz(func(t *testing.T, reason string) {
 		_, _ = protocol.ParseExpiredReason(reason) // must not panic
+	})
+}
+
+func FuzzCheckPath(f *testing.F) {
+	for _, p := range []string{"notes.md", "docs/a.md", "../x", "CON", "a:b", "a\\b", "café.md", "a‮b", "trailing.", "a//b", "\xff"} {
+		f.Add(p)
+	}
+	f.Fuzz(func(t *testing.T, p string) {
+		if protocol.CheckPath(p) != nil {
+			return
+		}
+		// What the checks promise, and what filepath agrees with on this platform.
+		if !utf8.ValidString(p) || path.Clean(p) != p || !filepath.IsLocal(filepath.FromSlash(p)) {
+			t.Fatalf("CheckPath accepted %q, which is not a clean local path", p)
+		}
+		if strings.ContainsAny(p, `\:<>"|?*`) {
+			t.Fatalf("CheckPath accepted %q, with a character Windows refuses", p)
+		}
+		for _, r := range p {
+			if unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) {
+				t.Fatalf("CheckPath accepted %q, with %U", p, r)
+			}
+		}
+		if k := protocol.PathKey(p); protocol.PathKey(k) != k {
+			t.Fatalf("PathKey(%q) = %q, but PathKey of that is %q", p, k, protocol.PathKey(k))
+		}
+	})
+}
+
+func FuzzDecodeFiles(f *testing.F) {
+	m, _ := protocol.EncodeManifest([]protocol.FileEntry{{ID: 1, Path: "a.md", Format: protocol.FormatText}})
+	d, _ := protocol.EncodeFileDoc(1, protocol.MessageSync, []byte{0, 1, 0})
+	f.Add(m)
+	f.Add(d)
+	f.Add([]byte{})
+	f.Add([]byte{0, 1, 1, 4, '.', '.', '/', 'x', 4, 't', 'e', 'x', 't'})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		m, err := protocol.DecodeFiles(data)
+		if err != nil {
+			return
+		}
+		// What decodes is safe to show and to route, and encodes the same.
+		var again []byte
+		if m.Kind == protocol.FilesManifest {
+			for _, e := range m.Files {
+				if protocol.CheckPath(e.Path) != nil || e.ID > protocol.MaxFileID {
+					t.Fatalf("decoded an unsafe entry %+v", e)
+				}
+			}
+			again, err = protocol.EncodeManifest(m.Files)
+		} else {
+			again, err = protocol.EncodeFileDoc(m.File, m.Type, m.Payload)
+		}
+		if err != nil {
+			t.Fatalf("re-encoding %+v: %v", m, err)
+		}
+		if again2, _ := protocol.DecodeFiles(again); !reflect.DeepEqual(again2, m) {
+			t.Fatalf("decode(encode(%+v)) = %+v", m, again2)
+		}
 	})
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -408,18 +409,30 @@ func TestParseArgs(t *testing.T) {
 			t.Fatalf("%q: %+v %v", tc.args, opts, err)
 		}
 	}
-	const link = "https://edit.piconic.ai/r/ROOM#key"
+	// Several files share one room.
 	for _, tc := range []struct {
-		args      []string
-		directory string
+		args []string
+		file string
+		more []string
 	}{
-		{[]string{link}, ""},
-		{[]string{"-d", "shared", link}, "shared"},
-		{[]string{link, "--directory=shared"}, "shared"},
+		{[]string{"a.md", "b.md"}, "a.md", []string{"b.md"}},
+		{[]string{"a.md", "docs/b.md", "c.csv"}, "a.md", []string{"docs/b.md", "c.csv"}},
+		{[]string{"--", "-a.md", "-b.md"}, "-a.md", []string{"-b.md"}},
+		{[]string{"a.md", "--", "-b.md"}, "a.md", []string{"-b.md"}},
+		{[]string{"-t", "minutes.md", "a.md", "b.md"}, "a.md", []string{"b.md"}},
 	} {
 		opts, err := parseArgs(tc.args)
-		if err != nil || opts.Room != link || opts.File != "" || opts.Template != "" || opts.Directory != tc.directory {
+		if err != nil || opts.File != tc.file || !slices.Equal(opts.More, tc.more) || opts.Room != "" {
 			t.Fatalf("%q: %+v %v", tc.args, opts, err)
+		}
+	}
+	const link = "https://edit.piconic.ai/r/ROOM#key"
+	if opts, err := parseArgs([]string{link}); err != nil || opts.Room != link || opts.File != "" || opts.Template != "" || opts.Directory != "" {
+		t.Fatalf("link: %+v %v", opts, err)
+	}
+	for _, args := range [][]string{{"-d", "shared", link}, {link, "--directory=shared"}} {
+		if _, err := parseArgs(args); err == nil {
+			t.Fatalf("accepted %q", args)
 		}
 	}
 	if opts, err := parseArgs([]string{"http://localhost:8787/r/ROOM#key"}); err != nil || opts.Room == "" {
@@ -427,7 +440,8 @@ func TestParseArgs(t *testing.T) {
 	}
 	for _, args := range [][]string{
 		{"--template"}, {"--template="}, {"--template=a", "-t", "b"}, {"-t", ""}, {"-unknown"},
-		{"--csv", "--canvas"}, {"--canvas", "-t", "csv"}, {"-t", "--csv"}, {"a", "b"},
+		{"--csv", "--canvas"}, {"--canvas", "-t", "csv"}, {"-t", "--csv"}, {"--"}, {"a", "--", ""},
+		{"a", "-d", "x", "b"}, {"a", "b", "https://edit.piconic.ai/r/ROOM#key"},
 		{"-d"}, {"-d", ""}, {"--directory="}, {"-d", "--csv"}, {"-d", "a", "-d", "b"},
 		{"notes.md", "-d", "reports"}, {"-d", "reports", "--", "notes.md"},
 		{"https://edit.piconic.ai/r/ROOM#key", "notes.md"}, {"notes.md", "https://edit.piconic.ai/r/ROOM#key"},

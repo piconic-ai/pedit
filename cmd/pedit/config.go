@@ -290,6 +290,8 @@ func templateName(name string) string {
 
 type commandArgs struct {
 	File string
+	// More are further files to share in the same room.
+	More []string
 	// Room is a share link to join instead of a file to share.
 	Room      string
 	Template  string
@@ -334,11 +336,20 @@ func parseArgs(args []string) (commandArgs, error) {
 		case "-h", "--help", "-v", "--version":
 			return fail("help and version must be used alone")
 		case "--":
-			if i+2 != len(args) || opts.File != "" || args[i+1] == "" {
-				return fail("expected one file")
+			if i+1 == len(args) || opts.Room != "" {
+				return fail("expected a file after --")
 			}
-			opts.File = args[i+1]
-			i++
+			for _, file := range args[i+1:] {
+				if file == "" {
+					return fail("expected a file, not an empty name")
+				}
+				if opts.File == "" {
+					opts.File = file
+				} else {
+					opts.More = append(opts.More, file)
+				}
+			}
+			i = len(args)
 		default:
 			if strings.HasPrefix(arg, "--") && !hasValue {
 				if opts.Template != "" {
@@ -346,13 +357,16 @@ func parseArgs(args []string) (commandArgs, error) {
 				}
 				opts.Template = strings.TrimPrefix(arg, "--")
 			} else {
-				if arg == "" || strings.HasPrefix(arg, "-") || opts.File != "" || opts.Room != "" {
-					return fail("expected one file or share link")
+				if arg == "" || strings.HasPrefix(arg, "-") || opts.Room != "" || opts.File != "" && isShareLink(arg) {
+					return fail("expected files to share, or one share link")
 				}
-				if isShareLink(arg) {
+				switch {
+				case isShareLink(arg):
 					opts.Room = arg
-				} else {
+				case opts.File == "":
 					opts.File = arg
+				default:
+					opts.More = append(opts.More, arg)
 				}
 			}
 		}
@@ -360,8 +374,8 @@ func parseArgs(args []string) (commandArgs, error) {
 	if opts.File != "" && opts.Directory != "" {
 		return fail("use either a file path or -d, not both")
 	}
-	if opts.Room != "" && opts.Template != "" {
-		return fail("a share link cannot be combined with a template")
+	if opts.Room != "" && (opts.Template != "" || opts.Directory != "") {
+		return fail("a share link cannot be combined with a template or -d")
 	}
 	return opts, nil
 }

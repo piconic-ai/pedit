@@ -13,10 +13,10 @@ const AdmissionHeader = "X-Pedit-Admission"
 // ProtocolVersion is the wire format version, offered as SocketProtocol.
 // Bump it only for changes older peers cannot skip; adding a message type or
 // kind does not need a bump. Keep it in sync with packages/protocol.
-const ProtocolVersion = 2
+const ProtocolVersion = 3
 
 // SocketProtocol is "pedit-v" followed by ProtocolVersion.
-const SocketProtocol = "pedit-v2"
+const SocketProtocol = "pedit-v3"
 const AdmissionProtocolPrefix = "pedit-admission."
 
 // AdmissionToken derives a capability for relay access, domain-separated from

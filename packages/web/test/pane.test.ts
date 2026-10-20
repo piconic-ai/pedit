@@ -95,6 +95,23 @@ describe('PreviewPane', () => {
     expect(images.rendered).toHaveBeenCalledTimes(2)
   })
 
+  it('shows another text, and follows only that one', async () => {
+    const { text, pane, rendered } = setup()
+    text.insert(0, 'first file')
+    pane.active = true
+    await vi.waitFor(() => expect(pane.element.textContent).toContain('first file'))
+    const other = new Y.Doc().getText('content')
+    other.insert(0, 'second file')
+    pane.setText(other)
+    await vi.waitFor(() => expect(pane.element.textContent).toContain('second file'))
+    const renders = rendered.mock.calls.length
+    text.insert(0, 'not shown ')
+    await new Promise((r) => setTimeout(r, 50))
+    expect(rendered).toHaveBeenCalledTimes(renders)
+    other.insert(0, 'edited ')
+    await vi.waitFor(() => expect(pane.element.textContent).toContain('edited second file'))
+  })
+
   it('catches up on edits made while hidden', async () => {
     const { text, pane, rendered } = setup()
     text.insert(0, 'first')

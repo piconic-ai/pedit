@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -24,11 +25,12 @@ func TestRunArgs(t *testing.T) {
 		stdout string
 		stderr string
 	}{
-		{args: []string{"--help"}, code: 0, stdout: "Usage: pedit [file]"},
+		{args: []string{"--help"}, code: 0, stdout: "Usage: pedit [file ...]"},
 		{args: []string{"-h"}, code: 0, stdout: ".pedit/config.yaml"},
 		{args: []string{"--version"}, code: 0, stdout: "dev"},
-		{args: []string{"a.md", "b.md"}, code: 2, stderr: "Usage: pedit [file]"},
-		{args: []string{""}, code: 2, stderr: "Usage: pedit [file]"},
+		{args: []string{"a.md", "b.md"}, code: 1, stderr: "a.md does not exist."},
+		{args: []string{"a.md", "--", ""}, code: 2, stderr: "Usage: pedit [file ...]"},
+		{args: []string{""}, code: 2, stderr: "Usage: pedit [file ...]"},
 		{args: []string{"does-not-exist.md"}, code: 1, stderr: "does-not-exist.md does not exist."},
 		{args: []string{"."}, code: 1, stderr: ". is a directory."},
 		{args: []string{"https://edit.piconic.ai/r/ROOM#key", "-t", "minutes.md"}, code: 2, stderr: "a share link cannot be combined with a template"},
@@ -130,11 +132,16 @@ func TestFinish(t *testing.T) {
 	}
 }
 
-func TestResumeOnEnter(t *testing.T) {
+func TestReadLines(t *testing.T) {
 	resumed := 0
-	resumeOnEnter(strings.NewReader("\n\nnot a full line"), func() { resumed++ })
+	var added []string
+	in := "\n  \nnotes.md\n 'a b.md' \n\"c d.md\"\ne\\ f.md\nnot a full line"
+	readLines(strings.NewReader(in), func() { resumed++ }, func(path string) { added = append(added, path) })
 	if resumed != 2 {
-		t.Fatalf("resumed %d times, want once per Enter", resumed)
+		t.Fatalf("resumed %d times, want once per empty line", resumed)
+	}
+	if want := []string{"notes.md", "a b.md", "c d.md", "e f.md"}; !slices.Equal(added, want) {
+		t.Fatalf("added %q, want %q", added, want)
 	}
 }
 
@@ -153,16 +160,16 @@ func TestFinishJoin(t *testing.T) {
 		{name: "left", code: 0, stdout: []string{"✓ Saved notes.md. It no longer syncs"}, not: []string{"host closed"}},
 		{name: "host left", ended: protocol.StatusClosed, code: 0, stdout: []string{"The host closed the room.", "✓ Saved notes.md"}},
 		{name: "not saved", stopErr: errors.New("disk full"), code: 1, not: []string{"Saved"}, stderr: "could not save notes.md: disk full"},
-		{name: "temporary", temporary: true, code: 0, stdout: []string{"✓ Left the room. The temporary copy was removed."}, not: []string{"Saving", "Saved"}},
-		{name: "temporary, host left", temporary: true, ended: protocol.StatusClosed, code: 0, stdout: []string{"The host closed the room.", "The temporary copy was removed."}},
+		{name: "temporary", temporary: true, code: 0, stdout: []string{"✓ Left the room. The temporary copies were removed."}, not: []string{"Saving", "Saved"}},
+		{name: "temporary, host left", temporary: true, ended: protocol.StatusClosed, code: 0, stdout: []string{"The host closed the room.", "The temporary copies were removed."}},
 		{name: "pedit outdated", ended: protocol.StatusClientOutdated, code: 1, stdout: []string{"✓ Saved notes.md", "This pedit is too old for the server", "To upgrade, run: brew upgrade piconic-ai/tap/pedit"}, not: []string{"host closed"}},
-		{name: "temporary, pedit outdated", temporary: true, ended: protocol.StatusClientOutdated, code: 1, stdout: []string{"The temporary copy was removed.", "This pedit is too old"}},
+		{name: "temporary, pedit outdated", temporary: true, ended: protocol.StatusClientOutdated, code: 1, stdout: []string{"The temporary copies were removed.", "This pedit is too old"}},
 		{name: "server outdated", ended: protocol.StatusServerOutdated, code: 1, stdout: []string{"✓ Saved notes.md", "The server is older than this pedit", "Ask whoever runs the server"}, not: []string{"To upgrade"}},
 		{name: "maintenance", ended: protocol.StatusMaintenance, code: 1, stdout: []string{"✓ Saved notes.md", "The relay was closed for maintenance. Run pedit again once it is back."}, not: []string{"host closed", "To upgrade"}},
 		{name: "too large", ended: protocol.StatusTooLarge, code: 1, stdout: []string{"✓ Saved notes.md", "pedit left the room: the shared file grew too large to share. pedit shares files up to about 1 MiB for now.", "Your latest changes may not have reached the others."}, not: []string{"host closed"}},
 		{name: "temporary, too large", temporary: true, ended: protocol.StatusTooLarge, code: 1, kept: true, stdout: []string{"✓ Saved notes.md", "pedit left the room: the shared file grew too large to share.", "Your latest changes may not have reached the others."}, not: []string{"removed"}},
 		{name: "expired", ended: protocol.StatusExpired, code: 0, stdout: []string{"✓ Saved notes.md", "The room reached its 24-hour limit on the relay and was closed.", "Ask the host to run pedit again for a new link."}, not: []string{"host closed"}},
-		{name: "temporary, expired", temporary: true, ended: protocol.StatusExpired, code: 0, stdout: []string{"The temporary copy was removed.", "The room reached its 24-hour limit on the relay and was closed."}, not: []string{"host closed"}},
+		{name: "temporary, expired", temporary: true, ended: protocol.StatusExpired, code: 0, stdout: []string{"The temporary copies were removed.", "The room reached its 24-hour limit on the relay and was closed."}, not: []string{"host closed"}},
 		{name: "temporary not removed", temporary: true, stopErr: errors.New("busy"), code: 1, not: []string{"removed"}, stderr: "could not remove the temporary copy notes.md: busy"},
 	}
 	for _, tt := range tests {

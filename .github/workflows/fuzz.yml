@@ -32,6 +32,8 @@ jobs:
           - { pkg: ./internal/protocol, name: FuzzDecodeAttachment }
           - { pkg: ./internal/protocol, name: FuzzDecodeCanvas }
           - { pkg: ./internal/protocol, name: FuzzParseExpiredReason }
+          - { pkg: ./internal/protocol, name: FuzzCheckPath }
+          - { pkg: ./internal/protocol, name: FuzzDecodeFiles }
           - { pkg: ./internal/canvas, name: FuzzParse }
           - { pkg: ./internal/merge, name: FuzzExternalEdit }
     steps:

@@ -53,22 +53,44 @@ No install or account needed for collaborators on the public server.
 Collaborators who would rather stay in their own editor join from the command
 line instead. Given the link, `pedit` mirrors the shared file to a temporary
 copy and keeps it in sync both ways until they leave or the host closes the
-room; the copy is removed then, like closing a browser tab:
+room; the copy is removed then, like closing a browser tab. `pedit` names the
+copy itself, from a number and the letters and digits of the host's name for
+it, never as the room names it:
 
 ```text
 ❯ pedit 'https://edit.piconic.ai/r/<room-id>#<key>'
 
   Joined. Your copy of the shared file:
-    /tmp/pedit-<room-id>-2271/notes.md
+    /tmp/pedit-<room-id>-2271/00-notes.md
     Copied to your clipboard.
 
   Edit it with any editor; changes sync both ways while you are in the room.
-  Press Ctrl+C to leave. The copy is temporary and removed then; -d <dir> keeps one.
+  Press Ctrl+C to leave. The copies are temporary and removed then.
 ```
 
-Quote the link in the shell: `#` starts a comment otherwise. `-d <dir>` keeps
-the copy in that directory instead, where `pedit` refuses to overwrite a file
-already there. Canvas rooms can only be joined in a browser for now.
+Quote the link in the shell: `#` starts a comment otherwise. Copy out what you
+want to keep before you leave. Canvas rooms can only be joined in a browser
+for now.
+
+### Several files in one room
+
+Name several files to share them in one room, under one link. Guests switch
+between them with the tabs above the editor:
+
+```text
+❯ pedit agenda.md docs/spec.md board.canvas
+```
+
+While sharing, type the path of another file and press Enter to add it to the
+room, without a new link: a meeting can start with the agenda and bring in the
+spec when it comes up. Only the host adds files; nobody in the room can ask for
+one. A room shares up to 20 files, each a regular UTF-8 file, as when sharing
+one. Paths are shown relative to the directory `pedit` runs in.
+
+A guest who joins from the command line gets a copy of each text file in the
+same temporary directory, including files the host adds later, named after
+the host's path: `docs/spec.md` is copied to `01-docs-spec.md`. Canvases are
+for the browser.
 
 ## Why pedit?
 
@@ -196,8 +218,8 @@ Edits in the opposite direction follow the same process.
   connections or attachment requests; the token cannot decrypt content.
 - **Your relay, your access rules.** Use the public relay at `edit.piconic.ai`,
   or [self-host](#self-host) to require sign-in with Cloudflare Access.
-- **Only the file you share.** The CLI reads and writes the shared file, images
-  in `assets/` beside it, its own `.pedit/` configuration and a cache, and runs
+- **Only the files you share.** The CLI reads and writes the files you name,
+  images in `assets/` beside each, its own `.pedit/` configuration and a cache, and runs
   only a clipboard tool and, for Access, `cloudflared`. See
   [what pedit does on your computer](docs/local-files.md) for every file and
   what you accept.

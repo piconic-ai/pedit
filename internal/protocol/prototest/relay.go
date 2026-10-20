@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/piconic-ai/pedit/internal/protocol"
 )
@@ -24,6 +25,9 @@ import (
 // With MaxFrame set, a connection that writes a larger frame is closed with
 // MessageTooBig and the frame is not relayed, as the Room does at
 // protocol.MaxFrameBytes.
+//
+// With Bytes set, a connection that writes more than that allowance is closed
+// with RateLimited and the frame is not relayed, as the Room does.
 type Relay struct {
 	Hosted bool
 	Guests int
@@ -34,8 +38,11 @@ type Relay struct {
 	Busy int
 	// MaxFrame is the most bytes a frame may have; 0 for no limit.
 	MaxFrame int
+	// Bytes is what one connection may write; zero for no limit.
+	Bytes protocol.Rate
 
 	mu      sync.Mutex
+	limited int
 	conns   map[*Conn]bool
 	urls    []string
 	headers []http.Header
@@ -68,6 +75,13 @@ func (r *Relay) Dial(_ context.Context, url string, header http.Header) (protoco
 	}
 	r.conns[c] = true
 	return c, nil
+}
+
+// Limited counts the connections closed for going over Bytes.
+func (r *Relay) Limited() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.limited
 }
 
 // SetRefuse changes Refuse while connections may be dialing, as a relay
@@ -159,7 +173,15 @@ type Conn struct {
 	inbox  [][]byte
 	closed error
 	wake   chan struct{}
+
+	// The byte allowance under Relay.Bytes, and when it was counted. Guarded
+	// by the relay's mu.
+	bytes   float64
+	counted time.Time
 }
+
+// RateLimited is the Room's close code for a connection over its rate.
+const RateLimited = 1008
 
 func (c *Conn) Read(ctx context.Context) ([]byte, error) {
 	for {
@@ -194,6 +216,22 @@ func (c *Conn) Write(_ context.Context, data []byte) error {
 		r.left(c)
 		c.closeWith(protocol.MessageTooBig)
 		return errors.New("message too big")
+	}
+	if rate := r.Bytes; rate != (protocol.Rate{}) {
+		now := time.Now()
+		if c.counted.IsZero() {
+			c.bytes = rate.Burst
+		} else {
+			c.bytes = min(rate.Burst, c.bytes+now.Sub(c.counted).Seconds()*rate.PerSecond)
+		}
+		c.counted = now
+		if c.bytes < float64(len(data)) {
+			r.limited++
+			r.left(c)
+			c.closeWith(RateLimited)
+			return errors.New("rate limited")
+		}
+		c.bytes -= float64(len(data))
 	}
 	r.frames = append(r.frames, append([]byte{}, data...))
 	for peer := range r.conns {

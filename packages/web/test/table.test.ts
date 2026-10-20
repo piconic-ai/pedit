@@ -2,8 +2,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate } from 'y-protocols/awareness'
 import * as Y from 'yjs'
-import type { CsvError } from '../src/csv.ts'
-import { columnName, describeError, keepCaret, TableView } from '../src/table.ts'
+import { CsvError } from '../src/csv.ts'
+import { columnName, describeError, keepCaret, TableErrors, TableView } from '../src/table.ts'
 
 const views: TableView[] = []
 
@@ -615,5 +615,29 @@ describe('columnName', () => {
     [702, 'AAA'],
   ])('%i -> %s', (index, name) => {
     expect(columnName(index)).toBe(name)
+  })
+})
+
+describe('TableErrors', () => {
+  const error = (line: number) => new CsvError('unclosed quote', line)
+
+  it('shows only the error of the file on screen, and each file its own on showing it', () => {
+    const shown: (number | null)[] = []
+    const errors = new TableErrors(0, (e) => shown.push(e?.line ?? null))
+    errors.report(0, error(3)) // a malformed table on screen
+    errors.report(1, null) // a valid one, not on screen
+    errors.report(2, error(5)) // another malformed one, not on screen
+    expect(shown).toEqual([3])
+    errors.show(1)
+    errors.show(2)
+    errors.show(0)
+    expect(shown).toEqual([3, null, 5, 3])
+    // A change to a file not on screen leaves the view alone.
+    errors.report(1, error(9))
+    expect(shown).toEqual([3, null, 5, 3])
+    errors.show(1)
+    expect(shown.at(-1)).toBe(9)
+    errors.show(7) // never reported
+    expect(shown.at(-1)).toBeNull()
   })
 })

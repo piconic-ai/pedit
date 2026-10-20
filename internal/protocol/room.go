@@ -87,8 +87,13 @@ type ClientOptions struct {
 	MaxBackoff time.Duration
 	// BusyBackoff is the least a busy relay is waited out before trying again.
 	BusyBackoff time.Duration
-	OnStatus    func(Status)
-	OnError     func(error)
+	// Messages and Bytes are what the relay lets one connection send;
+	// RelayMessages and RelayBytes when zero. The Client paces what it sends
+	// to stay within them.
+	Messages Rate
+	Bytes    Rate
+	OnStatus func(Status)
+	OnError  func(error)
 	// OnSynced is called once, on the connection's read loop, when the first
 	// SyncStep2 from a peer has been applied: the doc now holds what the room
 	// had. Return quickly.
@@ -99,6 +104,16 @@ type ClientOptions struct {
 	// OnCanvas is called with each canvas message from the room, on the
 	// connection's read loop: return quickly.
 	OnCanvas func(CanvasMessage)
+
+	// In a room that shares several files (room_files.go), these are called
+	// on the connection's read loop too: return quickly. OnManifest gets
+	// each list of the room's files. OnFileSynced is called once per added
+	// file, when the first SyncStep2 for it has been applied.
+	// OnFileAttachment and OnFileCanvas get the messages about one file.
+	OnManifest       func([]FileEntry)
+	OnFileSynced     func(id uint64)
+	OnFileAttachment func(id uint64, a Attachment)
+	OnFileCanvas     func(id uint64, m CanvasMessage)
 }
 
 // Client keeps a Doc and Awareness in sync with every other peer in a room.
@@ -132,6 +147,8 @@ type Client struct {
 	synced    bool
 	timeLimit time.Duration
 	unsubs    []func()
+	files     map[uint64]*fileDoc
+	manifest  []byte // the encoded FilesManifest, when this Client set one
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -266,6 +283,7 @@ func (c *Client) Destroy() {
 	for _, unsub := range c.unsubs {
 		unsub()
 	}
+	c.unsubscribeFiles()
 	if out != nil {
 		out.drain()
 	}
@@ -320,7 +338,7 @@ func (c *Client) run(done chan struct{}) {
 
 // serve runs one connection until it fails.
 func (c *Client) serve(conn Conn) error {
-	out := newOutbox(conn)
+	out := newOutbox(conn, newPacer(c.opts.Messages, c.opts.Bytes, time.Now))
 	c.mu.Lock()
 	if c.destroyed {
 		c.mu.Unlock()
@@ -342,6 +360,7 @@ func (c *Client) serve(conn Conn) error {
 		c.send(MessageSync, ysync.EncodeSyncStep1(c.doc))
 		c.send(MessageSync, step2)
 		c.sendAwareness([]uint64{c.aw.ClientID()})
+		c.syncFiles()
 	}
 
 	for {
@@ -384,6 +403,9 @@ func (c *Client) receive(data []byte) error {
 	}
 	if err != nil {
 		return err
+	}
+	if t == MessageFiles {
+		return c.receiveFiles(payload)
 	}
 	if t == MessageAttachment {
 		a, err := DecodeAttachment(payload)
@@ -472,10 +494,11 @@ func (c *Client) handleAwarenessUpdate(ev awareness.UpdateEvent) {
 }
 
 // Someone new showed up: tell them about us right away instead of waiting for the
-// periodic awareness renewal.
+// periodic awareness renewal, and which files the room shares.
 func (c *Client) handleAwarenessChange(ev awareness.ChangeEvent) {
 	if ev.Origin == c && len(ev.Added) > 0 {
 		c.sendAwareness([]uint64{c.aw.ClientID()})
+		c.sendManifest()
 	}
 }
 
@@ -556,22 +579,29 @@ func (c *Client) onError(err error) {
 	}
 }
 
-// outbox writes frames to a connection in order, without blocking the sender.
+// outbox writes frames to a connection in order, without blocking the
+// sender, and paces them within the relay's rates.
 type outbox struct {
 	conn   Conn
+	pace   *pacer
 	mu     sync.Mutex
 	queue  [][]byte
 	closed bool
 	failed error // why this side gave the connection up
 	wake   chan struct{}
-	done   chan struct{}
+	// quit is closed when the frames still queued are dropped.
+	quit     chan struct{}
+	quitOnce sync.Once
+	done     chan struct{}
 }
 
-func newOutbox(conn Conn) *outbox {
-	o := &outbox{conn: conn, wake: make(chan struct{}, 1), done: make(chan struct{})}
+func newOutbox(conn Conn, pace *pacer) *outbox {
+	o := &outbox{conn: conn, pace: pace, wake: make(chan struct{}, 1), quit: make(chan struct{}), done: make(chan struct{})}
 	go o.loop()
 	return o
 }
+
+func (o *outbox) quitNow() { o.quitOnce.Do(func() { close(o.quit) }) }
 
 func (o *outbox) push(frame []byte) {
 	o.mu.Lock()
@@ -602,6 +632,7 @@ func (o *outbox) fail(err error) {
 	o.closed = true
 	o.queue = nil
 	o.mu.Unlock()
+	o.quitNow()
 	o.signal()
 }
 
@@ -625,6 +656,9 @@ func (o *outbox) loop() {
 			return
 		}
 		for _, frame := range queue {
+			if !o.wait(o.pace.take(len(frame))) {
+				return
+			}
 			if err := o.conn.Write(context.Background(), frame); err != nil {
 				o.mu.Lock()
 				o.closed = true
@@ -639,6 +673,27 @@ func (o *outbox) loop() {
 		if len(queue) == 0 {
 			<-o.wake
 		}
+	}
+}
+
+// wait waits d before the next frame, unless the queue is dropped meanwhile,
+// and tells whether to go on. Draining waits too: going over the allowance
+// would close the connection before the edits still queued reach the room.
+func (o *outbox) wait(d time.Duration) bool {
+	if d <= 0 {
+		return true
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-o.quit:
+		// Given up: close the connection, which ends the read loop.
+		if o.failure() != nil {
+			_ = o.conn.Close()
+		}
+		return false
 	}
 }
 
@@ -660,5 +715,6 @@ func (o *outbox) stop() {
 	o.closed = true
 	o.queue = nil
 	o.mu.Unlock()
+	o.quitNow()
 	o.signal()
 }

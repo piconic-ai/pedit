@@ -27,6 +27,10 @@ import (
 
 type Options struct {
 	File string
+	// Root is the directory the paths of a room's files are shown relative
+	// to, such as where pedit runs. A file outside it is shown by its name.
+	// Empty: the first file's directory.
+	Root string
 	// Server is the base URL of the pedit server, e.g. https://edit.piconic.ai
 	Server string
 	Name   string
@@ -64,32 +68,37 @@ type Session struct {
 	// nodes and edges.
 	Text   *crdt.YText
 	Client *protocol.Client
-	Writer *filewriter.Writer
-	bound  *filewriter.BoundFile
+	// The first file, shared in the room's own doc (file 0).
+	*sharedFile
 
-	file        string
-	content     content
-	awareness   *awareness.Awareness
-	attachments *attach.Attachments
-	watcher     *fsnotify.Watcher
-	watchDone   chan struct{}
-	stopAlive   func()
-	onError     func(error)
-	notices     *notices
+	awareness *awareness.Awareness
+	watcher   *fsnotify.Watcher
+	watchDone chan struct{}
+	stopAlive func()
 	// temp is the directory holding a joined copy that is removed on Stop.
 	temp string
 
-	mu        sync.Mutex
-	readTimer *time.Timer
-	stopped   bool
-	stopOnce  sync.Once
-	stopErr   error
+	// What adding a file needs, set by Start (files.go).
+	opts     Options
+	server   string
+	roomID   string
+	blobKeys *protocol.BlobKeys
 
-	// syncing serializes syncs from disk, and lets Stop wait out one in flight.
-	syncing sync.Mutex
-	// invalidOnDisk is the invalid canvas last reported, so it is reported once.
-	// Guarded by syncing.
-	invalidOnDisk string
+	// filesMu guards the files added after the first, the watched files and
+	// stopped.
+	filesMu sync.Mutex
+	added   []*sharedFile
+	watched map[string]*sharedFile // by local path
+	dirs    map[string]bool        // watched directories
+	nextID  uint64
+	closed  bool
+
+	// mirror mirrors the room's other files, when joined (mirror.go).
+	mirrorMu sync.Mutex
+	mirror   *mirror
+
+	stopOnce sync.Once
+	stopErr  error
 
 	// Test seams, called during Stop.
 	beforeDestroy    func()
@@ -117,55 +126,35 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 	if onError == nil {
 		onError = func(error) {}
 	}
-	bound, err := filewriter.OpenBound(opts.File)
+	if opts.Root == "" {
+		opts.Root = filepath.Dir(opts.File)
+	}
+	root, err := filepath.Abs(opts.Root)
 	if err != nil {
-		return nil, fmt.Errorf("cannot open %s: %w", opts.File, err)
+		return nil, err
+	}
+	opts.Root = root
+	bound, initial, err := openShared(opts.File)
+	if err != nil {
+		return nil, err
 	}
 	defer func() {
 		if bound != nil {
 			_ = bound.Close()
 		}
 	}()
-	// Before reading: a file far over the limit is turned away without loading
-	// it, and before the UTF-8 check, which would scan all of it.
-	if size, ok := bound.Size(); ok && !isCanvas(opts.File) && protocol.FrameBytes(int(size)) > protocol.MaxFrameBytes {
-		return nil, &TooLargeError{File: opts.File, Size: int(size)}
-	}
-	initial, ok := bound.Read()
-	if !ok {
-		return nil, fmt.Errorf("cannot read %s", opts.File)
-	}
-	if !utf8.ValidString(initial) {
-		// Before creating a room: once edited, the bytes pedit cannot read
-		// would be saved back as U+FFFD, and the file changed for good.
-		return nil, fmt.Errorf("%s is not UTF-8 text. pedit shares UTF-8 only, and would replace the bytes it cannot read; convert the file first (for example, iconv -f SHIFT_JIS -t UTF-8)", opts.File)
-	}
-	// Before creating a room: on connecting, the room gets the whole state in
-	// one frame, which the relay caps. Text takes at least its own size there.
-	// This covers a file that grew since the size check above.
-	if !isCanvas(opts.File) && protocol.FrameBytes(len(initial)) > protocol.MaxFrameBytes {
-		return nil, &TooLargeError{File: opts.File, Size: len(initial)}
-	}
 	// Before creating a room, so a canvas that is not valid fails right away.
 	doc := crdt.New()
-	var shared content
+	shared, err := newContent(doc, opts.File, initial)
+	if err != nil {
+		return nil, err
+	}
 	var text *crdt.YText
-	if isCanvas(opts.File) {
-		c, err := newCanvasContent(doc, opts.File, initial)
-		if err != nil {
-			return nil, err
-		}
-		shared = c
-	} else {
-		c := newTextContent(doc, initial)
-		shared, text = c, c.text
+	if c, ok := shared.(*textContent); ok {
+		text = c.text
 	}
 	if frame := protocol.StateFrameBytes(doc); frame > protocol.MaxFrameBytes {
-		e := &TooLargeError{File: opts.File, Size: len(initial)}
-		if _, ok := shared.(*canvasContent); ok {
-			e.Shared = frame
-		}
-		return nil, e
+		return nil, tooLarge(opts.File, initial, shared, frame)
 	}
 
 	server := strings.TrimRight(opts.Server, "/")
@@ -207,16 +196,26 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 	}
 
 	s := &Session{
-		URL:       server + "/r/" + room.ID + "#" + key,
-		Doc:       doc,
-		Text:      text,
-		file:      opts.File,
-		bound:     bound,
-		content:   shared,
+		URL:  server + "/r/" + room.ID + "#" + key,
+		Doc:  doc,
+		Text: text,
+		sharedFile: &sharedFile{
+			file:    opts.File,
+			path:    sharedPath(opts.Root, opts.File),
+			doc:     doc,
+			bound:   bound,
+			content: shared,
+			onError: onError,
+			notices: newNotices(opts.File, opts.OnNotice, onError),
+		},
 		awareness: aw,
-		onError:   onError,
-		notices:   newNotices(opts.File, opts.OnNotice, onError),
+		opts:      opts,
+		server:    server,
+		roomID:    room.ID,
+		blobKeys:  blobKeys,
+		nextID:    1,
 	}
+	s.opts.OnError = onError
 	s.Writer = filewriter.New(opts.File, initial, filewriter.Options{
 		Bound:            bound,
 		Delay:            opts.WriteDelay,
@@ -240,12 +239,16 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 		OnStatus:  opts.OnStatus,
 		OnError:   onError,
 		// Set below, before the client connects.
-		OnAttachment: func(m protocol.Attachment) { s.attachments.Handle(m) },
-		OnCanvas:     s.handleCanvas,
+		OnAttachment:     func(m protocol.Attachment) { s.attachments.Handle(m) },
+		OnCanvas:         func(m protocol.CanvasMessage) { s.handleCanvas(m) },
+		OnFileAttachment: s.handleFileAttachment,
+		OnFileCanvas:     s.handleFileCanvas,
 	})
 	if err != nil {
 		return nil, err
 	}
+	s.client = s.Client
+	s.sendCanvas = s.Client.SendCanvas
 	s.attachments = attach.New(attach.Options{
 		File:            opts.File,
 		Root:            bound.Dir(),
@@ -417,20 +420,26 @@ func keepAlive(aw *awareness.Awareness) func() {
 	}
 }
 
-// Watch the directory rather than the file: editors often save by renaming a
-// new file over the old one, which would orphan a watch on the file itself.
+// Watch directories rather than files: editors often save by renaming a new
+// file over the old one, which would orphan a watch on the file itself.
+// fsnotify does not watch subdirectories, so each shared file's directory is
+// watched, and only the shared names in it are acted on.
 func (s *Session) watch() error {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return err
 	}
-	if err := w.Add(filepath.Dir(s.file)); err != nil {
+	s.filesMu.Lock()
+	s.watcher = w
+	s.watched = map[string]*sharedFile{}
+	s.dirs = map[string]bool{}
+	err = s.watchFile(s.sharedFile)
+	s.filesMu.Unlock()
+	if err != nil {
 		_ = w.Close()
 		return err
 	}
-	s.watcher = w
 	s.watchDone = make(chan struct{})
-	name := filepath.Base(s.file)
 	go func() {
 		defer close(s.watchDone)
 		for {
@@ -439,8 +448,11 @@ func (s *Session) watch() error {
 				if !ok {
 					return
 				}
-				if filepath.Base(ev.Name) == name {
-					s.scheduleSyncFromDisk()
+				s.filesMu.Lock()
+				f := s.watched[filepath.Clean(ev.Name)]
+				s.filesMu.Unlock()
+				if f != nil {
+					f.scheduleSyncFromDisk()
 				}
 			case err, ok := <-w.Errors:
 				if !ok {
@@ -453,81 +465,20 @@ func (s *Session) watch() error {
 	return nil
 }
 
-func (s *Session) scheduleSyncFromDisk() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.stopped {
-		return
+// watchFile starts acting on changes to f. The caller holds s.filesMu.
+func (s *Session) watchFile(f *sharedFile) error {
+	if s.watcher == nil {
+		return nil
 	}
-	if s.readTimer != nil {
-		s.readTimer.Stop()
+	dir := filepath.Dir(f.file)
+	if !s.dirs[dir] {
+		if err := s.watcher.Add(dir); err != nil {
+			return err
+		}
+		s.dirs[dir] = true
 	}
-	s.readTimer = time.AfterFunc(50*time.Millisecond, func() {
-		s.syncing.Lock()
-		defer s.syncing.Unlock()
-		s.mu.Lock()
-		stopped := s.stopped
-		s.mu.Unlock()
-		if !stopped {
-			s.syncFromDisk()
-		}
-	})
-}
-
-// syncFromDisk merges the file's current content into the doc if it changed
-// outside pedit, against what we last wrote. The caller must hold s.syncing.
-func (s *Session) syncFromDisk() {
-	changed := false
-	// Told after Rebase, so not under the writer's lock.
-	var notice *Notice
-	// Rebase drops any pending write, which predates the merge.
-	s.Writer.Rebase(func(lastWritten string) string {
-		onDisk, ok := settle(s.bound.Read, 30*time.Millisecond, 10)
-		if !ok {
-			return lastWritten
-		}
-		if onDisk == lastWritten {
-			// The file holds what pedit knows. A write skipped meanwhile
-			// (the file was invalid, or changed and changed back) is saved
-			// now; Flush skips it if nothing differs.
-			if s.invalidOnDisk != "" {
-				notice = &Notice{Kind: HoldReleased}
-			}
-			changed = true
-			s.invalidOnDisk = ""
-			return lastWritten
-		}
-		err := errNotUTF8
-		if utf8.ValidString(onDisk) {
-			s.Client.Do(func() { err = s.content.merge(lastWritten, onDisk) })
-		}
-		if err != nil {
-			// Wait for it to be fixed: saving now would clobber whatever
-			// someone is in the middle of writing.
-			if onDisk != s.invalidOnDisk {
-				s.invalidOnDisk = onDisk
-				n := held(filepath.Base(s.file), err)
-				notice = &n
-			}
-			return lastWritten
-		}
-		if s.invalidOnDisk != "" {
-			notice = &Notice{Kind: HoldReleased}
-		}
-		s.invalidOnDisk = ""
-		changed = true
-		if s.attachments != nil {
-			s.attachments.AllowLocalChanges(lastWritten, onDisk)
-		}
-		return onDisk
-	})
-	if notice != nil {
-		s.notices.send(*notice)
-	}
-	if changed {
-		// Remote edits made meanwhile are not on disk yet.
-		s.Writer.Schedule(s.render())
-	}
+	s.watched[filepath.Clean(f.file)] = f
+	return nil
 }
 
 // errNotUTF8 means the file on disk is no longer UTF-8 text, such as after an
@@ -535,34 +486,8 @@ func (s *Session) syncFromDisk() {
 // cannot read, and saving would then overwrite the file with that loss.
 var errNotUTF8 = errors.New("it is not UTF-8 text")
 
-// render returns the file as the doc has it now, under the client's lock so
-// remote updates cannot change the doc while it is read.
-func (s *Session) render() string {
-	var out string
-	s.Client.Do(func() { out = s.content.render() })
-	return out
-}
-
 // maxRejectReason keeps a rejection within what a canvas message carries.
 const maxRejectReason = 16 << 10
-
-// handleCanvas applies JSON someone edited by hand in the browser, and tells
-// the room whether it did.
-func (s *Session) handleCanvas(m protocol.CanvasMessage) {
-	c, ok := s.content.(*canvasContent)
-	if !ok || m.Kind != protocol.CanvasEdit {
-		return
-	}
-	var err error
-	s.Client.Do(func() { err = c.edit(m.ID, m.Base, m.Next) })
-	reply := protocol.CanvasMessage{Kind: protocol.CanvasApplied, ID: m.ID}
-	if err != nil {
-		reply = protocol.CanvasMessage{Kind: protocol.CanvasRejected, ID: m.ID, Reason: truncate(err.Error(), maxRejectReason)}
-	}
-	if err := s.Client.SendCanvas(reply); err != nil {
-		s.onError(err)
-	}
-}
 
 // truncate cuts s to at most n bytes, on a character boundary.
 func truncate(s string, n int) string {
@@ -579,65 +504,94 @@ func truncate(s string, n int) string {
 // outside pedit while it tries to save.
 const finalWriteAttempts = 3
 
-// Stop leaves the room and writes the final state to the file. It reports an
-// error when the final state could not be saved.
+// Stop leaves the room and writes the final state to the files. It reports
+// an error when the final state could not be saved.
 func (s *Session) Stop() error {
 	s.stopOnce.Do(func() {
+		s.filesMu.Lock()
+		s.closed = true
+		files := s.files()
+		s.filesMu.Unlock()
 		// Stop returns what goes wrong from here.
-		s.notices.stop()
-		s.mu.Lock()
-		s.stopped = true
-		if s.readTimer != nil {
-			s.readTimer.Stop()
+		for _, f := range files {
+			f.stop()
 		}
-		s.mu.Unlock()
 		if s.watcher != nil {
 			_ = s.watcher.Close()
 			<-s.watchDone
 		}
-		// Waits for a sync already started by the timer; none can start after this.
-		s.syncing.Lock()
-		defer s.syncing.Unlock()
+		// Waits for syncs already started by the timers; none can start after this.
+		for _, f := range files {
+			f.syncing.Lock()
+			defer f.syncing.Unlock()
+		}
 
-		// Merge a last-second external edit while peers can still get it, and
-		// save right away: leaving can take a while, and a second Ctrl+C exits.
-		s.syncFromDisk()
-		s.Writer.Schedule(s.render())
-		_ = s.Writer.Flush()
+		// Merge last-second external edits while peers can still get them,
+		// and save right away: leaving can take a while, and a second Ctrl+C
+		// exits.
+		for _, f := range files {
+			f.syncFromDisk()
+			f.Writer.Schedule(f.render())
+			_ = f.Writer.Flush()
+		}
 
 		if s.beforeDestroy != nil {
 			s.beforeDestroy()
 		}
-		// A joined session saves no attachments.
-		if s.attachments != nil {
-			s.attachments.Close()
+		for _, f := range files {
+			// A joined session saves no attachments.
+			if f.attachments != nil {
+				f.attachments.Close()
+			}
 		}
 		s.Client.Destroy()
 
 		// Save again: edits may have arrived while leaving, and none can arrive now.
-		for attempt := 1; ; attempt++ {
-			if s.beforeFinalWrite != nil {
-				s.beforeFinalWrite(attempt)
-			}
-			s.Writer.Schedule(s.render())
-			s.stopErr = s.Writer.Flush()
-			if !errors.Is(s.stopErr, filewriter.ErrExternalChange) || attempt == finalWriteAttempts {
-				break
-			}
-			// Someone saved the file meanwhile: merge it in and try again.
-			s.syncFromDisk()
+		for _, f := range files {
+			s.stopErr = errors.Join(s.stopErr, s.finalSave(f))
 		}
 		s.stopAlive()
 		s.awareness.Destroy()
-		if s.bound != nil {
-			s.stopErr = errors.Join(s.stopErr, s.bound.Close())
+		for _, f := range files {
+			if f.bound != nil {
+				s.stopErr = errors.Join(s.stopErr, f.bound.Close())
+			}
 		}
+		s.mirrorMu.Lock()
+		if s.mirror != nil && s.mirror.root != nil {
+			_ = s.mirror.root.Close()
+		}
+		s.mirrorMu.Unlock()
 		if s.temp != "" {
 			// A temporary copy is for the session only: nothing to save.
 			s.stopErr = errors.Join(s.stopErr, removeTemp(s.temp))
 		}
 	})
 	return s.stopErr
+}
+
+// finalSave writes f once the room is left, merging in saves made outside
+// pedit meanwhile.
+func (s *Session) finalSave(f *sharedFile) error {
+	var err error
+	for attempt := 1; ; attempt++ {
+		if s.beforeFinalWrite != nil {
+			s.beforeFinalWrite(attempt)
+		}
+		f.Writer.Schedule(f.render())
+		err = f.Writer.Flush()
+		if !errors.Is(err, filewriter.ErrExternalChange) || attempt == finalWriteAttempts {
+			return err
+		}
+		// Someone saved the file meanwhile: merge it in and try again.
+		f.syncFromDisk()
+	}
+}
+
+// files returns every file of the session, the first one first. The caller
+// holds s.filesMu.
+func (s *Session) files() []*sharedFile {
+	return append([]*sharedFile{s.sharedFile}, s.added...)
 }
 
 // Saving is often truncate-then-write, so a read right after the change event can

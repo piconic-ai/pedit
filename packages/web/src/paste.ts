@@ -1,5 +1,6 @@
 import { type Extension, StateEffect, StateField } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
+import * as Y from 'yjs'
 
 export interface ImagePasteOptions {
   /**
@@ -10,6 +11,18 @@ export interface ImagePasteOptions {
   /** Adds an image; resolves with the path to link to. */
   upload: (file: File) => Promise<string>
   onError: (message: string) => void
+  /**
+   * Holds the place an image goes outside the editor's state, which a room
+   * that shares several files replaces when another file is shown: the
+   * link then goes into the file it was added to, wherever it is. Without
+   * it, the place is kept in the editor's state.
+   */
+  anchor?: (pos: number) => Anchor
+}
+
+/** A place in a document that follows every edit until something goes there. */
+export interface Anchor {
+  insert(text: string): void
 }
 
 const IMAGE = /^image\//
@@ -42,6 +55,22 @@ const slots = StateField.define<ReadonlyMap<number, number>>({
   },
 })
 
+/**
+ * A place in a shared text: it follows every edit, made here or by others,
+ * while the text is shown or not. Text typed right at it stays after it, as
+ * the editor's own slots do.
+ */
+export function textAnchor(text: Y.Text, pos: number): Anchor {
+  const at = Y.createRelativePositionFromTypeIndex(text, pos, -1)
+  return {
+    insert(s) {
+      const doc = text.doc
+      const index = doc && Y.createAbsolutePositionFromRelativePosition(at, doc)?.index
+      if (doc && index != null) doc.transact(() => text.insert(index, s))
+    },
+  }
+}
+
 /** Markdown for an image link. Angle brackets keep any path in one piece. */
 export function imageMarkdown(path: string): string {
   return /[\s()<>]/.test(path) ? `![](<${path}>)` : `![](${path})`
@@ -58,6 +87,14 @@ export function imagePaste(opts: ImagePasteOptions): Extension {
       return
     }
     for (const file of files) {
+      const anchor = opts.anchor?.(pos)
+      if (anchor) {
+        opts.upload(file).then(
+          (path) => anchor.insert(imageMarkdown(path)),
+          (error: unknown) => opts.onError(error instanceof Error ? error.message : String(error)),
+        )
+        continue
+      }
       const id = nextSlot++
       view.dispatch({ effects: addSlot.of({ id, pos }) })
       opts.upload(file).then(

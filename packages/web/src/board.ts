@@ -134,6 +134,7 @@ export class BoardView {
   #dragFrame = 0
   #doc: Y.Doc
   #awareness: Awareness
+  #here: (state: Record<string, unknown>) => boolean
   #undo: Y.UndoManager
   #store: FlowStore | null = null
   #canvas: Canvas = { nodes: [], edges: [] }
@@ -148,9 +149,18 @@ export class BoardView {
   #edgesChanged = new Store(0)
   #drawnEdges = ''
 
-  constructor(doc: Y.Doc, awareness: Awareness, options: { json?: JsonPane } = {}) {
+  constructor(
+    doc: Y.Doc,
+    awareness: Awareness,
+    options: {
+      json?: JsonPane
+      /** Whose presence is on this canvas, in a room that shares several files. */
+      here?: (state: Record<string, unknown>) => boolean
+    } = {},
+  ) {
     this.#doc = doc
     this.#awareness = awareness
+    this.#here = options.here ?? (() => true)
     this.json = options.json ?? null
     const scope = [doc.getArray(NODES), doc.getArray(EDGES)]
     // Undo only this browser's edits, not everyone's; typing in a text node
@@ -176,7 +186,12 @@ export class BoardView {
 
   /** Draws where the others are: outlines on their nodes, ghosts where they drag. */
   #paintPeers(): void {
-    const { nodes, ghosts } = peersOf(this.#awareness.getStates(), this.#doc.clientID)
+    const states = new Map(
+      [...this.#awareness.getStates()].filter(([, s]) => this.#here(s as Record<string, unknown>)),
+    )
+    // Self by the awareness: a file of a room that shares several has a doc
+    // of its own, with another client id.
+    const { nodes, ghosts } = peersOf(states, this.#awareness.clientID)
     if (
       !sameNodePeers(
         untrack(() => this.peers.get()),

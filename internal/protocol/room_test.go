@@ -42,6 +42,12 @@ type joinOpts struct {
 	onSynced     func()
 	busyBackoff  time.Duration
 	onStatus     func(protocol.Status)
+
+	onManifest       func([]protocol.FileEntry)
+	onFileSynced     func(uint64)
+	onFileAttachment func(uint64, protocol.Attachment)
+	onFileCanvas     func(uint64, protocol.CanvasMessage)
+	bytes            protocol.Rate
 }
 
 func join(t *testing.T, relay *prototest.Relay, key string, o joinOpts) *peer {
@@ -74,6 +80,12 @@ func join(t *testing.T, relay *prototest.Relay, key string, o joinOpts) *peer {
 		OnAttachment: o.onAttachment,
 		OnCanvas:     o.onCanvas,
 		OnSynced:     o.onSynced,
+
+		OnManifest:       o.onManifest,
+		OnFileSynced:     o.onFileSynced,
+		OnFileAttachment: o.onFileAttachment,
+		OnFileCanvas:     o.onFileCanvas,
+		Bytes:            o.bytes,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -245,8 +257,8 @@ func TestSkipsMessagesFromNewerPeers(t *testing.T) {
 	}})
 	prototest.WaitFor(t, wait, func() bool { return b.Status() == protocol.StatusConnected }, "b connected")
 
-	// A newer peer sends a message type and an attachment kind b does not
-	// know, then an edit.
+	// A newer peer sends a message type, an attachment kind, a files kind
+	// and a message about a file that b does not know, then an edit.
 	raw, _ := protocol.DecodeKey(key)
 	c, _ := protocol.NewCipher(raw)
 	conn, err := relay.Dial(t.Context(), "ws://test", nil)
@@ -257,6 +269,8 @@ func TestSkipsMessagesFromNewerPeers(t *testing.T) {
 	for i, m := range [][]byte{
 		protocol.EncodeMessage(9, []byte{1, 2, 3}),
 		protocol.EncodeMessage(protocol.MessageAttachment, []byte{9, 1, 2, 3}),
+		protocol.EncodeMessage(protocol.MessageFiles, []byte{9, 1, 2, 3}),
+		protocol.EncodeMessage(protocol.MessageFiles, []byte{byte(protocol.FilesDoc), 1, 9, 1, 2, 3}),
 	} {
 		if err := conn.Write(t.Context(), c.Encrypt(protocol.EncodeFrame(protocol.Sender{1}, uint64(i+1), m))); err != nil {
 			t.Fatal(err)

@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -443,4 +444,76 @@ func TestGoHostSharesACanvasWithJavaScriptGuest(t *testing.T) {
 		b, _ := os.ReadFile(file)
 		return string(b) == want
 	}, "the guest's edits to be saved")
+}
+
+func TestGoHostSharesSeveralFilesWithJavaScriptGuest(t *testing.T) {
+	dir := protocolDir(t)
+	server := newServer(t)
+	key := protocol.GenerateKey()
+	raw, _ := protocol.DecodeKey(key)
+	doc := crdt.New()
+	attachments := make(chan string, 1)
+	host, err := protocol.NewClient(protocol.ClientOptions{
+		URL:       wsURL(server),
+		Header:    http.Header{"Authorization": {"Bearer host-token"}},
+		Key:       raw,
+		Doc:       doc,
+		Awareness: awareness.New(uint64(doc.ClientID())),
+		OnFileAttachment: func(id uint64, a protocol.Attachment) {
+			attachments <- fmt.Sprintf("%d %s %s", id, a.Hash, a.Mime)
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(host.Destroy)
+	files := []protocol.FileEntry{
+		{ID: 1, Path: "agenda.md", Format: protocol.FormatText},
+		{ID: 7, Path: "議事録/notes.md", Format: protocol.FormatText},
+	}
+	texts := map[uint64]*crdt.YText{}
+	for i, f := range files {
+		fileDoc := crdt.New()
+		texts[f.ID] = fileDoc.GetText("content")
+		fileDoc.Transact(func(txn *crdt.Transaction) { texts[f.ID].Insert(txn, 0, fmt.Sprintf("# %d 🌏\n", i), nil) })
+		if err := host.AddFile(f.ID, fileDoc); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := host.SetManifest(files); err != nil {
+		t.Fatal(err)
+	}
+	host.Connect()
+	prototest.WaitFor(t, 5*time.Second, func() bool { return host.Status() == protocol.StatusConnected }, "host connected")
+
+	guest := startGuest(t, "testdata/files.mjs", dir, wsURL(server), key)
+	var got struct {
+		Manifest []protocol.FileEntry
+		Texts    map[string]string
+		Room     string
+	}
+	if line := guest.next("the files"); json.Unmarshal([]byte(line), &got) != nil {
+		t.Fatalf("guest said %q\n%s", line, guest.stderr.String())
+	}
+	want := map[string]string{"agenda.md": "# 0 🌏\n", "議事録/notes.md": "# 1 🌏\n"}
+	if !reflect.DeepEqual(got.Manifest, files) || !reflect.DeepEqual(got.Texts, want) || got.Room != "" {
+		t.Fatalf("guest got %+v", got)
+	}
+	prototest.WaitFor(t, 5*time.Second, func() bool { return texts[7].ToString() == "# 1 🌏\n- from JS\n" }, "the guest's edit")
+	select {
+	case a := <-attachments:
+		if a != "7 0123456789abcdef0123456789abcdef image/png" {
+			t.Fatalf("host got %q", a)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatalf("no announcement\n%s", guest.stderr.String())
+	}
+	stored := protocol.Attachment{Kind: protocol.AttachmentStored, Hash: "0123456789abcdef0123456789abcdef", Path: "assets/0123456789abcdef0123456789abcdef.png"}
+	if err := host.SendFileAttachment(7, stored); err != nil {
+		t.Fatal(err)
+	}
+	if line := guest.next("the stored reply"); line != "stored 7 "+stored.Path {
+		t.Fatalf("guest said %q\n%s", line, guest.stderr.String())
+	}
+	guest.wait()
 }

@@ -84,6 +84,33 @@ export function applyToText(text: Y.Text, edits: readonly Edit[], origin: unknow
 }
 
 /** Why the table cannot show, in a line fit for a tooltip. */
+/**
+ * Each file's table error, in a room that shares several: only the error of
+ * the file on screen reaches the view, and showing another file shows its own.
+ */
+export class TableErrors<K> {
+  #errors = new Map<K, CsvError | null>()
+  #shown: K
+  #apply: (error: CsvError | null) => void
+
+  constructor(shown: K, apply: (error: CsvError | null) => void) {
+    this.#shown = shown
+    this.#apply = apply
+  }
+
+  /** A file's table error changed. */
+  report(file: K, error: CsvError | null): void {
+    this.#errors.set(file, error)
+    if (file === this.#shown) this.#apply(error)
+  }
+
+  /** Another file is on screen. */
+  show(file: K): void {
+    this.#shown = file
+    this.#apply(this.#errors.get(file) ?? null)
+  }
+}
+
 export function describeError(error: CsvError): string {
   return `Shown as text: line ${error.line} is not valid CSV (${error.message.toLowerCase()}).`
 }
@@ -543,7 +570,9 @@ export class TableView {
     }
     const byCell: Record<string, CellPeers> = {}
     const states = this.#awareness.getStates()
-    for (const p of participants(states, doc.clientID)) {
+    // Self by the awareness: a file of a room that shares several has a doc
+    // of its own, with another client id.
+    for (const p of participants(states, this.#awareness.clientID)) {
       if (p.isSelf) continue
       const cursor = (states.get(p.clientId) as { cursor?: { head?: unknown } } | undefined)?.cursor
       if (!cursor?.head) continue
