@@ -266,6 +266,12 @@ func (c *Client) Do(fn func()) {
 	fn()
 }
 
+func (c *Client) isDestroyed() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.destroyed
+}
+
 // Destroy announces departure, closes the connection and stops reconnecting.
 func (c *Client) Destroy() {
 	c.mu.Lock()
@@ -292,15 +298,15 @@ func (c *Client) Destroy() {
 	c.unsubscribeFiles()
 	if out != nil {
 		out.drain()
-	}
-	c.cancel()
-	if out != nil {
+		// Before the read is cancelled: that closes the connection at once,
+		// without the code that tells the relay the host left on purpose.
 		if c.opts.Host {
 			_ = out.conn.Leave()
 		} else {
 			_ = out.conn.Close()
 		}
 	}
+	c.cancel()
 	if started {
 		<-done
 	}
@@ -317,7 +323,7 @@ func (c *Client) run(done chan struct{}) {
 			attempts = 0
 			err = c.serve(conn)
 		}
-		if c.ctx.Err() != nil || errors.Is(err, errDestroyed) {
+		if c.ctx.Err() != nil || errors.Is(err, errDestroyed) || c.isDestroyed() {
 			return
 		}
 		c.dropRemoteAwareness()
