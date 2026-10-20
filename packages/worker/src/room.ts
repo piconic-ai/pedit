@@ -444,7 +444,11 @@ export class Room extends DurableObject<Env> {
   // Everything before the first await runs synchronously, which the
   // generation and cleaning invariants rely on.
   private async endSession(code: number, reason: string, except?: WebSocket): Promise<void> {
-    this.log('session ended', { code, reason })
+    // Logged once per session: the close callbacks and alarms that follow
+    // clean up again, but the session already ended, for this reason.
+    if (this.ctx.storage.kv.get(ADMISSION_KEY) !== undefined) {
+      this.log('session ended', { code, reason })
+    }
     for (const peer of this.ctx.getWebSockets()) {
       if (peer !== except) safeClose(peer, code, reason)
     }

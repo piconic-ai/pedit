@@ -1124,13 +1124,28 @@ describe('room lifetime', () => {
   })
 
   it('can run its alarm twice', async () => {
-    const room = await createRoom()
-    await host(room)
-    await backdate(room)
-    const run = () => runInDurableObject(stubOf(room), (instance: RoomObject) => instance.alarm())
-    await run()
-    const once = await state(room)
-    await run()
-    expect(await state(room)).toEqual(once)
+    const lines: string[] = []
+    const spy = vi.spyOn(console, 'log').mockImplementation((line: string) => {
+      lines.push(line)
+    })
+    try {
+      const room = await createRoom()
+      const h = await host(room)
+      await backdate(room)
+      const run = () => runInDurableObject(stubOf(room), (instance: RoomObject) => instance.alarm())
+      await run()
+      expect((await h.closed).code).toBe(ROOM_EXPIRED)
+      const once = await state(room)
+      await run()
+      expect(await state(room)).toEqual(once)
+      // The host's close and the second alarm clean up again, but the
+      // session ended once, when it expired.
+      const ended = lines
+        .map((l) => JSON.parse(l))
+        .filter((e) => e.message === 'room: session ended')
+      expect(ended).toEqual([expect.objectContaining({ code: ROOM_EXPIRED })])
+    } finally {
+      spy.mockRestore()
+    }
   })
 })
