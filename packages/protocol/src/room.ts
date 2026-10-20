@@ -178,8 +178,8 @@ export class RoomClient {
   private readonly files = new Map<number, FileDoc>()
   // Paces the frames sent on the current socket; see Pacer.
   private pacer = new Pacer()
-  // Set by destroy: the last frames go without waiting.
-  private leaving = false
+  // Ends the pacing wait of the frame next in line, when its socket closes.
+  private wake: (() => void) | null = null
   // The encoded manifest, when this client set one.
   private manifest: Uint8Array | null = null
 
@@ -237,6 +237,8 @@ export class RoomClient {
     socket.onclose = (ev) => {
       if (this.socket !== socket) return
       this.socket = null
+      // Its frames are dropped: the next connection need not wait them out.
+      this.wake?.()
       this.dropRemoteAwareness()
       const final = ev.code === undefined ? undefined : FINAL_CLOSE.get(ev.code)
       if (final && !this.destroyed) {
@@ -260,7 +262,6 @@ export class RoomClient {
   /** Announces departure, closes the socket and stops reconnecting. */
   async destroy(): Promise<void> {
     if (this.destroyed) return
-    this.leaving = true
     awarenessProtocol.removeAwarenessStates(this.awareness, [this.doc.clientID], 'local')
     await this.sendChain
     this.destroyed = true
@@ -516,8 +517,22 @@ export class RoomClient {
     const pacer = this.pacer
     this.sendChain = this.sendChain
       .then(async () => {
+        // A closed connection's frames are dropped, as frames sent while
+        // disconnected are: the next handshake carries what they did.
+        if (socket.readyState !== OPEN) return
+        // Paced on leaving too: going over the allowance would close the
+        // socket before the edits still queued reach the room.
         const wait = pacer.take(frameBytes(payload.length))
-        if (wait > 0 && !this.leaving) await new Promise((r) => setTimeout(r, wait))
+        if (wait > 0) {
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, wait)
+            this.wake = () => {
+              clearTimeout(timer)
+              resolve()
+            }
+          })
+          this.wake = null
+        }
         const data = await encrypt(this.opts.key, plaintext)
         if (socket.readyState === OPEN) socket.send(data)
       })
@@ -528,6 +543,7 @@ export class RoomClient {
   private tooLarge(socket: SocketLike): void {
     if (this.socket !== socket) return
     this.socket = null // onclose then ignores this socket: no reconnect
+    this.wake?.()
     socket.close()
     // Told once the change that caused it is done: this runs inside Yjs
     // transactions and editor updates, which must not be re-entered.

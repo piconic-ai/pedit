@@ -30,6 +30,8 @@ export interface RelayOptions {
 export class Relay {
   sockets = new Set<FakeSocket>()
   frames: Uint8Array[] = []
+  /** Sockets closed for going over `byteRate`. */
+  rateLimited = 0
   urls: string[] = []
   headers: (Record<string, string> | undefined)[] = []
   protocols: (string[] | undefined)[] = []
@@ -114,6 +116,7 @@ export class FakeSocket implements SocketLike {
       this.at = now
       this.bytes = Math.min(rate.burst, (this.bytes ?? rate.burst) + seconds * rate.perSecond)
       if (this.bytes < data.length) {
+        this.relay.rateLimited++
         this.close(RATE_LIMITED)
         return
       }
