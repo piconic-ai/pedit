@@ -80,3 +80,47 @@ func TestDialWebSocketKeepsAnAnsweringConnection(t *testing.T) {
 	case <-time.After(500 * time.Millisecond):
 	}
 }
+
+// The relay's own text frames come back as Signals, between binary frames.
+func TestDialWebSocketReadsTheRelaysSignals(t *testing.T) {
+	url := relayServer(t, func(ctx context.Context, c *websocket.Conn) {
+		_ = c.Write(ctx, websocket.MessageText, []byte(HostAway))
+		_ = c.Write(ctx, websocket.MessageBinary, []byte{1})
+		_, _, _ = c.Read(ctx)
+	})
+	conn, err := DialWebSocket(context.Background(), url, http.Header{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := conn.Read(ctx); err != Signal(HostAway) {
+		t.Fatalf("first Read = %v, want the HostAway signal", err)
+	}
+	if data, err := conn.Read(ctx); err != nil || len(data) != 1 {
+		t.Fatalf("second Read = %v, %v", data, err)
+	}
+}
+
+// A host leaving on purpose says so, where a dropped one does not.
+func TestLeaveClosesWithHostLeft(t *testing.T) {
+	codes := make(chan websocket.StatusCode, 1)
+	url := relayServer(t, func(ctx context.Context, c *websocket.Conn) {
+		_, _, err := c.Read(ctx)
+		codes <- websocket.CloseStatus(err)
+	})
+	conn, err := DialWebSocket(context.Background(), url, http.Header{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.Leave()
+	select {
+	case code := <-codes:
+		if code != HostLeft {
+			t.Fatalf("closed with %d, want HostLeft", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the relay never heard the close")
+	}
+}

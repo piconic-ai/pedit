@@ -227,7 +227,8 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 	if header == nil {
 		header = http.Header{}
 	}
-	// Marks us as the host: the room closes for everyone once we leave.
+	// Marks us as the host: the room closes for everyone once we leave, and
+	// waits a while for us when we drop.
 	header.Set("Authorization", "Bearer "+room.HostToken)
 	s.Client, err = protocol.NewClient(protocol.ClientOptions{
 		URL:       wsURL,
@@ -235,6 +236,7 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 		Doc:       doc,
 		Awareness: aw,
 		Header:    header,
+		Host:      true,
 		Dial:      opts.Dial,
 		OnStatus:  opts.OnStatus,
 		OnError:   onError,

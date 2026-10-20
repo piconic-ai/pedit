@@ -452,11 +452,24 @@ async function joinRoom(
     settings,
   })
 
+  // Nobody edits while the host is away: nobody would save it. Once the room
+  // has ended, for good.
   const setStatus = (s: RoomStatus) => {
+    const was = roomStatus.get()
     roomStatus.set(s)
     if (isFinalStatus(s)) {
       editor.dispatch({ effects: editable.reconfigure(readOnly) })
-      for (const f of opened.values()) f.board.readOnly = true
+      for (const f of opened.values()) {
+        f.board.readOnly = true
+        f.table.readOnly = true
+      }
+    } else if ((s === 'waiting') !== (was === 'waiting')) {
+      const away = s === 'waiting'
+      editor.dispatch({ effects: editable.reconfigure(away ? readOnly : []) })
+      for (const f of opened.values()) {
+        f.board.paused = away
+        f.table.readOnly = away
+      }
     }
   }
 
@@ -515,7 +528,13 @@ async function joinRoom(
       table: tableFor(entry.id, fileText, undo),
       ...canvasFor(entry.id, fileDoc),
     }
-    if (isFinalStatus(roomStatus.get())) f.board.readOnly = true
+    if (isFinalStatus(roomStatus.get())) {
+      f.board.readOnly = true
+      f.table.readOnly = true
+    } else if (roomStatus.get() === 'waiting') {
+      f.board.paused = true
+      f.table.readOnly = true
+    }
     opened.set(entry.id, f)
     client?.addFile(entry.id, fileDoc)
     return f

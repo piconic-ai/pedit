@@ -232,6 +232,27 @@ func TestJoinedCopySyncsBothWays(t *testing.T) {
 	prototest.WaitFor(t, wait, func() bool { return readFile(t, f.file) == all }, "host file from browser")
 }
 
+// While the host is away nobody edits: what changes in the copy meanwhile is
+// taken in once the host is back.
+func TestJoinedCopyHoldsItsEditsWhileTheHostIsAway(t *testing.T) {
+	f := setup(t, "one\n", setupOpts{watch: true})
+	g, err := joinFromCLI(t, f, joinCLIOpts{JoinOptions: JoinOptions{Watch: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.relay.Signal(protocol.HostAway)
+	prototest.WaitFor(t, wait, func() bool { return g.Client.Status() == protocol.StatusWaiting }, "waiting")
+	if err := os.WriteFile(g.File(), []byte("one\nheld\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if got := readFile(t, f.file); got != "one\n" {
+		t.Fatalf("taken in while the host was away: %q", got)
+	}
+	f.relay.Signal(protocol.HostBack)
+	prototest.WaitFor(t, wait, func() bool { return readFile(t, f.file) == "one\nheld\n" }, "the held edit at the host")
+}
+
 func TestJoinedSessionAppearsAsAGuest(t *testing.T) {
 	f := setup(t, "x", setupOpts{})
 	browser := joinAsGuest(t, f.relay, f.session.URL)

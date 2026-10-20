@@ -28,6 +28,11 @@ It runs the latest release, deployed from this repository
   point-in-time recovery
   ([Cloudflare](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/#pitr-point-in-time-recovery-api)).
 
+A host whose connection drops, rather than one ending the session with
+Ctrl+C, gets two minutes to come back: meanwhile the room keeps its guests,
+lets new ones in and keeps its images and per-room data, and nobody edits. If
+the host does not come back, the room ends as if it had left.
+
 A relay update drops every room's connections without the room seeing anyone
 leave. A host whose `pedit` is still running reconnects, and the session goes
 on. A room whose host does not come back deletes its images and per-room data
@@ -57,7 +62,9 @@ log lines are `rate limited <route>`, without the address,
 `failed to delete blobs` with the error, and one JSON line per event that
 ends a session or turns someone away, so a room that closed unexpectedly can
 be explained: `room: host connected`, `room: host closed` (with its close
-code), `room: host errored`, `room: alarm found no host`,
+code), `room: host errored`, `room: host away` (the room waits for a host
+that dropped), `room: host returned`, `room: host did not come back`,
+`room: alarm found no host`,
 `room: closed a peer` (rate limited, a frame too big, or text),
 `room: closed for maintenance`, `room: session ended` (with the close code
 and reason) and `room: turned a guest away`. Each names the room's Durable

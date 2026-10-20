@@ -15,10 +15,20 @@ import (
 type Conn interface {
 	// Read returns the next binary frame. A close frame from the peer is
 	// reported as a *CloseError.
+	// A text frame, which only the relay itself sends, is reported as a
+	// Signal and does not end the connection.
 	Read(ctx context.Context) ([]byte, error)
 	Write(ctx context.Context, data []byte) error
 	Close() error
+	// Leave closes the connection as a host ending the session on purpose
+	// (HostLeft).
+	Leave() error
 }
+
+// Signal is a text frame of the relay's own, HostAway or HostBack.
+type Signal string
+
+func (s Signal) Error() string { return "relay says: " + string(s) }
 
 // Dialer opens a connection to url with extra handshake headers.
 type Dialer func(ctx context.Context, url string, header http.Header) (Conn, error)
@@ -125,6 +135,9 @@ func (w *wsConn) Read(ctx context.Context) ([]byte, error) {
 		if typ == websocket.MessageBinary {
 			return data, nil
 		}
+		if typ == websocket.MessageText {
+			return nil, Signal(data)
+		}
 	}
 }
 
@@ -135,4 +148,9 @@ func (w *wsConn) Write(ctx context.Context, data []byte) error {
 func (w *wsConn) Close() error {
 	w.stop()
 	return w.c.Close(websocket.StatusNormalClosure, "")
+}
+
+func (w *wsConn) Leave() error {
+	w.stop()
+	return w.c.Close(HostLeft, "the host left")
 }

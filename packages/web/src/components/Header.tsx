@@ -15,6 +15,7 @@ const MAX_FACES = 3
 const STATUS_LABELS: Record<RoomStatus, string> = {
   connected: 'Connected',
   connecting: 'Connecting…',
+  waiting: 'Waiting for the host…',
   closed: 'Ended',
   full: 'Room full',
   maintenance: 'Maintenance',

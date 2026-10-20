@@ -53,6 +53,22 @@ const RelayMaintenance = 4006
 // it: the room ID is never reopened; the host starts a new room.
 const RoomExpired = 4007
 
+// HostLeft is the WebSocket close code a host sends when it ends the session
+// on purpose, as on Ctrl+C. The relay then closes the room at once (with
+// RoomClosed for everyone else), where a host that drops gets a grace period
+// to come back.
+const HostLeft = 4008
+
+// HostAway and HostBack are the text frames the relay itself sends guests,
+// the only frames not from a peer and not encrypted: the host dropped and the
+// relay waits for it to come back, or it came back. Guests do not edit while
+// the host is away: nobody would save what they wrote. Keep them equal to
+// HOST_AWAY and HOST_BACK in packages/protocol.
+const (
+	HostAway = "host away"
+	HostBack = "host back"
+)
+
 // MessageTooBig is the WebSocket close code (the standard 1009) the relay
 // sends a connection whose frame is over MaxFrameBytes. Clients must not
 // reconnect on it: they would send the same frame again.

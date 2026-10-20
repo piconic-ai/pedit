@@ -186,6 +186,25 @@ describe('TableView', () => {
     expect(text.toString()).toBe('a,x\n')
   })
 
+  it('can only be read while it is read-only, and is edited again after', () => {
+    const { text, view, cell, key } = setup('a,b\nc,d\n')
+    view.select({ row: 0, col: 0 })
+    view.readOnly = true
+    key(cell(0, 0), 'x')
+    key(cell(0, 0), 'Delete')
+    view.edit({ row: 0, col: 1 })
+    view.insertRow('below')
+    view.deleteColumn()
+    key(cell(0, 0), 'z', { ctrlKey: true })
+    expect(text.toString()).toBe('a,b\nc,d\n')
+    // Moving around still works.
+    key(cell(0, 0), 'ArrowDown')
+    expect(view.selected).toEqual({ row: 1, col: 0 })
+    view.readOnly = false
+    key(cell(1, 0), 'x')
+    expect(text.toString()).toBe('a,b\nx,d\n')
+  })
+
   it('moves with the arrow keys and clears with Delete', () => {
     const { text, view, cell, key } = setup('a,b\nc,d\n')
     view.select({ row: 0, col: 0 })

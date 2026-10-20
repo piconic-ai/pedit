@@ -56,6 +56,7 @@ export function whyNoImages(
   if (status === 'server-outdated') return 'The server is older than this page.'
   if (status === 'expired') return 'This room reached its time limit.'
   if (status === 'too-large') return 'The document is too large to share.'
+  if (status === 'waiting') return 'The host is away. Try again once they are back.'
   if (status !== 'connected' || !hostHere) return 'Connecting to the host. Try again in a moment.'
   if (!host) return "The host's pedit is too old to save images."
   return null

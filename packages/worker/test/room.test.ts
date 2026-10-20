@@ -29,6 +29,7 @@ const ROOM_FULL = 4004
 const RELAY_BUSY = 4005
 const RELAY_MAINTENANCE = 4006
 const ROOM_EXPIRED = 4007
+const HOST_LEFT = 4008
 const MESSAGE_TOO_BIG = 1009
 // The tests run with small limits (vitest.config.ts).
 const { guests: GUESTS, blobBytes: BLOB_BYTES, roomSeconds } = limits(env)
@@ -68,6 +69,8 @@ async function createRoom(): Promise<Room> {
 interface Peer {
   ws: WebSocket
   received: ArrayBuffer[]
+  /** What the relay itself said (HOST_AWAY, HOST_BACK). */
+  signals: string[]
   closed: Promise<CloseEvent>
 }
 
@@ -88,13 +91,15 @@ async function connect(id: string, headers: Record<string, string> = {}): Promis
   const ws = res.webSocket
   if (!ws) throw new Error('no websocket')
   const received: ArrayBuffer[] = []
+  const signals: string[] = []
   const closed = new Promise<CloseEvent>((resolve) => ws.addEventListener('close', resolve))
   ws.addEventListener('message', (ev) => {
     if (ev.data instanceof ArrayBuffer) received.push(ev.data)
+    else if (typeof ev.data === 'string') signals.push(ev.data)
   })
   ws.binaryType = 'arraybuffer'
   ws.accept()
-  return { ws, received, closed }
+  return { ws, received, signals, closed }
 }
 
 const host = (room: Room, headers: Record<string, string> = {}) =>
@@ -134,7 +139,7 @@ describe('rooms', () => {
     ).toBe(403)
     const valid = await upgrade(room.id)
     expect(valid.status).toBe(101)
-    expect(valid.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v3')
+    expect(valid.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v4')
     valid.webSocket?.accept()
     valid.webSocket?.close()
   })
@@ -155,13 +160,13 @@ describe('rooms', () => {
     const room = await createRoom()
     await host(room)
     const admission = admissionProtocols(admissions.get(room.id)!)[1]
-    // pedit-v2 is a pedit from before command line guests named their copies.
-    const old = await upgrade(room.id, { 'Sec-WebSocket-Protocol': `pedit-v2, ${admission}` })
+    // pedit-v3 is a pedit from before the relay waited for a host that dropped.
+    const old = await upgrade(room.id, { 'Sec-WebSocket-Protocol': `pedit-v3, ${admission}` })
     expect(old.status).toBe(101)
-    expect(old.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v2')
+    expect(old.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v3')
     // A wrong admission makes no difference: the version is checked first.
     const newer = await connect(room.id, {
-      'Sec-WebSocket-Protocol': `pedit-v4, pedit-admission.${'B'.repeat(43)}`,
+      'Sec-WebSocket-Protocol': `pedit-v5, pedit-admission.${'B'.repeat(43)}`,
     })
     expect((await newer.closed).code).toBe(SERVER_OUTDATED)
     const ws = old.webSocket!
@@ -263,7 +268,7 @@ describe('rooms', () => {
     const h = await host(room)
     const a = await connect(room.id)
     const b = await connect(room.id)
-    h.ws.close(1000, 'bye')
+    h.ws.close(HOST_LEFT, 'bye')
     expect((await a.closed).code).toBe(ROOM_CLOSED)
     expect((await b.closed).code).toBe(ROOM_CLOSED)
     const late = await connect(room.id)
@@ -279,7 +284,7 @@ describe('rooms', () => {
       const room = await createRoom()
       const h = await host(room)
       const guest = await connect(room.id)
-      h.ws.close(1000, 'bye')
+      h.ws.close(HOST_LEFT, 'bye')
       expect((await guest.closed).code).toBe(ROOM_CLOSED)
       const late = await connect(room.id)
       expect((await late.closed).code).toBe(ROOM_CLOSED)
@@ -287,7 +292,7 @@ describe('rooms', () => {
       const events = lines.map((l) => JSON.parse(l)).filter((e) => e.message?.startsWith('room: '))
       const named = (m: string) => events.find((e) => e.message === `room: ${m}`)
       expect(named('host connected')).toMatchObject({ hosts: 1, guests: 0 })
-      expect(named('host closed')).toMatchObject({ code: 1000, wasClean: true, otherHosts: 0 })
+      expect(named('host closed')).toMatchObject({ code: HOST_LEFT, wasClean: true, otherHosts: 0 })
       expect(named('session ended')).toMatchObject({ code: ROOM_CLOSED, reason: 'the host left' })
       expect(named('turned a guest away')).toMatchObject({ code: ROOM_CLOSED, hosts: 0 })
       const room0 = named('host connected').room
@@ -367,7 +372,7 @@ describe('rooms', () => {
     const again = await host(room)
     expect(again.ws.readyState).toBe(WebSocket.OPEN)
     // Someone leaving frees their place.
-    first.ws.close(1000, 'bye')
+    first.ws.close(HOST_LEFT, 'bye')
     await first.closed
     await vi.waitFor(async () => {
       const next = await connect(room.id)
@@ -388,8 +393,13 @@ describe('rooms', () => {
       quotaBytes: 100 * 1024 * 1024,
       quotaCount: 500,
       roomSeconds: Number.POSITIVE_INFINITY,
+      hostGraceSeconds: 120,
     })
     expect(limits({ ROOM_MAX_SECONDS: '86400' }).roomSeconds).toBe(86400)
+    expect(limits({ HOST_GRACE_SECONDS: '30' }).hostGraceSeconds).toBe(30)
+    for (const bad of ['0', '-1', '1.5', 'many', '']) {
+      expect(limits({ HOST_GRACE_SECONDS: bad }).hostGraceSeconds).toBe(120)
+    }
     for (const bad of ['0', '-1', '1.5', 'many', '']) {
       expect(limits({ ROOM_MAX_SECONDS: bad }).roomSeconds).toBe(Number.POSITIVE_INFINITY)
     }
@@ -643,9 +653,9 @@ describe('blobs', () => {
     const first = await host(room)
     await putBlob(room, blobId(1), new Uint8Array([1]))
     // Two sessions end back to back; each chains a cleanup.
-    first.ws.close(1000, 'bye')
+    first.ws.close(HOST_LEFT, 'bye')
     const second = await host(room)
-    second.ws.close(1000, 'bye')
+    second.ws.close(HOST_LEFT, 'bye')
     await host(room)
     const res = await getBlob(room, blobId(1))
     expect(res.status).toBe(404)
@@ -657,7 +667,7 @@ describe('blobs', () => {
     const h = await host(room)
     const upload = slowPut(room, blobId(1), 90)
     await upload.started()
-    h.ws.close(1000, 'bye')
+    h.ws.close(HOST_LEFT, 'bye')
     await new Promise((r) => setTimeout(r, 50))
     await host(room)
     expect((await upload.finish()).status).toBe(410)
@@ -689,7 +699,7 @@ describe('blobs', () => {
     await putBlob(room, blobId(2), new Uint8Array([2]))
     expect(await roomBlobs(room)).toHaveLength(2)
 
-    h.ws.close(1000, 'bye')
+    h.ws.close(HOST_LEFT, 'bye')
     await guest.closed
     await vi.waitFor(async () => expect(await roomBlobs(room)).toEqual([]))
     expect((await getBlob(room, blobId(1))).status).toBe(410)
@@ -758,7 +768,7 @@ describe('rate limits', () => {
     expect(turnedAway.map((r) => r.status)).toEqual(Array(60).fill(403))
     const res = await upgrade(room.id, { 'CF-Connecting-IP': ip })
     expect(res.status).toBe(101)
-    expect(res.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v3')
+    expect(res.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v4')
     const ws = res.webSocket as WebSocket
     const closed = new Promise<CloseEvent>((resolve) => ws.addEventListener('close', resolve))
     ws.accept()
@@ -840,7 +850,7 @@ describe('maintenance', () => {
       }),
     )
     expect(upgraded.status).toBe(101)
-    expect(upgraded.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v3')
+    expect(upgraded.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v4')
     const ws = upgraded.webSocket as WebSocket
     const closed = new Promise<CloseEvent>((resolve) => ws.addEventListener('close', resolve))
     ws.accept()
@@ -888,7 +898,7 @@ describe('room lifetime', () => {
     expect(s.alarm).toBeLessThan(Date.now() + ALARM_INTERVAL_MS + 1000)
     await new Promise((r) => setTimeout(r, 20))
     await host(room)
-    first.ws.close(1000, 'bye')
+    first.ws.close(HOST_LEFT, 'bye')
     await first.closed
     await host(room)
     expect((await state(room)).opened).toBe(s.opened)
@@ -897,7 +907,7 @@ describe('room lifetime', () => {
   it('moves the alarm to the deadline once that is sooner than an hour', async () => {
     const room = await createRoom()
     const h = await host(room)
-    h.ws.close(1000, 'bye')
+    h.ws.close(HOST_LEFT, 'bye')
     await h.closed
     await backdate(room, LIFETIME_MS - 60_000)
     await host(room)
@@ -944,7 +954,7 @@ describe('room lifetime', () => {
   it('refuses a host who comes back after the deadline without an alarm having run', async () => {
     const room = await createRoom()
     const h = await host(room)
-    h.ws.close(1000, 'bye')
+    h.ws.close(HOST_LEFT, 'bye')
     await h.closed
     await backdate(room)
     const again = await host(room)
@@ -1020,7 +1030,7 @@ describe('room lifetime', () => {
   it('does nothing when the alarm comes after the host left normally', async () => {
     const room = await createRoom()
     const h = await host(room)
-    h.ws.close(1000, 'bye')
+    h.ws.close(HOST_LEFT, 'bye')
     await h.closed
     // The room's close handler ends the session; wait until it has.
     await vi.waitFor(async () => expect((await state(room)).admission).toBeUndefined())
@@ -1040,7 +1050,7 @@ describe('room lifetime', () => {
     const s = await state(room)
     expect(s.alarm).toBeGreaterThan(Date.now() + ALARM_INTERVAL_MS - 5000)
     // A host that is gone still has its session cleaned up.
-    h.ws.close(1000, 'bye')
+    h.ws.close(HOST_LEFT, 'bye')
     await h.closed
     await runInDurableObject(stubOf(room), (_: RoomObject, st) => {
       st.storage.kv.put('admissionHash', new Uint8Array(32).buffer)
@@ -1144,6 +1154,132 @@ describe('room lifetime', () => {
         .map((l) => JSON.parse(l))
         .filter((e) => e.message === 'room: session ended')
       expect(ended).toEqual([expect.objectContaining({ code: ROOM_EXPIRED })])
+    } finally {
+      spy.mockRestore()
+    }
+  })
+})
+
+describe('a host that drops', () => {
+  const stubOf = (room: Room) => env.ROOM.get(env.ROOM.idFromName(room.id))
+  const awayUntil = (room: Room) =>
+    runInDurableObject(stubOf(room), (_: RoomObject, st) =>
+      st.storage.kv.get<number>('hostAwayUntil'),
+    )
+  // As if the grace period had run out.
+  const endGrace = (room: Room) =>
+    runInDurableObject(stubOf(room), (_: RoomObject, st) => {
+      st.storage.kv.put('hostAwayUntil', Date.now() - 1)
+    })
+  const closedEarly = (peer: Peer) =>
+    Promise.race([
+      peer.closed.then(() => true),
+      new Promise<boolean>((r) => setTimeout(() => r(false), 50)),
+    ])
+
+  it('keeps its guests and lets new ones in while it waits, and goes on when it comes back', async () => {
+    const room = await createRoom()
+    const h = await host(room)
+    const guest = await connect(room.id)
+    // Any close but HOST_LEFT is a drop.
+    h.ws.close(1001, 'gone')
+    await until(() => guest.signals.includes('host away'))
+    expect(await closedEarly(guest)).toBe(false)
+    const before = Date.now()
+    expect(await awayUntil(room)).toBeGreaterThanOrEqual(before + 119_000)
+
+    const late = await connect(room.id)
+    await until(() => late.signals.includes('host away'))
+
+    const back = await host(room)
+    await until(() => guest.signals.includes('host back') && late.signals.includes('host back'))
+    expect(back.signals).toEqual([])
+    expect(await awayUntil(room)).toBeUndefined()
+    guest.ws.send(new Uint8Array([7]))
+    await until(() => back.received.length > 0)
+  })
+
+  it('closes the room when it does not come back in time', async () => {
+    const room = await createRoom()
+    const h = await host(room)
+    const guest = await connect(room.id)
+    h.ws.close(1001, 'gone')
+    await until(() => guest.signals.includes('host away'))
+    // The alarm waits out the grace period.
+    expect(await runDurableObjectAlarm(stubOf(room))).toBe(true)
+    expect(await closedEarly(guest)).toBe(false)
+    await endGrace(room)
+    await runInDurableObject(stubOf(room), (instance: RoomObject) => instance.alarm())
+    expect((await guest.closed).code).toBe(ROOM_CLOSED)
+    const late = await connect(room.id)
+    expect((await late.closed).code).toBe(ROOM_CLOSED)
+    expect(await awayUntil(room)).toBeUndefined()
+  })
+
+  it('turns a guest away once the grace period ran out, even before its alarm', async () => {
+    const room = await createRoom()
+    const h = await host(room)
+    h.ws.close(1001, 'gone')
+    await new Promise((r) => setTimeout(r, 50))
+    await endGrace(room)
+    const late = await connect(room.id)
+    expect((await late.closed).code).toBe(ROOM_CLOSED)
+  })
+
+  it('ends the session at once when the host leaves on purpose, though it still counts another', async () => {
+    const room = await createRoom()
+    // An older connection of the host the relay has not seen close.
+    await host(room)
+    const h = await host(room)
+    const guest = await connect(room.id)
+    h.ws.close(HOST_LEFT, 'bye')
+    expect((await guest.closed).code).toBe(ROOM_CLOSED)
+    expect(guest.signals).toEqual([])
+  })
+
+  it('shows attachments while it waits, and takes no new ones', async () => {
+    const room = await createRoom()
+    const h = await host(room)
+    const guest = await connect(room.id)
+    expect((await putBlob(room, blobId(1), new Uint8Array(10))).status).toBe(201)
+    h.ws.close(1001, 'gone')
+    await until(() => guest.signals.includes('host away'))
+    expect((await getBlob(room, blobId(1))).status).toBe(200)
+    expect((await putBlob(room, blobId(2), new Uint8Array(10))).status).toBe(503)
+  })
+
+  it('logs that it waited, and how it ended', async () => {
+    const lines: string[] = []
+    const spy = vi.spyOn(console, 'log').mockImplementation((line: string) => {
+      lines.push(line)
+    })
+    try {
+      const room = await createRoom()
+      const h = await host(room)
+      const guest = await connect(room.id)
+      h.ws.close(1001, 'gone')
+      await until(() => guest.signals.includes('host away'))
+      const back = await host(room)
+      await until(() => guest.signals.includes('host back'))
+      back.ws.close(1001, 'gone')
+      await until(() => guest.signals.filter((m) => m === 'host away').length === 2)
+      await endGrace(room)
+      await runInDurableObject(stubOf(room), (instance: RoomObject) => instance.alarm())
+      await guest.closed
+      const messages = lines.map((l) => JSON.parse(l).message)
+      expect(
+        messages.filter((m: string) => m.startsWith('room: host ') || m === 'room: session ended'),
+      ).toEqual([
+        'room: host connected',
+        'room: host closed',
+        'room: host away',
+        'room: host connected',
+        'room: host returned',
+        'room: host closed',
+        'room: host away',
+        'room: host did not come back',
+        'room: session ended',
+      ])
     } finally {
       spy.mockRestore()
     }

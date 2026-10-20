@@ -24,6 +24,8 @@ const LABELS = { idle: 'Copy text', copied: 'Copied', failed: 'Could not copy' }
 /** Why the room will not come back, for each status that says so. */
 const STATIC_MESSAGES: Partial<Record<RoomStatus, string>> = {
   closed: 'This session has ended: the host is not connected. You can still copy the text.',
+  waiting:
+    "The host's connection dropped. Waiting for them to come back: until then you can read, but not edit.",
   maintenance:
     'The relay is closed for maintenance. Once it is back and the host has reconnected, Reconnect brings you back. You can still copy the text.',
   full: 'This room is full: its relay takes only so many people at once. Try again when someone leaves, or ask the host to run their own relay, which can take more.',
@@ -42,7 +44,8 @@ function message(status: RoomStatus, limit: number | undefined): string | undefi
 }
 
 /**
- * Shown once the room closes, which it does as soon as the host leaves, or
+ * Shown while the host is away (the room waits for it to come back, and
+ * nobody edits), and once the room closes, which it does as soon as the host leaves, or
  * when the server speaks another protocol version than this page, or when the
  * room had no place for us, or when the document grew too large to share, or when the room reached
  * the relay's time limit.
@@ -70,7 +73,11 @@ export function EndedBanner(props: EndedBannerProps) {
       <button type="button" onClick={copyAll} hidden={status() === 'full'}>
         {LABELS[copy()]}
       </button>
-      <button type="button" onClick={() => props.onReconnect()} hidden={status() === 'expired'}>
+      <button
+        type="button"
+        onClick={() => props.onReconnect()}
+        hidden={status() === 'expired' || status() === 'waiting'}
+      >
         {status() === 'client-outdated' ? 'Reload' : 'Reconnect'}
       </button>
     </div>

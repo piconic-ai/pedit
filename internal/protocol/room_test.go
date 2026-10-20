@@ -133,6 +133,25 @@ func TestReportsSyncedOnceWithTheDocument(t *testing.T) {
 	}
 }
 
+// The relay's word on the host moves a guest between connected and waiting,
+// neither of which ends the client.
+func TestWaitsWhileTheRelaySaysTheHostIsAway(t *testing.T) {
+	relay := prototest.NewRelay(false)
+	key := protocol.GenerateKey()
+	guest := join(t, relay, key, joinOpts{})
+	prototest.WaitFor(t, wait, func() bool { return guest.Status() == protocol.StatusConnected }, "connected")
+	relay.Signal(protocol.HostAway)
+	prototest.WaitFor(t, wait, func() bool { return guest.Status() == protocol.StatusWaiting }, "waiting")
+	if protocol.StatusWaiting.Final() {
+		t.Fatal("waiting is final")
+	}
+	relay.Signal(protocol.HostBack)
+	prototest.WaitFor(t, wait, func() bool { return guest.Status() == protocol.StatusConnected }, "connected again")
+	if n := len(relay.URLs()); n != 1 {
+		t.Fatalf("dialed %d times", n)
+	}
+}
+
 // A connection dropped without a close reaching us still ends on the first
 // write that fails, and the client reconnects instead of waiting on it.
 func TestReconnectsWhenAWriteFails(t *testing.T) {

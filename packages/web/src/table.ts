@@ -133,6 +133,7 @@ export class TableView {
   #text: Y.Text
   #awareness: Awareness
   #undo: Y.UndoManager
+  #readOnly = false
   #onError: (error: CsvError | null) => void
   #menu = new ContextMenu()
   /** The table on screen: the latest parse while active, left as it was while hidden. */
@@ -195,6 +196,18 @@ export class TableView {
     this.#show()
   }
 
+  /**
+   * Whether the table can only be read: while the host is away, and once the
+   * room has ended, nobody would save an edit. Cells can still be selected.
+   */
+  set readOnly(on: boolean) {
+    this.#readOnly = on
+    if (on) {
+      this.#finishEdit(false)
+      this.#menu.close()
+    }
+  }
+
   get selected(): Position | null {
     return this.#selected && { ...this.#selected }
   }
@@ -234,7 +247,7 @@ export class TableView {
 
   /** Starts editing a cell; `initial` replaces its value, as typing over a cell does. */
   edit(at: Position, initial?: string): void {
-    if (!this.#table) return
+    if (!this.#table || this.#readOnly) return
     this.select(at, false)
     // The edit gets undo steps of its own, which Escape takes back.
     this.#undo.stopCapturing()
@@ -447,6 +460,7 @@ export class TableView {
   }
 
   #apply(edits: Edit[]): void {
+    if (this.#readOnly) return
     this.#undo.stopCapturing()
     applyToText(this.#text, edits, TABLE_ORIGIN)
     this.#undo.stopCapturing()
@@ -455,7 +469,7 @@ export class TableView {
   #write(value: string): void {
     const table = this.#table
     const at = this.#selected
-    if (!table || !at) return
+    if (!table || !at || this.#readOnly) return
     applyToText(this.#text, setCell(table, at.row, at.col, value), TABLE_ORIGIN)
   }
 
@@ -658,13 +672,14 @@ export class TableView {
     const mod = ev.ctrlKey || ev.metaKey
     if (mod && ev.key.toLowerCase() === 'z') {
       ev.preventDefault()
+      if (this.#readOnly) return
       if (ev.shiftKey) this.#undo.redo()
       else this.#undo.undo()
       return
     }
     if (mod && ev.key.toLowerCase() === 'y') {
       ev.preventDefault()
-      this.#undo.redo()
+      if (!this.#readOnly) this.#undo.redo()
       return
     }
     // Google Sheets' keys: with a whole row or column selected, Ctrl+Alt+=

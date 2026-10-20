@@ -215,6 +215,18 @@ describe('JsonPane', () => {
     expect(sent).toEqual([])
   })
 
+  it('is read-only while the host is away, and not once it is back', () => {
+    const { pane } = setup()
+    pane.readOnly = true
+    expect(pane.view.state.readOnly).toBe(true)
+    pane.readOnly = false
+    expect(pane.view.state.readOnly).toBe(false)
+    // Closed for good, it stays read-only.
+    pane.close()
+    pane.readOnly = false
+    expect(pane.view.state.readOnly).toBe(true)
+  })
+
   it('cannot be edited once the room has closed', () => {
     const { pane, sent, type } = setup()
     pane.close()

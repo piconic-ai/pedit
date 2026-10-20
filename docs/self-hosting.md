@@ -141,11 +141,12 @@ Cloudflare dashboard → your Worker → Settings → Variables and Secrets):
 | `BLOB_QUOTA_BYTES` | All images of a session, in bytes | `104857600` |
 | `BLOB_QUOTA_COUNT` | All images of a session, in number | `500` |
 | `ROOM_MAX_SECONDS` | How long a room lasts, in seconds from its host's first connection | *(unset: no limit)* |
+| `HOST_GRACE_SECONDS` | How long a room waits for a host whose connection dropped before it closes; meanwhile guests stay and can read but not edit | `120` |
 | `MEDIA_SOURCES` | Where the Markdown preview may load images and videos from: space-separated Content-Security-Policy sources, such as `https:` for any HTTPS site or `https://images.example.com`. An invalid list is ignored. | *(unset: none; only images pasted in the session)* |
 
 Whatever the limits, a connection that sends far more than editing needs is
-closed: a guest's client reconnects, and a host's disconnect ends the session,
-as any host leaving does. A room takes at most four image uploads at once.
+closed: a guest's client reconnects, and so does a host's, within the
+`HOST_GRACE_SECONDS` a room waits for it. A room takes at most four image uploads at once.
 Files over about 1 MiB are not supported: the relay passes messages of at most
 1 MiB, and a newcomer gets the whole shared document in one. See
 [the public relay](public-relay.md#limits) for how canvases and long sessions

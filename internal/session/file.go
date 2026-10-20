@@ -87,6 +87,11 @@ func (f *sharedFile) stop() {
 // syncFromDisk merges the file's current content into the doc if it changed
 // outside pedit, against what we last wrote. The caller must hold f.syncing.
 func (f *sharedFile) syncFromDisk() {
+	// Nobody edits while the host is away: nobody would save it. What
+	// changed is merged once the host is back (Session.resumeFromDisk).
+	if f.client != nil && f.client.Status() == protocol.StatusWaiting {
+		return
+	}
 	changed := false
 	// Told after Rebase, so not under the writer's lock.
 	var notice *Notice

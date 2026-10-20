@@ -457,6 +457,8 @@ func (u *ui) liveLine() string {
 	switch u.status {
 	case protocol.StatusConnected:
 		return u.green("●") + " " + whoIsHere(u.people)
+	case protocol.StatusWaiting:
+		return u.yellow("○") + " The host's connection dropped. Waiting for them to come back…"
 	case protocol.StatusDisconnected:
 		return u.yellow("○") + " Offline. Reconnecting…"
 	case protocol.StatusBusy:
