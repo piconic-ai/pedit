@@ -89,44 +89,9 @@ func (s *Session) AddFile(file string) (protocol.FileEntry, error) {
 	}
 	s.filesMu.Lock()
 	defer s.filesMu.Unlock()
-	if s.closed {
-		return protocol.FileEntry{}, errors.New("the session has ended")
-	}
-	if s.roomID == "" {
-		return protocol.FileEntry{}, errors.New("a joined room shares only the host's files")
-	}
-	files := s.files()
-	if len(files) >= MaxFiles {
-		return protocol.FileEntry{}, fmt.Errorf("a room shares up to %d files", MaxFiles)
-	}
-	path := sharedPath(s.opts.Root, file)
-	if err := protocol.CheckPath(path); err != nil {
-		return protocol.FileEntry{}, fmt.Errorf("%s cannot be shared under that name: %w", path, err)
-	}
-	info, err := os.Stat(file)
+	path, err := s.canShare(file)
 	if err != nil {
-		return protocol.FileEntry{}, fmt.Errorf("cannot open %s: %w", file, err)
-	}
-	for _, f := range files {
-		if same, err := os.Stat(f.file); err == nil && os.SameFile(info, same) || f.file == file {
-			return protocol.FileEntry{}, fmt.Errorf("%s is already shared", path)
-		}
-		if protocol.PathKey(f.path) == protocol.PathKey(path) {
-			// Two names macOS and Windows take for one, such as Notes.md and
-			// notes.md: a guest there could not keep both.
-			return protocol.FileEntry{}, fmt.Errorf("%s is already shared as %s", path, f.path)
-		}
-	}
-
-	// Every file goes in the list the room gets, the first one too, which
-	// Start does not check: one name it refuses would keep the room from
-	// getting any list.
-	format := protocol.FormatText
-	if isCanvas(file) {
-		format = protocol.FormatCanvas
-	}
-	if _, err := protocol.EncodeManifest(append(s.manifest(), protocol.FileEntry{ID: s.nextID, Path: path, Format: format})); err != nil {
-		return protocol.FileEntry{}, fmt.Errorf("no other file can be shared with %s, whose name macOS or Windows would read differently: %w", s.path, err)
+		return protocol.FileEntry{}, err
 	}
 
 	bound, initial, err := openShared(file)
@@ -212,6 +177,60 @@ func (s *Session) AddFile(file string) (protocol.FileEntry, error) {
 	}
 	f.notices.start()
 	return protocol.FileEntry{ID: id, Path: path, Format: f.format()}, nil
+}
+
+// canShare checks that file can be shared, and returns the path the room is
+// to know it by. s.filesMu must be held.
+func (s *Session) canShare(file string) (string, error) {
+	if s.closed {
+		return "", errors.New("the session has ended")
+	}
+	if s.roomID == "" {
+		return "", errors.New("a joined room shares only the host's files")
+	}
+	files := s.files()
+	if len(files) >= MaxFiles {
+		return "", fmt.Errorf("a room shares up to %d files", MaxFiles)
+	}
+	path := sharedPath(s.opts.Root, file)
+	if err := protocol.CheckPath(path); err != nil {
+		return "", fmt.Errorf("%s cannot be shared under that name: %w", path, err)
+	}
+	info, err := os.Stat(file)
+	if err != nil {
+		return "", fmt.Errorf("cannot open %s: %w", file, err)
+	}
+	if err := alreadyShared(files, file, path, info); err != nil {
+		return "", err
+	}
+
+	// Every file goes in the list the room gets, the first one too, which
+	// Start does not check: one name it refuses would keep the room from
+	// getting any list.
+	format := protocol.FormatText
+	if isCanvas(file) {
+		format = protocol.FormatCanvas
+	}
+	if _, err := protocol.EncodeManifest(append(s.manifest(), protocol.FileEntry{ID: s.nextID, Path: path, Format: format})); err != nil {
+		return "", fmt.Errorf("no other file can be shared with %s, whose name macOS or Windows would read differently: %w", s.path, err)
+	}
+	return path, nil
+}
+
+// alreadyShared fails when one of files is file, whose info is info, or is
+// shared under a path that macOS or Windows would take for path.
+func alreadyShared(files []*sharedFile, file, path string, info os.FileInfo) error {
+	for _, f := range files {
+		if same, err := os.Stat(f.file); err == nil && os.SameFile(info, same) || f.file == file {
+			return fmt.Errorf("%s is already shared", path)
+		}
+		if protocol.PathKey(f.path) == protocol.PathKey(path) {
+			// Two names macOS and Windows take for one, such as Notes.md and
+			// notes.md: a guest there could not keep both.
+			return fmt.Errorf("%s is already shared as %s", path, f.path)
+		}
+	}
+	return nil
 }
 
 // Files lists the files the session shares, the first one first.
