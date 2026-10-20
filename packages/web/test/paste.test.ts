@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-import { EditorSelection } from '@codemirror/state'
+import { EditorSelection, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { imageMarkdown, imagePaste } from '../src/paste.ts'
+import * as Y from 'yjs'
+import { imageMarkdown, imagePaste, textAnchor } from '../src/paste.ts'
 
 const views: EditorView[] = []
 afterEach(() => {
@@ -128,5 +129,49 @@ describe('imageMarkdown', () => {
   it('links the path, bracketing one with spaces or parentheses', () => {
     expect(imageMarkdown('assets/a.png')).toBe('![](assets/a.png)')
     expect(imageMarkdown('my assets/a (1).png')).toBe('![](<my assets/a (1).png>)')
+  })
+})
+
+describe('imagePaste with an anchor in the shared text', () => {
+  it('links the image in the file it was added to, though another is shown by then', async () => {
+    const ydoc = new Y.Doc()
+    const text = ydoc.getText('content')
+    text.insert(0, 'ab')
+    const uploads: ReturnType<typeof deferred>[] = []
+    const view = new EditorView({
+      doc: 'ab',
+      parent: document.body,
+      extensions: imagePaste({
+        blocked: () => null,
+        upload: () => {
+          const d = deferred()
+          uploads.push(d)
+          return d.promise
+        },
+        onError: vi.fn(),
+        anchor: (pos) => textAnchor(text, pos),
+      }),
+    })
+    views.push(view)
+    view.dispatch({ selection: EditorSelection.cursor(1) })
+    dispatch(view, 'paste', [image()])
+    // Another file is shown, then this one again, as a fresh state.
+    view.setState(EditorState.create({ doc: 'other file' }))
+    view.setState(EditorState.create({ doc: 'ab' }))
+    // Others edit the file meanwhile, before the image's place and at it.
+    text.insert(0, '>')
+    text.insert(2, 'typed ')
+    uploads[0]?.resolve('assets/x.png')
+    await settle()
+    expect(text.toString()).toBe('>a![](assets/x.png)typed b')
+  })
+
+  it('inserts where its place has moved to', () => {
+    const text = new Y.Doc().getText('content')
+    text.insert(0, 'ab')
+    const anchor = textAnchor(text, 1)
+    text.insert(0, 'xx')
+    anchor.insert('!')
+    expect(text.toString()).toBe('xxa!b')
   })
 })

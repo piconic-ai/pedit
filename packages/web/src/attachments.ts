@@ -91,8 +91,11 @@ const REJECTED: Record<string, keyof typeof MESSAGES> = {
 export interface AttachmentsOptions {
   roomId: string
   keys: BlobKeys
-  /** Sends an attachment message to the room. */
-  send: (attachment: Attachment) => void
+  /**
+   * Sends an attachment message to the room: about `file`, the file an
+   * image was added to in a room that shares several, or the one on screen.
+   */
+  send: (attachment: Attachment, file?: number) => void
   fetch?: typeof fetch
   shrink?: Shrink
   /** How long to wait for the host to save an upload. */
@@ -126,6 +129,8 @@ interface Cached {
 
 interface Pending {
   mime: string
+  /** The file it was added to, in a room that shares several. */
+  file: number | undefined
   promise: Promise<string>
   resolve: (path: string) => void
   reject: (error: AttachmentError) => void
@@ -218,11 +223,15 @@ export class Attachments implements ImageResolver {
     return this.#urls.has(url)
   }
 
-  /** Adds an image; resolves with its path relative to the shared file. */
-  async upload(file: Blob): Promise<string> {
+  /**
+   * Adds an image; resolves with its path relative to the shared file. In a
+   * room that shares several, `to` is the file it goes beside, whichever is
+   * on screen by the time it is sent.
+   */
+  async upload(file: Blob, to?: number): Promise<string> {
     this.uploading.set(this.uploading.get() + 1)
     try {
-      return await this.#upload(file)
+      return await this.#upload(file, to)
     } finally {
       this.uploading.set(this.uploading.get() - 1)
     }
@@ -254,7 +263,7 @@ export class Attachments implements ImageResolver {
    */
   reconnected(): void {
     for (const [hash, p] of this.#pending) {
-      this.#opts.send({ kind: 'announce', hash, mime: p.mime })
+      this.#opts.send({ kind: 'announce', hash, mime: p.mime }, p.file)
     }
     // The host may have uploaded them while we were away, so look in the
     // room first; a 404 wants them again.
@@ -269,7 +278,7 @@ export class Attachments implements ImageResolver {
     }
   }
 
-  async #upload(file: Blob): Promise<string> {
+  async #upload(file: Blob, to: number | undefined): Promise<string> {
     const host = this.host
     if (!host) throw new AttachmentError(MESSAGES.unsupported)
     let image: Awaited<ReturnType<typeof prepareImage>>
@@ -290,7 +299,7 @@ export class Attachments implements ImageResolver {
     // Another upload of the same image may have got here first.
     const announced = this.#pending.get(hash)
     if (announced) return announced.promise
-    const path = await this.#announce(hash, image.type)
+    const path = await this.#announce(hash, image.type, to)
     // Show it right away: no need to fetch what we just uploaded.
     this.#remember(hash, image.bytes, image.type)
     return path
@@ -413,7 +422,7 @@ export class Attachments implements ImageResolver {
     }
   }
 
-  #announce(hash: string, mime: string): Promise<string> {
+  #announce(hash: string, mime: string, file: number | undefined): Promise<string> {
     let resolve!: (path: string) => void
     let reject!: (error: AttachmentError) => void
     const promise = new Promise<string>((res, rej) => {
@@ -429,8 +438,8 @@ export class Attachments implements ImageResolver {
       if (this.#pending.get(hash)?.promise === promise) this.#pending.delete(hash)
     }
     promise.then(done, done)
-    this.#pending.set(hash, { mime, promise, resolve, reject })
-    this.#opts.send({ kind: 'announce', hash, mime })
+    this.#pending.set(hash, { mime, file, promise, resolve, reject })
+    this.#opts.send({ kind: 'announce', hash, mime }, file)
     return promise
   }
 }
