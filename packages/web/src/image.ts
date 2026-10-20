@@ -59,9 +59,7 @@ function stripJpeg(bytes: Uint8Array): Uint8Array {
   let orientationKept = false
   let i = 2
   for (;;) {
-    if (bytes[i] !== 0xff) unreadable()
-    const marker = bytes[i + 1]
-    if (marker === undefined) unreadable()
+    const marker = markerAt(bytes, i)
     if (marker === 0xff) {
       i++ // fill byte
       continue
@@ -70,43 +68,62 @@ function stripJpeg(bytes: Uint8Array): Uint8Array {
       out.push(bytes.subarray(i, i + 2))
       break
     }
-    if ((marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) {
+    if (isRestart(marker) || marker === 0x01) {
       out.push(bytes.subarray(i, i + 2))
       i += 2
       continue
     }
-    const length = ((bytes[i + 2] ?? 0) << 8) | (bytes[i + 3] ?? 0)
-    const end = i + 2 + length
-    if (length < 2 || end > bytes.length) unreadable()
-    if (marker === 0xe1) {
-      const orientation = exifOrientation(bytes.subarray(i + 4, end))
-      if (orientation && orientation !== 1 && !orientationKept) {
-        out.push(orientationSegment(orientation))
-        orientationKept = true
-      }
-    } else {
+    const end = segmentEnd(bytes, i)
+    if (marker !== 0xe1) {
       out.push(bytes.subarray(i, end))
+    } else if (!orientationKept) {
+      const kept = orientationOnly(bytes.subarray(i + 4, end))
+      if (kept) out.push(kept)
+      orientationKept = kept !== null
     }
     i = end
     if (marker === 0xda) {
-      // Entropy-coded data runs to the next marker: 0xff is followed there
-      // by 0x00 (a stuffed byte) or a restart marker, and by nothing else.
-      while (i < bytes.length) {
-        const next = bytes[i + 1]
-        if (
-          bytes[i] === 0xff &&
-          next !== 0x00 &&
-          !(next !== undefined && next >= 0xd0 && next <= 0xd7)
-        ) {
-          break
-        }
-        i++
-      }
-      if (i >= bytes.length) unreadable()
+      i = scanEnd(bytes, end)
       out.push(bytes.subarray(end, i))
     }
   }
   return concat(out)
+}
+
+/** The marker byte after the 0xff at `i`. */
+function markerAt(bytes: Uint8Array, i: number): number {
+  if (bytes[i] !== 0xff) unreadable()
+  return bytes[i + 1] ?? unreadable()
+}
+
+const isRestart = (marker: number | undefined) =>
+  marker !== undefined && marker >= 0xd0 && marker <= 0xd7
+
+/** Where the segment at `i` ends; its length counts itself but not the marker. */
+function segmentEnd(bytes: Uint8Array, i: number): number {
+  const length = ((bytes[i + 2] ?? 0) << 8) | (bytes[i + 3] ?? 0)
+  const end = i + 2 + length
+  if (length < 2 || end > bytes.length) unreadable()
+  return end
+}
+
+/** An APP1 in place of this one holding only its orientation, if not the default. */
+function orientationOnly(app1: Uint8Array): Uint8Array | null {
+  const orientation = exifOrientation(app1)
+  return orientation && orientation !== 1 ? orientationSegment(orientation) : null
+}
+
+// Entropy-coded data runs to the next marker: 0xff is followed there by 0x00
+// (a stuffed byte) or a restart marker, and by nothing else.
+function scanEnd(bytes: Uint8Array, from: number): number {
+  let i = from
+  while (i < bytes.length) {
+    const next = bytes[i + 1]
+    if (bytes[i] === 0xff && next !== 0x00 && !isRestart(next)) break
+    i++
+  }
+  if (i >= bytes.length) unreadable()
+  return i
 }
 
 const EXIF_HEADER = ascii('Exif\0\0')
