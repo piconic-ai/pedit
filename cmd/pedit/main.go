@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -127,7 +128,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	var shared bool
-	debug := debugLog(stderr, os.Getenv("PEDIT_DEBUG") != "")
+	// While the host types on a line of its own, the terminal is raw: lines
+	// then end with CRLF.
+	rawOut, rawErr := &crlfWriter{w: out.out}, &crlfWriter{w: stderr}
+	out.out = rawOut
+	debug := debugLog(rawErr, os.Getenv("PEDIT_DEBUG") != "")
 	scratch := opts.File == ""
 	arg, created, err := prepareFile(cfg, opts.File, opts.Template, opts.Directory, func() string { return time.Now().Format("2006-01-02-150405") })
 	if err != nil {
@@ -244,17 +249,55 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	out.sharing(files, s.URL, clipboard.Copy(s.URL), scratch)
 	shared = true
+	stopTyping := func() {}
 	if resumable {
-		go readLines(os.Stdin, s.Client.Resume, func(path string) {
+		add := func(path string) {
 			if entry, err := s.AddFile(path); err != nil {
 				out.notAdded(path, err)
 			} else {
 				out.added(entry.Path)
 			}
-		})
+		}
+		fd := int(os.Stdin.Fd())
+		var state *term.State
+		if out.tty {
+			state, _ = term.MakeRaw(fd)
+		}
+		if state != nil {
+			rawOut.raw.Store(true)
+			rawErr.raw.Store(true)
+			out.width = func() int {
+				w, _, err := term.GetSize(int(os.Stdout.Fd()))
+				if err != nil {
+					return 0
+				}
+				return w
+			}
+			out.startTyping()
+			var once sync.Once
+			stopTyping = func() {
+				once.Do(func() {
+					out.stopTyping()
+					_ = term.Restore(fd, state)
+					rawOut.raw.Store(false)
+					rawErr.raw.Store(false)
+				})
+			}
+			defer stopTyping()
+			interrupt := func() {
+				select {
+				case signals <- os.Interrupt:
+				default:
+				}
+			}
+			go readTyped(ctx, os.Stdin, out, s.Client.Resume, add, interrupt)
+		} else {
+			go readLines(os.Stdin, s.Client.Resume, add)
+		}
 	}
 
 	<-ctx.Done()
+	stopTyping()
 	// A second signal gives up on saving.
 	go func() {
 		<-signals
