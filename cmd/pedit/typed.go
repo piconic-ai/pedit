@@ -74,6 +74,9 @@ func (e *editor) feed(b []byte, on func(edit, string)) {
 				changed = true
 			}
 			i++
+		case c == 27 && i == len(data)-1:
+			// The Esc key alone: a key that sends a sequence sends it whole.
+			i++
 		case c == 27:
 			n, complete := escapeLength(data[i:])
 			if !complete {
