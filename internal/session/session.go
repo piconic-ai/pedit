@@ -93,6 +93,10 @@ type Session struct {
 	nextID  uint64
 	closed  bool
 
+	// mirror mirrors the room's other files, when joined (mirror.go).
+	mirrorMu sync.Mutex
+	mirror   *mirror
+
 	stopOnce sync.Once
 	stopErr  error
 
@@ -553,6 +557,11 @@ func (s *Session) Stop() error {
 				s.stopErr = errors.Join(s.stopErr, f.bound.Close())
 			}
 		}
+		s.mirrorMu.Lock()
+		if s.mirror != nil && s.mirror.root != nil {
+			_ = s.mirror.root.Close()
+		}
+		s.mirrorMu.Unlock()
 		if s.temp != "" {
 			// A temporary copy is for the session only: nothing to save.
 			s.stopErr = errors.Join(s.stopErr, removeTemp(s.temp))

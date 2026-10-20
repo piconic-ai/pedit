@@ -56,7 +56,8 @@ them. While sharing, type the path of another file and press Enter to add it.
 
 Given a share link instead of a file, pedit joins that room from the command
 line: it writes a copy of the shared file to a temporary directory and keeps it
-in sync, so you can edit it with any editor. The copy is removed when you leave
+in sync, so you can edit it with any editor. In a room that shares several files,
+each text file is copied there too, at the path the host shows. The copy is removed when you leave
 or the host closes the room, like closing a browser tab. To keep it, pass -d.
 
 Examples:
@@ -329,6 +330,14 @@ func runJoin(opts commandArgs, out *ui, stderr io.Writer) int {
 		OnNotice: func(n session.Notice) {
 			debug(n.Err)
 			out.notice(displayPath(n.File), false, n)
+		},
+		OnMirrored: func(path string, err error) {
+			if err != nil {
+				debug(err)
+				out.notMirrored(displayPath(path), err)
+			} else {
+				out.mirrored(displayPath(path))
+			}
 		},
 		OnError: debug,
 	})

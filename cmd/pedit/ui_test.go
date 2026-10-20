@@ -499,3 +499,18 @@ func TestUISharingSeveralFiles(t *testing.T) {
 		}
 	}
 }
+
+func TestUIMirroredFiles(t *testing.T) {
+	var out strings.Builder
+	u := newUI(&out, false, false)
+	u.mirrored("/tmp/pedit-x/docs/spec.md")
+	u.notMirrored("/tmp/pedit-x/board.canvas", errors.New("it is a canvas, which only a browser can open; open the link in a browser"))
+	for _, want := range []string{
+		"✓ Also syncing /tmp/pedit-x/docs/spec.md",
+		"Not syncing /tmp/pedit-x/board.canvas: it is a canvas, which only a browser can open; open the link in a browser.",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("missing %q in:\n%s", want, out.String())
+		}
+	}
+}

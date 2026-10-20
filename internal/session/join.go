@@ -44,6 +44,10 @@ type JoinOptions struct {
 	// OnNotice and OnError are as in Options.
 	OnNotice func(Notice)
 	OnError  func(error)
+	// OnMirrored is called with the path of each other file the room shares
+	// as it is mirrored beside the first, with why not when it is not. Called
+	// one at a time.
+	OnMirrored func(path string, err error)
 
 	// beforePublishWriter is a test seam; see Session.beforePublishWriter.
 	beforePublishWriter func()
@@ -154,6 +158,7 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 
 		beforePublishWriter: opts.beforePublishWriter,
 	}
+	s.mirror = &mirror{dir: dir, opts: opts, keys: map[string]bool{}, dirs: map[string]bool{}, done: map[uint64]bool{}}
 	synced := make(chan struct{})
 	closed := make(chan struct{})
 	var ended atomic.Value // the final protocol.Status, set before closed is
@@ -177,8 +182,9 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 				opts.OnStatus(st)
 			}
 		},
-		OnSynced: func() { close(synced) },
-		OnError:  onError,
+		OnSynced:   func() { close(synced) },
+		OnError:    onError,
+		OnManifest: s.takeManifest,
 	})
 	if err != nil {
 		return nil, err
@@ -326,6 +332,13 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 		if err := s.watch(); err != nil {
 			return fail(err)
 		}
+	}
+	// The room's other files go beside the first, as the host lists them.
+	s.mirrorMu.Lock()
+	err = s.startMirror(base)
+	s.mirrorMu.Unlock()
+	if err != nil {
+		onError(err)
 	}
 	return s, nil
 }

@@ -304,6 +304,16 @@ func (u *ui) notAdded(path string, err error) {
 	u.above(u.yellow("Could not share " + printable(path) + ": " + printable(err.Error()) + "."))
 }
 
+// mirrored says that another file of the room is copied beside the first.
+func (u *ui) mirrored(path string) {
+	u.above(u.green("✓") + " Also syncing " + printable(path))
+}
+
+// notMirrored says why another file of the room is not copied.
+func (u *ui) notMirrored(path string, err error) {
+	u.above(u.yellow("Not syncing " + printable(path) + ": " + printable(err.Error()) + "."))
+}
+
 // imageSaved says that an image someone pasted was written to the host's
 // disk.
 func (u *ui) imageSaved(path string) {
