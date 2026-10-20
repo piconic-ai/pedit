@@ -70,6 +70,27 @@ Quote the link in the shell: `#` starts a comment otherwise. `-d <dir>` keeps
 the copy in that directory instead, where `pedit` refuses to overwrite a file
 already there. Canvas rooms can only be joined in a browser for now.
 
+### Several files in one room
+
+Name several files to share them in one room, under one link. Guests switch
+between them with the tabs above the editor:
+
+```text
+❯ pedit agenda.md docs/spec.md board.canvas
+```
+
+While sharing, type the path of another file and press Enter to add it to the
+room, without a new link: a meeting can start with the agenda and bring in the
+spec when it comes up. Only the host adds files; nobody in the room can ask for
+one. A room shares up to 20 files, each a regular UTF-8 file, as when sharing
+one. Paths are shown relative to the directory `pedit` runs in.
+
+A guest who joins from the command line gets a copy of each text file in the
+same directory, at the path the host shows, and of files the host adds later.
+With `-d`, the other files are copied only into a directory that is new or
+empty when joining, since their paths come from the host. Canvases are for
+the browser.
+
 ## Why pedit?
 
 Local files work naturally with coding agents and your own editor. Keeping
@@ -196,8 +217,8 @@ Edits in the opposite direction follow the same process.
   connections or attachment requests; the token cannot decrypt content.
 - **Your relay, your access rules.** Use the public relay at `edit.piconic.ai`,
   or [self-host](#self-host) to require sign-in with Cloudflare Access.
-- **Only the file you share.** The CLI reads and writes the shared file, images
-  in `assets/` beside it, its own `.pedit/` configuration and a cache, and runs
+- **Only the files you share.** The CLI reads and writes the files you name,
+  images in `assets/` beside each, its own `.pedit/` configuration and a cache, and runs
   only a clipboard tool and, for Access, `cloudflared`. See
   [what pedit does on your computer](docs/local-files.md) for every file and
   what you accept.

@@ -94,7 +94,10 @@ AES-GCM rejects a frame made or altered without the key.
 - **No authentication between participants.** Names, avatars and the host
   badge come from each peer's own presence state. Anyone with the link can
   claim any name, or to be the host, in what others see, and can send any
-  edit. Frames carry no authenticated sender: the Yjs client ID in an update is
+  edit. The same goes for the list of a room's files: anyone with the link
+  can send one, and browsers show it. The host never acts on a list or a path
+  from the room, and a guest from the command line checks every path again
+  before it writes a copy. Frames carry no authenticated sender: the Yjs client ID in an update is
   one each peer picks for itself.
 - **No forward secrecy.** A room has one key, never rotated. Whoever records
   the traffic and later gets the link can decrypt all of it. Every run of
