@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/piconic-ai/pedit/internal/protocol"
@@ -125,7 +126,7 @@ func TestEditor(t *testing.T) {
 		{"Ctrl+C", []string{"ab\x03"}, []string{"edited:ab", "interrupted"}},
 		{"arrows are ignored", []string{"a\x1b[D\x1b[Cb\x1bOA\r"}, []string{"edited:ab", "entered:ab"}},
 		{"an escape sequence split across reads", []string{"a\x1b[", "1;5", "Db\r"}, []string{"edited:a", "edited:ab", "entered:ab"}},
-		{"the Esc key alone", []string{"a\x1b", "b\r"}, []string{"edited:a", "edited:ab", "entered:ab"}},
+		{"a read that ends after Esc", []string{"notes\x1b", "[D.md\r"}, []string{"edited:notes", "edited:notes.md", "entered:notes.md"}},
 		{"a character split across reads", []string{"caf\xc3", "\xa9.md\r"}, []string{"edited:caf", "edited:café.md", "entered:café.md"}},
 		{"other control characters are ignored", []string{"a\tb\x01\r"}, []string{"edited:ab", "entered:ab"}},
 		{"invalid UTF-8 is dropped", []string{"a\xffb\r"}, []string{"edited:ab", "entered:ab"}},
@@ -176,6 +177,43 @@ func TestReadTyped(t *testing.T) {
 	}
 	if string(u.typed) != "x" {
 		t.Fatalf("typed %q, want x", string(u.typed))
+	}
+}
+
+// The Esc key alone does nothing, and does not take the key after it.
+func TestReadTypedEscKey(t *testing.T) {
+	// Long enough that the second half of a split key arrives in time, even
+	// on a loaded machine.
+	defer func(d time.Duration) { escWait = d }(escWait)
+	escWait = 250 * time.Millisecond
+	u := newUI(io.Discard, true, false)
+	r, w := io.Pipe()
+	var added []string
+	done := make(chan struct{})
+	go func() {
+		readTyped(context.Background(), r, u, func() {}, func(path string) { added = append(added, path) }, func() {})
+		close(done)
+	}()
+	for _, step := range []struct {
+		chunk string
+		pause bool
+	}{
+		{"a\x1b", true}, // the Esc key, then b
+		{"b\r", false},
+		{"c\x1b", false}, // a left arrow split across reads
+		{"[Dd\r", false},
+	} {
+		if _, err := w.Write([]byte(step.chunk)); err != nil {
+			t.Fatal(err)
+		}
+		if step.pause {
+			time.Sleep(4 * escWait)
+		}
+	}
+	w.Close()
+	<-done
+	if want := []string{"ab", "cd"}; !slices.Equal(added, want) {
+		t.Fatalf("added %q, want %q", added, want)
 	}
 }
 
