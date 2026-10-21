@@ -346,6 +346,19 @@ describe('comments on cells', () => {
     expect(only(before.shown())).toMatchObject({ state: 'attached', cells: { from: cell(0, 2) } })
   })
 
+  it('tells an empty corner by the place, not by a quote cut short', () => {
+    // From review: a range's quote cut to the limit ended at a comma, and
+    // its last corner, not empty, was taken for one that was.
+    const long = setup(`${'a'.repeat(999)},b\nx,y\n`, ',')
+    long.view.startCells(cell(0, 0), cell(1, 1), 'range')
+    edit(long.text, (t) => insertColumn(t, 1))
+    expect(only(long.shown()).cells).toEqual({ from: cell(0, 0), to: cell(1, 2) })
+    const empty = setup(`${'a'.repeat(999)},b\nx,\n`, ',')
+    empty.view.startCells(cell(0, 0), cell(1, 1), 'range')
+    edit(empty.text, (t) => setCell(t, 1, 2, 'z'))
+    expect(only(empty.shown()).cells).toEqual({ from: cell(0, 0), to: cell(1, 1) })
+  })
+
   it('takes no cell longer than a quote, which the host could not keep', () => {
     // From review: the host saved such a thread as one on text.
     const { view } = setup(`${'a'.repeat(COMMENT_LIMITS.quote + 1)},b\n`, ',')

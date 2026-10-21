@@ -24,7 +24,8 @@ const (
 	// below.
 	CommentsKey = "comments"
 	// AnchorKey is where a thread points in this session: {"type": "text",
-	// "start", "end"}, {"type": "cells", "from": {"start", "end"}, "to": {...}}
+	// "start", "end"}, {"type": "cells", "from": {"start", "end", "empty"?},
+	// "to": {...}}
 	// or {"type": "node", "id"}. start and end are base64 Yjs
 	// RelativePositions on the content's Y.Text, and left out when the place
 	// was not found. A text range keeps out what is typed at its edges (start
@@ -39,12 +40,15 @@ const (
 
 // The keys inside an anchor and a message of the doc.
 const (
-	typeKey   = "type"
-	idKey     = "id"
-	startKey  = "start"
-	endKey    = "end"
-	fromKey   = "from"
-	toKey     = "to"
+	typeKey  = "type"
+	idKey    = "id"
+	startKey = "start"
+	endKey   = "end"
+	fromKey  = "from"
+	toKey    = "to"
+	// emptyKey marks a corner that was an empty cell when the thread was
+	// made, or loaded: such a cell takes in what is typed after it.
+	emptyKey  = "empty"
 	authorKey = "author"
 	timeKey   = "time"
 	bodyKey   = "body"
@@ -142,6 +146,15 @@ func anchorIn(a Anchor, t *fileText, hay *haystack) map[string]any {
 		from, okFrom := rangeIn(a.From, -1, 0, t, hay)
 		to, okTo := rangeIn(a.To, -1, 0, t, hay)
 		if okFrom && okTo {
+			// A corner found as an empty cell says so, as the editor's do.
+			for _, c := range []struct {
+				place map[string]any
+				s     *Selector
+			}{{from, a.From}, {to, a.To}} {
+				if c.s.Exact == "" {
+					c.place[emptyKey] = true
+				}
+			}
 			out[fromKey], out[toKey] = from, to
 		}
 	}
@@ -369,7 +382,7 @@ func savedAnchor(raw map[string]any, was *Anchor, quote string, t *fileText) (An
 		return Anchor{}, false
 	}
 	if t != nil {
-		if a, ok := placeNow(kind, raw, quote, t); ok {
+		if a, ok := placeNow(kind, raw, t); ok {
 			return a, true
 		}
 	}
@@ -385,18 +398,15 @@ func savedAnchor(raw map[string]any, was *Anchor, quote string, t *fileText) (An
 }
 
 // placeNow is where an anchor of the doc is in t now, if it can be told.
-func placeNow(kind string, raw map[string]any, quote string, t *fileText) (Anchor, bool) {
+func placeNow(kind string, raw map[string]any, t *fileText) (Anchor, bool) {
 	if kind == AnchorText {
 		s, ok := selectorAt(raw, nil, t)
 		return Anchor{Type: AnchorText, Text: s}, ok
 	}
 	from, _ := raw[fromKey].(map[string]any)
 	to, _ := raw[toKey].(map[string]any)
-	// Whether each corner was empty, as the thread quotes the cells' text:
-	// an empty corner's quote starts, or ends, at a delimiter or line break.
-	q := utf16.Encode([]rune(quote))
-	firstEmpty := len(q) == 0 || t.edge(q[0])
-	lastEmpty := len(q) == 0 || t.edge(q[len(q)-1])
+	firstEmpty, _ := from[emptyKey].(bool)
+	lastEmpty, _ := to[emptyKey].(bool)
 	f, okFrom := selectorAt(from, &firstEmpty, t)
 	l, okTo := selectorAt(to, &lastEmpty, t)
 	return Anchor{Type: AnchorCells, From: f, To: l}, okFrom && okTo
