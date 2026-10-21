@@ -174,7 +174,10 @@ else: a guest, or a teammate through Git. Every peer checks it the same way.
   a panic in ygo on such an update into an error.
 - Anyone with the key can fill the lists' allowance, after which the room
   takes no more comments until the host starts again. Anyone with the key can
-  as well delete or rewrite every comment, so it gives them nothing new.
+  as well delete or rewrite every comment, so it gives them nothing new. The
+  measure counts what a session deletes or overwrites too, 96 bytes a value,
+  so one session of the host takes about 10,000 of those (resolving, editing
+  and deleting comments); each starts from the file, with none.
 - A metadata file that breaks these rules is left untouched, and its shared
   file offers no comments.
 
