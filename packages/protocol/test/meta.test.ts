@@ -209,6 +209,12 @@ describe('checkMetaUpdate', () => {
       ],
       [{ client: 5, items: [[5, 0]] }],
       [{ client: 5, items: [[5, 1], null] }],
+      // Client 5's second item follows its first, which is in 6's, in 5's
+      // second: a cycle only with the order of clocks.
+      [
+        { client: 5, items: [{ parent: [6, 0] }, null] },
+        { client: 6, items: [{ parent: [5, 1] }] },
+      ],
     ]
     for (const blocks of cases) {
       expect(checkMetaUpdate(new Y.Doc(), encodeUpdate(blocks))).not.toBeNull()
@@ -221,6 +227,74 @@ describe('checkMetaUpdate', () => {
     const doc = new Y.Doc()
     Y.applyUpdate(doc, ok)
     expect(doc.store.pendingStructs).toBeNull()
+  })
+})
+
+describe('the measure of comments', () => {
+  it('counts the tag of an integer', () => {
+    // From review: integers were counted without it, so a doc of them
+    // measured half its size.
+    const doc = new Y.Doc()
+    doc.getMap('comments').set('zeros', new Array(3000).fill(0))
+    expect(Y.encodeStateAsUpdate(doc).length).toBeLessThanOrEqual(metaDocSize(doc))
+    expect(metaDocSize(doc)).toBeGreaterThan(6000)
+  })
+
+  it('refuses a concurrent set that would take the doc past the limit', () => {
+    // From review: k=false and padding to just under the limit, then another
+    // client's k=true, with no deletions, passed and took the doc past it.
+    const padded = (n: number) => {
+      const doc = new Y.Doc()
+      doc.transact(() => {
+        doc.getMap('comments').set('k', false)
+        doc.getMap('comments').set('pad', 'x'.repeat(n))
+      })
+      return doc
+    }
+    const n = META_LIMITS.maxDocBytes - 300
+    const host = padded(n + META_LIMITS.maxDocBytes - 100 - metaDocSize(padded(n)))
+    expect(metaDocSize(host)).toBe(META_LIMITS.maxDocBytes - 100)
+    const peer = new Y.Doc()
+    peer.getMap('comments').set('k', true)
+    expect(checkMetaUpdate(host, Y.encodeStateAsUpdate(peer))).not.toBeNull()
+  })
+
+  it('foresees what concurrent sets delete', () => {
+    // Peers that seldom catch up set values and maps under the same keys.
+    // Every doc the host comes to, a new peer takes whole, and it measures
+    // no less than Yjs writes.
+    let seed = 7
+    const rand = (n: number) => {
+      seed = (seed * 1103515245 + 12345) % 2 ** 31
+      return seed % n
+    }
+    const host = new Y.Doc()
+    const peers = [new Y.Doc(), new Y.Doc(), new Y.Doc()]
+    for (let round = 0; round < 200; round++) {
+      const p = peers[rand(peers.length)]!
+      if (rand(4) === 0) Y.applyUpdate(p, Y.encodeStateAsUpdate(host, Y.encodeStateVector(p)))
+      const before = Y.encodeStateVector(p)
+      p.transact(() => {
+        const m = p.getMap('comments')
+        for (let i = 0; i <= rand(4); i++) {
+          const key = `k${rand(6)}`
+          const op = rand(4)
+          if (op === 0) m.delete(key)
+          else if (op === 1) {
+            const inner = new Y.Map()
+            m.set(key, inner)
+            inner.set('body', `${round}`)
+            inner.set('n', rand(1000))
+          } else m.set(key, rand(1 << 20))
+        }
+      })
+      const update = Y.encodeStateAsUpdate(p, before)
+      expect(checkMetaUpdate(host, update)).toBeNull()
+      Y.applyUpdate(host, update)
+      const state = Y.encodeStateAsUpdate(host)
+      expect(state.length).toBeLessThanOrEqual(metaDocSize(host))
+      expect(checkMetaUpdate(new Y.Doc(), state)).toBeNull()
+    }
   })
 })
 

@@ -148,7 +148,8 @@ else: a guest, or a teammate through Git. Every peer checks it the same way.
   follows, and drops an update that holds anything but maps and plain values,
   under the comments map and keys of at most 64 bytes; that needs structs or
   deletions not received yet, or follows an item, or sits in one, in a cycle
-  or ahead of itself (Yjs keeps those as pending, and sends them on with the
+  (with each client's structs also following its one before) or ahead of
+  itself (Yjs keeps those as pending, and sends them on with the
   doc, past every check); that takes one of its clients past 65,536
   operations; after which applying the doc's lists could take more than the
   sum of the squares of their lengths allows (1,048,576: honest comments stay
@@ -158,7 +159,12 @@ else: a guest, or a teammate through Git. Every peer checks it the same way.
   on a measure every peer works out alike from the structs, which neither
   encoding passes, and so fits the frame the state is sent in: a live item
   counts what Yjs writes for it, each deleted clock 96 bytes, and each client
-  a few. A doc a peer has, or its whole state to a peer that has none,
+  a few. Applying an update deletes more than it says: of the items set under
+  one key, by peers that had not seen each other's, all but one, and what the
+  maps among them hold. So an item that could be deleted that way, one of
+  several under its key or in a map that could be, counts 96 bytes a clock at
+  least, deleted or not, and a doc measures no less for having an update
+  applied than the check foresaw. A doc a peer has, or its whole state to a peer that has none,
   measures the same everywhere. So a hostile client cannot make a peer hold,
   and send, what other peers refuse, nor spend long applying it. The host
   shares no comments over that limit, so every peer can take the state the

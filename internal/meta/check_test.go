@@ -292,6 +292,12 @@ func TestCheckUpdateRefusesWhatWouldWait(t *testing.T) {
 			block{client: 5, items: []item{{parent: &[2]uint64{6, 0}}}},
 			block{client: 6, items: []item{{parent: &[2]uint64{5, 0}}}},
 		),
+		// Client 5's second item follows its first, which is in 6's, in 5's
+		// second: a cycle only with the order of clocks.
+		"a cycle through a client's clocks": encodeUpdate(
+			block{client: 5, items: []item{{parent: &[2]uint64{6, 0}}, {}}},
+			block{client: 6, items: []item{{parent: &[2]uint64{5, 1}}}},
+		),
 		"following itself":       encodeUpdate(block{client: 5, items: []item{{origin: &[2]uint64{5, 0}}}}),
 		"following a later item": encodeUpdate(block{client: 5, items: []item{{origin: &[2]uint64{5, 1}}, {}}}),
 	} {
@@ -413,8 +419,9 @@ func TestCheckUpdateTakesWhatTheHostLoaded(t *testing.T) {
 }
 
 func TestTheMeasureIsTheBrowsers(t *testing.T) {
-	// A doc Yjs made, with an UndoManager's run of values and a deleted
-	// thread, and its measure there: ygo, which encodes it larger, measures
+	// A doc Yjs made, with an UndoManager's run of values, a deleted thread,
+	// integers, and concurrent sets of values and of maps, and its measure
+	// there: ygo, which encodes it larger, measures
 	// it alike.
 	data, err := os.ReadFile("../../packages/testdata/meta-measure.json")
 	if err != nil {

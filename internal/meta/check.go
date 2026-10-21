@@ -89,14 +89,15 @@ func CheckUpdate(doc *crdt.Doc, update []byte) (err error) {
 		return fmt.Errorf("%w: the doc: %v", ErrRefused, err)
 	}
 	fresh := freshOf(u.recs, known)
-	missing, long := newLists(have.recs, fresh).check()
+	l := newLists(have.recs, fresh)
+	missing, long := l.check()
 	if missing {
 		return fmt.Errorf("%w: %w: it needs updates not received yet", ErrRefused, protocol.ErrRetryLater)
 	}
 	if long {
 		return fmt.Errorf("%w: its lists would take too long to apply", ErrRefused)
 	}
-	if n := size(append(have.recs, fresh...), merged(have.deleted, u.deleted)); n > MaxDocBytes {
+	if n := l.size(have.deleted, u.deleted); n > MaxDocBytes {
 		return fmt.Errorf("%w: the comments could take %d bytes", ErrRefused, n)
 	}
 	return nil

@@ -13,7 +13,8 @@ import (
 // every list at once. lists finds the list of each item of
 // the doc and an update, by its parent and key or by the item it follows,
 // as Yjs would, and tells which items it cannot place: those would wait
-// for structs not received yet.
+// for structs not received yet. A struct also waits for its client's one
+// before it.
 type lists struct {
 	recs []record
 	doc  int // the first records are the doc's; the rest, the update's
@@ -22,6 +23,11 @@ type lists struct {
 	state    []byte // unseen, seen or done, as list works through them
 	list     []string
 	placed   []bool
+	// The item each record's list is in, or -1 for a root type's or none.
+	parent []int
+	// The records in the order they were finished: each after the records
+	// it depends on, its parent among them.
+	order []int
 }
 
 const (
@@ -42,6 +48,7 @@ func newLists(doc, fresh []record) *lists {
 	l.state = make([]byte, len(l.recs))
 	l.list = make([]string, len(l.recs))
 	l.placed = make([]bool, len(l.recs))
+	l.parent = make([]int, len(l.recs))
 	return l
 }
 
@@ -86,6 +93,18 @@ func (l *lists) step(i int) (j int, list string, ok bool) {
 	return j, list, true
 }
 
+// before is the record holding the clock before record i's, which must be
+// placed for it to be, or -1 for none; ok tells whether there is one when
+// there must be.
+func (l *lists) before(i int) (j int, ok bool) {
+	r := l.recs[i]
+	if r.at.clock == 0 {
+		return -1, true
+	}
+	j = l.find(id{r.at.client, r.at.clock - 1})
+	return j, j >= 0
+}
+
 // resolve finds the list of every record, and whether it can be placed,
 // without recursion: a chain of origins can be as long as the doc.
 func (l *lists) resolve() {
@@ -97,20 +116,9 @@ func (l *lists) resolve() {
 				stack = stack[:len(stack)-1]
 				continue
 			}
-			j, list, ok := l.step(k)
-			switch {
-			case j < 0:
-				l.finish(k, list, ok)
-			case l.state[j] == done:
-				if list == "" {
-					list = l.list[j]
-				}
-				l.finish(k, list, l.placed[j])
-			case l.state[j] == seen:
-				l.finish(k, "", false) // a cycle of origins or parents
-			default:
+			if next := l.visit(k); next >= 0 {
 				l.state[k] = seen
-				stack = append(stack, j)
+				stack = append(stack, next)
 				continue
 			}
 			stack = stack[:len(stack)-1]
@@ -118,8 +126,44 @@ func (l *lists) resolve() {
 	}
 }
 
-func (l *lists) finish(k int, list string, ok bool) {
-	l.state[k], l.list[k], l.placed[k] = done, list, ok
+// visit finishes record k once the records it depends on are, or returns
+// one of them that is not, to finish first.
+func (l *lists) visit(k int) int {
+	j, list, ok := l.step(k)
+	p, prior := l.before(k)
+	if !ok || !prior {
+		l.finish(k, "", false, -1)
+		return -1
+	}
+	deps := [2]int{j, p}
+	for _, d := range deps {
+		if d >= 0 && l.state[d] == seen {
+			l.finish(k, "", false, -1) // a cycle of origins, parents and clocks
+			return -1
+		}
+	}
+	for _, d := range deps {
+		if d >= 0 && l.state[d] == unseen {
+			return d
+		}
+	}
+	placed, parent := true, -1
+	if j >= 0 {
+		placed, parent = l.placed[j], j
+		if list == "" {
+			list, parent = l.list[j], l.parent[j]
+		}
+	}
+	if p >= 0 {
+		placed = placed && l.placed[p]
+	}
+	l.finish(k, list, placed, parent)
+	return -1
+}
+
+func (l *lists) finish(k int, list string, ok bool, parent int) {
+	l.state[k], l.list[k], l.placed[k], l.parent[k] = done, list, ok, parent
+	l.order = append(l.order, k)
 }
 
 // check tells whether an update's records can all be placed, and whether

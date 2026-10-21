@@ -3,6 +3,7 @@ package meta
 import (
 	"fmt"
 	"math/rand/v2"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,7 +18,9 @@ func measure(t *testing.T, doc *crdt.Doc) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return size(s.recs, s.deleted)
+	l := newLists(s.recs, nil)
+	l.resolve()
+	return l.size(s.deleted)
 }
 
 func TestNeitherEncodingPassesTheMeasure(t *testing.T) {
@@ -201,4 +204,118 @@ func runWithInserts(n, k int) []byte {
 	}
 	e.WriteVarUint(0)
 	return e.Bytes()
+}
+
+func TestAnyLenIsWhatLib0Writes(t *testing.T) {
+	// From review: integers were counted without their tag.
+	for _, v := range []any{
+		nil, true, int64(0), int64(63), int64(64), int64(-8192), int64(1 << 30), float64(1.5),
+		float64(1e300), "héllo", []byte{1, 2}, []any{int64(0), int64(0), "x"},
+		map[string]any{"a": int64(1), "b": []any{false}},
+	} {
+		e := encoding.NewEncoder()
+		e.WriteAny(v)
+		if got, want := anyLen(v), len(e.Bytes()); got != want {
+			t.Errorf("anyLen(%#v) = %d; lib0 writes %d", v, got, want)
+		}
+	}
+}
+
+// predicted is the measure CheckUpdate takes of doc with update applied.
+func predicted(t *testing.T, doc *crdt.Doc, update []byte) int {
+	t.Helper()
+	u, err := scan(update)
+	if err != nil {
+		t.Fatal(err)
+	}
+	have, err := scan(crdt.EncodeStateAsUpdateV1(doc, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	known := map[uint64]uint64{}
+	for c, clock := range doc.StateVector() {
+		known[uint64(c)] = clock
+	}
+	l := newLists(have.recs, freshOf(u.recs, known))
+	l.resolve()
+	return l.size(have.deleted, u.deleted)
+}
+
+func TestConcurrentSetsMeasureNoMoreThanForeseen(t *testing.T) {
+	// From review: applying a set of a key another peer set too deletes one
+	// of them, and what a map set holds, which no update says. Peers that
+	// seldom catch up set values and maps under the same keys; the doc
+	// applied measures no more than CheckUpdate foresaw.
+	rng := rand.New(rand.NewPCG(3, 4))
+	host := crdt.New()
+	peers := make([]*crdt.Doc, 3)
+	for i := range peers {
+		peers[i] = crdt.New()
+	}
+	for round := range 300 {
+		p := peers[rng.IntN(len(peers))]
+		if rng.IntN(4) == 0 {
+			if err := crdt.ApplyUpdateV1(p, crdt.EncodeStateAsUpdateV1(host, p.StateVector()), nil); err != nil {
+				t.Fatal(err)
+			}
+		}
+		before := p.StateVector()
+		m := p.GetMap(CommentsKey)
+		p.Transact(func(txn *crdt.Transaction) {
+			for range 1 + rng.IntN(4) {
+				key := fmt.Sprintf("k%d", rng.IntN(6))
+				switch rng.IntN(4) {
+				case 0:
+					m.Delete(txn, key)
+				case 1:
+					inner := crdt.NewMapPrelim()
+					m.Set(txn, key, inner)
+					inner.Set(txn, "body", fmt.Sprintf("%d", round))
+					inner.Set(txn, "n", int64(rng.IntN(1000)))
+				default:
+					m.Set(txn, key, int64(rng.IntN(1<<20)))
+				}
+			}
+		})
+		update := crdt.EncodeStateAsUpdateV1(p, before)
+		if err := CheckUpdate(host, update); err != nil {
+			t.Fatalf("round %d: %v", round, err)
+		}
+		want := predicted(t, host, update)
+		if err := crdt.ApplyUpdateV1(host, update, nil); err != nil {
+			t.Fatal(err)
+		}
+		if got := DocSize(host); got > want {
+			t.Fatalf("round %d: the doc measures %d, past the %d foreseen", round, got, want)
+		}
+		if got, want := len(crdt.EncodeStateAsUpdateV1(host, nil)), DocSize(host); got > want {
+			t.Fatalf("round %d: the doc took %d bytes, more than its measure, %d", round, got, want)
+		}
+	}
+}
+
+func TestAConcurrentSetAtTheLimitIsRefused(t *testing.T) {
+	// From review: k=false and padding to just under the limit, then another
+	// client's k=true, with no deletions, passed and took the doc past it.
+	padded := func(n int) *crdt.Doc {
+		doc := crdt.New()
+		comments := doc.GetMap(CommentsKey) // not inside Transact: ygo would deadlock
+		doc.Transact(func(txn *crdt.Transaction) {
+			comments.Set(txn, "k", false)
+			comments.Set(txn, "pad", strings.Repeat("x", n))
+		})
+		return doc
+	}
+	n := MaxDocBytes - 300
+	host := padded(n + MaxDocBytes - 100 - DocSize(padded(n)))
+	if got := DocSize(host); got != MaxDocBytes-100 {
+		t.Fatalf("padded to %d", got)
+	}
+	peer := crdt.New()
+	theirs := peer.GetMap(CommentsKey)
+	peer.Transact(func(txn *crdt.Transaction) { theirs.Set(txn, "k", true) })
+	update := crdt.EncodeStateAsUpdateV1(peer, nil)
+	if err := CheckUpdate(host, update); err == nil {
+		t.Fatal("took it")
+	}
 }

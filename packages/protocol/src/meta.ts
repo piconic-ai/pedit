@@ -54,7 +54,7 @@ export function checkMetaUpdate(doc: Y.Doc, update: Uint8Array): Refusal | null 
   const { missing, long } = lists.check()
   if (missing) return { reason: 'it needs updates not received yet', retryLater: true }
   if (long) return { reason: 'its lists would take too long to apply' }
-  const n = size([...have.recs, ...lists.recs.slice(lists.doc)], merged(have.deleted, u.deleted))
+  const n = lists.size(have.deleted, u.deleted)
   if (n > META_LIMITS.maxDocBytes) return { reason: `the comments could take ${n} bytes` }
   return null
 }
@@ -91,7 +91,9 @@ function checkClocks(u: Scanned, known: Map<number, number>): Refusal | null {
  */
 export function metaDocSize(doc: Y.Doc): number {
   const s = scan(Y.encodeStateAsUpdate(doc))
-  return size(s.recs, merged(s.deleted))
+  const lists = new Lists(s.recs, [])
+  lists.resolve()
+  return lists.size(s.deleted)
 }
 
 /**
@@ -231,7 +233,8 @@ function freshOf(recs: Rec[], known: Map<number, number>): Rec[] {
 /**
  * The list of each record of the doc and of an update's new ones, by parent
  * and key or by the item each follows, as Yjs would, found without
- * recursion. See internal/meta/lists.go.
+ * recursion; a struct also waits for its client's one before it. See
+ * internal/meta/lists.go.
  */
 class Lists {
   readonly recs: Rec[]
@@ -239,6 +242,10 @@ class Lists {
   readonly byClient = new Map<number, number[]>()
   /** Each record's list ('' for none), or null when it cannot be placed. */
   readonly list: Array<string | null | undefined>
+  /** The item each record's list is in, or -1 for a root type's or none. */
+  readonly parent: number[]
+  /** The records as they were finished: each after those it depends on. */
+  readonly order: number[] = []
 
   constructor(doc: Rec[], fresh: Rec[]) {
     this.recs = [...doc, ...fresh]
@@ -252,6 +259,7 @@ class Lists {
       is.sort((a, b) => this.recs[a]!.clock - this.recs[b]!.clock)
     }
     this.list = new Array(this.recs.length)
+    this.parent = new Array(this.recs.length).fill(-1)
   }
 
   /** The record holding a clock of a client, or -1. */
@@ -286,35 +294,74 @@ class Lists {
   }
 
   /**
+   * The record holding the clock before record i's, which must be placed for
+   * it to be: -1 for none, and null when there must be one and is not.
+   */
+  before(i: number): number | null {
+    const r = this.recs[i]!
+    if (r.clock === 0) return -1
+    const j = this.find(r.client, r.clock - 1)
+    return j < 0 ? null : j
+  }
+
+  /** Finds every record's list, and whether it can be placed. */
+  resolve(): void {
+    const seen = new Set<number>()
+    for (let i = 0; i < this.recs.length; i++) {
+      const stack = [i]
+      while (stack.length > 0) {
+        const k = stack[stack.length - 1]!
+        if (this.list[k] !== undefined) {
+          stack.pop()
+          continue
+        }
+        const next = this.visit(k, seen)
+        if (next < 0) stack.pop()
+        else {
+          seen.add(k)
+          stack.push(next)
+        }
+      }
+    }
+  }
+
+  /**
+   * Finishes record k once the records it depends on are, or returns one of
+   * them that is not, to finish first.
+   */
+  private visit(k: number, seen: Set<number>): number {
+    const { dep, list: own } = this.step(k)
+    const prior = this.before(k)
+    if (own === null || prior === null) return this.finish(k, null, -1)
+    const deps = [dep, prior].filter((d) => d >= 0)
+    const open = (d: number) => this.list[d] === undefined
+    // A cycle of origins, parents and clocks.
+    if (deps.some((d) => open(d) && seen.has(d))) return this.finish(k, null, -1)
+    const next = deps.find(open)
+    if (next !== undefined) return next
+    if (deps.some((d) => this.list[d] === null)) return this.finish(k, null, -1)
+    if (dep < 0) return this.finish(k, own, -1)
+    return own
+      ? this.finish(k, own, dep)
+      : this.finish(k, this.list[dep] as string, this.parent[dep]!)
+  }
+
+  private finish(k: number, list: string | null, parent: number): number {
+    this.list[k] = list
+    this.parent[k] = parent
+    this.order.push(k)
+    return -1
+  }
+
+  /**
    * Whether an update's records can all be placed, and whether applying the
    * doc's lists, with them, could take more than maxListWork. A run of
    * values weighs as many items: it splits, copying the rest of it, each time
    * an item goes inside it.
    */
   check(): { missing: boolean; long: boolean } {
+    this.resolve()
     const { list } = this
-    const seen = new Set<number>()
-    for (let i = 0; i < this.recs.length; i++) {
-      const stack = [i]
-      while (stack.length > 0) {
-        const k = stack[stack.length - 1]!
-        if (list[k] !== undefined) {
-          stack.pop()
-          continue
-        }
-        const { dep, list: own } = this.step(k)
-        if (dep < 0) list[k] = own
-        else if (list[dep] !== undefined) list[k] = list[dep] === null ? null : own || list[dep]
-        else if (seen.has(dep))
-          list[k] = null // a cycle of origins or parents
-        else {
-          seen.add(k)
-          stack.push(dep)
-          continue
-        }
-        stack.pop()
-      }
-    }
     const lengths = new Map<string, number>()
     this.recs.forEach((r, i) => {
       const l = list[i]
@@ -324,7 +371,53 @@ class Lists {
     for (const n of lengths.values()) work += n * n
     return { missing: list.slice(this.doc).includes(null), long: work > META_LIMITS.maxListWork }
   }
+
+  /**
+   * The measure of the doc the records make, resolved, with the deleted
+   * ranges of all of `sets`, as internal/meta/size.go: an item that applying
+   * them could delete, being one of more than one under a key of a map, or
+   * in a map that could be deleted, takes DEAD_BYTES a clock at least, and
+   * one partly deleted SPLIT_BYTES more for each clock deleted.
+   */
+  size(...sets: Array<Map<number, Array<[number, number]>>>): number {
+    const dead = merged(...sets)
+    const { recs, list } = this
+    const deleted = recs.map((r) =>
+      r.item && !r.deleted ? overlap(dead.get(r.client) ?? [], r.clock, r.length) : r.length,
+    )
+    // Lists of more than one item, or of one partly deleted, count two.
+    const items = new Map<string, number>()
+    recs.forEach((_, i) => {
+      const l = list[i]
+      if (l) items.set(l, (items.get(l) ?? 0) + (deleted[i]! > 0 ? 2 : 1))
+    })
+    const fate: Fate[] = new Array(recs.length).fill(Fate.Stays)
+    for (const i of this.order) {
+      const r = recs[i]!
+      const p = this.parent[i]!
+      if (!r.item || deleted[i] === r.length || (p >= 0 && (!recs[p]!.item || fate[p] === Fate.Gone)))
+        fate[i] = Fate.Gone
+      else if ((p >= 0 && fate[p] === Fate.MayGo) || (items.get(list[i] ?? '') ?? 0) > 1)
+        fate[i] = Fate.MayGo
+    }
+    let n = 2
+    const clients = new Set<number>(dead.keys())
+    recs.forEach((r, i) => {
+      clients.add(r.client)
+      const all = DEAD_BYTES * r.length
+      if (fate[i] === Fate.Gone) n += all
+      else if (fate[i] === Fate.Stays) n += r.bytes
+      else if (deleted[i]! > 0) n += r.bytes + SPLIT_BYTES * deleted[i]! + all
+      else n += Math.max(r.bytes, all)
+    })
+    for (const c of clients) n += CLIENT_BYTES + 2 * varLen(c)
+    return n
+  }
 }
+
+/** What may become of an item, by what applying the records can delete. */
+const Fate = { Stays: 0, MayGo: 1, Gone: 2 } as const
+type Fate = (typeof Fate)[keyof typeof Fate]
 
 /**
  * Yjs and ygo encode one doc in different sizes: Yjs merges the runs of
@@ -336,23 +429,7 @@ class Lists {
  */
 const DEAD_BYTES = 96
 const CLIENT_BYTES = 12
-
-/** The measure of a doc of `recs`, with `deleted`, sorted and joined. */
-function size(recs: Rec[], deleted: Map<number, Array<[number, number]>>): number {
-  let n = 2
-  const clients = new Set<number>(deleted.keys())
-  for (const r of recs) {
-    clients.add(r.client)
-    let gone = r.length
-    if (r.item && !r.deleted) {
-      gone = overlap(deleted.get(r.client) ?? [], r.clock, r.length)
-      if (gone < r.length) n += r.bytes
-    }
-    n += DEAD_BYTES * gone
-  }
-  for (const c of clients) n += CLIENT_BYTES + 2 * varLen(c)
-  return n
-}
+const SPLIT_BYTES = 16
 
 /** Each client's deleted ranges, of all of `sets`, sorted and joined. */
 function merged(
@@ -407,12 +484,12 @@ function anyLen(v: unknown): number {
 }
 
 /**
- * How many bytes lib0 writes for a number: a varint for an integer of 31
- * bits, else a float32 when it holds it, else a float64.
+ * How many bytes lib0 writes for a number, with its tag: a varint for an
+ * integer of 31 bits, else a float32 when it holds it, else a float64.
  */
 function numberLen(x: number): number {
   if (Number.isInteger(x) && Math.abs(x) <= 0x7fffffff) {
-    let n = 1
+    let n = 2
     for (let a = Math.floor(Math.abs(x) / 64); a > 0; a = Math.floor(a / 128)) n++
     return n
   }

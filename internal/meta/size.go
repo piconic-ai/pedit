@@ -14,26 +14,47 @@ import (
 // encoding passes: a live item takes what Yjs writes for it, each clock of
 // deleted content deadBytes, which covers the struct and deleted range ygo
 // may write for it, and each client clientBytes plus its id twice.
+//
+// Applying an update deletes more than it says: of the items under one key
+// of a map, all but the last, and what the maps among them hold. So an item
+// that could be deleted that way, being in a list of more than one item, or
+// in a map that could be, takes deadBytes a clock at least, deleted or not,
+// and a doc measures no less for being applied. An item an update deletes
+// part of also takes splitBytes for each clock deleted: the rest of it is
+// split into items of its own.
 const (
 	deadBytes   = 96
 	clientBytes = 12
+	splitBytes  = 16
 )
 
-// size is the measure of a doc of recs, with deleted, by client.
-func size(recs []record, deleted map[uint64][][2]uint64) int {
-	dead := merged(deleted)
+// What may become of an item, by what applying the records can delete.
+const (
+	stays = iota
+	mayGo
+	gone
+)
+
+// size is the measure of the doc the records make, resolved, with the
+// deleted ranges of all of sets, by client.
+func (l *lists) size(sets ...map[uint64][][2]uint64) int {
+	dead := merged(sets...)
+	deleted, fate := l.fates(dead)
 	n := 2
 	clients := map[uint64]bool{}
-	for _, r := range recs {
+	for i, r := range l.recs {
 		clients[r.at.client] = true
-		gone := r.length
-		if r.item && !r.deleted {
-			gone = overlap(dead[r.at.client], r.at.clock, r.length)
-			if gone < r.length {
-				n += r.bytes
-			}
+		all := deadBytes * int(r.length)
+		switch {
+		case fate[i] == gone:
+			n += all
+		case fate[i] == stays:
+			n += r.bytes
+		case deleted[i] > 0:
+			n += r.bytes + splitBytes*int(deleted[i]) + all
+		default:
+			n += max(r.bytes, all)
 		}
-		n += deadBytes * int(gone)
 	}
 	for c := range dead {
 		clients[c] = true
@@ -44,19 +65,49 @@ func size(recs []record, deleted map[uint64][][2]uint64) int {
 	return n
 }
 
+// fates tells how many clocks of each record dead deletes, and what may
+// become of it.
+func (l *lists) fates(dead map[uint64][][2]uint64) (deleted []uint64, fate []byte) {
+	deleted = make([]uint64, len(l.recs))
+	// Lists of more than one item, or of one partly deleted, count two.
+	items := map[string]int{}
+	for i, r := range l.recs {
+		deleted[i] = r.length
+		if r.item && !r.deleted {
+			deleted[i] = overlap(dead[r.at.client], r.at.clock, r.length)
+		}
+		if l.list[i] != "" {
+			items[l.list[i]] += 1 + min(1, int(deleted[i]))
+		}
+	}
+	fate = make([]byte, len(l.recs))
+	for _, i := range l.order {
+		r, p := l.recs[i], l.parent[i]
+		switch {
+		case !r.item || deleted[i] == r.length || p >= 0 && (!l.recs[p].item || fate[p] == gone):
+			fate[i] = gone
+		case p >= 0 && fate[p] == mayGo || items[l.list[i]] > 1:
+			fate[i] = mayGo
+		}
+	}
+	return deleted, fate
+}
+
 // DocSize is the measure CheckUpdate limits, of doc, a metadata doc.
 func DocSize(doc *crdt.Doc) int {
 	s, err := scan(crdt.EncodeStateAsUpdateV1(doc, nil))
 	if err != nil {
 		return math.MaxInt
 	}
-	return size(s.recs, s.deleted)
+	l := newLists(s.recs, nil)
+	l.resolve()
+	return l.size(s.deleted)
 }
 
-// merged sorts and joins each client's ranges of deleted, and those of more.
-func merged(deleted map[uint64][][2]uint64, more ...map[uint64][][2]uint64) map[uint64][][2]uint64 {
+// merged sorts and joins each client's ranges of all of sets.
+func merged(sets ...map[uint64][][2]uint64) map[uint64][][2]uint64 {
 	out := map[uint64][][2]uint64{}
-	for _, d := range append([]map[uint64][][2]uint64{deleted}, more...) {
+	for _, d := range sets {
 		for c, rs := range d {
 			out[c] = append(out[c], rs...)
 		}
@@ -122,11 +173,12 @@ func anyLen(v any) int {
 	return 9
 }
 
-// numberLen is how many bytes lib0 writes for a number: a varint for an
-// integer of 31 bits, else a float32 when it holds it, else a float64.
+// numberLen is how many bytes lib0 writes for a number, with its tag: a
+// varint for an integer of 31 bits, else a float32 when it holds it, else a
+// float64.
 func numberLen(x float64) int {
 	if x == math.Trunc(x) && math.Abs(x) <= math.MaxInt32 {
-		n, a := 1, uint64(math.Abs(x))>>6
+		n, a := 2, uint64(math.Abs(x))>>6
 		for ; a > 0; a >>= 7 {
 			n++
 		}
