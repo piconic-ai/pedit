@@ -1,6 +1,8 @@
 import { META_LIMITS, metaDocSize, randomBase64Url } from '@pedit/protocol'
 import * as Y from 'yjs'
+import { type Cell, CsvError, type Table, tryParse } from './csv.ts'
 import { Store } from './store.ts'
+import type { Position } from './table.ts'
 
 /**
  * The comments on one file (#121), from the metadata doc the host shares
@@ -35,7 +37,14 @@ export interface ShownThread {
   /** Where its anchor is in the text, while attached or changed. */
   from: number
   to: number
+  /** The corner cells of a thread on a table's cells, while attached or changed. */
+  cells: { from: Position; to: Position } | null
 }
+
+/** What a new comment goes on: the editor's selection, or cells of the table. */
+export type CommentTarget =
+  | { kind: 'text'; from: number; to: number }
+  | { kind: 'cells'; from: Position; to: Position }
 
 /** Limits on what a comment holds, as internal/meta/meta.go keeps them. */
 export const COMMENT_LIMITS = {
@@ -76,6 +85,8 @@ export interface CommentsOptions {
   delayMs?: number
   /** Whether the room takes no changes now: it has ended, or waits for the host. */
   locked?: () => boolean
+  /** The file's delimiter when it is a table, CSV or TSV, so threads can go on cells. */
+  delimiter?: () => string | null
 }
 
 /**
@@ -133,18 +144,52 @@ export class CommentsView {
    */
   start(from: number, to: number, body: string): string | null {
     const quote = this.#text.toString().slice(from, to)
+    if (quote.length === 0) return null
+    return this.#begin(quote, body, {
+      type: 'text',
+      start: position(this.#text, from, 0),
+      end: position(this.#text, to, -1),
+    })
+  }
+
+  /**
+   * Starts a thread on the cells of a table between two corners, as start
+   * does on text. Null as for start, but an empty cell takes one, or when a
+   * corner is not a cell of the table now.
+   */
+  startCells(a: Position, b: Position, body: string): string | null {
+    const table = this.#table()
+    const from = table?.rows[Math.min(a.row, b.row)]?.cells[Math.min(a.col, b.col)]
+    const to = table?.rows[Math.max(a.row, b.row)]?.cells[Math.max(a.col, b.col)]
+    if (!table || !from || !to) return null
+    return this.#begin(table.text.slice(from.from, to.to), body, {
+      type: 'cells',
+      from: this.#cell(from),
+      to: this.#cell(to),
+    })
+  }
+
+  /** Starts a thread on a target, as start or startCells. */
+  startOn(target: CommentTarget, body: string): string | null {
+    return target.kind === 'text'
+      ? this.start(target.from, target.to, body)
+      : this.startCells(target.from, target.to, body)
+  }
+
+  /** A cell's place: it takes in what is typed at its edges, as typing into it does. */
+  #cell(c: Cell): { start: string; end: string } {
+    return { start: position(this.#text, c.from, -1), end: position(this.#text, c.to, 0) }
+  }
+
+  #begin(quote: string, body: string, anchor: Record<string, unknown>): string | null {
     const text = body.trim()
-    if (!this.#fits(text) || quote.length === 0 || quote.length > COMMENT_LIMITS.quote) return null
+    if (!this.#fits(text) || quote.length > COMMENT_LIMITS.quote) return null
     if (this.#comments.size >= COMMENT_LIMITS.threads) return null
     const id = newId()
     this.#meta.transact(() => {
       const thread = new Y.Map<unknown>()
       this.#comments.set(id, thread)
-      thread.set('anchor', {
-        type: 'text',
-        start: position(this.#text, from, 0),
-        end: position(this.#text, to, -1),
-      })
+      thread.set('anchor', anchor)
       thread.set('quote', quote)
       thread.set('resolved', false)
       const messages = new Y.Map<unknown>()
@@ -153,6 +198,14 @@ export class CommentsView {
     })
     this.refresh()
     return id
+  }
+
+  /** The table the text is now, or null when it is none, or does not parse. */
+  #table(): Table | null {
+    const delimiter = this.#opts.delimiter?.()
+    if (!delimiter) return null
+    const table = tryParse(this.#text.toString(), delimiter)
+    return table instanceof CsvError ? null : table
   }
 
   /** Adds a comment to a thread. */
@@ -251,11 +304,18 @@ export class CommentsView {
       clearTimeout(this.#timer)
       this.#timer = null
     }
-    const text = this.#text.toString()
     let index: TextIndex | null = null
-    const at = () => {
-      index ??= new TextIndex(this.#text)
-      return index
+    let table: Table | null | undefined
+    const here: Here = {
+      text: this.#text.toString(),
+      index: () => {
+        index ??= new TextIndex(this.#text)
+        return index
+      },
+      table: () => {
+        if (table === undefined) table = this.#table()
+        return table
+      },
     }
     const shown: ShownThread[] = []
     let count = 0
@@ -263,7 +323,7 @@ export class CommentsView {
       const thread = this.#comments.get(id)
       if (!ID.test(id) || !(thread instanceof Y.Map)) continue
       if (++count > COMMENT_LIMITS.threads) break
-      const s = this.#show(id, thread, text, at)
+      const s = this.#show(id, thread, here)
       if (s) shown.push(s)
     }
     shown.sort(order)
@@ -275,16 +335,17 @@ export class CommentsView {
     if (this.#measure) this.#measureNow()
   }
 
-  #show(id: string, thread: Y.Map<unknown>, text: string, at: () => TextIndex): ShownThread | null {
+  #show(id: string, thread: Y.Map<unknown>, here: Here): ShownThread | null {
     const quote = thread.get('quote')
     if (typeof quote !== 'string' || quote.length > COMMENT_LIMITS.quote) return null
     // The host saves no thread without an anchor of a kind it knows.
     if (!ANCHORS.has(String((thread.get('anchor') as { type?: unknown } | undefined)?.type)))
       return null
-    const place = placeOf(thread.get('anchor'), at)
-    const live = place ? text.slice(place.from, place.to) : ''
-    const state: ThreadState =
-      !place || place.from >= place.to ? 'detached' : live === quote ? 'attached' : 'changed'
+    const place = placeOf(thread.get('anchor'), here)
+    const live = place ? here.text.slice(place.from, place.to) : ''
+    // Only a cell may be empty.
+    const gone = !place || (place.cells === null && place.from >= place.to)
+    const state: ThreadState = gone ? 'detached' : live === quote ? 'attached' : 'changed'
     return {
       id,
       state,
@@ -294,6 +355,7 @@ export class CommentsView {
       messages: this.#shownMessages(thread.get('messages')),
       from: state === 'detached' ? -1 : (place?.from ?? -1),
       to: state === 'detached' ? -1 : (place?.to ?? -1),
+      cells: state === 'detached' ? null : (place?.cells ?? null),
     }
   }
 
@@ -344,14 +406,61 @@ function position(text: Y.Text, index: number, assoc: number): string {
   return btoa(String.fromCharCode(...bytes))
 }
 
-/** Where a text anchor is now, or null. */
-function placeOf(anchor: unknown, at: () => TextIndex): { from: number; to: number } | null {
+/** The text on screen, looked at once a refresh, and what is costly worked out once. */
+interface Here {
+  text: string
+  index: () => TextIndex
+  table: () => Table | null
+}
+
+interface Place {
+  from: number
+  to: number
+  cells: { from: Position; to: Position } | null
+}
+
+/** Where an anchor is now, or null. */
+function placeOf(anchor: unknown, here: Here): Place | null {
   if (typeof anchor !== 'object' || anchor === null) return null
   const a = anchor as Record<string, unknown>
+  if (a.type === 'cells') {
+    const from = cellOf(a.from, here)
+    const to = from && cellOf(a.to, here)
+    if (!from || !to) return null
+    return { from: from.cell.from, to: to.cell.to, cells: { from: from.at, to: to.at } }
+  }
   if (a.type !== 'text') return null
-  const from = at().resolve(a.start)
-  const to = from === null ? null : at().resolve(a.end)
-  return from === null || to === null ? null : { from, to }
+  const from = here.index().resolve(a.start)
+  const to = from === null ? null : here.index().resolve(a.end)
+  return from === null || to === null ? null : { from, to, cells: null }
+}
+
+/**
+ * The cell a cell's place holds now. It is there when its positions still
+ * hold exactly one cell of the table, its raw text: a deleted cell takes a
+ * delimiter with it, and leaves its positions on an empty span between its
+ * neighbours, or on one that runs into a neighbour. An empty cell whose
+ * column was deleted can pass to an empty neighbour: nothing in the text
+ * tells them apart.
+ */
+function cellOf(v: unknown, here: Here): { cell: Cell; at: Position } | null {
+  if (typeof v !== 'object' || v === null) return null
+  const p = v as Record<string, unknown>
+  const start = here.index().resolve(p.start)
+  const end = start === null ? null : here.index().resolve(p.end)
+  const table = here.table()
+  if (start === null || end === null || !table) return null
+  // The last row that starts at or before it.
+  let lo = 0
+  let hi = table.rows.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (table.rows[mid]!.from <= start) lo = mid + 1
+    else hi = mid
+  }
+  const row = lo - 1
+  const col = table.rows[row]?.cells.findIndex((c) => c.from === start && c.to === end) ?? -1
+  return col < 0 ? null : { cell: table.rows[row]!.cells[col]!, at: { row, col } }
 }
 
 /**

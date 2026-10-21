@@ -1,14 +1,19 @@
 'use client'
 
 import { createSignal } from '@barefootjs/client'
-import { COMMENT_LIMITS, type CommentsView, type ShownThread } from '../comments.ts'
+import {
+  COMMENT_LIMITS,
+  type CommentsView,
+  type CommentTarget,
+  type ShownThread,
+} from '../comments.ts'
 import type { Readable, Store } from '../store.ts'
 
 export interface CommentsPanelProps {
   /** The comments of the file on screen, or null when it has none. */
   comments: Readable<CommentsView | null>
-  /** The editor's selection: a comment goes on it. */
-  selection: Readable<{ from: number; to: number }>
+  /** What a new comment goes on: the editor's selection or the table's cells; null for nothing. */
+  target: Readable<CommentTarget | null>
   /** No new comments, replies or changes: the room has ended or waits. */
   locked: Readable<boolean>
   /** The thread in focus, marked in the text too. */
@@ -28,9 +33,13 @@ export function CommentsPanel(props: CommentsPanelProps) {
   const view = () => props.comments.get()
   const threads = () => view()?.threads.get() ?? []
   const open = () => threads().filter((t) => !t.resolved).length
-  const selected = () => {
-    const s = props.selection.get()
-    return s.to > s.from
+  const selected = () => props.target.get() !== null
+  const prompt = () => {
+    const t = props.target.get()
+    if (!t) return 'Select text or a cell to comment on it'
+    if (t.kind === 'text') return 'Comment on the selection'
+    const one = t.from.row === t.to.row && t.from.col === t.to.col
+    return one ? 'Comment on the cell' : 'Comment on the cells'
   }
   const canWrite = () => !props.locked.get() && (view()?.roomForMore.get() ?? false)
   // On a narrow screen the panel covers the text: it opens on demand.
@@ -39,9 +48,9 @@ export function CommentsPanel(props: CommentsPanelProps) {
 
   const start = () => {
     const v = view()
-    const s = props.selection.get()
-    if (!v || !draft) return
-    const id = v.start(s.from, s.to, draft.value)
+    const t = props.target.get()
+    if (!v || !draft || !t) return
+    const id = v.startOn(t, draft.value)
     if (id) {
       draft.value = ''
       props.focus.set(id)
@@ -73,7 +82,7 @@ export function CommentsPanel(props: CommentsPanelProps) {
           }}
           rows={3}
           maxlength={COMMENT_LIMITS.body}
-          placeholder={selected() ? 'Comment on the selection' : 'Select text to comment on it'}
+          placeholder={prompt()}
           disabled={!selected()}
         />
         <button type="button" disabled={!selected()} onClick={start}>

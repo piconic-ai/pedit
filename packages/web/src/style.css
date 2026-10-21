@@ -1233,6 +1233,10 @@ main.editor[data-resizing] iframe {
   color: var(--panel);
   font-weight: 600;
 }
+/* A cell with an open comment: a corner, as spreadsheets draw it. */
+.grid td[data-comment] {
+  background-image: linear-gradient(225deg, var(--comment-mark, #e8a317) 6px, transparent 6px);
+}
 .grid td[data-mark="span"] {
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
@@ -1818,7 +1822,6 @@ main.editor .cm-vim-panel {
   font: 13px / 1.45 var(--sans);
   padding: 12px;
 }
-main.editor[data-view="table"] .comments,
 main.editor[data-view="canvas"] .comments {
   display: none;
 }

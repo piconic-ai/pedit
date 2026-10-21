@@ -76,10 +76,17 @@ Each kind of file anchors on what survives its edits:
   false`, so every peer agrees after an undo.
 - **CSV and TSV:** a cell is a range of the same Y.Text that takes in what is
   typed at its edges (start assoc -1, end assoc 0), so a value rewritten in
-  place stays in it and an empty cell has a place. Telling a deleted cell from
-  one whose neighbour was deleted takes the positions of the delimiters and
-  line breaks around it too; the change that brings comments to tables
-  settles that rule. A range of cells is its two corner cells.
+  place stays in it and an empty cell has a place. A cell is still there
+  while its two positions hold exactly one cell of the table as it parses
+  now, its raw text, quotes and all. Deleting a cell takes a delimiter with
+  it, so its positions close on an empty span between its neighbours, or
+  take in a neighbour, and hold no cell: the thread is detached. A cell whose
+  neighbour was deleted keeps its positions, and its thread. The one case
+  this cannot tell is an empty cell whose column goes beside another empty
+  cell: nothing left in the text tells them apart. While the file does not
+  parse as a table, its cells' threads are detached. A range of cells is its
+  two corner cells; the table marks a thread on its first, as spreadsheets
+  do.
 - **Canvas:** the node's `id`. Stacking changes and undo replace a node's
   Y.Map, but keep its id.
 

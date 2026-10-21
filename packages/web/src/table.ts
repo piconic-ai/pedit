@@ -145,6 +145,8 @@ export class TableView {
   readonly mirror = new Store('')
   /** Others' cells, keyed "row:col". */
   readonly peers = new Store<Readonly<Record<string, CellPeers>>>({})
+  /** The cells open comments start on, keyed "row:col". */
+  readonly commented = new Store<ReadonlySet<string>>(new Set())
   #span: Span = 'cell'
   /** Set after a long press opened the menu, so the tap that ends it does not select. */
   #swallowClick = false
@@ -222,6 +224,11 @@ export class TableView {
 
   get table(): Table | null {
     return this.#table
+  }
+
+  /** The delimiter for the shared file, or null when it is not a table. */
+  get delimiter(): string | null {
+    return this.#delimiter
   }
 
   /** The delimiter for the shared file, or null when it is not a table. */

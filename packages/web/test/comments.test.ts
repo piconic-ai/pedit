@@ -7,8 +7,9 @@ import {
   type ShownThread,
   TextIndex,
 } from '../src/comments.ts'
+import { deleteColumn, deleteRow, type Edit, parse, setCell } from '../src/csv.ts'
 
-function setup(text: string) {
+function setup(text: string, delimiter: string | null = null) {
   const meta = new Y.Doc()
   const content = new Y.Doc()
   content.getText('content').insert(0, text)
@@ -17,6 +18,7 @@ function setup(text: string) {
     name: () => 'Ada',
     now: () => new Date(Date.UTC(2026, 9, 21, 0, 0, tick++)),
     delayMs: 0,
+    delimiter: () => delimiter,
   })
   const shown = () => {
     view.refresh()
@@ -233,5 +235,83 @@ describe('TextIndex', () => {
     expect(new TextIndex(text).resolve(b64(named))).toBeNull()
     expect(doc.share.has('chosen')).toBe(false)
     expect(new TextIndex(text).resolve('not base64!')).toBeNull()
+  })
+})
+
+describe('comments on cells', () => {
+  /** Edits the text as the table does. */
+  const edit = (text: Y.Text, edits: (t: ReturnType<typeof parse>) => Edit[]) => {
+    for (const e of [...edits(parse(text.toString()))].sort((a, b) => b.from - a.from)) {
+      text.delete(e.from, e.to - e.from)
+      text.insert(e.from, e.insert)
+    }
+  }
+  const cell = (row: number, col: number) => ({ row, col })
+
+  it('follows a cell through edits of the table', () => {
+    const { view, shown, text } = setup('a,b,c\n1,2,3\n', ',')
+    expect(view.startCells(cell(1, 1), cell(1, 1), 'Why 2?')).not.toBeNull()
+    expect(only(shown())).toMatchObject({
+      state: 'attached',
+      quote: '2',
+      cells: { from: cell(1, 1), to: cell(1, 1) },
+    })
+    // Rewritten in place, it is the same cell, changed.
+    edit(text, (t) => setCell(t, 1, 1, '22'))
+    expect(only(shown())).toMatchObject({ state: 'changed', live: '22' })
+    // Its left neighbour's column goes: it moves with its value.
+    edit(text, (t) => deleteColumn(t, 0))
+    expect(text.toString()).toBe('b,c\n22,3\n')
+    expect(only(shown())).toMatchObject({ state: 'changed', cells: { from: cell(1, 0) } })
+    // Its own column goes: it is gone, not on a neighbour.
+    edit(text, (t) => deleteColumn(t, 0))
+    expect(only(shown())).toMatchObject({ state: 'detached', cells: null, from: -1 })
+  })
+
+  it('loses a cell whose row is deleted, and its last column', () => {
+    const { view, shown, text } = setup('a,b\n1,2\n', ',')
+    view.startCells(cell(1, 1), cell(1, 1), 'last')
+    view.startCells(cell(0, 0), cell(0, 0), 'first')
+    edit(text, (t) => deleteColumn(t, 1))
+    const states = () => shown().map((t) => [t.quote, t.state])
+    expect(states()).toContainEqual(['2', 'detached'])
+    expect(states()).toContainEqual(['a', 'attached'])
+    edit(text, (t) => deleteRow(t, 0))
+    expect(states()).toContainEqual(['a', 'detached'])
+  })
+
+  it('comments on an empty cell, and on a range by its corners', () => {
+    const { view, shown, text } = setup('a,,c\n1,2,3\n', ',')
+    view.startCells(cell(0, 1), cell(0, 1), 'empty')
+    view.startCells(cell(1, 2), cell(0, 0), 'range')
+    const [range, empty] = [...shown()].sort((x, y) => x.from - y.from)
+    expect(empty).toMatchObject({ state: 'attached', quote: '', cells: { from: cell(0, 1) } })
+    expect(range).toMatchObject({
+      state: 'attached',
+      quote: 'a,,c\n1,2,3',
+      cells: { from: cell(0, 0), to: cell(1, 2) },
+    })
+    // Typing into the empty cell stays in it.
+    edit(text, (t) => setCell(t, 0, 1, 'b'))
+    expect(shown().find((t) => t.cells?.from.col === 1)).toMatchObject({
+      state: 'changed',
+      live: 'b',
+    })
+  })
+
+  it('takes no cell that is not in the table, nor any in a file that is none', () => {
+    const { view } = setup('a,b\n1\n', ',')
+    expect(view.startCells(cell(1, 1), cell(1, 1), 'past the row')).toBeNull()
+    expect(view.startCells(cell(5, 0), cell(5, 0), 'past the table')).toBeNull()
+    expect(setup('a,b\n').view.startCells(cell(0, 0), cell(0, 0), 'text')).toBeNull()
+  })
+
+  it('shows a cell as gone while the table does not parse', () => {
+    const { view, shown, text } = setup('a,b\n', ',')
+    view.startCells(cell(0, 1), cell(0, 1), 'b')
+    text.insert(0, '"')
+    expect(only(shown()).state).toBe('detached')
+    text.delete(0, 1)
+    expect(only(shown()).state).toBe('attached')
   })
 })

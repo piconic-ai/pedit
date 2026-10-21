@@ -31,7 +31,7 @@ import { Attachments, hostAttachments, whyNoImages } from './attachments.ts'
 import { BoardView } from './board.ts'
 import { read as readCanvas, toJSON } from './canvas.ts'
 import { commentMarks } from './commentmarks.ts'
-import { CommentsView, type ShownThread } from './comments.ts'
+import { CommentsView, type CommentTarget, type ShownThread } from './comments.ts'
 import { delimiterFor } from './csv.ts'
 import { avatarFor, fetchIdentity } from './identity.ts'
 import { JsonPane } from './jsonpane.ts'
@@ -266,6 +266,9 @@ async function joinRoom(
   const threadsShown = new Store<readonly ShownThread[]>([])
   const commentFocus = new Store<string | null>(null)
   const selection = new Store({ from: 0, to: 0 })
+  // What a new comment goes on: the table's cells in the table view, else
+  // the editor's selection.
+  const commentTarget = new Store<CommentTarget | null>(null)
   const locked = new Store(false)
   // The room closes as soon as the host leaves (or was never there).
   let parts: LayoutParts | undefined
@@ -390,10 +393,15 @@ async function joinRoom(
   const tableErrors = new TableErrors(0, (error) =>
     view.setTableError(error && describeError(error)),
   )
-  const tableFor = (id: number, fileText: Y.Text, undo: Y.UndoManager) =>
-    new TableView(fileText, awareness, undo, {
+  const tableFor = (id: number, fileText: Y.Text, undo: Y.UndoManager) => {
+    const t = new TableView(fileText, awareness, undo, {
       onError: (error) => tableErrors.report(id, error),
     })
+    t.selection.subscribe(() => {
+      if (t === shown.table) aim()
+    })
+    return t
+  }
   // Other editors that follow the settings: each canvas's JSON.
   const fontFollowers: { view: EditorView; compartment: Compartment }[] = []
   const themeFollowers: { view: EditorView; compartment: Compartment }[] = []
@@ -449,6 +457,7 @@ async function joinRoom(
     shown.board.active = mode === 'canvas'
     editor.requestMeasure()
     followEditor()
+    aim()
   }
   showView(view.mode)
   // Keep the page above the on-screen keyboard, with the cursor in sight.
@@ -521,6 +530,8 @@ async function joinRoom(
     const lang = resolveLanguage(fileName)
     const delimiter = delimiterFor(fileName)
     shown.table.setDelimiter(delimiter)
+    // Threads on cells need the table to be placed.
+    shown.comments?.refresh()
     view.setKind(lang.kind === 'markdown' ? 'markdown' : delimiter ? 'table' : 'plain')
     let support: Extension
     try {
@@ -588,7 +599,11 @@ async function joinRoom(
       const user = awareness.getLocalState()?.user as { name?: unknown } | undefined
       return typeof user?.name === 'string' ? user.name : me.name
     }
-    f.comments = new CommentsView(metaDoc, f.doc, { name, locked: editLocked })
+    f.comments = new CommentsView(metaDoc, f.doc, {
+      name,
+      locked: editLocked,
+      delimiter: () => f.table.delimiter,
+    })
     if (f === shown) showComments()
   }
   let stopThreads = () => {}
@@ -598,9 +613,21 @@ async function joinRoom(
     const c = shown.comments
     comments.set(c)
     commentFocus.set(null)
-    threadsShown.set(c?.threads.get() ?? [])
-    stopThreads = c ? c.threads.subscribe((t) => threadsShown.set(t)) : () => {}
+    const show = (t: readonly ShownThread[]) => {
+      threadsShown.set(t)
+      const cells = commentedCells(t)
+      if (!sameCells(cells, shown.table.commented.get())) shown.table.commented.set(cells)
+    }
+    show(c?.threads.get() ?? [])
+    stopThreads = c ? c.threads.subscribe(show) : () => {}
   }
+  // Works out what a new comment would go on, when the selection, the view
+  // or the file changes. Declared so showView, which runs first, can call it.
+  function aim() {
+    const next = shown.table.active ? cellsTarget(shown.table) : textTarget(selection.get())
+    if (JSON.stringify(next) !== JSON.stringify(commentTarget.get())) commentTarget.set(next)
+  }
+  selection.subscribe(aim)
 
   // Shows another file of the room. The editor keeps its settings.
   const switchTo = (id: number) => {
@@ -678,10 +705,14 @@ async function joinRoom(
   render(parts.files, 'FileTabs', { files, current, onOpen: switchTo })
   render(parts.comments, 'CommentsPanel', {
     comments,
-    selection,
+    target: commentTarget,
     locked,
     focus: commentFocus,
     onShow: (t: ShownThread) => {
+      if (t.cells && shown.table.active) {
+        shown.table.select(t.cells.from)
+        return
+      }
       if (t.from < 0 || t.to > editor.state.doc.length) return
       editor.dispatch({ selection: { anchor: t.from, head: t.to }, scrollIntoView: true })
       editor.focus()
@@ -693,6 +724,50 @@ async function joinRoom(
   client.connect()
   renderPeople()
   window.addEventListener('pagehide', () => void client?.destroy())
+}
+
+/** The editor's selection as a comment's target: text, if any is selected. */
+function textTarget(s: { from: number; to: number }): CommentTarget | null {
+  return s.to > s.from ? { kind: 'text', from: s.from, to: s.to } : null
+}
+
+/**
+ * The table's selection as a comment's target: the cell, or the corners of
+ * its row or column. None while editing a cell, or where there is no cell.
+ */
+function cellsTarget(view: TableView): CommentTarget | null {
+  const s = view.selection.get()
+  const table = view.table
+  if (!s || !table) return null
+  const { row, col } = s.at
+  if (s.span === 'row') {
+    const n = table.rows[row]?.cells.length ?? 0
+    return n > 0 ? { kind: 'cells', from: { row, col: 0 }, to: { row, col: n - 1 } } : null
+  }
+  if (s.span === 'column') {
+    const rows = table.rows.flatMap((r, i) => (r.cells[col] ? [i] : []))
+    if (rows.length === 0) return null
+    return { kind: 'cells', from: { row: rows[0]!, col }, to: { row: rows.at(-1)!, col } }
+  }
+  return table.rows[row]?.cells[col] ? { kind: 'cells', from: s.at, to: s.at } : null
+}
+
+/**
+ * The cells open threads start on, keyed "row:col", for the table to mark:
+ * the first corner of each, as spreadsheets mark a comment, so a thread over
+ * the whole table costs one mark.
+ */
+function commentedCells(threads: readonly ShownThread[]): ReadonlySet<string> {
+  const keys = new Set<string>()
+  for (const t of threads) {
+    if (!t.resolved && t.cells) keys.add(`${t.cells.from.row}:${t.cells.from.col}`)
+  }
+  return keys
+}
+
+/** Whether two sets of cells hold the same keys. */
+function sameCells(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+  return a.size === b.size && [...a].every((k) => b.has(k))
 }
 
 // A file dropped outside the editor would open in place of the page, and

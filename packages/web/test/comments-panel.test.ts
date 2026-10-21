@@ -2,17 +2,21 @@
 import { render } from '@barefootjs/client/runtime'
 import { describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
-import { CommentsView, type ShownThread } from '../src/comments.ts'
+import { CommentsView, type CommentTarget, type ShownThread } from '../src/comments.ts'
 import '../src/components/CommentsPanel.tsx'
 import { Store } from '../src/store.ts'
 
-function mount(text = 'hello world!\n') {
+function mount(text = 'hello world!\n', delimiter: string | null = null) {
   const meta = new Y.Doc()
   const content = new Y.Doc()
   content.getText('content').insert(0, text)
-  const view = new CommentsView(meta, content, { name: () => 'Ada', delayMs: 0 })
+  const view = new CommentsView(meta, content, {
+    name: () => 'Ada',
+    delayMs: 0,
+    delimiter: () => delimiter,
+  })
   const comments = new Store<CommentsView | null>(view)
-  const selection = new Store({ from: 0, to: 0 })
+  const selection = new Store<CommentTarget | null>(null)
   const locked = new Store(false)
   const focus = new Store<string | null>(null)
   const shown: ShownThread[] = []
@@ -20,7 +24,7 @@ function mount(text = 'hello world!\n') {
   document.body.append(container)
   render(container, 'CommentsPanel', {
     comments,
-    selection,
+    target: selection,
     locked,
     focus,
     onShow: (t: ShownThread) => shown.push(t),
@@ -37,7 +41,7 @@ describe('CommentsPanel', () => {
     const { $, $$, selection, focus, view } = mount()
     const box = $<HTMLTextAreaElement>('.comments-new textarea')
     expect(box.disabled).toBe(true)
-    selection.set({ from: 6, to: 11 })
+    selection.set({ kind: 'text', from: 6, to: 11 })
     expect(box.disabled).toBe(false)
     box.value = 'Which world?'
     click($('.comments-new button'))
@@ -52,7 +56,7 @@ describe('CommentsPanel', () => {
 
   it('replies, resolves, and shows a thread in the text', () => {
     const { $, $$, selection, view, shown } = mount()
-    selection.set({ from: 0, to: 5 })
+    selection.set({ kind: 'text', from: 0, to: 5 })
     $<HTMLTextAreaElement>('.comments-new textarea').value = 'first'
     click($('.comments-new button'))
     const reply = $<HTMLTextAreaElement>('.comment-reply textarea')
@@ -94,5 +98,18 @@ describe('CommentsPanel', () => {
     expect($<HTMLElement>('.comments-new').hidden).toBe(true)
     comments.set(null)
     expect($<HTMLElement>('.comments').hidden).toBe(true)
+  })
+
+  it('comments on a cell of a table', () => {
+    const { $, $$, selection, shown } = mount('name,age\nAda,36\n', ',')
+    const box = $<HTMLTextAreaElement>('.comments-new textarea')
+    selection.set({ kind: 'cells', from: { row: 1, col: 1 }, to: { row: 1, col: 1 } })
+    expect(box.placeholder).toBe('Comment on the cell')
+    box.value = 'Really?'
+    click($('.comments-new button'))
+    const [thread] = $$('.comment-thread')
+    expect(thread?.querySelector('q')?.textContent).toBe('36')
+    click(thread?.querySelector('.comment-quote') as Element)
+    expect(shown.at(-1)?.cells).toEqual({ from: { row: 1, col: 1 }, to: { row: 1, col: 1 } })
   })
 })
