@@ -7,9 +7,10 @@ import (
 
 // The items of a map under one key form a list. Yjs and ygo integrate an
 // item by walking its list from its origin, past items inserted after the
-// same or a later origin, so a list costs time in the square of its length
-// to apply: an update can make a list long with one long chain of origins,
-// or many items after the same one. lists finds the list of each item of
+// same or a later origin, so a list costs time up to the square of its
+// length to apply: an update can make a list long with one long chain of
+// origins, or many items after the same one, and a peer that joins applies
+// every list at once. lists finds the list of each item of
 // the doc and an update, by its parent and key or by the item it follows,
 // as Yjs would, and tells which items it cannot place: those would wait
 // for structs not received yet.
@@ -68,36 +69,36 @@ func (l *lists) find(x id) int {
 	return is[k]
 }
 
-// step is what record i's list comes from: another record, j, or, when
-// final, its own list, or none it can be placed in.
-func (l *lists) step(i int) (j int, final bool, list string, ok bool) {
+// step is where record i's list comes from: the record j it depends on
+// (-1 for none), which must be placed for it to be, and its own list, or ""
+// to take j's. Without j, ok tells whether it can be placed at all.
+func (l *lists) step(i int) (j int, list string, ok bool) {
 	r := l.recs[i]
 	if !r.item {
-		return 0, true, "", true // garbage: in no list
+		return -1, "", true // garbage: in no list
 	}
 	dep := r.parent
 	if r.origin != nil {
 		dep = r.origin
 	}
 	if dep == nil {
-		return 0, true, "r " + r.root + "\x00" + r.key, true
+		return -1, "r " + r.root + "\x00" + r.key, true
 	}
 	// A client's structs come in order: one cannot follow its own later one.
 	if dep.client == r.at.client && dep.clock >= r.at.clock {
-		return 0, true, "", false
+		return -1, "", false
 	}
-	j = l.find(*dep)
-	if j < 0 {
-		return 0, true, "", false
+	if j = l.find(*dep); j < 0 {
+		return -1, "", false
 	}
 	if r.origin == nil {
-		return 0, true, fmt.Sprintf("p %d %d\x00%s", dep.client, dep.clock, r.key), true
+		list = fmt.Sprintf("p %d %d\x00%s", dep.client, dep.clock, r.key)
 	}
-	return j, false, "", false
+	return j, list, true
 }
 
-// resolve finds the list of every record, without recursion: a chain of
-// origins can be as long as the doc.
+// resolve finds the list of every record, and whether it can be placed,
+// without recursion: a chain of origins can be as long as the doc.
 func (l *lists) resolve() {
 	for i := range l.recs {
 		stack := []int{i}
@@ -107,14 +108,17 @@ func (l *lists) resolve() {
 				stack = stack[:len(stack)-1]
 				continue
 			}
-			j, final, list, ok := l.step(k)
+			j, list, ok := l.step(k)
 			switch {
-			case final:
+			case j < 0:
 				l.finish(k, list, ok)
 			case l.state[j] == done:
-				l.finish(k, l.list[j], l.placed[j])
+				if list == "" {
+					list = l.list[j]
+				}
+				l.finish(k, list, l.placed[j])
 			case l.state[j] == seen:
-				l.finish(k, "", false) // a cycle of origins
+				l.finish(k, "", false) // a cycle of origins or parents
 			default:
 				l.state[k] = seen
 				stack = append(stack, j)
@@ -130,7 +134,7 @@ func (l *lists) finish(k int, list string, ok bool) {
 }
 
 // check tells whether an update's records can all be placed, and whether
-// one makes a list longer than MaxListItems.
+// applying the doc's lists, with them, could take more than MaxListWork.
 func (l *lists) check() (missing, long bool) {
 	l.resolve()
 	lengths := map[string]int{}
@@ -142,10 +146,9 @@ func (l *lists) check() (missing, long bool) {
 			lengths[l.list[i]]++
 		}
 	}
-	for i := range l.recs {
-		if l.fresh[i] && lengths[l.list[i]] > MaxListItems {
-			long = true
-		}
+	work := 0
+	for _, n := range lengths {
+		work += n * n
 	}
-	return missing, long
+	return missing, work > MaxListWork
 }

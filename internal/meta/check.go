@@ -22,11 +22,12 @@ const (
 	MaxClientClock = 1 << 16
 )
 
-// MaxListItems bounds the items of one list in the doc: those set under
-// one key of a map, in the order Yjs keeps them. Honest peers add one each
-// time they set the key; Yjs and ygo take time in the square of a list's
-// length to apply items to it.
-const MaxListItems = 1024
+// MaxListWork bounds the time applying the doc's lists can take, as the sum
+// of the squares of their lengths: a list holds the items set under one key
+// of a map, and Yjs and ygo take time up to the square of its length to
+// apply items to it. Honest comments make short lists, a few items each, and
+// stay far under it; at it, Yjs applies the doc in well under a second.
+const MaxListWork = 1 << 21
 
 // ErrRefused marks an update a peer drops by these rules.
 var ErrRefused = errors.New("refused")
@@ -40,7 +41,7 @@ var ErrRefused = errors.New("refused")
 //     every check). This refusal wraps protocol.ErrRetryLater: the client
 //     asks the room again, and an honest peer's updates come back whole;
 //   - it takes one of its clients past MaxClientClock operations;
-//   - it makes a list longer than MaxListItems;
+//   - applying the doc's lists, with it, could take more than MaxListWork;
 //   - the doc could pass MaxDocBytes.
 //
 // It costs time in the size of the doc and the update, and applying an
@@ -90,7 +91,7 @@ func CheckUpdate(doc *crdt.Doc, update []byte) (err error) {
 		return fmt.Errorf("%w: %w: it needs updates not received yet", ErrRefused, protocol.ErrRetryLater)
 	}
 	if long {
-		return fmt.Errorf("%w: a list of more than %d items", ErrRefused, MaxListItems)
+		return fmt.Errorf("%w: its lists would take too long to apply", ErrRefused)
 	}
 	return nil
 }

@@ -144,16 +144,20 @@ func concurrentSets(t *testing.T, n int) []byte {
 func TestCheckUpdateRefusesALongList(t *testing.T) {
 	// From review: Yjs and ygo take time in the square of the items of one
 	// list; 24,000 set at once on one key took 31s to apply.
-	if err := meta.CheckUpdate(crdt.New(), concurrentSets(t, meta.MaxListItems)); err != nil {
-		t.Fatalf("refused %d: %v", meta.MaxListItems, err)
+	most := 1
+	for (most+1)*(most+1) <= meta.MaxListWork {
+		most++
 	}
-	err := meta.CheckUpdate(crdt.New(), concurrentSets(t, meta.MaxListItems+1))
-	if !errors.Is(err, meta.ErrRefused) || !strings.Contains(err.Error(), "list") {
+	if err := meta.CheckUpdate(crdt.New(), concurrentSets(t, most)); err != nil {
+		t.Fatalf("refused %d: %v", most, err)
+	}
+	err := meta.CheckUpdate(crdt.New(), concurrentSets(t, most+1))
+	if !errors.Is(err, meta.ErrRefused) || !strings.Contains(err.Error(), "lists") {
 		t.Fatalf("CheckUpdate = %v", err)
 	}
 	// Nor a few at a time.
 	host := crdt.New()
-	if err := crdt.ApplyUpdateV1(host, concurrentSets(t, meta.MaxListItems), nil); err != nil {
+	if err := crdt.ApplyUpdateV1(host, concurrentSets(t, most), nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := meta.CheckUpdate(host, concurrentSets(t, 1)); !errors.Is(err, meta.ErrRefused) {
@@ -165,7 +169,7 @@ func TestCheckUpdateRefusesAListMadeLongAlongAChain(t *testing.T) {
 	// From review: client 1 sets a key n times, then each of n clients
 	// inserts one item after one of those: no two items follow the same
 	// one, but the list is 2n long, and took 43s to apply for n = 20,000.
-	n := meta.MaxListItems
+	n := 1024 // a list of 2,048: more work than MaxListWork
 	var blocks []block
 	chain := block{client: 1}
 	for i := range n {
@@ -180,7 +184,7 @@ func TestCheckUpdateRefusesAListMadeLongAlongAChain(t *testing.T) {
 		blocks = append(blocks, block{client: uint64(1000 + i), items: []item{{origin: &[2]uint64{1, uint64(i)}}}})
 	}
 	err := meta.CheckUpdate(crdt.New(), encodeUpdate(blocks...))
-	if !errors.Is(err, meta.ErrRefused) || !strings.Contains(err.Error(), "list") {
+	if !errors.Is(err, meta.ErrRefused) || !strings.Contains(err.Error(), "lists") {
 		t.Fatalf("CheckUpdate = %v", err)
 	}
 }
@@ -193,6 +197,10 @@ func TestCheckUpdateRefusesWhatWouldWait(t *testing.T) {
 		"a cycle of origins": encodeUpdate(
 			block{client: 5, items: []item{{origin: &[2]uint64{6, 0}}}},
 			block{client: 6, items: []item{{origin: &[2]uint64{5, 0}}}},
+		),
+		"a cycle of parents": encodeUpdate(
+			block{client: 5, items: []item{{parent: &[2]uint64{6, 0}}}},
+			block{client: 6, items: []item{{parent: &[2]uint64{5, 0}}}},
 		),
 		"following itself":       encodeUpdate(block{client: 5, items: []item{{origin: &[2]uint64{5, 0}}}}),
 		"following a later item": encodeUpdate(block{client: 5, items: []item{{origin: &[2]uint64{5, 1}}, {}}}),
@@ -223,7 +231,9 @@ type block struct {
 	items         []item
 }
 
-type item struct{ origin *[2]uint64 }
+// item follows origin, or is first under key "k" of parent, or of the
+// comments.
+type item struct{ origin, parent *[2]uint64 }
 
 // encodeUpdate writes blocks as a V1 update, as no honest peer would.
 func encodeUpdate(blocks ...block) []byte {
@@ -238,6 +248,12 @@ func encodeUpdate(blocks ...block) []byte {
 				e.WriteUint8(0x80 | 8)
 				e.WriteVarUint(it.origin[0])
 				e.WriteVarUint(it.origin[1])
+			} else if it.parent != nil {
+				e.WriteUint8(0x20 | 8)
+				e.WriteVarUint(0)
+				e.WriteVarUint(it.parent[0])
+				e.WriteVarUint(it.parent[1])
+				e.WriteVarString("k")
 			} else {
 				e.WriteUint8(0x20 | 8)
 				e.WriteVarUint(1)

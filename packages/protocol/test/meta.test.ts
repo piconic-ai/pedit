@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
 // The Go side checks its own against the same file (internal/meta/check_test.go).
 import limits from '../../testdata/meta-limits.json'
-import { checkMetaUpdate, MAX_LIST_ITEMS, META_LIMITS } from '../src/index.ts'
+import { checkMetaUpdate, MAX_LIST_WORK, META_LIMITS } from '../src/index.ts'
 
 function thread(doc: Y.Doc, id: string, quote: string) {
   doc.transact(() => {
@@ -95,10 +95,11 @@ describe('checkMetaUpdate', () => {
       }
       return Y.encodeStateAsUpdate(all)
     }
-    expect(checkMetaUpdate(new Y.Doc(), sets(MAX_LIST_ITEMS))).toBeNull()
-    expect(checkMetaUpdate(new Y.Doc(), sets(MAX_LIST_ITEMS + 1))?.reason).toMatch(/list/)
+    const most = Math.floor(Math.sqrt(MAX_LIST_WORK))
+    expect(checkMetaUpdate(new Y.Doc(), sets(most))).toBeNull()
+    expect(checkMetaUpdate(new Y.Doc(), sets(most + 1))?.reason).toMatch(/lists/)
     const host = new Y.Doc()
-    Y.applyUpdate(host, sets(MAX_LIST_ITEMS))
+    Y.applyUpdate(host, sets(most))
     expect(checkMetaUpdate(host, sets(1))).not.toBeNull()
   })
 
@@ -135,12 +136,12 @@ describe('checkMetaUpdate', () => {
 
   it('refuses a list made long along a chain of origins', () => {
     // From review: no two items follow the same one, but the list is long.
-    const n = MAX_LIST_ITEMS
+    const n = 1024 // a list of 2,048: more work than MAX_LIST_WORK
     const chain: Block = { client: 1, items: [] }
     for (let i = 0; i < n; i++) chain.items.push(i > 0 ? [1, i - 1] : null)
     const blocks = [chain]
     for (let i = 0; i < n; i++) blocks.push({ client: 1000 + i, items: [[1, i]] })
-    expect(checkMetaUpdate(new Y.Doc(), encodeUpdate(blocks))?.reason).toMatch(/list/)
+    expect(checkMetaUpdate(new Y.Doc(), encodeUpdate(blocks))?.reason).toMatch(/lists/)
   })
 
   it('refuses what Yjs would keep pending', () => {
@@ -152,6 +153,10 @@ describe('checkMetaUpdate', () => {
       [
         { client: 5, items: [[6, 0]] },
         { client: 6, items: [[5, 0]] },
+      ],
+      [
+        { client: 5, items: [{ parent: [6, 0] }] },
+        { client: 6, items: [{ parent: [5, 0] }] },
       ],
       [{ client: 5, items: [[5, 0]] }],
       [{ client: 5, items: [[5, 1], null] }],
@@ -174,7 +179,8 @@ describe('checkMetaUpdate', () => {
 interface Block {
   client: number
   clock?: number
-  items: Array<[number, number] | null>
+  /** Each after an origin, or first under key "k" of a parent, or of the comments. */
+  items: Array<[number, number] | { parent: [number, number] } | null>
 }
 
 /** Writes blocks as a V1 update, as no honest peer would. */
@@ -185,11 +191,17 @@ function encodeUpdate(blocks: Block[]): Uint8Array {
     encoding.writeVarUint(e, b.items.length)
     encoding.writeVarUint(e, b.client)
     encoding.writeVarUint(e, b.clock ?? 0)
-    for (const origin of b.items) {
-      if (origin) {
+    for (const it of b.items) {
+      if (Array.isArray(it)) {
         encoding.writeUint8(e, 0x80 | 8)
-        encoding.writeVarUint(e, origin[0])
-        encoding.writeVarUint(e, origin[1])
+        encoding.writeVarUint(e, it[0])
+        encoding.writeVarUint(e, it[1])
+      } else if (it) {
+        encoding.writeUint8(e, 0x20 | 8)
+        encoding.writeVarUint(e, 0)
+        encoding.writeVarUint(e, it.parent[0])
+        encoding.writeVarUint(e, it.parent[1])
+        encoding.writeVarString(e, 'k')
       } else {
         encoding.writeUint8(e, 0x20 | 8)
         encoding.writeVarUint(e, 1)

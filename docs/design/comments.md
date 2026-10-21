@@ -146,14 +146,16 @@ else: a guest, or a teammate through Git. Every peer checks it the same way.
   every update. It finds the list of each item as Yjs would, by its parent and
   key or along the chain of items it follows, and drops an update that holds
   anything but maps and plain values; that needs structs or deletions not
-  received yet, or follows an item in a cycle or ahead of itself (Yjs keeps
-  those as pending, and sends them on with the doc, past every check); that
-  takes one of its clients past 65,536 operations; that makes a list longer
-  than 1,024 items; or after which the doc could no longer fit the 1 MiB frame
-  its state is sent in. So a hostile client cannot make a peer hold, and send,
-  what other peers refuse, nor spend long applying it. The host shares no
-  comments larger than that limit, so every peer can take the state the host
-  sends.
+  received yet, or follows an item, or sits in one, in a cycle or ahead of
+  itself (Yjs keeps those as pending, and sends them on with the doc, past
+  every check); that takes one of its clients past 65,536 operations; after
+  which applying the doc's lists could take more than the sum of the squares
+  of their lengths allows (2,097,152: honest comments stay far under it, and
+  Yjs applies a doc at it in well under a second); or after which the doc
+  could no longer fit the 1 MiB frame its state is sent in. So a hostile
+  client cannot make a peer hold, and send, what other peers refuse, nor spend
+  long applying it. The host shares no comments larger than that limit, so
+  every peer can take the state the host sends.
 - An update dropped for a gap is refused for now: the peer asks the room for
   what it is missing (a sync step 1, at once or, if it asked in the last 5
   seconds, then), and an honest sender's updates come back whole. So is one
@@ -163,6 +165,9 @@ else: a guest, or a teammate through Git. Every peer checks it the same way.
   places the anchors of each update as it applies it (for up to a second),
   since one left for later could lose its character first. The host also turns
   a panic in ygo on such an update into an error.
+- Anyone with the key can fill the lists' allowance, after which the room
+  takes no more comments until the host starts again. Anyone with the key can
+  as well delete or rewrite every comment, so it gives them nothing new.
 - A metadata file that breaks these rules is left untouched, and its shared
   file offers no comments.
 

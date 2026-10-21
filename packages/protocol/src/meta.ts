@@ -19,11 +19,12 @@ export const META_LIMITS = {
 } as const
 
 /**
- * At most this many items may be in one list of the doc (those set under one
- * key of a map), as internal/meta/check.go's MaxListItems: Yjs takes time in
- * the square of a list's length to apply items to it.
+ * Bounds the time applying the doc's lists can take, as the sum of the
+ * squares of their lengths, as internal/meta/check.go's MaxListWork: a list
+ * holds the items set under one key of a map, and Yjs takes time up to the
+ * square of its length to apply items to it.
  */
-export const MAX_LIST_ITEMS = 1024
+export const MAX_LIST_WORK = 1 << 21
 
 /**
  * Tells why an update received for `doc`, a metadata doc, must not be
@@ -35,7 +36,7 @@ export const MAX_LIST_ITEMS = 1024
  *   every check). This refusal is for now: the client asks the room again,
  *   and an honest peer's updates come back whole;
  * - it takes one of its clients past maxClientClock operations;
- * - it makes a list longer than MAX_LIST_ITEMS;
+ * - applying the doc's lists, with it, could take more than MAX_LIST_WORK;
  * - the doc could pass maxDocBytes.
  */
 export function checkMetaUpdate(doc: Y.Doc, update: Uint8Array): Refusal | null {
@@ -68,7 +69,7 @@ export function checkMetaUpdate(doc: Y.Doc, update: Uint8Array): Refusal | null 
   const fresh = u.recs.filter((r) => r.id.clock + r.length > (known.get(r.id.client) ?? 0))
   const { missing, long } = checkLists(scan(state).recs, fresh)
   if (missing) return { reason: 'it needs updates not received yet', retryLater: true }
-  if (long) return { reason: `a list of more than ${MAX_LIST_ITEMS} items` }
+  if (long) return { reason: 'its lists would take too long to apply' }
   return null
 }
 
@@ -133,7 +134,7 @@ function holdsComments(item: Y.Item): void {
  * Finds the list of each record of the doc and of an update's new ones, by
  * parent and key or by the item each follows, as Yjs would, without
  * recursion, and tells whether a new one cannot be placed (it would wait),
- * or makes a list too long. See internal/meta/lists.go.
+ * or makes the lists too long to apply. See internal/meta/lists.go.
  */
 function checkLists(doc: Rec[], fresh: Rec[]): { missing: boolean; long: boolean } {
   const recs = [...doc, ...fresh]
@@ -157,19 +158,21 @@ function checkLists(doc: Rec[], fresh: Rec[]): { missing: boolean; long: boolean
     const i = is[lo]
     return i !== undefined && recs[i]!.id.clock <= x.clock ? i : -1
   }
-  // What record i's list comes from: another record, or its own list (null: none).
-  const step = (i: number): number | { list: string | null } => {
+  // Where record i's list comes from: the record it depends on (-1: none),
+  // which must be placed for it to be, and its own list ('': take that
+  // record's). With no record, null: it cannot be placed.
+  const step = (i: number): { dep: number; list: string | null } => {
     const r = recs[i]!
-    if (!(r instanceof Y.Item)) return { list: '' }
+    if (!(r instanceof Y.Item)) return { dep: -1, list: '' }
     const parent = r.parent as unknown
     const dep = r.origin ?? (parent instanceof Y.ID ? parent : null)
-    if (dep === null) return { list: `r ${String(parent)}\0${r.parentSub}` }
-    if (dep.client === r.id.client && dep.clock >= r.id.clock) return { list: null }
+    if (dep === null) return { dep: -1, list: `r ${String(parent)}\0${r.parentSub}` }
+    if (dep.client === r.id.client && dep.clock >= r.id.clock) return { dep: -1, list: null }
     const j = find(dep)
-    if (j < 0) return { list: null }
-    if (r.origin === null) return { list: `p ${dep.client} ${dep.clock}\0${r.parentSub}` }
-    return j
+    if (j < 0) return { dep: -1, list: null }
+    return { dep: j, list: r.origin === null ? `p ${dep.client} ${dep.clock}\0${r.parentSub}` : '' }
   }
+  // Each record's list ('' for garbage), or null when it cannot be placed.
   const list: Array<string | null | undefined> = new Array(recs.length)
   const seen = new Set<number>()
   for (let i = 0; i < recs.length; i++) {
@@ -180,14 +183,14 @@ function checkLists(doc: Rec[], fresh: Rec[]): { missing: boolean; long: boolean
         stack.pop()
         continue
       }
-      const next = step(k)
-      if (typeof next !== 'number') list[k] = next.list
-      else if (list[next] !== undefined) list[k] = list[next]
-      else if (seen.has(next))
-        list[k] = null // a cycle of origins
+      const { dep, list: own } = step(k)
+      if (dep < 0) list[k] = own
+      else if (list[dep] !== undefined) list[k] = list[dep] === null ? null : own || list[dep]
+      else if (seen.has(dep))
+        list[k] = null // a cycle of origins or parents
       else {
         seen.add(k)
-        stack.push(next)
+        stack.push(dep)
         continue
       }
       stack.pop()
@@ -195,12 +198,7 @@ function checkLists(doc: Rec[], fresh: Rec[]): { missing: boolean; long: boolean
   }
   const lengths = new Map<string, number>()
   for (const l of list) if (l) lengths.set(l, (lengths.get(l) ?? 0) + 1)
-  let missing = false
-  let long = false
-  for (let i = doc.length; i < recs.length; i++) {
-    const l = list[i]
-    if (l === null) missing = true
-    else if (l && (lengths.get(l) ?? 0) > MAX_LIST_ITEMS) long = true
-  }
-  return { missing, long }
+  let work = 0
+  for (const n of lengths.values()) work += n * n
+  return { missing: list.slice(doc.length).includes(null), long: work > MAX_LIST_WORK }
 }
