@@ -148,10 +148,12 @@ else: a guest, or a teammate through Git. Every peer checks it the same way.
   the host sends.
 - An update dropped for a gap is refused for now: the peer asks the room for
   what it is missing (a sync step 1, at most every 5 seconds), and an honest
-  sender's updates come back whole. So is one that comes while a file's
-  checks have taken a quarter of the time (up to a second in hand), so a
-  flood of updates cannot keep a peer checking copies. The host also turns a
-  panic in ygo on such an update into an error.
+  sender's updates come back whole. So is one that comes while checking and
+  applying a file's updates have taken a quarter of the time (up to a second
+  in hand), so a flood of updates cannot keep a peer checking copies, or the
+  host placing anchors: the host places every anchor of each update it
+  applies, since one left for later could lose its character first. The host
+  also turns a panic in ygo on such an update into an error.
 - A metadata file that breaks these rules is left untouched, and its shared
   file offers no comments.
 

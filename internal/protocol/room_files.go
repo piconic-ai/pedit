@@ -43,8 +43,9 @@ type UpdateCheck func(doc *crdt.Doc, update []byte) error
 // everything the refused one needed.
 var ErrRetryLater = errors.New("refused for now")
 
-// The checks of one file may take a quarter of the time, with up to a second
-// in hand, so a peer flooding the room cannot keep the Client checking.
+// Checking and applying the updates of one file may take a quarter of the
+// time, with up to a second in hand, so a peer flooding the room cannot keep
+// the Client busy.
 const (
 	checkShare  = 4
 	checkBurst  = time.Second
@@ -295,28 +296,34 @@ func (f *fileDoc) apply(payload []byte, origin any) (reply []byte, err error) {
 	if err != nil {
 		return nil, err
 	}
-	if kind == ysync.MsgSyncStep2 || kind == ysync.MsgUpdate {
-		if err := f.timedCheck(update); err != nil {
+	if kind != ysync.MsgSyncStep2 && kind != ysync.MsgUpdate {
+		return ysync.ApplySyncMessage(f.doc, payload, origin)
+	}
+	return f.timed(func() ([]byte, error) {
+		if err := f.check(f.doc, update); err != nil {
 			return nil, err
 		}
-	}
-	return ysync.ApplySyncMessage(f.doc, payload, origin)
+		return ysync.ApplySyncMessage(f.doc, payload, origin)
+	})
 }
 
-// timedCheck checks update, unless the checks took their share of the time.
-// The caller holds Client.applying.
-func (f *fileDoc) timedCheck(update []byte) error {
+// timed checks and applies an update, in apply, unless that took its share
+// of the time already. The time counted takes in what the doc's observers
+// do with the update, such as placing the anchors of comments. The caller
+// holds Client.applying.
+func (f *fileDoc) timed(apply func() ([]byte, error)) ([]byte, error) {
 	now := checkClock()
 	f.credit = min(checkBurst, f.credit+now.Sub(f.counted)/checkShare)
 	f.counted = now
 	if f.credit <= 0 {
-		return fmt.Errorf("%w: checking updates took too long", ErrRetryLater)
+		return nil, fmt.Errorf("%w: checking updates took too long", ErrRetryLater)
 	}
-	err := f.check(f.doc, update)
-	end := checkClock()
-	f.credit -= end.Sub(now)
-	f.counted = end
-	return err
+	defer func() {
+		end := checkClock()
+		f.credit -= end.Sub(now)
+		f.counted = end
+	}()
+	return apply()
 }
 
 // mayResync tells whether the Client may ask the room for what a check

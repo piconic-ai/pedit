@@ -4,8 +4,6 @@ import (
 	"errors"
 	"testing"
 	"time"
-
-	"github.com/reearth/ygo/crdt"
 )
 
 // fakeClock stands in for checkClock until the test ends.
@@ -19,25 +17,28 @@ func fakeClock(t *testing.T) *time.Time {
 func TestChecksTakeTheirShareOfTheTimeOnly(t *testing.T) {
 	now := fakeClock(t)
 	checks := 0
-	f := &fileDoc{doc: crdt.New(), credit: checkBurst, counted: *now}
-	f.check = func(*crdt.Doc, []byte) error {
-		checks++
-		*now = now.Add(2 * checkBurst)
-		return nil
+	f := &fileDoc{credit: checkBurst, counted: *now}
+	check := func() error {
+		_, err := f.timed(func() ([]byte, error) {
+			checks++
+			*now = now.Add(2 * checkBurst)
+			return nil, nil
+		})
+		return err
 	}
-	if err := f.timedCheck(nil); err != nil {
+	if err := check(); err != nil {
 		t.Fatal(err)
 	}
 	// The check took more than was in hand: none until it is made up.
-	if err := f.timedCheck(nil); !errors.Is(err, ErrRetryLater) || checks != 1 {
+	if err := check(); !errors.Is(err, ErrRetryLater) || checks != 1 {
 		t.Fatalf("timedCheck = %v after %d checks", err, checks)
 	}
 	*now = now.Add(checkShare * checkBurst)
-	if err := f.timedCheck(nil); !errors.Is(err, ErrRetryLater) {
+	if err := check(); !errors.Is(err, ErrRetryLater) {
 		t.Fatalf("checked with nothing in hand: %v", err)
 	}
 	*now = now.Add(checkShare * time.Millisecond)
-	if err := f.timedCheck(nil); err != nil || checks != 2 {
+	if err := check(); err != nil || checks != 2 {
 		t.Fatalf("timedCheck = %v after %d checks", err, checks)
 	}
 }
