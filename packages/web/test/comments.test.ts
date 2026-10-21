@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
-import { COMMENT_LIMITS, CommentsView, clean, type ShownThread, TextIndex } from '../src/comments.ts'
+import {
+  COMMENT_LIMITS,
+  CommentsView,
+  clean,
+  type ShownThread,
+  TextIndex,
+} from '../src/comments.ts'
 
 function setup(text: string) {
   const meta = new Y.Doc()
@@ -187,7 +193,8 @@ describe('clean', () => {
 })
 
 describe('TextIndex', () => {
-  const b64 = (rel: Y.RelativePosition) => btoa(String.fromCharCode(...Y.encodeRelativePosition(rel)))
+  const b64 = (rel: Y.RelativePosition) =>
+    btoa(String.fromCharCode(...Y.encodeRelativePosition(rel)))
 
   it('resolves a position where Yjs does', () => {
     let seed = 11
@@ -207,7 +214,9 @@ describe('TextIndex', () => {
       if (rand(3) === 0) t.format(0, Math.min(2, t.length), { bold: true })
       Y.applyUpdate(doc, Y.encodeStateAsUpdate(other))
       Y.applyUpdate(other, Y.encodeStateAsUpdate(doc))
-      positions.push(Y.createRelativePositionFromTypeIndex(text, rand(text.length + 1), rand(2) - 1))
+      positions.push(
+        Y.createRelativePositionFromTypeIndex(text, rand(text.length + 1), rand(2) - 1),
+      )
       const index = new TextIndex(text)
       for (const rel of positions) {
         const want = Y.createAbsolutePositionFromRelativePosition(rel, doc, false)

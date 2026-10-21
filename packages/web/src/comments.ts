@@ -275,16 +275,12 @@ export class CommentsView {
     if (this.#measure) this.#measureNow()
   }
 
-  #show(
-    id: string,
-    thread: Y.Map<unknown>,
-    text: string,
-    at: () => TextIndex,
-  ): ShownThread | null {
+  #show(id: string, thread: Y.Map<unknown>, text: string, at: () => TextIndex): ShownThread | null {
     const quote = thread.get('quote')
     if (typeof quote !== 'string' || quote.length > COMMENT_LIMITS.quote) return null
     // The host saves no thread without an anchor of a kind it knows.
-    if (!ANCHORS.has(String((thread.get('anchor') as { type?: unknown } | undefined)?.type))) return null
+    if (!ANCHORS.has(String((thread.get('anchor') as { type?: unknown } | undefined)?.type)))
+      return null
     const place = placeOf(thread.get('anchor'), at)
     const live = place ? text.slice(place.from, place.to) : ''
     const state: ThreadState =
