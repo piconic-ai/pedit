@@ -1,3 +1,4 @@
+import { checkMetaUpdate } from '@pedit/protocol'
 import { describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
 import { addNode, deleteNodes, textOf } from '../src/canvas.ts'
@@ -436,5 +437,50 @@ describe('comments on a canvas', () => {
     thread.set('quote', 'Idea')
     thread.set('messages', new Y.Map())
     expect(only(shown()).state).toBe('detached')
+  })
+})
+
+describe('comments from peers, at the limits', () => {
+  it('shows no thread whose anchor kind is no string', () => {
+    // From review: String() of an object with no toString threw, and every
+    // refresh stopped while the thread was there.
+    const { meta, view, shown } = setup('hello')
+    const peer = new Y.Doc()
+    peer.transact(() => {
+      const thread = new Y.Map<unknown>()
+      peer.getMap('comments').set('t1', thread)
+      thread.set('anchor', { type: { toString: null, valueOf: null } })
+      thread.set('quote', 'hello')
+      thread.set('messages', new Y.Map())
+    })
+    const update = Y.encodeStateAsUpdate(peer)
+    expect(checkMetaUpdate(meta, update)).toBeNull()
+    Y.applyUpdate(meta, update)
+    expect(shown()).toEqual([])
+    expect(view.start(0, 5, 'still works')).not.toBeNull()
+  })
+
+  it('makes no change peers would refuse for its lists', () => {
+    // From review: concurrent resolves of one thread from 1,022 clients
+    // brought its list near the work every peer allows, and a resolve here
+    // went past it, refused by every peer.
+    const { meta, view, shown } = setup('hello world')
+    const id = view.start(0, 5, 'Why?') as string
+    const snapshot = Y.encodeStateAsUpdate(meta)
+    for (let i = 0; i < 1022; i++) {
+      const fork = new Y.Doc()
+      Y.applyUpdate(fork, snapshot)
+      ;(fork.getMap('comments').get(id) as Y.Map<unknown>).set('resolved', true)
+      const update = Y.encodeStateAsUpdate(fork)
+      if (checkMetaUpdate(meta, update) === null) Y.applyUpdate(meta, update)
+    }
+    const peer = new Y.Doc()
+    Y.applyUpdate(peer, Y.encodeStateAsUpdate(meta))
+    const sent: Uint8Array[] = []
+    meta.on('update', (u: Uint8Array) => sent.push(u))
+    shown()
+    view.resolve(id, false)
+    view.reply(id, 'and?')
+    for (const u of sent) expect(checkMetaUpdate(peer, u)).toBeNull()
   })
 })

@@ -5,7 +5,7 @@ import * as Y from 'yjs'
 import limits from '../../testdata/meta-limits.json'
 // internal/meta/check_test.go checks the Go measure against the same file.
 import measured from '../../testdata/meta-measure.json'
-import { checkMetaUpdate, META_LIMITS, metaDocSize } from '../src/index.ts'
+import { checkMetaUpdate, META_LIMITS, metaDocSize, metaUse } from '../src/index.ts'
 
 function thread(doc: Y.Doc, id: string, quote: string) {
   doc.transact(() => {
@@ -231,6 +231,19 @@ describe('checkMetaUpdate', () => {
 })
 
 describe('the measure of comments', () => {
+  it('tells the work of the lists, as the check counts it', () => {
+    // Three sets of one key, one item each from three clients, and one of another.
+    const doc = new Y.Doc()
+    for (const client of [1, 2, 3]) {
+      const peer = new Y.Doc()
+      peer.clientID = client
+      peer.getMap('comments').set('k', client)
+      Y.applyUpdate(doc, Y.encodeStateAsUpdate(peer))
+    }
+    doc.getMap('comments').set('other', true)
+    expect(metaUse(doc)).toEqual({ bytes: metaDocSize(doc), listWork: 3 * 3 + 1 })
+  })
+
   it('counts the tag of an integer', () => {
     // From review: integers were counted without it, so a doc of them
     // measured half its size.
