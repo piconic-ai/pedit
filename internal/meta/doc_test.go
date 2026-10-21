@@ -501,3 +501,18 @@ func TestReadLooksNoFurtherThanItSaves(t *testing.T) {
 		t.Errorf("saved %d threads with no place to tell", len(got.Comments))
 	}
 }
+
+func TestReadKeepsAnEmptyCellWhenAValueComesAfterIt(t *testing.T) {
+	// From review: a value set past an empty cell came into its place, and
+	// the host saved the thread on the value.
+	doc, text := content("a,\n")
+	m := crdt.New()
+	place := map[string]any{"start": pos(text, 2, -1), "end": pos(text, 2, 0)}
+	guestThread(t, m, text, "c", map[string]any{"type": "cells", "from": place, "to": place}, "")
+	trackerOf(doc).Learn(m)
+	doc.Transact(func(txn *crdt.Transaction) { text.Insert(txn, 2, ",x", nil) })
+	got := meta.Read(m, &meta.File{Path: "a.csv"}, trackerOf(doc))
+	if a := got.Comments["c"].Anchor; a.Type != meta.AnchorCells || a.From == nil || a.From.Exact != "" || a.From.Offset != 2 {
+		t.Fatalf("saved %+v %+v", a, a.From)
+	}
+}
