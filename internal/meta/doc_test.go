@@ -400,3 +400,23 @@ func TestTrackerCountsUTF16(t *testing.T) {
 		t.Fatalf("selector %+v", s)
 	}
 }
+
+func TestTrackerFollowsWhatReadSaves(t *testing.T) {
+	// From review: entries that are not threads come first by id, but do
+	// not push a thread out of what the Tracker follows.
+	doc, text := content("abc")
+	m := crdt.New()
+	guestThread(t, m, text, "zvalid", map[string]any{"type": "text", "start": pos(text, 1, 0), "end": pos(text, 3, -1)}, "bc")
+	comments := m.GetMap(meta.CommentsKey)
+	m.Transact(func(txn *crdt.Transaction) {
+		for i := range meta.MaxThreads {
+			comments.Set(txn, fmt.Sprintf("a%04d", i), "not a thread")
+		}
+	})
+	trackerOf(doc).Learn(m)
+	doc.Transact(func(txn *crdt.Transaction) { text.Delete(txn, 1, 1) })
+	got := meta.Read(m, &meta.File{Path: "a.md"}, trackerOf(doc))
+	if s := selectorOf(t, got, "zvalid"); s.Exact != "c" || s.Offset != 1 {
+		t.Fatalf("selector %+v", s)
+	}
+}

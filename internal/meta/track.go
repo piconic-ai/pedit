@@ -1,7 +1,6 @@
 package meta
 
 import (
-	"slices"
 	"sync"
 
 	"github.com/reearth/ygo/crdt"
@@ -111,20 +110,13 @@ func (t *Tracker) place(key string) (int, int, bool) {
 
 // Learn tracks the positions of the anchors in doc, a metadata doc, that it
 // does not track yet, while their characters are still in the text, and
-// forgets those of anchors gone from it. It looks at the threads Read saves:
-// the first MaxThreads by id. Call it on each update to doc, under the lock
+// forgets those of anchors gone from it. It looks at the threads Read may
+// save (candidates). Call it on each update to doc, under the lock
 // remote updates are applied under, so that a position is known before an
 // edit deletes its character.
 func (t *Tracker) Learn(doc *crdt.Doc) {
 	keys := map[string]bool{}
-	comments := doc.GetMap(CommentsKey)
-	ids := slices.Sorted(slices.Values(comments.Keys()))
-	for _, id := range ids[:min(len(ids), MaxThreads)] {
-		v, _ := comments.Get(id)
-		thread, ok := v.(*crdt.YMap)
-		if !ok {
-			continue
-		}
+	for _, thread := range candidates(doc) {
 		raw, _ := get[map[string]any](thread, AnchorKey)
 		for _, r := range []any{raw, raw[fromKey], raw[toKey]} {
 			r, ok := r.(map[string]any)

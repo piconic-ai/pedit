@@ -3,6 +3,7 @@ package meta
 import (
 	"bytes"
 	"encoding/base64"
+	"iter"
 	"maps"
 	"slices"
 	"unicode/utf16"
@@ -261,16 +262,7 @@ func Read(doc *crdt.Doc, prev *File, tr *Tracker) *File {
 	// What threads may take in the file; the rest is for its own keys and
 	// those a newer pedit wrote.
 	budget := MaxFileBytes - extraBytes(prev) - 1024
-	comments := doc.GetMap(CommentsKey)
-	for _, id := range slices.Sorted(slices.Values(comments.Keys())) {
-		if len(threads) == MaxThreads {
-			break
-		}
-		v, _ := comments.Get(id)
-		m, ok := v.(*crdt.YMap)
-		if !ok || checkID(id) != nil {
-			continue
-		}
+	for id, m := range candidates(doc) {
 		var was *Anchor
 		if th, ok := prev.Comments[id]; ok {
 			was = &th.Anchor
@@ -286,6 +278,27 @@ func Read(doc *crdt.Doc, prev *File, tr *Tracker) *File {
 	}
 	prev.Comments = threads
 	return prev
+}
+
+// candidates are the threads of doc that Read may save and the Tracker
+// follows: the first MaxThreads, by id, that are Y.Maps with a valid id.
+// One that turns out invalid takes its place among them, so what a guest
+// writes cannot push others out of what the Tracker follows.
+func candidates(doc *crdt.Doc) iter.Seq2[string, *crdt.YMap] {
+	return func(yield func(string, *crdt.YMap) bool) {
+		comments := doc.GetMap(CommentsKey)
+		n := 0
+		for _, id := range slices.Sorted(slices.Values(comments.Keys())) {
+			v, _ := comments.Get(id)
+			m, ok := v.(*crdt.YMap)
+			if !ok || checkID(id) != nil {
+				continue
+			}
+			if n++; n > MaxThreads || !yield(id, m) {
+				return
+			}
+		}
+	}
 }
 
 // threadBytes is what a thread takes in the file, as Render writes it.
