@@ -252,13 +252,18 @@ export class CommentsView {
       this.#timer = null
     }
     const text = this.#text.toString()
+    let index: TextIndex | null = null
+    const at = () => {
+      index ??= new TextIndex(this.#text)
+      return index
+    }
     const shown: ShownThread[] = []
     let count = 0
     for (const id of [...this.#comments.keys()].sort()) {
       const thread = this.#comments.get(id)
       if (!ID.test(id) || !(thread instanceof Y.Map)) continue
       if (++count > COMMENT_LIMITS.threads) break
-      const s = this.#show(id, thread, text)
+      const s = this.#show(id, thread, text, at)
       if (s) shown.push(s)
     }
     shown.sort(order)
@@ -270,12 +275,17 @@ export class CommentsView {
     if (this.#measure) this.#measureNow()
   }
 
-  #show(id: string, thread: Y.Map<unknown>, text: string): ShownThread | null {
+  #show(
+    id: string,
+    thread: Y.Map<unknown>,
+    text: string,
+    at: () => TextIndex,
+  ): ShownThread | null {
     const quote = thread.get('quote')
     if (typeof quote !== 'string' || quote.length > COMMENT_LIMITS.quote) return null
     // The host saves no thread without an anchor of a kind it knows.
     if (!ANCHORS.has(String((thread.get('anchor') as { type?: unknown } | undefined)?.type))) return null
-    const place = this.#place(thread.get('anchor'))
+    const place = placeOf(thread.get('anchor'), at)
     const live = place ? text.slice(place.from, place.to) : ''
     const state: ThreadState =
       !place || place.from >= place.to ? 'detached' : live === quote ? 'attached' : 'changed'
@@ -289,17 +299,6 @@ export class CommentsView {
       from: state === 'detached' ? -1 : (place?.from ?? -1),
       to: state === 'detached' ? -1 : (place?.to ?? -1),
     }
-  }
-
-  #place(anchor: unknown): { from: number; to: number } | null {
-    if (typeof anchor !== 'object' || anchor === null) return null
-    const a = anchor as Record<string, unknown>
-    if (a.type !== 'text') return null
-    const doc = this.#text.doc
-    if (!doc) return null
-    const from = resolve(a.start, doc)
-    const to = resolve(a.end, doc)
-    return from === null || to === null ? null : { from, to }
   }
 
   #shownMessages(messages: unknown): ShownMessage[] {
@@ -349,22 +348,69 @@ function position(text: Y.Text, index: number, assoc: number): string {
   return btoa(String.fromCharCode(...bytes))
 }
 
+/** Where a text anchor is now, or null. */
+function placeOf(anchor: unknown, at: () => TextIndex): { from: number; to: number } | null {
+  if (typeof anchor !== 'object' || anchor === null) return null
+  const a = anchor as Record<string, unknown>
+  if (a.type !== 'text') return null
+  const from = at().resolve(a.start)
+  const to = from === null ? null : at().resolve(a.end)
+  return from === null || to === null ? null : { from, to }
+}
+
 /**
- * Where a position of the doc is now, as every peer resolves it: with
- * followUndoneDeletions off, so an undo does not move it on one peer only.
+ * Where each item of the text starts, worked out once a refresh: resolving
+ * an anchor is then a lookup, where Yjs walks the text back from each one,
+ * and a peer's threads could make every keystroke cost that many walks.
  */
-function resolve(v: unknown, doc: Y.Doc): number | null {
-  if (typeof v !== 'string' || v.length > 256) return null
-  try {
-    const bytes = Uint8Array.from(atob(v), (c) => c.charCodeAt(0))
-    const abs = Y.createAbsolutePositionFromRelativePosition(
-      Y.decodeRelativePosition(bytes),
-      doc,
-      false,
-    )
-    return abs && abs.type === doc.getText('content') ? abs.index : null
-  } catch {
-    return null
+export class TextIndex {
+  readonly #items = new Map<number, Array<{ item: Y.Item; at: number }>>()
+  readonly #length: number
+
+  constructor(text: Y.Text) {
+    let at = 0
+    for (let n = text._start; n !== null; n = n.right) {
+      const list = this.#items.get(n.id.client) ?? []
+      list.push({ item: n, at })
+      this.#items.set(n.id.client, list)
+      if (!n.deleted && n.countable) at += n.length
+    }
+    for (const list of this.#items.values()) list.sort((a, b) => a.item.id.clock - b.item.id.clock)
+    this.#length = at
+  }
+
+  /**
+   * Where a position of the doc, base64, is now, as every peer resolves it:
+   * as Y.createAbsolutePositionFromRelativePosition does with
+   * followUndoneDeletions off, so an undo does not move it on one peer
+   * only. One at an end of the text names it, 'content'; a position of any
+   * other type is none, where Yjs would make a root type of a name a peer
+   * chose.
+   */
+  resolve(v: unknown): number | null {
+    if (typeof v !== 'string' || v.length > 256) return null
+    let rel: Y.RelativePosition
+    try {
+      rel = Y.decodeRelativePosition(Uint8Array.from(atob(v), (c) => c.charCodeAt(0)))
+    } catch {
+      return null
+    }
+    const id = rel.item
+    if (id === null) return rel.tname === 'content' ? (rel.assoc >= 0 ? this.#length : 0) : null
+    const list = this.#items.get(id.client) ?? []
+    let lo = 0
+    let hi = list.length
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1
+      const { item } = list[mid]!
+      if (item.id.clock + item.length > id.clock) hi = mid
+      else lo = mid + 1
+    }
+    const found = list[lo]
+    if (!found || found.item.id.clock > id.clock) return null
+    const { item, at } = found
+    if (item.deleted || !item.countable) return at
+    return at + id.clock - item.id.clock + (rel.assoc >= 0 ? 0 : 1)
   }
 }
 

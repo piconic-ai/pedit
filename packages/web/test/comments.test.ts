@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
-import { COMMENT_LIMITS, CommentsView, clean, type ShownThread } from '../src/comments.ts'
+import { COMMENT_LIMITS, CommentsView, clean, type ShownThread, TextIndex } from '../src/comments.ts'
 
 function setup(text: string) {
   const meta = new Y.Doc()
@@ -183,5 +183,46 @@ describe('clean', () => {
     const shown = view.threads.get()
     expect(shown.map((t) => t.id)).toEqual(['t2'])
     expect(shown[0]?.messages).toEqual([])
+  })
+})
+
+describe('TextIndex', () => {
+  const b64 = (rel: Y.RelativePosition) => btoa(String.fromCharCode(...Y.encodeRelativePosition(rel)))
+
+  it('resolves a position where Yjs does', () => {
+    let seed = 11
+    const rand = (n: number) => {
+      seed = (seed * 1103515245 + 12345) % 2 ** 31
+      return seed % n
+    }
+    const doc = new Y.Doc()
+    const other = new Y.Doc()
+    const text = doc.getText('content')
+    const positions: Y.RelativePosition[] = []
+    for (let round = 0; round < 300; round++) {
+      const d = rand(2) === 0 ? doc : other
+      const t = d.getText('content')
+      if (t.length > 0 && rand(3) === 0) t.delete(rand(t.length), 1 + rand(3))
+      else t.insert(rand(t.length + 1), 'abcdef'.slice(0, 1 + rand(6)))
+      if (rand(3) === 0) t.format(0, Math.min(2, t.length), { bold: true })
+      Y.applyUpdate(doc, Y.encodeStateAsUpdate(other))
+      Y.applyUpdate(other, Y.encodeStateAsUpdate(doc))
+      positions.push(Y.createRelativePositionFromTypeIndex(text, rand(text.length + 1), rand(2) - 1))
+      const index = new TextIndex(text)
+      for (const rel of positions) {
+        const want = Y.createAbsolutePositionFromRelativePosition(rel, doc, false)
+        expect(index.resolve(b64(rel))).toBe(want ? want.index : null)
+      }
+    }
+  })
+
+  it('takes no position a peer could make a root type of', () => {
+    const doc = new Y.Doc()
+    const text = doc.getText('content')
+    text.insert(0, 'hello')
+    const named = new Y.RelativePosition(null, 'chosen', null, 0)
+    expect(new TextIndex(text).resolve(b64(named))).toBeNull()
+    expect(doc.share.has('chosen')).toBe(false)
+    expect(new TextIndex(text).resolve('not base64!')).toBeNull()
   })
 })
