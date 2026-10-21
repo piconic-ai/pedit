@@ -395,7 +395,11 @@ class Lists {
     for (const i of this.order) {
       const r = recs[i]!
       const p = this.parent[i]!
-      if (!r.item || deleted[i] === r.length || (p >= 0 && (!recs[p]!.item || fate[p] === Fate.Gone)))
+      if (
+        !r.item ||
+        deleted[i] === r.length ||
+        (p >= 0 && (!recs[p]!.item || fate[p] === Fate.Gone))
+      )
         fate[i] = Fate.Gone
       else if ((p >= 0 && fate[p] === Fate.MayGo) || (items.get(list[i] ?? '') ?? 0) > 1)
         fate[i] = Fate.MayGo
