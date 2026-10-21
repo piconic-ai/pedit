@@ -3,10 +3,12 @@ import { markdown } from '@codemirror/lang-markdown'
 import { Compartment, EditorState, type Extension, Prec } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import {
+  checkMetaUpdate,
   deriveBlobKeys,
   type FileEntry,
   importKey,
   isFinalStatus,
+  metaFiles,
   RoomClient,
   type RoomStatus,
 } from '@pedit/protocol'
@@ -28,6 +30,8 @@ import {
 import { Attachments, hostAttachments, whyNoImages } from './attachments.ts'
 import { BoardView } from './board.ts'
 import { read as readCanvas, toJSON } from './canvas.ts'
+import { commentMarks } from './commentmarks.ts'
+import { CommentsView, type ShownThread } from './comments.ts'
 import { delimiterFor } from './csv.ts'
 import { avatarFor, fetchIdentity } from './identity.ts'
 import { JsonPane } from './jsonpane.ts'
@@ -54,6 +58,7 @@ import { NARROW_QUERY, type ViewMode, ViewSwitch } from './view.ts'
 import { trackViewport } from './viewport.ts'
 import { loadVimMode, VimToggle, vimExtension } from './vim.ts'
 import './components/Cards.tsx'
+import './components/CommentsPanel.tsx'
 import './components/EndedBanner.tsx'
 import './components/FileTabs.tsx'
 import './components/Header.tsx'
@@ -218,6 +223,8 @@ interface OpenFile {
   table: TableView
   board: BoardView
   json: JsonPane
+  /** Its comments, once the host shares them (#121). */
+  comments: CommentsView | null
 }
 
 async function joinRoom(
@@ -249,6 +256,14 @@ async function joinRoom(
   // the room's own doc; each other file opened gets a doc of its own.
   const files = new Store<readonly FileEntry[]>([])
   const current = new Store(0)
+  // The comments of the files the host keeps them for (#121): which file of
+  // the room holds each file's, those on screen, and what they act on.
+  const metaOf = new Map<number, number>()
+  const comments = new Store<CommentsView | null>(null)
+  const threadsShown = new Store<readonly ShownThread[]>([])
+  const commentFocus = new Store<string | null>(null)
+  const selection = new Store({ from: 0, to: 0 })
+  const locked = new Store(false)
   // The room closes as soon as the host leaves (or was never there).
   let parts: LayoutParts | undefined
   render(app, 'Layout', { onReady: (p: LayoutParts) => (parts = p) })
@@ -328,6 +343,12 @@ async function joinRoom(
       wrap.of(held(wrap, lineWrapping(appearance.wrap))),
       editable.of(held(editable, [])),
       yCollab(fileText, awareness, { undoManager: undo }),
+      commentMarks(threadsShown, commentFocus),
+      EditorView.updateListener.of((u) => {
+        const s = u.state.selection.main
+        const was = selection.get()
+        if (s.from !== was.from || s.to !== was.to) selection.set({ from: s.from, to: s.to })
+      }),
       imagePaste({
         blocked: () =>
           whyNoImages(
@@ -403,6 +424,7 @@ async function joinRoom(
     canvas: false,
     table: tableFor(0, text, undoManager),
     ...canvasFor(0, doc),
+    comments: null,
   }
   // The file on screen, and every file opened so far, which stay in sync.
   let shown = first
@@ -466,6 +488,7 @@ async function joinRoom(
   const setStatus = (s: RoomStatus) => {
     const was = roomStatus.get()
     roomStatus.set(s)
+    locked.set(editLocked())
     if (isFinalStatus(s)) {
       editor.dispatch({ effects: editable.reconfigure(readOnly) })
       for (const f of opened.values()) {
@@ -536,6 +559,7 @@ async function joinRoom(
       canvas: entry.format === 'canvas',
       table: tableFor(entry.id, fileText, undo),
       ...canvasFor(entry.id, fileDoc),
+      comments: null,
     }
     if (isFinalStatus(roomStatus.get())) {
       f.board.readOnly = true
@@ -546,7 +570,33 @@ async function joinRoom(
     }
     opened.set(entry.id, f)
     client?.addFile(entry.id, fileDoc)
+    followComments(f)
     return f
+  }
+
+  // Follows the comments of a text file once the host lists them, in a doc
+  // whose every update is checked: anyone in the room can send one.
+  const followComments = (f: OpenFile) => {
+    const metaId = metaOf.get(f.id)
+    if (f.comments || f.canvas || metaId === undefined || !client) return
+    const metaDoc = new Y.Doc()
+    client.addFile(metaId, metaDoc, checkMetaUpdate)
+    const name = () => {
+      const user = awareness.getLocalState()?.user as { name?: unknown } | undefined
+      return typeof user?.name === 'string' ? user.name : me.name
+    }
+    f.comments = new CommentsView(metaDoc, f.doc, { name })
+    if (f === shown) showComments()
+  }
+  let stopThreads = () => {}
+  // Shows the comments of the file on screen, if it has any.
+  const showComments = () => {
+    stopThreads()
+    const c = shown.comments
+    comments.set(c)
+    commentFocus.set(null)
+    threadsShown.set(c?.threads.get() ?? [])
+    stopThreads = c ? c.threads.subscribe((t) => threadsShown.set(t)) : () => {}
   }
 
   // Shows another file of the room. The editor keeps its settings.
@@ -556,6 +606,7 @@ async function joinRoom(
     shown.table.active = false
     shown.board.active = false
     shown = openFile(entry)
+    showComments()
     current.set(id)
     awareness.setLocalStateField('file', id)
     editor.setState(
@@ -573,7 +624,11 @@ async function joinRoom(
   }
 
   const takeManifest = (list: FileEntry[]) => {
-    // A file of a format this version does not know is left out.
+    metaOf.clear()
+    for (const [file, meta] of metaFiles(list)) metaOf.set(file, meta)
+    for (const f of opened.values()) followComments(f)
+    // A file of a format this version does not know is left out, and so is
+    // the metadata of a file, shown with it.
     const known = list.filter((f) => f.format === 'text' || f.format === 'canvas')
     files.set(known)
     const named = known.find((f) => f.id === shown.id)
@@ -614,6 +669,17 @@ async function joinRoom(
     onFileCanvas: (fileId, m) => opened.get(fileId)?.json.handle(m),
   })
   render(parts.files, 'FileTabs', { files, current, onOpen: switchTo })
+  render(parts.comments, 'CommentsPanel', {
+    comments,
+    selection,
+    locked,
+    focus: commentFocus,
+    onShow: (t: ShownThread) => {
+      if (t.from < 0 || t.to > editor.state.doc.length) return
+      editor.dispatch({ selection: { anchor: t.from, head: t.to }, scrollIntoView: true })
+      editor.focus()
+    },
+  })
   awareness.on('change', renderPeople)
 
   setStatus('connecting')

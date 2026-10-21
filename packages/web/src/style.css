@@ -70,6 +70,7 @@ body {
 .table-slot,
 .canvas-host,
 .canvas-slot,
+.comments-host,
 .menu-slot,
 .menu-host {
   display: contents;
@@ -1805,4 +1806,134 @@ main.editor .cm-vim-panel {
   fill: var(--peer-color);
   font-size: 12px;
   font-weight: 600;
+}
+
+/* Comments (#121): beside the text, below it on a narrow screen. */
+.comments {
+  flex: 0 0 300px;
+  overflow-y: auto;
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  font: 13px / 1.45 var(--sans);
+  padding: 12px;
+}
+main.editor[data-view="table"] .comments,
+main.editor[data-view="canvas"] .comments {
+  display: none;
+}
+.comments-title {
+  font-size: 13px;
+  margin: 0 0 4px;
+}
+.comments-count:not(:empty) {
+  margin-left: 4px;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--bg);
+}
+.comments-note,
+.comments-full {
+  margin: 0 0 10px;
+  color: var(--muted);
+}
+.comments textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  font: inherit;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 4px 6px;
+}
+.comments button {
+  font: inherit;
+}
+.comments-new {
+  margin-bottom: 12px;
+}
+.comments-threads,
+.comment-messages {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.comment-thread {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px;
+  margin-bottom: 8px;
+}
+.comment-thread[aria-current="true"] {
+  border-color: var(--accent);
+}
+.comment-thread[data-resolved="true"] {
+  opacity: 0.6;
+}
+.comment-quote {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  padding: 0 0 6px;
+  cursor: pointer;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.comment-state:not(:empty) {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--warn-bg);
+  color: var(--warn-ink);
+}
+.comment-live {
+  display: block;
+}
+.comment-message {
+  padding: 4px 0;
+  border-top: 1px solid var(--line);
+}
+.comment-author {
+  font-weight: 600;
+  unicode-bidi: isolate;
+}
+.comment-time {
+  color: var(--muted);
+  font-size: 12px;
+}
+.comment-body {
+  margin: 2px 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.comment-reply {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+}
+.cm-comment {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-bottom: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+}
+.cm-comment-focus {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+@media (max-width: 720px) {
+  .comments {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    max-height: 40vh;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    z-index: 5;
+  }
 }

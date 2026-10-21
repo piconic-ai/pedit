@@ -18,6 +18,8 @@ export interface LayoutParts {
   table: HTMLElement
   /** Where the canvas board goes. */
   canvas: HTMLElement
+  /** The comments of the file on screen, beside it. */
+  comments: HTMLElement
 }
 
 /**
@@ -89,6 +91,12 @@ export function Layout(props: { onReady: (parts: LayoutParts) => void }) {
           className="canvas-host"
           ref={(el) => {
             parts.canvas = el
+          }}
+        />
+        <div
+          className="comments-host"
+          ref={(el) => {
+            parts.comments = el
           }}
         />
       </main>
