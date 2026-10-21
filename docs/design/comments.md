@@ -110,13 +110,16 @@ happens once and on the host, so every peer starts from the same anchors. Text
 that is not found leaves its thread detached, with its last saved place kept
 for the next try.
 
-When the host saves, it writes each anchor's place as it is then, read from
-the thread's RelativePositions, resolved as Yjs resolves them. ygo places a
-position whose character was deleted after the deleted characters before it
-in their run, unlike Yjs, so the host walks back to the run's first
-character. An anchor whose text is gone keeps the place it last saved, or,
-for a thread made this session, its quote, so it can be found if the text
-comes back. The doc's shape and these rules are in `internal/meta/doc.go`.
+When the host saves, it writes each anchor's place as it is then. ygo cannot
+resolve a position whose character was deleted as Yjs does, and what is left
+of a deleted run cannot be told from outside it, so the host does not ask
+ygo then: a `Tracker` takes each position while its character is still in the
+text (as the room makes it, or as it arrives) and follows it through every
+change to the text, as Yjs would place it. The one case it cannot follow is
+text inserted concurrently right where a deleted character was. An anchor
+whose text is gone keeps the place it last saved, or, for a thread made this
+session, its quote, so it can be found if the text comes back. The doc's
+shape and these rules are in `internal/meta/doc.go` and `track.go`.
 
 ## Input from other people
 

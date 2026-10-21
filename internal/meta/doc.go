@@ -51,27 +51,26 @@ const maxCandidates = 10_000
 
 // fileText is a text file's content, as Load and Read look at it.
 type fileText struct {
-	doc   *crdt.Doc
-	ytext *crdt.YText
+	*Tracker
 	units []uint16 // the content in UTF-16 code units, as Yjs counts
+	seen  map[string]bool
 }
 
-// textOf reads content, the doc of a text file, or returns nil for nil, as
-// for a canvas, whose anchors are node ids.
-func textOf(content *crdt.Doc) *fileText {
-	if content == nil {
+// textOf reads the text tr follows, or returns nil for nil, as for a canvas,
+// whose anchors are node ids.
+func textOf(tr *Tracker) *fileText {
+	if tr == nil {
 		return nil
 	}
-	t := content.GetText(ContentText)
-	return &fileText{doc: content, ytext: t, units: utf16.Encode([]rune(t.ToString()))}
+	return &fileText{Tracker: tr, units: utf16.Encode([]rune(tr.text.ToString())), seen: map[string]bool{}}
 }
 
 // Load puts the threads of f into doc, a metadata doc that has none yet,
-// re-anchoring each on content, the doc of the file they belong to: the
-// place of a text or cells anchor is found again by its saved text. content
-// is nil for a canvas.
-func Load(doc *crdt.Doc, f *File, content *crdt.Doc) {
-	t := textOf(content)
+// re-anchoring each on the text tr follows, the file they belong to: the
+// place of a text or cells anchor is found again by its saved text. tr is
+// nil for a canvas.
+func Load(doc *crdt.Doc, f *File, tr *Tracker) {
+	t := textOf(tr)
 	var hay []byte
 	if t != nil {
 		hay = unitBytes(t.units)
@@ -141,9 +140,16 @@ func rangeIn(s *Selector, startAssoc, endAssoc int, t *fileText, hay []byte) (ma
 		return nil, false
 	}
 	return map[string]any{
-		startKey: encodePosition(crdt.CreateRelativePositionFromIndex(t.ytext, start, startAssoc)),
-		endKey:   encodePosition(crdt.CreateRelativePositionFromIndex(t.ytext, end, endAssoc)),
+		startKey: t.make(start, startAssoc),
+		endKey:   t.make(end, endAssoc),
 	}, true
+}
+
+// make makes a position at index, and tracks it.
+func (t *fileText) make(index, assoc int) string {
+	key := encodePosition(crdt.CreateRelativePositionFromIndex(t.text, index, assoc))
+	t.add(key, index, assoc)
+	return key
 }
 
 // find returns where s is in content, in UTF-16 code units, or -1, -1; hay
@@ -246,13 +252,15 @@ func decodePosition(v any) (crdt.RelativePosition, bool) {
 // as it was read (or a new one), so its unknown keys survive. Anyone in the
 // room can write anything into doc, so Read keeps only threads and messages
 // that Check accepts, in order of id, up to MaxThreads and to what fits the
-// file. An anchor that resolves on content, the doc of the file (nil for a
-// canvas), gets its place as it is now; one that does not keeps the place it
-// had in prev, or else the place of its quote. The caller holds the lock that
-// remote updates are applied under, so that the docs do not change while
-// Read reads them.
-func Read(doc *crdt.Doc, prev *File, content *crdt.Doc) *File {
-	t := textOf(content)
+// file. An anchor that tr (nil for a canvas) can place gets its place as it
+// is now; one it cannot keeps the place it had in prev, or else the place of
+// its quote. The caller holds the lock that remote updates are applied
+// under, so that the docs do not change while Read reads them.
+func Read(doc *crdt.Doc, prev *File, tr *Tracker) *File {
+	t := textOf(tr)
+	if t != nil {
+		defer func() { t.keep(t.seen) }()
+	}
 	threads := map[string]Thread{}
 	// What threads may take in the file; the rest is for its own keys and
 	// those a newer pedit wrote.
@@ -371,8 +379,8 @@ func placeNow(kind string, raw map[string]any, t *fileText) (Anchor, bool) {
 // selectorAt is the place between the start and end positions of r as it is
 // now, or false when it cannot be told. Only a cell may be empty.
 func selectorAt(r map[string]any, empty bool, t *fileText) (*Selector, bool) {
-	start, ok1 := t.resolve(r[startKey])
-	end, ok2 := t.resolve(r[endKey])
+	start, ok1 := t.resolveSeen(r[startKey])
+	end, ok2 := t.resolveSeen(r[endKey])
 	if !ok1 || !ok2 || start > end || end > len(t.units) {
 		return nil, false
 	}
@@ -414,63 +422,10 @@ func isLowSurrogate(u uint16) bool  { return u >= 0xdc00 && u < 0xe000 }
 
 func decode(s []uint16) string { return string(utf16.Decode(s)) }
 
-// maxWalk bounds how far resolve walks back through deleted characters.
-const maxWalk = 4096
-
-// resolve returns where a position is in t now, as Yjs resolves it with
-// followUndoneDeletions off: a position whose character was deleted is where
-// that character was. ygo (v1.53.0 too) counts the deleted characters of its
-// run before it, so resolve walks back through the run to its first
-// character, which ygo places right. It gives up on a run longer than
-// maxWalk. TODO: drop the walk once reearth/ygo's ToAbsolutePosition leaves
-// out the offset into a deleted item, as Yjs does.
-func (t *fileText) resolve(v any) (int, bool) {
-	p, ok := decodePosition(v)
-	if !ok {
-		return 0, false
+// resolveSeen resolves a position of the doc, and keeps it tracked.
+func (t *fileText) resolveSeen(v any) (int, bool) {
+	if s, ok := v.(string); ok {
+		t.seen[s] = true
 	}
-	if p.Item == nil {
-		// The start or end of the text, which ygo places as Yjs does.
-		abs, ok := crdt.ToAbsolutePosition(t.doc, p)
-		return abs.Index, ok && abs.Name == ContentText
-	}
-	id := *p.Item
-	at, live, ok := t.place(id)
-	if !ok {
-		return 0, false
-	}
-	if live {
-		if p.Assoc < 0 {
-			// After the character, not before it.
-			at++
-		}
-		return at, true
-	}
-	for range maxWalk {
-		if id.Clock == 0 {
-			return at, true
-		}
-		prev := crdt.ID{Client: id.Client, Clock: id.Clock - 1}
-		prevAt, prevLive, ok := t.place(prev)
-		if !ok || prevLive || prevAt != at-1 {
-			// prev is not of the same deleted run: id starts it.
-			return at, true
-		}
-		id, at = prev, prevAt
-	}
-	return 0, false
-}
-
-// place is where ygo puts the character id, and whether it is still in the
-// text: a position made there then names it again.
-func (t *fileText) place(id crdt.ID) (int, bool, bool) {
-	abs, ok := crdt.ToAbsolutePosition(t.doc, crdt.RelativePosition{Item: &id})
-	if !ok || abs.Name != ContentText || abs.Index < 0 {
-		return 0, false, false
-	}
-	if abs.Index >= t.ytext.Len() {
-		return abs.Index, false, true
-	}
-	again := crdt.CreateRelativePositionFromIndex(t.ytext, abs.Index, 0)
-	return abs.Index, again.Item != nil && *again.Item == id, true
+	return t.resolve(v)
 }

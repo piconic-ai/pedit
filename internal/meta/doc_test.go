@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,12 +12,26 @@ import (
 	"github.com/reearth/ygo/crdt"
 )
 
-// content is a text file's doc, as the host shares it.
+// trackers follow the docs content made, as the host follows its files.
+var trackers sync.Map
+
+// content is a text file's doc, as the host shares it, followed by a
+// Tracker from the start.
 func content(s string) (*crdt.Doc, *crdt.YText) {
 	doc := crdt.New()
 	text := doc.GetText(meta.ContentText)
 	doc.Transact(func(txn *crdt.Transaction) { text.Insert(txn, 0, s, nil) })
+	trackers.Store(doc, meta.NewTracker(doc))
 	return doc, text
+}
+
+// trackerOf is the Tracker of a doc content made, or nil for a canvas.
+func trackerOf(doc *crdt.Doc) *meta.Tracker {
+	if doc == nil {
+		return nil
+	}
+	tr, _ := trackers.Load(doc)
+	return tr.(*meta.Tracker)
 }
 
 func textThread(exact, prefix, suffix string, offset int) meta.Thread {
@@ -33,8 +48,8 @@ func textThread(exact, prefix, suffix string, offset int) meta.Thread {
 func reload(t *testing.T, f *meta.File, doc *crdt.Doc) (*crdt.Doc, *meta.File) {
 	t.Helper()
 	m := crdt.New()
-	meta.Load(m, f, doc)
-	return m, meta.Read(m, &meta.File{Path: f.Path}, doc)
+	meta.Load(m, f, trackerOf(doc))
+	return m, meta.Read(m, &meta.File{Path: f.Path}, trackerOf(doc))
 }
 
 func selectorOf(t *testing.T, f *meta.File, id string) meta.Selector {
@@ -81,7 +96,7 @@ func TestLoadLeavesTextNotFoundDetachedAndKeepsItsPlace(t *testing.T) {
 	doc, _ := content("hello there!\n")
 	saved := textThread("world", "hello ", "!\n", 6)
 	m := crdt.New()
-	meta.Load(m, &meta.File{Path: "a.md", Comments: map[string]meta.Thread{"c1": saved}}, doc)
+	meta.Load(m, &meta.File{Path: "a.md", Comments: map[string]meta.Thread{"c1": saved}}, trackerOf(doc))
 	thread, _ := m.GetMap(meta.CommentsKey).Get("c1")
 	anchor, _ := thread.(*crdt.YMap).Get(meta.AnchorKey)
 	if a := anchor.(map[string]any); a["type"] != meta.AnchorText || a["start"] != nil || a["end"] != nil {
@@ -89,7 +104,7 @@ func TestLoadLeavesTextNotFoundDetachedAndKeepsItsPlace(t *testing.T) {
 	}
 	// Read keeps the place it had, for the next session to try again.
 	prev := &meta.File{Path: "a.md", Comments: map[string]meta.Thread{"c1": saved}}
-	got := meta.Read(m, prev, doc)
+	got := meta.Read(m, prev, trackerOf(doc))
 	if s := selectorOf(t, got, "c1"); s != *saved.Anchor.Text {
 		t.Fatalf("selector %+v, want %+v", s, *saved.Anchor.Text)
 	}
@@ -99,13 +114,13 @@ func TestReadFollowsEditsInTheSession(t *testing.T) {
 	doc, text := content("hello world!\n")
 	f := &meta.File{Path: "a.md", Comments: map[string]meta.Thread{"c1": textThread("world", "hello ", "!\n", 6)}}
 	m := crdt.New()
-	meta.Load(m, f, doc)
+	meta.Load(m, f, trackerOf(doc))
 	doc.Transact(func(txn *crdt.Transaction) {
 		text.Insert(txn, 0, "Oh, ", nil)
 		text.Insert(txn, 12, "OO", nil) // inside "world"
 		text.Insert(txn, 17, " and ", nil)
 	})
-	got := meta.Read(m, &meta.File{Path: "a.md"}, doc)
+	got := meta.Read(m, &meta.File{Path: "a.md"}, trackerOf(doc))
 	want := meta.Selector{Exact: "woOOrld", Prefix: "Oh, hello ", Suffix: " and !\n", Offset: 10}
 	if s := selectorOf(t, got, "c1"); s != want {
 		t.Fatalf("selector %+v, want %+v (text %q)", s, want, text.ToString())
@@ -116,10 +131,10 @@ func TestReadKeepsThePlaceOfTextDeletedInTheSession(t *testing.T) {
 	doc, text := content("hello world!\n")
 	saved := textThread("world", "hello ", "!\n", 6)
 	m := crdt.New()
-	meta.Load(m, &meta.File{Path: "a.md", Comments: map[string]meta.Thread{"c1": saved}}, doc)
+	meta.Load(m, &meta.File{Path: "a.md", Comments: map[string]meta.Thread{"c1": saved}}, trackerOf(doc))
 	doc.Transact(func(txn *crdt.Transaction) { text.Delete(txn, 6, 5) })
 	// ygo would resolve the end past the text; the thread keeps its place.
-	got := meta.Read(m, &meta.File{Path: "a.md", Comments: map[string]meta.Thread{"c1": saved}}, doc)
+	got := meta.Read(m, &meta.File{Path: "a.md", Comments: map[string]meta.Thread{"c1": saved}}, trackerOf(doc))
 	if s := selectorOf(t, got, "c1"); s != *saved.Anchor.Text {
 		t.Fatalf("selector %+v, want %+v", s, *saved.Anchor.Text)
 	}
@@ -142,7 +157,7 @@ func TestReadSavesAThreadAGuestMade(t *testing.T) {
 		messages.Set(txn, "m2", map[string]any{"author": "Bo", "time": "now", "body": "dropped"})
 		messages.Set(txn, "m3", "not a message")
 	})
-	got := meta.Read(m, &meta.File{Path: "a.md"}, doc)
+	got := meta.Read(m, &meta.File{Path: "a.md"}, trackerOf(doc))
 	if s := selectorOf(t, got, "g1"); s != (meta.Selector{Exact: "two", Prefix: "one ", Suffix: " three\n", Offset: 4}) {
 		t.Fatalf("selector %+v", s)
 	}
@@ -174,7 +189,7 @@ func TestReadSkipsWhatAFileCouldNotHold(t *testing.T) {
 		add("lost", map[string]any{"type": "text", "start": "%%%", "end": "AAA="}, "")
 		add("node", map[string]any{"type": "node", "id": "n1"}, "Ideas")
 	})
-	got := meta.Read(m, &meta.File{Path: "a.md"}, doc)
+	got := meta.Read(m, &meta.File{Path: "a.md"}, trackerOf(doc))
 	if len(got.Comments) != 1 || got.Comments["node"].Anchor.ID != "n1" || got.Comments["node"].Quote != "Ideas" {
 		t.Fatalf("kept %+v", got.Comments)
 	}
@@ -208,7 +223,7 @@ func TestReadKeepsUnknownTopLevelKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	doc, _ := content("abc")
-	out, err := meta.Render(meta.Read(crdt.New(), prev, doc))
+	out, err := meta.Render(meta.Read(crdt.New(), prev, trackerOf(doc)))
 	if err != nil || !strings.Contains(string(out), `"suggestions"`) {
 		t.Fatalf("render %s, %v", out, err)
 	}
@@ -248,12 +263,13 @@ func TestReadFollowsARangeWhoseEdgeWasRetyped(t *testing.T) {
 	doc, text := content("hello world!\n")
 	m := crdt.New()
 	guestThread(t, m, text, "g1", map[string]any{"type": "text", "start": pos(text, 6, 0), "end": pos(text, 11, -1)}, "world")
+	trackerOf(doc).Learn(m)
 	doc.Transact(func(txn *crdt.Transaction) {
 		text.Delete(txn, 6, 1)
 		text.Insert(txn, 6, "W", nil)
 		text.Delete(txn, 10, 1) // the last "d"
 	})
-	got := meta.Read(m, &meta.File{Path: "a.md"}, doc)
+	got := meta.Read(m, &meta.File{Path: "a.md"}, trackerOf(doc))
 	s := selectorOf(t, got, "g1")
 	// Where Yjs puts it, checked against yjs 13.6: the deleted "w" and "d"
 	// stand where they were.
@@ -266,8 +282,9 @@ func TestReadKeepsAThreadWhoseTextIsGoneByItsQuote(t *testing.T) {
 	doc, text := content("hello world!\n")
 	m := crdt.New()
 	guestThread(t, m, text, "g1", map[string]any{"type": "text", "start": pos(text, 6, 0), "end": pos(text, 11, -1)}, "world")
+	trackerOf(doc).Learn(m)
 	doc.Transact(func(txn *crdt.Transaction) { text.Delete(txn, 5, 6) })
-	got := meta.Read(m, &meta.File{Path: "a.md"}, doc)
+	got := meta.Read(m, &meta.File{Path: "a.md"}, trackerOf(doc))
 	if s := selectorOf(t, got, "g1"); s.Exact != "world" || len(got.Comments["g1"].Messages) != 1 {
 		t.Fatalf("selector %+v", s)
 	}
@@ -282,8 +299,9 @@ func TestReadFollowsCellsAtTheEdgesAndTypedInto(t *testing.T) {
 	// The empty first cell, and the empty cell between x and y.
 	guestThread(t, m, text, "first", map[string]any{"type": "cells", "from": cell(0, 0), "to": cell(0, 0)}, "")
 	guestThread(t, m, text, "middle", map[string]any{"type": "cells", "from": cell(7, 7), "to": cell(7, 7)}, "")
+	trackerOf(doc).Learn(m)
 	doc.Transact(func(txn *crdt.Transaction) { text.Insert(txn, 7, "Z", nil) })
-	got := meta.Read(m, &meta.File{Path: "a.csv"}, doc)
+	got := meta.Read(m, &meta.File{Path: "a.csv"}, trackerOf(doc))
 	if a := got.Comments["first"].Anchor; a.From == nil || a.From.Exact != "" || a.From.Offset != 0 || a.From.Suffix != ",a,b\nx,Z,y" {
 		t.Fatalf("first %+v", a.From)
 	}
@@ -308,7 +326,7 @@ func TestReadKeepsTheSameThreadsEveryTime(t *testing.T) {
 			thread.Set(txn, meta.AnchorKey, map[string]any{"type": "node", "id": "n"})
 		}
 	})
-	got := meta.Read(m, &meta.File{Path: "a.md"}, doc)
+	got := meta.Read(m, &meta.File{Path: "a.md"}, trackerOf(doc))
 	if len(got.Comments) != meta.MaxThreads {
 		t.Fatalf("%d threads", len(got.Comments))
 	}
@@ -331,7 +349,7 @@ func TestReadKeepsTheFileUnderItsSize(t *testing.T) {
 			messages.Set(txn, "m", map[string]any{"author": "a", "time": "2026-10-21T00:00:00Z", "body": strings.Repeat("あ", meta.MaxBody)})
 		}
 	})
-	got := meta.Read(m, &meta.File{Path: "a.md"}, doc)
+	got := meta.Read(m, &meta.File{Path: "a.md"}, trackerOf(doc))
 	if _, err := meta.Render(got); err != nil || len(got.Comments) == 300 || len(got.Comments) == 0 {
 		t.Fatalf("%d threads: %v", len(got.Comments), err)
 	}
@@ -345,8 +363,36 @@ func TestLoadFindsQuickly(t *testing.T) {
 		threads[fmt.Sprintf("c%d", i)] = meta.Thread{Anchor: meta.Anchor{Type: meta.AnchorText, Text: &sel}, Messages: map[string]meta.Message{}}
 	}
 	start := time.Now()
-	meta.Load(crdt.New(), &meta.File{Path: "a.md", Comments: threads}, doc)
+	meta.Load(crdt.New(), &meta.File{Path: "a.md", Comments: threads}, trackerOf(doc))
 	if d := time.Since(start); d > 5*time.Second {
 		t.Fatalf("Load took %v", d)
+	}
+}
+
+func TestReadDoesNotCrossTextLeftBetweenDeletedCharacters(t *testing.T) {
+	// From review: "a" and "b" have consecutive clocks, but "X" stays
+	// between them. Yjs 13.6 resolves the anchor of "bc" to [1, 2], "c".
+	doc, text := content("abc")
+	m := crdt.New()
+	guestThread(t, m, text, "g1", map[string]any{"type": "text", "start": pos(text, 1, 0), "end": pos(text, 3, -1)}, "bc")
+	trackerOf(doc).Learn(m)
+	doc.Transact(func(txn *crdt.Transaction) { text.Insert(txn, 1, "X", nil) })
+	doc.Transact(func(txn *crdt.Transaction) { text.Delete(txn, 2, 1) })
+	doc.Transact(func(txn *crdt.Transaction) { text.Delete(txn, 0, 1) })
+	got := meta.Read(m, &meta.File{Path: "a.md"}, trackerOf(doc))
+	if s := selectorOf(t, got, "g1"); s != (meta.Selector{Exact: "c", Prefix: "X", Suffix: "", Offset: 1}) {
+		t.Fatalf("selector %+v (text %q)", s, text.ToString())
+	}
+}
+
+func TestTrackerCountsUTF16(t *testing.T) {
+	doc, text := content("🌏 hello world")
+	m := crdt.New()
+	guestThread(t, m, text, "g1", map[string]any{"type": "text", "start": pos(text, 9, 0), "end": pos(text, 14, -1)}, "world")
+	trackerOf(doc).Learn(m)
+	doc.Transact(func(txn *crdt.Transaction) { text.Insert(txn, 0, "🐹🐹", nil) })
+	got := meta.Read(m, &meta.File{Path: "a.md"}, trackerOf(doc))
+	if s := selectorOf(t, got, "g1"); s.Exact != "world" || s.Offset != 13 {
+		t.Fatalf("selector %+v", s)
 	}
 }
