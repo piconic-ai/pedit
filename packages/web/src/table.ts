@@ -668,54 +668,86 @@ export class TableView {
   #onKey(ev: KeyboardEvent): void {
     // Keys in the open cell are the editor's (#onEditorKey).
     if ((ev.target as Element).closest?.('.cell-editor') || this.#editor || !this.#selected) return
-    const { row, col } = this.#selected
+    const at = this.#selected
+    const undo = undoKey(ev)
+    if (undo) {
+      ev.preventDefault()
+      if (!this.#readOnly) this.#undo[undo]()
+      return
+    }
+    if (this.#onSpanKey(ev) || this.#onSelectSpanKey(ev, at) || this.#onMenuKey(ev, at)) return
+    this.#onCellKey(ev, at)
+  }
+
+  /**
+   * Google Sheets' keys: with a whole row or column selected, Ctrl+Alt+=
+   * inserts one before it and Ctrl+Alt+- deletes it (⌘⌥ on a Mac). On a single
+   * cell Sheets asks what to insert, so they do nothing here. The codes
+   * survive ⌥ changing the character.
+   */
+  #onSpanKey(ev: KeyboardEvent): boolean {
     const mod = ev.ctrlKey || ev.metaKey
-    if (mod && ev.key.toLowerCase() === 'z') {
+    if (!mod || !ev.altKey || (ev.code !== 'Equal' && ev.code !== 'Minus')) return false
+    ev.preventDefault()
+    if (this.#span === 'cell') return true
+    const column = this.#span === 'column'
+    if (ev.code === 'Equal') {
+      if (column) this.insertColumn('left')
+      else this.insertRow('above')
+    } else if (column) this.deleteColumn()
+    else this.deleteRow()
+    return true
+  }
+
+  /** Shift+Space selects the row, Ctrl+Space the column. */
+  #onSelectSpanKey(ev: KeyboardEvent, at: Position): boolean {
+    if (ev.key !== ' ' || !(ev.shiftKey || ev.ctrlKey) || ev.metaKey || ev.altKey) return false
+    ev.preventDefault()
+    this.select(at, true, ev.shiftKey ? 'row' : 'column')
+    return true
+  }
+
+  #onMenuKey(ev: KeyboardEvent, at: Position): boolean {
+    if (ev.key !== 'ContextMenu' && !(ev.key === 'F10' && ev.shiftKey)) return false
+    ev.preventDefault()
+    const rect = this.#cellElement(at)?.getBoundingClientRect()
+    this.openMenu(this.#selectionTarget(at), rect?.left ?? 0, rect?.bottom ?? 0)
+    return true
+  }
+
+  /** The selection as the menu sees it: a whole row or column, or one cell. */
+  #selectionTarget({ row, col }: Position): Target {
+    if (this.#span === 'row') return { kind: 'row', row }
+    if (this.#span === 'column') return { kind: 'column', col }
+    return { kind: 'cell', at: { row, col } }
+  }
+
+  /** Moving, opening, clearing or typing over the selected cell. */
+  #onCellKey(ev: KeyboardEvent, at: Position): void {
+    const mod = ev.ctrlKey || ev.metaKey
+    const move = this.#moveFor(ev.key, at, mod)
+    if (move) {
       ev.preventDefault()
-      if (this.#readOnly) return
-      if (ev.shiftKey) this.#undo.redo()
-      else this.#undo.undo()
-      return
-    }
-    if (mod && ev.key.toLowerCase() === 'y') {
+      this.select(move)
+    } else if (ev.key === 'Enter' || ev.key === 'F2') {
       ev.preventDefault()
-      if (!this.#readOnly) this.#undo.redo()
-      return
-    }
-    // Google Sheets' keys: with a whole row or column selected, Ctrl+Alt+=
-    // inserts one before it and Ctrl+Alt+- deletes it (⌘⌥ on a Mac). On a single
-    // cell Sheets asks what to insert, so they do nothing here. The codes
-    // survive ⌥ changing the character.
-    if (mod && ev.altKey && (ev.code === 'Equal' || ev.code === 'Minus')) {
+      this.edit(at)
+    } else if (ev.key === 'Delete' || ev.key === 'Backspace') {
       ev.preventDefault()
-      if (this.#span === 'cell') return
-      const column = this.#span === 'column'
-      if (ev.code === 'Equal') {
-        if (column) this.insertColumn('left')
-        else this.insertRow('above')
-      } else if (column) this.deleteColumn()
-      else this.deleteRow()
-      return
-    }
-    if (ev.key === ' ' && (ev.shiftKey || ev.ctrlKey) && !ev.metaKey && !ev.altKey) {
+      this.#clear()
+    } else if (isComposing(ev)) {
+      // An IME is starting: open the cell as it is, so the conversion lands in
+      // the editor. Replacing the value would clear it if it did not.
+      this.edit(at)
+    } else if (ev.key.length === 1 && !mod && !ev.altKey) {
       ev.preventDefault()
-      this.select({ row, col }, true, ev.shiftKey ? 'row' : 'column')
-      return
+      this.edit(at, ev.key)
     }
-    if (ev.key === 'ContextMenu' || (ev.key === 'F10' && ev.shiftKey)) {
-      ev.preventDefault()
-      const rect = this.#cellElement({ row, col })?.getBoundingClientRect()
-      const target: Target =
-        this.#span === 'row'
-          ? { kind: 'row', row }
-          : this.#span === 'column'
-            ? { kind: 'column', col }
-            : { kind: 'cell', at: { row, col } }
-      this.openMenu(target, rect?.left ?? 0, rect?.bottom ?? 0)
-      return
-    }
-    const rows = Math.max(1, this.#table?.rows.length ?? 0)
-    const cols = Math.max(1, this.#table?.columns ?? 0)
+  }
+
+  /** Where an arrow key, Home or End (to the corners with Ctrl) moves the selection. */
+  #moveFor(key: string, { row, col }: Position, mod: boolean): Position | undefined {
+    const { rows, cols } = this.#size()
     const moves: Record<string, Position> = {
       ArrowUp: { row: Math.max(0, row - 1), col },
       ArrowDown: { row: Math.min(rows - 1, row + 1), col },
@@ -724,23 +756,14 @@ export class TableView {
       Home: { row: mod ? 0 : row, col: 0 },
       End: { row: mod ? rows - 1 : row, col: cols - 1 },
     }
-    const move = moves[ev.key]
-    if (move) {
-      ev.preventDefault()
-      this.select(move)
-    } else if (ev.key === 'Enter' || ev.key === 'F2') {
-      ev.preventDefault()
-      this.edit({ row, col })
-    } else if (ev.key === 'Delete' || ev.key === 'Backspace') {
-      ev.preventDefault()
-      this.#clear()
-    } else if (isComposing(ev)) {
-      // An IME is starting: open the cell as it is, so the conversion lands in
-      // the editor. Replacing the value would clear it if it did not.
-      this.edit({ row, col })
-    } else if (ev.key.length === 1 && !mod && !ev.altKey) {
-      ev.preventDefault()
-      this.edit({ row, col }, ev.key)
+    return moves[key]
+  }
+
+  /** The grid's size, at least one cell even for an empty file. */
+  #size(): { rows: number; cols: number } {
+    return {
+      rows: Math.max(1, this.#table?.rows.length ?? 0),
+      cols: Math.max(1, this.#table?.columns ?? 0),
     }
   }
 
@@ -749,50 +772,52 @@ export class TableView {
     // Keys that confirm or cancel an IME conversion belong to the IME. Safari
     // sends the confirming Enter just after compositionend, with keyCode 229.
     if (!at || isComposing(ev)) return
-    const mod = ev.ctrlKey || ev.metaKey
     // The text is written as you type, so the textarea's own undo would lose track.
-    if (mod && (ev.key.toLowerCase() === 'z' || ev.key.toLowerCase() === 'y')) {
+    const undo = undoKey(ev)
+    if (undo) {
       ev.preventDefault()
-      if (ev.key.toLowerCase() === 'y' || ev.shiftKey) this.#undo.redo()
-      else this.#undo.undo()
+      this.#undo[undo]()
       return
     }
     // A line break inside the cell: Alt+Enter or Ctrl/⌘+Enter, as in Google Sheets.
-    if (ev.key === 'Enter' && (ev.altKey || mod)) {
+    if (ev.key === 'Enter' && (ev.altKey || ev.ctrlKey || ev.metaKey)) {
       ev.preventDefault()
-      const editor = ev.target as HTMLTextAreaElement
-      editor.setRangeText('\n', editor.selectionStart, editor.selectionEnd, 'end')
-      this.#write(editor.value)
-      this.#fit()
+      this.#breakLine(ev.target as HTMLTextAreaElement)
       return
     }
     if (ev.key === 'Escape') {
-      // As in a spreadsheet, Escape drops the edit. Undoing it, rather than
-      // writing the old value back, also removes a cell the typing created,
-      // and leaves nothing for Ctrl+Z or Ctrl+Y to bring back.
       ev.preventDefault()
-      this.#finishEdit(false)
-      const redoDepth = this.#undo.redoStack.length
-      while (this.#undo.undoStack.length > this.#undoDepth) this.#undo.undo()
-      this.#undo.redoStack.splice(redoDepth)
-      this.select(at)
+      this.#cancelEdit(at)
       return
     }
-    const next =
-      ev.key === 'Enter'
-        ? { row: Math.max(0, at.row + (ev.shiftKey ? -1 : 1)), col: at.col }
-        : ev.key === 'Tab'
-          ? { row: at.row, col: Math.max(0, at.col + (ev.shiftKey ? -1 : 1)) }
-          : null
+    const next = leaveTo(ev, at)
     if (!next) {
       this.#fit()
       return
     }
     ev.preventDefault()
     this.#finishEdit(true)
-    const rows = Math.max(1, this.#table?.rows.length ?? 0)
-    const cols = Math.max(1, this.#table?.columns ?? 0)
+    const { rows, cols } = this.#size()
     this.select({ row: Math.min(rows - 1, next.row), col: Math.min(cols - 1, next.col) })
+  }
+
+  #breakLine(editor: HTMLTextAreaElement): void {
+    editor.setRangeText('\n', editor.selectionStart, editor.selectionEnd, 'end')
+    this.#write(editor.value)
+    this.#fit()
+  }
+
+  /**
+   * As in a spreadsheet, Escape drops the edit. Undoing it, rather than
+   * writing the old value back, also removes a cell the typing created, and
+   * leaves nothing for Ctrl+Z or Ctrl+Y to bring back.
+   */
+  #cancelEdit(at: Position): void {
+    this.#finishEdit(false)
+    const redoDepth = this.#undo.redoStack.length
+    while (this.#undo.undoStack.length > this.#undoDepth) this.#undo.undo()
+    this.#undo.redoStack.splice(redoDepth)
+    this.select(at)
   }
 
   #finishEdit(focus: boolean): void {
@@ -813,6 +838,22 @@ export class TableView {
     // The zero-width space keeps a trailing line break's empty line.
     this.mirror.set(`${editor.value}\u200b`)
   }
+}
+
+/** Ctrl+Z undoes; Ctrl+Shift+Z and Ctrl+Y redo (⌘ on a Mac). */
+function undoKey(ev: KeyboardEvent): 'undo' | 'redo' | null {
+  if (!ev.ctrlKey && !ev.metaKey) return null
+  const key = ev.key.toLowerCase()
+  if (key === 'y' || (key === 'z' && ev.shiftKey)) return 'redo'
+  return key === 'z' ? 'undo' : null
+}
+
+/** Where Enter (down) or Tab (right) leaves the cell being edited; back with Shift. */
+function leaveTo(ev: KeyboardEvent, at: Position): Position | null {
+  const step = ev.shiftKey ? -1 : 1
+  if (ev.key === 'Enter') return { row: Math.max(0, at.row + step), col: at.col }
+  if (ev.key === 'Tab') return { row: at.row, col: Math.max(0, at.col + step) }
+  return null
 }
 
 function isComposing(ev: KeyboardEvent): boolean {

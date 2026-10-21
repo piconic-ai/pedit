@@ -511,6 +511,25 @@ func TestJoinGivesUpWhenTheHostStaysSilent(t *testing.T) {
 	}
 }
 
+func TestJoinStopsWaitingForTheHostWhenCanceled(t *testing.T) {
+	relay := prototest.NewRelay(false)
+	dir := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	_, err := Join(ctx, JoinOptions{
+		URL:     "https://edit.example/r/AAAAAAAAAAAAAAAAAAAAAA#" + protocol.GenerateKey(),
+		dir:     dir,
+		Dial:    relay.Dial,
+		Timeout: time.Minute,
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v", err)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Fatalf("left %v behind", entries)
+	}
+}
+
 func TestParseShareURL(t *testing.T) {
 	key := protocol.GenerateKey()
 	ws, id, raw, err := parseShareURL("https://edit.piconic.ai/r/AAAAAAAAAAAAAAAAAAAAAA#" + key)

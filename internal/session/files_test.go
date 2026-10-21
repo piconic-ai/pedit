@@ -204,6 +204,24 @@ func TestAddFileRefusesWhatCannotBeShared(t *testing.T) {
 	}
 }
 
+func TestAddFileRefusesInAJoinedRoom(t *testing.T) {
+	f := setup(t, "a\n", setupOpts{})
+	g, err := joinFromCLI(t, f, joinCLIOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(filepath.Dir(g.File()), "other.md")
+	if err := os.WriteFile(other, []byte("o\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.AddFile(other); err == nil || !strings.Contains(err.Error(), "only the host's files") {
+		t.Fatalf("AddFile = %v", err)
+	}
+	if got := len(f.session.Files()); got != 1 {
+		t.Fatalf("%d files shared", got)
+	}
+}
+
 func TestSharedPathIsRelativeToTheRoot(t *testing.T) {
 	root := t.TempDir()
 	for file, want := range map[string]string{

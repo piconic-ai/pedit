@@ -290,8 +290,9 @@ func TestSkipsMessagesFromNewerPeers(t *testing.T) {
 	}})
 	prototest.WaitFor(t, wait, func() bool { return b.Status() == protocol.StatusConnected }, "b connected")
 
-	// A newer peer sends a message type, an attachment kind, a files kind
-	// and a message about a file that b does not know, then an edit.
+	// A newer peer sends a message type, an attachment kind, a canvas kind,
+	// a files kind and a message about a file that b does not know, then an
+	// edit.
 	raw, _ := protocol.DecodeKey(key)
 	c, _ := protocol.NewCipher(raw)
 	conn, err := relay.Dial(t.Context(), "ws://test", nil)
@@ -302,6 +303,7 @@ func TestSkipsMessagesFromNewerPeers(t *testing.T) {
 	for i, m := range [][]byte{
 		protocol.EncodeMessage(9, []byte{1, 2, 3}),
 		protocol.EncodeMessage(protocol.MessageAttachment, []byte{9, 1, 2, 3}),
+		protocol.EncodeMessage(protocol.MessageCanvas, []byte{9, 1, 2, 3}),
 		protocol.EncodeMessage(protocol.MessageFiles, []byte{9, 1, 2, 3}),
 		protocol.EncodeMessage(protocol.MessageFiles, []byte{byte(protocol.FilesDoc), 1, 9, 1, 2, 3}),
 	} {
@@ -316,6 +318,37 @@ func TestSkipsMessagesFromNewerPeers(t *testing.T) {
 	if len(errs) > 0 {
 		t.Fatalf("errors: %v", errs)
 	}
+}
+
+func TestReportsMalformedMessages(t *testing.T) {
+	relay := prototest.NewRelay(false)
+	key := protocol.GenerateKey()
+	var mu sync.Mutex
+	var errs []error
+	b := join(t, relay, key, joinOpts{onError: func(err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		errs = append(errs, err)
+	}})
+	prototest.WaitFor(t, wait, func() bool { return b.Status() == protocol.StatusConnected }, "b connected")
+
+	raw, _ := protocol.DecodeKey(key)
+	c, _ := protocol.NewCipher(raw)
+	conn, err := relay.Dial(t.Context(), "ws://test", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	for i, m := range [][]byte{
+		protocol.EncodeMessage(protocol.MessageAttachment, nil),
+		protocol.EncodeMessage(protocol.MessageCanvas, nil),
+		protocol.EncodeMessage(protocol.MessageAwareness, nil),
+	} {
+		if err := conn.Write(t.Context(), c.Encrypt(protocol.EncodeFrame(protocol.Sender{1}, uint64(i+1), m))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	prototest.WaitFor(t, wait, func() bool { mu.Lock(); defer mu.Unlock(); return len(errs) == 3 }, "an error for each message")
 }
 
 // TestDropsReplayedFrames: the relay can send any frame it relayed again, or

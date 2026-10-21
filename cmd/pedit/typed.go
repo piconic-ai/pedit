@@ -41,65 +41,76 @@ func (e *editor) feed(b []byte, on func(edit, string)) {
 	data := append(e.pending, b...)
 	e.pending = nil
 	changed := false
-	flush := func() {
+	for i := 0; i < len(data); {
+		n, ev, ok := e.key(data[i:])
+		if n == 0 {
+			e.pending = append([]byte(nil), data[i:]...)
+			break
+		}
+		i += n
+		if !ok {
+			continue
+		}
+		if ev == edited {
+			changed = true
+			continue
+		}
 		if changed {
 			on(edited, "")
 			changed = false
 		}
-	}
-	for i := 0; i < len(data); {
-		c := data[i]
-		switch {
-		case c == '\r' || c == '\n':
-			flush()
-			line := string(e.line)
+		line := ""
+		if ev == entered {
+			line = string(e.line)
 			e.line = nil
-			on(entered, line)
-			i++
-			if c == '\r' && i < len(data) && data[i] == '\n' {
-				i++
-			}
-		case c == 3: // Ctrl+C
-			flush()
-			on(interrupted, "")
-			i++
-		case c == 127 || c == 8: // Backspace
-			if len(e.line) > 0 {
-				e.line = e.line[:len(e.line)-1]
-				changed = true
-			}
-			i++
-		case c == 21: // Ctrl+U
-			if len(e.line) > 0 {
-				e.line = nil
-				changed = true
-			}
-			i++
-		case c == 27:
-			n, complete := escapeLength(data[i:])
-			if !complete {
-				e.pending = append([]byte(nil), data[i:]...)
-				i = len(data)
-				break
-			}
-			i += n
-		case c < 32:
-			i++
-		default:
-			if !utf8.FullRune(data[i:]) {
-				e.pending = append([]byte(nil), data[i:]...)
-				i = len(data)
-				break
-			}
-			r, size := utf8.DecodeRune(data[i:])
-			if r != utf8.RuneError || size > 1 {
-				e.line = append(e.line, r)
-				changed = true
-			}
-			i += size
 		}
+		on(ev, line)
 	}
-	flush()
+	if changed {
+		on(edited, "")
+	}
+}
+
+// key takes the key at the start of data: how many bytes it took, or 0 when
+// its end has not arrived yet, and what it did, if anything.
+func (e *editor) key(data []byte) (int, edit, bool) {
+	c := data[0]
+	switch {
+	case c == '\r' || c == '\n':
+		if c == '\r' && len(data) > 1 && data[1] == '\n' {
+			return 2, entered, true
+		}
+		return 1, entered, true
+	case c == 3: // Ctrl+C
+		return 1, interrupted, true
+	case c == 127 || c == 8: // Backspace
+		if len(e.line) == 0 {
+			return 1, edited, false
+		}
+		e.line = e.line[:len(e.line)-1]
+		return 1, edited, true
+	case c == 21: // Ctrl+U
+		changed := len(e.line) > 0
+		e.line = nil
+		return 1, edited, changed
+	case c == 27:
+		n, complete := escapeLength(data)
+		if !complete {
+			return 0, edited, false
+		}
+		return n, edited, false
+	case c < 32:
+		return 1, edited, false
+	}
+	if !utf8.FullRune(data) {
+		return 0, edited, false
+	}
+	r, size := utf8.DecodeRune(data)
+	if r == utf8.RuneError && size == 1 {
+		return 1, edited, false
+	}
+	e.line = append(e.line, r)
+	return size, edited, true
 }
 
 // lonelyEsc reports whether all that is pending is an Esc: the Esc key, or

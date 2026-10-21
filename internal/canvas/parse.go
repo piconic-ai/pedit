@@ -93,43 +93,63 @@ func (p *parser) value() (*jnode, error) {
 		return nil, err
 	}
 	n := &jnode{start: start}
-	switch t := tok.(type) {
-	case json.Delim:
-		switch t {
-		case '{':
-			n.kind = kindObject
-			for p.dec.More() {
-				keyStart := p.next()
-				k, err := p.dec.Token()
-				if err != nil {
-					return nil, err
-				}
-				key, _ := k.(string)
-				v, err := p.value()
-				if err != nil {
-					return nil, err
-				}
-				n.fields = append(n.fields, jfield{key: key, keyStart: keyStart, val: v})
-			}
-		case '[':
-			n.kind = kindArray
-			for p.dec.More() {
-				v, err := p.value()
-				if err != nil {
-					return nil, err
-				}
-				n.items = append(n.items, v)
-			}
-		}
-		if _, err := p.dec.Token(); err != nil {
+	if d, ok := tok.(json.Delim); ok {
+		if err := p.container(n, d); err != nil {
 			return nil, err
 		}
-	default:
+	} else {
 		n.kind = kindScalar
-		n.value = t
+		n.value = tok
 	}
 	n.end = int(p.dec.InputOffset())
 	return n, nil
+}
+
+// container reads an object or array after its opening delimiter, up to and
+// including the closing one.
+func (p *parser) container(n *jnode, open json.Delim) error {
+	var err error
+	switch open {
+	case '{':
+		n.kind = kindObject
+		err = p.fields(n)
+	case '[':
+		n.kind = kindArray
+		err = p.items(n)
+	}
+	if err != nil {
+		return err
+	}
+	_, err = p.dec.Token()
+	return err
+}
+
+func (p *parser) fields(n *jnode) error {
+	for p.dec.More() {
+		keyStart := p.next()
+		k, err := p.dec.Token()
+		if err != nil {
+			return err
+		}
+		key, _ := k.(string)
+		v, err := p.value()
+		if err != nil {
+			return err
+		}
+		n.fields = append(n.fields, jfield{key: key, keyStart: keyStart, val: v})
+	}
+	return nil
+}
+
+func (p *parser) items(n *jnode) error {
+	for p.dec.More() {
+		v, err := p.value()
+		if err != nil {
+			return err
+		}
+		n.items = append(n.items, v)
+	}
+	return nil
 }
 
 func (n *jnode) raw(data string) string { return data[n.start:n.end] }

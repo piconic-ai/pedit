@@ -619,3 +619,27 @@ func TestNumberRejectsWhatJSONCannotHold(t *testing.T) {
 		}
 	}
 }
+
+func TestEqual(t *testing.T) {
+	for _, c := range []struct {
+		a, b any
+		want bool
+	}{
+		{int64(3), 3.0, true},
+		{int64(3), "3", false},
+		{"a", "a", true},
+		{nil, nil, true},
+		{map[string]any{"x": int64(1)}, map[string]any{"x": 1.0}, true},
+		{map[string]any{"x": int64(1)}, map[string]any{"y": int64(1)}, false},
+		{map[string]any{"x": int64(1)}, map[string]any{}, false},
+		{map[string]any{}, []any{}, false},
+		{[]any{"a", int64(1)}, []any{"a", 1.0}, true},
+		{[]any{"a"}, []any{"b"}, false},
+		{[]any{"a"}, []any{"a", "b"}, false},
+		{[]any{}, map[string]any{}, false},
+	} {
+		if got := equal(c.a, c.b); got != c.want {
+			t.Errorf("equal(%#v, %#v) = %v", c.a, c.b, got)
+		}
+	}
+}

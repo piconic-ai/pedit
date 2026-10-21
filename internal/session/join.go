@@ -122,39 +122,14 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	dir, temp := opts.dir, ""
-	if dir == "" {
-		// The room ID only tells the directories apart; a short part does.
-		if temp, err = os.MkdirTemp("", "pedit-"+roomID[:min(len(roomID), maxRoomInDir)]+"-"); err != nil {
-			return nil, fmt.Errorf("cannot create a temporary directory for the copies: %w", err)
-		}
-		dir = temp
-	}
-	dir, err = filepath.Abs(dir)
+	dir, temp, root, err := copyRoot(opts.dir, roomID)
 	if err != nil {
-		_ = removeTemp(temp)
-		return nil, err
-	}
-	// Every copy is made through this handle, so the directory stays the one
-	// made here, whatever its name comes to lead to.
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		_ = removeTemp(temp)
 		return nil, err
 	}
 
 	doc := crdt.New()
 	shared := newTextContent(doc, "")
-	aw := awareness.New(uint64(doc.ClientID()))
-	name := opts.Name
-	if name == "" {
-		name = "guest"
-	}
-	aw.SetLocalState(map[string]any{
-		"role": "guest",
-		"name": name,
-		"user": map[string]any{"name": name},
-	})
+	aw := guestAwareness(doc, opts.Name)
 
 	s := &Session{
 		URL:        opts.URL,
@@ -167,9 +142,11 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 		beforePublishWriter: opts.beforePublishWriter,
 	}
 	s.mirror = &mirror{dir: dir, root: root, opts: opts, done: map[uint64]bool{}}
-	synced := make(chan struct{})
-	closed := make(chan struct{})
-	var ended atomic.Value // the final protocol.Status, set before closed is
+	room := &roomWait{
+		synced:   make(chan struct{}),
+		closed:   make(chan struct{}),
+		hostSeen: make(chan struct{}, 1),
+	}
 	var waited atomic.Bool // the host was away
 	s.Client, err = protocol.NewClient(protocol.ClientOptions{
 		URL:       wsURL,
@@ -185,18 +162,13 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 				s.resumeFromDisk()
 			}
 			if st.Final() {
-				select {
-				case <-closed:
-				default:
-					ended.Store(st)
-					close(closed)
-				}
+				room.end(st)
 			}
 			if opts.OnStatus != nil {
 				opts.OnStatus(st)
 			}
 		},
-		OnSynced:   func() { close(synced) },
+		OnSynced:   func() { close(room.synced) },
 		OnError:    onError,
 		OnManifest: s.takeManifest,
 	})
@@ -220,11 +192,10 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 			w.Schedule(s.content.render())
 		}
 	})
-	hostSeen := make(chan struct{}, 1)
 	aw.OnChange(func(awareness.ChangeEvent) {
 		if _, ok := hostState(aw); ok {
 			select {
-			case hostSeen <- struct{}{}:
+			case room.hostSeen <- struct{}{}:
 			default:
 			}
 		}
@@ -254,61 +225,17 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 		_ = removeTemp(temp)
 		return nil, err
 	}
-	// OnStatus may cancel ctx on the very status that ended the room, so both
-	// are ready at once; the reason the room ended wins.
-	canceled := func() (*Session, error) {
-		select {
-		case <-closed:
-			return fail(endedErr(ended.Load().(protocol.Status)))
-		default:
-			return fail(ctx.Err())
-		}
-	}
-	deadline := time.NewTimer(opts.Timeout)
-	defer deadline.Stop()
-	var host map[string]any
-	for host == nil {
-		select {
-		case <-hostSeen:
-			host, _ = hostState(aw)
-		case <-closed:
-			return fail(endedErr(ended.Load().(protocol.Status)))
-		case <-deadline.C:
-			return fail(fmt.Errorf("no host answered within %s", opts.Timeout))
-		case <-ctx.Done():
-			return canceled()
-		}
-	}
-	select {
-	case <-synced:
-	case <-closed:
-		return fail(endedErr(ended.Load().(protocol.Status)))
-	case <-deadline.C:
-		return fail(fmt.Errorf("the room did not send its content within %s", opts.Timeout))
-	case <-ctx.Done():
-		return canceled()
+	host, err := room.wait(ctx, aw, opts.Timeout)
+	if err != nil {
+		return fail(err)
 	}
 	if format, _ := host["format"].(string); format == formatCanvas {
 		return fail(errors.New("this room shares a canvas as nodes and edges, which pedit cannot join from the command line yet; open the link in a browser"))
 	}
 	hostName, _ := host["file"].(string)
-	base := copyName(0, hostName)
-	s.file = filepath.Join(dir, base)
-	s.notices = newNotices(s.file, opts.OnNotice, onError)
-	if _, err := root.Lstat(base); err == nil {
-		return fail(&ErrFileExists{Path: s.file})
-	} else if !errors.Is(err, os.ErrNotExist) {
+	if err := s.openCopy(root, dir, hostName, opts, onError); err != nil {
 		return fail(err)
 	}
-	s.bound, err = filewriter.OpenBoundIn(root, base)
-	if err != nil {
-		return fail(err)
-	}
-	if opts.writeHook != nil {
-		s.bound.SetTestHook(opts.writeHook)
-	}
-	// The copy is new: a file that appears at its name is never replaced.
-	s.bound.CreateOnly()
 
 	w := filewriter.New(s.file, "", filewriter.Options{
 		Bound:            s.bound,
@@ -317,27 +244,8 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 		OnWritten:        s.notices.written,
 		OnExternalChange: s.scheduleSyncFromDisk,
 	})
-	// Under the client's lock, no remote update can land between taking the
-	// first snapshot and publishing the writer that OnUpdate schedules on,
-	// so every edit after the snapshot is scheduled. The writer skips content
-	// equal to what it last wrote (nothing yet), so an empty document is
-	// created by hand, before any later edit can be written.
-	var created error
-	s.Client.Do(func() {
-		if s.beforePublishWriter != nil {
-			s.beforePublishWriter()
-		}
-		s.mu.Lock()
-		s.Writer = w
-		s.mu.Unlock()
-		if content := s.content.render(); content != "" {
-			w.Schedule(content)
-		} else {
-			created = s.bound.Write("", "")
-		}
-	})
-	if created != nil {
-		return fail(fmt.Errorf("cannot write %s: %w", s.file, created))
+	if err := s.publishWriter(w); err != nil {
+		return fail(fmt.Errorf("cannot write %s: %w", s.file, err))
 	}
 	if err := w.Flush(); err != nil {
 		return fail(fmt.Errorf("cannot write %s: %w", s.file, err))
@@ -353,6 +261,155 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 	s.startMirror()
 	s.mirrorMu.Unlock()
 	return s, nil
+}
+
+// copyRoot opens the directory the copies go in: dir, or when it is empty a
+// new temporary directory, which it also returns as temp.
+func copyRoot(dir, roomID string) (abs, temp string, root *os.Root, err error) {
+	if dir == "" {
+		// The room ID only tells the directories apart; a short part does.
+		if temp, err = os.MkdirTemp("", "pedit-"+roomID[:min(len(roomID), maxRoomInDir)]+"-"); err != nil {
+			return "", "", nil, fmt.Errorf("cannot create a temporary directory for the copies: %w", err)
+		}
+		dir = temp
+	}
+	abs, err = filepath.Abs(dir)
+	if err != nil {
+		_ = removeTemp(temp)
+		return "", "", nil, err
+	}
+	// Every copy is made through this handle, so the directory stays the one
+	// made here, whatever its name comes to lead to.
+	root, err = os.OpenRoot(abs)
+	if err != nil {
+		_ = removeTemp(temp)
+		return "", "", nil, err
+	}
+	return abs, temp, root, nil
+}
+
+// guestAwareness is the awareness of a guest called name.
+func guestAwareness(doc *crdt.Doc, name string) *awareness.Awareness {
+	aw := awareness.New(uint64(doc.ClientID()))
+	if name == "" {
+		name = "guest"
+	}
+	aw.SetLocalState(map[string]any{
+		"role": "guest",
+		"name": name,
+		"user": map[string]any{"name": name},
+	})
+	return aw
+}
+
+// roomWait is what Join waits on until the room has sent its content.
+type roomWait struct {
+	synced, closed chan struct{}
+	ended          atomic.Value // the final protocol.Status, set before closed is
+	hostSeen       chan struct{}
+}
+
+// end records the final status st, once.
+func (r *roomWait) end(st protocol.Status) {
+	select {
+	case <-r.closed:
+	default:
+		r.ended.Store(st)
+		close(r.closed)
+	}
+}
+
+// endedErr says why the room ended.
+func (r *roomWait) endedErr() error { return endedErr(r.ended.Load().(protocol.Status)) }
+
+// canceled is the error for a canceled ctx. OnStatus may cancel ctx on the
+// very status that ended the room, so both are ready at once; the reason the
+// room ended wins.
+func (r *roomWait) canceled(ctx context.Context) error {
+	select {
+	case <-r.closed:
+		return r.endedErr()
+	default:
+		return ctx.Err()
+	}
+}
+
+// wait waits for a host to show up in the room, and then for the room's
+// content, both within timeout. It returns the host's awareness state.
+func (r *roomWait) wait(ctx context.Context, aw *awareness.Awareness, timeout time.Duration) (map[string]any, error) {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	var host map[string]any
+	for host == nil {
+		select {
+		case <-r.hostSeen:
+			host, _ = hostState(aw)
+		case <-r.closed:
+			return nil, r.endedErr()
+		case <-deadline.C:
+			return nil, fmt.Errorf("no host answered within %s", timeout)
+		case <-ctx.Done():
+			return nil, r.canceled(ctx)
+		}
+	}
+	select {
+	case <-r.synced:
+	case <-r.closed:
+		return nil, r.endedErr()
+	case <-deadline.C:
+		return nil, fmt.Errorf("the room did not send its content within %s", timeout)
+	case <-ctx.Done():
+		return nil, r.canceled(ctx)
+	}
+	return host, nil
+}
+
+// openCopy opens the copy of the host's file hostName in dir, through root.
+// The copy must not exist yet, and is never written over once it does.
+func (s *Session) openCopy(root *os.Root, dir, hostName string, opts JoinOptions, onError func(error)) error {
+	base := copyName(0, hostName)
+	s.file = filepath.Join(dir, base)
+	s.notices = newNotices(s.file, opts.OnNotice, onError)
+	if _, err := root.Lstat(base); err == nil {
+		return &ErrFileExists{Path: s.file}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	var err error
+	s.bound, err = filewriter.OpenBoundIn(root, base)
+	if err != nil {
+		return err
+	}
+	if opts.writeHook != nil {
+		s.bound.SetTestHook(opts.writeHook)
+	}
+	// The copy is new: a file that appears at its name is never replaced.
+	s.bound.CreateOnly()
+	return nil
+}
+
+// publishWriter makes w the copy's writer and gives it the content so far.
+// Under the client's lock, no remote update can land between taking the
+// first snapshot and publishing the writer that OnUpdate schedules on, so
+// every edit after the snapshot is scheduled. The writer skips content equal
+// to what it last wrote (nothing yet), so an empty document is created by
+// hand, before any later edit can be written.
+func (s *Session) publishWriter(w *filewriter.Writer) error {
+	var created error
+	s.Client.Do(func() {
+		if s.beforePublishWriter != nil {
+			s.beforePublishWriter()
+		}
+		s.mu.Lock()
+		s.Writer = w
+		s.mu.Unlock()
+		if content := s.content.render(); content != "" {
+			w.Schedule(content)
+		} else {
+			created = s.bound.Write("", "")
+		}
+	})
+	return created
 }
 
 // File is the path of the shared file, or of the copy when the session joined

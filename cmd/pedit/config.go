@@ -46,58 +46,72 @@ func findConfig(cwd string, retry bool) (config, error) {
 		data, err := readConfig(path)
 		if err == nil {
 			c.root = dir
-			dec := yaml.NewDecoder(bytes.NewReader(data))
-			dec.KnownFields(true)
-			if err := dec.Decode(&c); err != nil && !errors.Is(err, io.EOF) {
-				return c, fmt.Errorf("%s: %w", path, err)
-			}
-			var extra any
-			if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
-				return c, fmt.Errorf("%s: expected one YAML document", path)
-			}
-			u, err := url.Parse(c.Server)
-			if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-				return c, fmt.Errorf("%s: server must be an http or https URL", path)
-			}
-			return c, nil
+			return c, decodeConfig(path, data, &c)
 		}
 		if !errors.Is(err, os.ErrNotExist) {
 			return c, err
 		}
 		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-			if dir == cwd {
-				if err := os.MkdirAll(filepath.Join(dir, ".pedit", "templates"), 0o755); err != nil {
-					return c, err
-				}
-				f, err := createConfig(path)
-				if errors.Is(err, os.ErrExist) && retry {
-					return findConfig(cwd, false)
-				}
-				if err != nil {
-					return c, err
-				}
-				_, writeErr := io.WriteString(f, initialConfig)
-				closeErr := f.Close()
-				if writeErr != nil {
-					return c, writeErr
-				}
-				if closeErr != nil {
-					return c, closeErr
-				}
-				for name, content := range builtinTemplates {
-					err := writeNewFile(filepath.Join(dir, ".pedit", "templates", name), []byte(content))
-					if err != nil && !errors.Is(err, os.ErrExist) {
-						return c, err
-					}
-				}
+			if dir != cwd {
+				break
 			}
-			break
+			err := initProject(dir, path)
+			if errors.Is(err, os.ErrExist) && retry {
+				return findConfig(cwd, false)
+			}
+			return c, err
 		}
 		if filepath.Dir(dir) == dir {
 			break
 		}
 	}
 	return c, nil
+}
+
+// decodeConfig reads one YAML document of known fields into c.
+func decodeConfig(path string, data []byte, c *config) error {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(c); err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	var extra any
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("%s: expected one YAML document", path)
+	}
+	u, err := url.Parse(c.Server)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return fmt.Errorf("%s: server must be an http or https URL", path)
+	}
+	return nil
+}
+
+// initProject writes the default configuration and templates at the root of a
+// Git repository. It reports os.ErrExist when the configuration already
+// exists, as when another pedit created it first.
+func initProject(dir, path string) error {
+	if err := os.MkdirAll(filepath.Join(dir, ".pedit", "templates"), 0o755); err != nil {
+		return err
+	}
+	f, err := createConfig(path)
+	if err != nil {
+		return err
+	}
+	_, writeErr := io.WriteString(f, initialConfig)
+	closeErr := f.Close()
+	if writeErr != nil {
+		return writeErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	for name, content := range builtinTemplates {
+		err := writeNewFile(filepath.Join(dir, ".pedit", "templates", name), []byte(content))
+		if err != nil && !errors.Is(err, os.ErrExist) {
+			return err
+		}
+	}
+	return nil
 }
 
 // createConfig creates the default configuration, failing if anything has its
@@ -200,55 +214,78 @@ func prepareFile(c config, file, template, directory string, now func() string) 
 		return "", false, errors.New("use either a file path or -d, not both")
 	}
 	if file != "" {
-		_, err := os.Stat(file)
-		if err == nil {
-			if template != "" {
-				return "", false, fmt.Errorf("%s already exists; -t requires a new file", file)
-			}
-			return file, false, nil
-		}
-		if !errors.Is(err, os.ErrNotExist) {
-			return "", false, err
-		}
+		return prepareNamedFile(c, file, template)
 	}
-	// A named file without --template must already exist, so typos do not
-	// create stray files. Unnamed files default to Markdown.
-	if file != "" && template == "" {
-		return file, false, nil
-	}
-	template = templateName(template)
-	ext := filepath.Ext(template)
-	if file != "" && filepath.Ext(file) != ext {
-		return "", false, fmt.Errorf("output file must have extension %s for template %q", ext, template)
-	}
-	content, err := c.template(template)
+	// Unnamed files default to Markdown.
+	template, content, err := loadTemplate(c, template)
 	if err != nil {
-		return "", false, fmt.Errorf("template %q: %w", template, err)
-	}
-	if file != "" {
-		err = writeNewFile(file, content)
-		return file, true, err
+		return "", false, err
 	}
 	dir := outputDirectory(c, directory)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", false, err
 	}
+	ext := filepath.Ext(template)
 	prefix := strings.TrimSuffix(template, ext)
 	if prefix == "default" {
 		prefix = "pedit"
 	}
-	base := prefix + "-" + now()
+	path, err := writeNumberedFile(filepath.Join(dir, prefix+"-"+now()), ext, content)
+	return path, true, err
+}
+
+// prepareNamedFile shares file as it is, or creates it from template. A named
+// file without a template must already exist, so typos do not create stray
+// files.
+func prepareNamedFile(c config, file, template string) (string, bool, error) {
+	_, err := os.Stat(file)
+	if err == nil {
+		if template != "" {
+			return "", false, fmt.Errorf("%s already exists; -t requires a new file", file)
+		}
+		return file, false, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return "", false, err
+	}
+	if template == "" {
+		return file, false, nil
+	}
+	template = templateName(template)
+	if ext := filepath.Ext(template); filepath.Ext(file) != ext {
+		return "", false, fmt.Errorf("output file must have extension %s for template %q", ext, template)
+	}
+	_, content, err := loadTemplate(c, template)
+	if err != nil {
+		return "", false, err
+	}
+	return file, true, writeNewFile(file, content)
+}
+
+// loadTemplate resolves a template name and reads it.
+func loadTemplate(c config, name string) (string, []byte, error) {
+	name = templateName(name)
+	content, err := c.template(name)
+	if err != nil {
+		return name, nil, fmt.Errorf("template %q: %w", name, err)
+	}
+	return name, content, nil
+}
+
+// writeNumberedFile creates base+ext, or base-2+ext and so on when the name
+// is taken.
+func writeNumberedFile(base, ext string, content []byte) (string, error) {
 	for n := 1; ; n++ {
 		suffix := ""
 		if n > 1 {
 			suffix = fmt.Sprintf("-%d", n)
 		}
-		path := filepath.Join(dir, base+suffix+ext)
+		path := base + suffix + ext
 		err := writeNewFile(path, content)
 		if errors.Is(err, os.ErrExist) {
 			continue
 		}
-		return path, true, err
+		return path, err
 	}
 }
 
@@ -306,76 +343,112 @@ func isShareLink(arg string) bool {
 
 func parseArgs(args []string) (commandArgs, error) {
 	var opts commandArgs
-	fail := func(message string) (commandArgs, error) { return commandArgs{}, errors.New(message) }
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		option, value, hasValue := strings.Cut(arg, "=")
+		var err error
 		switch option {
 		case "-t", "--template", "-d", "--directory":
 			if !hasValue {
 				i++
-				if i == len(args) || strings.HasPrefix(args[i], "-") {
-					return fail(option + " requires a value")
-				}
-				value = args[i]
+				value = optionValue(args, i)
 			}
-			if value == "" {
-				return fail(option + " requires a value")
-			}
-			if option == "-t" || option == "--template" {
-				if opts.Template != "" {
-					return fail("select only one template")
-				}
-				opts.Template = value
-			} else {
-				if opts.Directory != "" {
-					return fail("specify only one output directory")
-				}
-				opts.Directory = value
-			}
+			err = opts.setOption(option, value)
 		case "-h", "--help", "-v", "--version":
-			return fail("help and version must be used alone")
+			err = errors.New("help and version must be used alone")
 		case "--":
-			if i+1 == len(args) || opts.Room != "" {
-				return fail("expected a file after --")
-			}
-			for _, file := range args[i+1:] {
-				if file == "" {
-					return fail("expected a file, not an empty name")
-				}
-				if opts.File == "" {
-					opts.File = file
-				} else {
-					opts.More = append(opts.More, file)
-				}
-			}
+			err = opts.addFiles(args[i+1:])
 			i = len(args)
 		default:
-			if strings.HasPrefix(arg, "--") && !hasValue {
-				if opts.Template != "" {
-					return fail("select only one template")
-				}
-				opts.Template = strings.TrimPrefix(arg, "--")
-			} else {
-				if arg == "" || strings.HasPrefix(arg, "-") || opts.Room != "" || opts.File != "" && isShareLink(arg) {
-					return fail("expected files to share, or one share link")
-				}
-				switch {
-				case isShareLink(arg):
-					opts.Room = arg
-				case opts.File == "":
-					opts.File = arg
-				default:
-					opts.More = append(opts.More, arg)
-				}
-			}
+			err = opts.addArg(arg, hasValue)
+		}
+		if err != nil {
+			return commandArgs{}, err
 		}
 	}
-	if opts.File != "" && opts.Directory != "" {
-		return fail("use either a file path or -d, not both")
-	}
-	if opts.Room != "" && (opts.Template != "" || opts.Directory != "") {
-		return fail("a share link cannot be combined with a template or -d")
+	if err := opts.check(); err != nil {
+		return commandArgs{}, err
 	}
 	return opts, nil
+}
+
+// optionValue is the argument at i given as an option's value, or "" when
+// there is none: past the end, or another option.
+func optionValue(args []string, i int) string {
+	if i == len(args) || strings.HasPrefix(args[i], "-") {
+		return ""
+	}
+	return args[i]
+}
+
+func (o *commandArgs) setOption(option, value string) error {
+	if value == "" {
+		return errors.New(option + " requires a value")
+	}
+	if option == "-t" || option == "--template" {
+		return o.setTemplate(value)
+	}
+	if o.Directory != "" {
+		return errors.New("specify only one output directory")
+	}
+	o.Directory = value
+	return nil
+}
+
+func (o *commandArgs) setTemplate(name string) error {
+	if o.Template != "" {
+		return errors.New("select only one template")
+	}
+	o.Template = name
+	return nil
+}
+
+// addFiles takes everything after --, which are all files.
+func (o *commandArgs) addFiles(files []string) error {
+	if len(files) == 0 || o.Room != "" {
+		return errors.New("expected a file after --")
+	}
+	for _, file := range files {
+		if file == "" {
+			return errors.New("expected a file, not an empty name")
+		}
+		o.addFile(file)
+	}
+	return nil
+}
+
+func (o *commandArgs) addFile(file string) {
+	if o.File == "" {
+		o.File = file
+	} else {
+		o.More = append(o.More, file)
+	}
+}
+
+// addArg takes an argument that is not a known option: --<template>, a file,
+// or a share link.
+func (o *commandArgs) addArg(arg string, hasValue bool) error {
+	if strings.HasPrefix(arg, "--") && !hasValue {
+		return o.setTemplate(strings.TrimPrefix(arg, "--"))
+	}
+	if arg == "" || strings.HasPrefix(arg, "-") || o.Room != "" || o.File != "" && isShareLink(arg) {
+		return errors.New("expected files to share, or one share link")
+	}
+	if isShareLink(arg) {
+		o.Room = arg
+	} else {
+		o.addFile(arg)
+	}
+	return nil
+}
+
+// check rejects combinations that are each fine alone.
+func (o *commandArgs) check() error {
+	if o.File != "" && o.Directory != "" {
+		return errors.New("use either a file path or -d, not both")
+	}
+	if o.Room != "" && (o.Template != "" || o.Directory != "") {
+		return errors.New("a share link cannot be combined with a template or -d")
+	}
+	return nil
 }

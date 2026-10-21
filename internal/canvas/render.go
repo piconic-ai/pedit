@@ -74,26 +74,7 @@ func (w *writer) colon() string {
 
 func render(c Canvas, prev *File, l layout) []byte {
 	w := &writer{l: l}
-	var keys []string
-	has := func(k string) bool { return slices.Contains(keys, k) }
-	if prev != nil {
-		for _, k := range prev.keys {
-			if k == "nodes" || k == "edges" {
-				keys = append(keys, k)
-			} else if _, ok := c.Extra[k]; ok {
-				keys = append(keys, k)
-			}
-		}
-	}
-	// A new file, or one with neither list, gets both, as Obsidian writes them.
-	bare := prev == nil || (!slices.Contains(prev.keys, "nodes") && !slices.Contains(prev.keys, "edges"))
-	for _, k := range []string{"nodes", "edges"} {
-		if !has(k) && (bare || len(listOf(c, k)) > 0) {
-			keys = append(keys, k)
-		}
-	}
-	keys = append(keys, sortedNew(c.Extra, has)...)
-
+	keys := topKeys(c, prev)
 	w.WriteString("{")
 	for i, k := range keys {
 		if i > 0 {
@@ -124,6 +105,30 @@ func render(c Canvas, prev *File, l layout) []byte {
 		w.WriteString("\n")
 	}
 	return w.Bytes()
+}
+
+// topKeys returns the top-level keys to write, in order: those prev had and c
+// still has, then the lists, then c's new keys, sorted.
+func topKeys(c Canvas, prev *File) []string {
+	var keys []string
+	has := func(k string) bool { return slices.Contains(keys, k) }
+	if prev != nil {
+		for _, k := range prev.keys {
+			if k == "nodes" || k == "edges" {
+				keys = append(keys, k)
+			} else if _, ok := c.Extra[k]; ok {
+				keys = append(keys, k)
+			}
+		}
+	}
+	// A new file, or one with neither list, gets both, as Obsidian writes them.
+	bare := prev == nil || (!slices.Contains(prev.keys, "nodes") && !slices.Contains(prev.keys, "edges"))
+	for _, k := range []string{"nodes", "edges"} {
+		if !has(k) && (bare || len(listOf(c, k)) > 0) {
+			keys = append(keys, k)
+		}
+	}
+	return append(keys, sortedNew(c.Extra, has)...)
 }
 
 func listOf(c Canvas, key string) []map[string]any {
@@ -183,22 +188,7 @@ func (w *writer) item(values map[string]any, old *item, order []string) {
 		w.WriteString(old.raw)
 		return
 	}
-	var keys []string
-	has := func(k string) bool { return slices.Contains(keys, k) }
-	if old != nil {
-		for _, k := range old.keys {
-			if _, ok := values[k]; ok {
-				keys = append(keys, k)
-			}
-		}
-	}
-	for _, k := range order {
-		if _, ok := values[k]; ok && !has(k) {
-			keys = append(keys, k)
-		}
-	}
-	keys = append(keys, sortedNew(values, has)...)
-
+	keys := itemKeys(values, old, order)
 	w.WriteString("{")
 	for i, k := range keys {
 		if i > 0 {
@@ -221,6 +211,26 @@ func (w *writer) item(values map[string]any, old *item, order []string) {
 		w.WriteString("\n" + w.pad(2))
 	}
 	w.WriteString("}")
+}
+
+// itemKeys returns the keys of an item to write, in order: those old had,
+// then new ones in Obsidian's order, then any others, sorted.
+func itemKeys(values map[string]any, old *item, order []string) []string {
+	var keys []string
+	has := func(k string) bool { return slices.Contains(keys, k) }
+	if old != nil {
+		for _, k := range old.keys {
+			if _, ok := values[k]; ok {
+				keys = append(keys, k)
+			}
+		}
+	}
+	for _, k := range order {
+		if _, ok := values[k]; ok && !has(k) {
+			keys = append(keys, k)
+		}
+	}
+	return append(keys, sortedNew(values, has)...)
 }
 
 // value writes v, as it was written before when it has not changed.
@@ -262,29 +272,37 @@ func equal(a, b any) bool {
 	switch a := a.(type) {
 	case map[string]any:
 		b, ok := b.(map[string]any)
-		if !ok || len(a) != len(b) {
-			return false
-		}
-		for k, av := range a {
-			bv, ok := b[k]
-			if !ok || !equal(av, bv) {
-				return false
-			}
-		}
-		return true
+		return ok && equalMaps(a, b)
 	case []any:
 		b, ok := b.([]any)
-		if !ok || len(a) != len(b) {
-			return false
-		}
-		for i := range a {
-			if !equal(a[i], b[i]) {
-				return false
-			}
-		}
-		return true
+		return ok && equalSlices(a, b)
 	}
 	return a == b
+}
+
+func equalMaps(a, b map[string]any) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, av := range a {
+		bv, ok := b[k]
+		if !ok || !equal(av, bv) {
+			return false
+		}
+	}
+	return true
+}
+
+func equalSlices(a, b []any) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !equal(a[i], b[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 func number(v any) (float64, bool) {
