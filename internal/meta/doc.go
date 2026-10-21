@@ -369,7 +369,7 @@ func savedAnchor(raw map[string]any, was *Anchor, quote string, t *fileText) (An
 		return Anchor{}, false
 	}
 	if t != nil {
-		if a, ok := placeNow(kind, raw, t); ok {
+		if a, ok := placeNow(kind, raw, quote, t); ok {
 			return a, true
 		}
 	}
@@ -385,28 +385,35 @@ func savedAnchor(raw map[string]any, was *Anchor, quote string, t *fileText) (An
 }
 
 // placeNow is where an anchor of the doc is in t now, if it can be told.
-func placeNow(kind string, raw map[string]any, t *fileText) (Anchor, bool) {
+func placeNow(kind string, raw map[string]any, quote string, t *fileText) (Anchor, bool) {
 	if kind == AnchorText {
-		s, ok := selectorAt(raw, false, t)
+		s, ok := selectorAt(raw, nil, t)
 		return Anchor{Type: AnchorText, Text: s}, ok
 	}
 	from, _ := raw[fromKey].(map[string]any)
 	to, _ := raw[toKey].(map[string]any)
-	f, okFrom := selectorAt(from, true, t)
-	l, okTo := selectorAt(to, true, t)
+	// Whether each corner was empty, as the thread quotes the cells' text:
+	// an empty corner's quote starts, or ends, at a delimiter or line break.
+	q := utf16.Encode([]rune(quote))
+	firstEmpty := len(q) == 0 || t.edge(q[0])
+	lastEmpty := len(q) == 0 || t.edge(q[len(q)-1])
+	f, okFrom := selectorAt(from, &firstEmpty, t)
+	l, okTo := selectorAt(to, &lastEmpty, t)
 	return Anchor{Type: AnchorCells, From: f, To: l}, okFrom && okTo
 }
 
 // selectorAt is the place between the start and end positions of r as it is
-// now, or false when it cannot be told. Only a cell may be empty.
-func selectorAt(r map[string]any, cell bool, t *fileText) (*Selector, bool) {
+// now, or false when it cannot be told. Only a cell may be empty: for a cell,
+// empty tells whether it was, and for text it is nil.
+func selectorAt(r map[string]any, empty *bool, t *fileText) (*Selector, bool) {
 	start, ok1 := t.lookup(r[startKey])
 	end, ok2 := t.lookup(r[endKey])
 	if !ok1 || !ok2 || start > end || end > len(t.units) {
 		return nil, false
 	}
+	cell := empty != nil
 	if cell {
-		if start, end, ok1 = t.cellIn(start, end); !ok1 {
+		if start, end, ok1 = t.cellIn(start, end, *empty); !ok1 {
 			return nil, false
 		}
 	}
@@ -427,17 +434,24 @@ func selectorAt(r map[string]any, cell bool, t *fileText) (*Selector, bool) {
 // editor finds it. The place takes in what is typed at its edges, a row or
 // column inserted beside it too, so the cell starts past the delimiters and
 // line breaks the place starts with, and ends at its first edge, or at the
-// closing quote of a quoted cell. It looks at no more than MaxQuote code
-// units for either, as no more is saved, and is false past them.
-func (t *fileText) cellIn(start, end int) (int, int, bool) {
+// closing quote of a quoted cell. A cell that was empty took in what was
+// typed after it, or a row or column before it: it is the empty cell at the
+// start when something came in, else the one at the end. It looks at no more
+// than MaxQuote code units for either, as no more is saved, and is false past
+// them.
+func (t *fileText) cellIn(start, end int, empty bool) (int, int, bool) {
 	// One code unit past the most that is read, or saved.
 	past := func(i int) int { return min(end, i+MaxQuote+1) }
 	limit := past(start)
-	for start < limit && t.edge(t.units[start]) {
-		start++
+	at := start
+	for at < limit && t.edge(t.units[at]) {
+		at++
 	}
-	if start == limit && limit < end {
+	if at == limit && limit < end {
 		return 0, 0, false
+	}
+	if !empty || at == end {
+		start = at
 	}
 	limit = past(start)
 	i := start
