@@ -10,8 +10,8 @@ history.
 - **A metadata file per shared file.** Comments on `docs/spec.md` live in
   `.pedit/meta/docs/spec.md.json`, under the directory whose `.pedit/` pedit
   uses: the one with `.pedit/config.yaml`, found as `cmd/pedit/config.go`
-  finds it. A file outside that directory gets no comments, and pedit says
-  why.
+  finds it, or the one pedit runs in when there is none. A file outside that
+  directory gets no comments, and pedit says why.
 - **Never in the shared file.** CriticMarkup or canvas fields would make every
   comment an edit of the file, and CSV has no place for them.
 - **Shaped for more than comments.** The file is
@@ -209,7 +209,8 @@ else: a guest, or a teammate through Git. Every peer checks it the same way.
   the web editor's comments panel (`packages/web/src/comments.ts`,
   `components/CommentsPanel.tsx`) on the selection, the table's cells or the
   board's node; marks in the text (`commentmarks.ts`), the table and the
-  board. Tests: `packages/web/test/comments*.test.ts`.
+  board. Tests: `packages/web/test/comments.test.ts` and
+  `comments-panel.test.ts`, for the threads and the panel.
 - **Never in the file, only ciphertext on the relay:** the comments are a
   doc of their own, a `meta` file of the room (`internal/protocol/files.go`,
   `packages/protocol/src/files.ts`), synced and encrypted as every file is.
@@ -219,7 +220,7 @@ else: a guest, or a teammate through Git. Every peer checks it the same way.
   `internal/meta/doc_test.go`, `internal/session/meta_test.go`.
 - **Follow edits, from the room or from disk, alike on every peer:** anchors
   are Yjs positions, resolved with `followUndoneDeletions` off; the host
-  follows them through every change to the text, its own disk writes
+  follows them through every change to the text, edits it reads from disk
   included (`internal/meta/track.go`), and every peer checks every update to
   the comments by the same rules (`internal/meta/check.go`,
   `packages/protocol/src/meta.ts`), so all hold the same doc.
