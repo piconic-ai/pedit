@@ -19,11 +19,11 @@ export const META_LIMITS = {
 } as const
 
 /**
- * At most this many items may share a place in the doc (a parent, a key and
- * the item they were inserted after), as internal/meta/check.go's
- * MaxPlaceItems: Yjs takes time in the square of their number to apply them.
+ * At most this many items may be in one list of the doc (those set under one
+ * key of a map), as internal/meta/check.go's MaxListItems: Yjs takes time in
+ * the square of a list's length to apply items to it.
  */
-export const MAX_PLACE_ITEMS = 64
+export const MAX_LIST_ITEMS = 1024
 
 /**
  * Tells why an update received for `doc`, a metadata doc, must not be
@@ -35,41 +35,49 @@ export const MAX_PLACE_ITEMS = 64
  *   every check). This refusal is for now: the client asks the room again,
  *   and an honest peer's updates come back whole;
  * - it takes one of its clients past maxClientClock operations;
- * - it puts more than MAX_PLACE_ITEMS items in one place;
+ * - it makes a list longer than MAX_LIST_ITEMS;
  * - the doc could pass maxDocBytes.
  */
 export function checkMetaUpdate(doc: Y.Doc, update: Uint8Array): Refusal | null {
   const known = Y.decodeStateVector(Y.encodeStateVector(doc))
   let u: Scanned
   try {
-    u = scan(update, known)
+    u = scan(update)
   } catch (e) {
     return { reason: e instanceof ScanError ? e.message : 'not a valid update' }
   }
-  for (const [client, end] of u.end) {
-    if (end > META_LIMITS.maxClientClock) {
+  const end = new Map<number, number>()
+  for (const r of u.recs) {
+    const { client, clock } = r.id
+    if (!end.has(client) && clock > (known.get(client) ?? 0)) {
+      return { reason: `it skips structs of client ${client}`, retryLater: true }
+    }
+    end.set(client, clock + r.length)
+    if (clock + r.length > META_LIMITS.maxClientClock) {
       return { reason: `client ${client} passed ${META_LIMITS.maxClientClock} operations` }
     }
   }
-  if (missing(u, known)) return { reason: 'it needs updates not received yet', retryLater: true }
+  for (const [client, e] of u.deleted) {
+    if (e > Math.max(known.get(client) ?? 0, end.get(client) ?? 0)) {
+      return { reason: 'it deletes what was not received', retryLater: true }
+    }
+  }
   const state = Y.encodeStateAsUpdate(doc)
   const size = state.length + update.length + 32 * u.ranges
   if (size > META_LIMITS.maxDocBytes) return { reason: `the comments could take ${size} bytes` }
-  const have = scan(state, null)
-  for (const [p, n] of u.places) {
-    if (n + (have.places.get(p) ?? 0) > MAX_PLACE_ITEMS) {
-      return { reason: `more than ${MAX_PLACE_ITEMS} items in one place` }
-    }
-  }
+  const fresh = u.recs.filter((r) => r.id.clock + r.length > (known.get(r.id.client) ?? 0))
+  const { missing, long } = checkLists(scan(state).recs, fresh)
+  if (missing) return { reason: 'it needs updates not received yet', retryLater: true }
+  if (long) return { reason: `a list of more than ${MAX_LIST_ITEMS} items` }
   return null
 }
 
-/** What an update's structs and deletions name; see internal/meta/scan.go. */
+/** A struct of an update: an item, or a run of collected garbage. */
+type Rec = Y.Item | Y.GC
+
+/** An update's structs and deletions; see internal/meta/scan.go. */
 interface Scanned {
-  start: Map<number, number>
-  end: Map<number, number>
-  deps: Y.ID[]
-  places: Map<string, number>
+  recs: Rec[]
   deleted: Map<number, number>
   ranges: number
 }
@@ -77,27 +85,27 @@ interface Scanned {
 class ScanError extends Error {}
 
 /**
- * Reads the structs of `update` without applying it. Places count only the
- * items `known`, the state of the doc, lacks; all of them when it is null.
+ * Reads the structs of `update` without applying it, refusing what no
+ * comments hold, and a client whose structs are not one run: Yjs keeps only
+ * its last run, and the rest would wait for the gap.
  */
-function scan(update: Uint8Array, known: Map<number, number> | null): Scanned {
+function scan(update: Uint8Array): Scanned {
   const { structs, ds } = Y.decodeUpdate(update)
-  const u: Scanned = {
-    start: new Map(),
-    end: new Map(),
-    deps: [],
-    places: new Map(),
-    deleted: new Map(),
-    ranges: 0,
-  }
+  const u: Scanned = { recs: [], deleted: new Map(), ranges: 0 }
+  const done = new Set<number>()
+  let last: Rec | null = null
   for (const s of structs) {
     if (s instanceof Y.Skip) throw new ScanError('it skips structs')
     const { client, clock } = s.id
-    u.start.set(client, Math.min(u.start.get(client) ?? clock, clock))
-    u.end.set(client, Math.max(u.end.get(client) ?? 0, clock + s.length))
-    if (!(s instanceof Y.Item)) continue
-    const place = placeOf(s, u)
-    if (clock >= (known?.get(client) ?? 0)) u.places.set(place, (u.places.get(place) ?? 0) + 1)
+    if (last?.id.client === client) {
+      if (clock !== last.id.clock + last.length) throw new ScanError('structs of one client twice')
+    } else {
+      if (done.has(client)) throw new ScanError('structs of one client twice')
+      if (last) done.add(last.id.client)
+    }
+    if (s instanceof Y.Item) holdsComments(s)
+    u.recs.push(s as Rec)
+    last = s as Rec
   }
   for (const [client, ranges] of ds.clients) {
     for (const r of ranges) {
@@ -108,40 +116,91 @@ function scan(update: Uint8Array, known: Map<number, number> | null): Scanned {
   return u
 }
 
-/** Where an item goes, as a key, after checking it holds what comments hold. */
-function placeOf(item: Y.Item, u: Scanned): string {
+/** Refuses an item with content, or a place, no comments have. */
+function holdsComments(item: Y.Item): void {
   const c = item.content
   const fits =
     c instanceof Y.ContentAny ||
     c instanceof Y.ContentDeleted ||
     (c instanceof Y.ContentType && c.type instanceof Y.Map)
-  if (!fits || item.rightOrigin !== null) {
+  const placed = item.origin !== null || item.parentSub !== null
+  if (!fits || !placed || item.rightOrigin !== null) {
     throw new ScanError('not content a comments doc holds')
   }
-  if (item.origin !== null) {
-    u.deps.push(item.origin)
-    return `o ${item.origin.client} ${item.origin.clock}`
-  }
-  if (item.parentSub === null) throw new ScanError('not content a comments doc holds')
-  const parent = item.parent as unknown
-  if (typeof parent === 'string') return `r ${parent} ${item.parentSub}`
-  if (parent instanceof Y.ID) {
-    u.deps.push(parent)
-    return `p ${parent.client} ${parent.clock} ${item.parentSub}`
-  }
-  throw new ScanError('not content a comments doc holds')
 }
 
-/** Whether a scanned update needs structs neither it nor the doc has. */
-function missing(u: Scanned, known: Map<number, number>): boolean {
-  const has = (client: number, clock: number) =>
-    clock < Math.max(known.get(client) ?? 0, u.end.get(client) ?? 0)
-  for (const [client, start] of u.start) {
-    if (start > (known.get(client) ?? 0)) return true
+/**
+ * Finds the list of each record of the doc and of an update's new ones, by
+ * parent and key or by the item each follows, as Yjs would, without
+ * recursion, and tells whether a new one cannot be placed (it would wait),
+ * or makes a list too long. See internal/meta/lists.go.
+ */
+function checkLists(doc: Rec[], fresh: Rec[]): { missing: boolean; long: boolean } {
+  const recs = [...doc, ...fresh]
+  const byClient = new Map<number, number[]>()
+  recs.forEach((r, i) => {
+    const is = byClient.get(r.id.client) ?? []
+    is.push(i)
+    byClient.set(r.id.client, is)
+  })
+  for (const is of byClient.values()) is.sort((a, b) => recs[a]!.id.clock - recs[b]!.id.clock)
+  const find = (x: Y.ID): number => {
+    const is = byClient.get(x.client) ?? []
+    let lo = 0
+    let hi = is.length
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1
+      const r = recs[is[mid]!]!
+      if (r.id.clock + r.length > x.clock) hi = mid
+      else lo = mid + 1
+    }
+    const i = is[lo]
+    return i !== undefined && recs[i]!.id.clock <= x.clock ? i : -1
   }
-  if (u.deps.some((d) => !has(d.client, d.clock))) return true
-  for (const [client, end] of u.deleted) {
-    if (end > 0 && !has(client, end - 1)) return true
+  // What record i's list comes from: another record, or its own list (null: none).
+  const step = (i: number): number | { list: string | null } => {
+    const r = recs[i]!
+    if (!(r instanceof Y.Item)) return { list: '' }
+    const parent = r.parent as unknown
+    const dep = r.origin ?? (parent instanceof Y.ID ? parent : null)
+    if (dep === null) return { list: `r ${String(parent)}\0${r.parentSub}` }
+    if (dep.client === r.id.client && dep.clock >= r.id.clock) return { list: null }
+    const j = find(dep)
+    if (j < 0) return { list: null }
+    if (r.origin === null) return { list: `p ${dep.client} ${dep.clock}\0${r.parentSub}` }
+    return j
   }
-  return false
+  const list: Array<string | null | undefined> = new Array(recs.length)
+  const seen = new Set<number>()
+  for (let i = 0; i < recs.length; i++) {
+    const stack = [i]
+    while (stack.length > 0) {
+      const k = stack[stack.length - 1]!
+      if (list[k] !== undefined) {
+        stack.pop()
+        continue
+      }
+      const next = step(k)
+      if (typeof next !== 'number') list[k] = next.list
+      else if (list[next] !== undefined) list[k] = list[next]
+      else if (seen.has(next))
+        list[k] = null // a cycle of origins
+      else {
+        seen.add(k)
+        stack.push(next)
+        continue
+      }
+      stack.pop()
+    }
+  }
+  const lengths = new Map<string, number>()
+  for (const l of list) if (l) lengths.set(l, (lengths.get(l) ?? 0) + 1)
+  let missing = false
+  let long = false
+  for (let i = doc.length; i < recs.length; i++) {
+    const l = list[i]
+    if (l === null) missing = true
+    else if (l && (lengths.get(l) ?? 0) > MAX_LIST_ITEMS) long = true
+  }
+  return { missing, long }
 }

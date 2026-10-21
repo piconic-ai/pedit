@@ -139,18 +139,21 @@ else: a guest, or a teammate through Git. Every peer checks it the same way.
 - Names, bodies and quotes are shown as text, never as HTML, with control and
   bidi characters removed.
 - Every peer reads each update to the doc before applying it
-  (`internal/meta/check.go` and `scan.go`, `packages/protocol/src/meta.ts`),
-  without applying it to a copy: Yjs takes time in the square of the items
-  that share a place (a parent, a key and the item they follow), and a copy
-  would pay that for the whole doc on every update. It drops an update that
-  holds anything but maps and plain values; that needs structs or deletions
-  not received yet (Yjs keeps those as pending, and sends them on with the
-  doc, past every check); that takes one of its clients past 65,536
-  operations; that puts more than 64 items in one place; or after which the
-  doc could no longer fit the 1 MiB frame its state is sent in. So a hostile
-  client cannot make a peer hold, and send, what other peers refuse, nor
-  spend long applying it. The host shares no comments larger than that
-  limit, so every peer can take the state the host sends.
+  (`internal/meta/check.go`, `scan.go` and `lists.go`;
+  `packages/protocol/src/meta.ts`), without applying it to a copy: Yjs takes
+  time in the square of the length of a list (the items set under one key of a
+  map) to apply items to it, and a copy would pay that for the whole doc on
+  every update. It finds the list of each item as Yjs would, by its parent and
+  key or along the chain of items it follows, and drops an update that holds
+  anything but maps and plain values; that needs structs or deletions not
+  received yet, or follows an item in a cycle or ahead of itself (Yjs keeps
+  those as pending, and sends them on with the doc, past every check); that
+  takes one of its clients past 65,536 operations; that makes a list longer
+  than 1,024 items; or after which the doc could no longer fit the 1 MiB frame
+  its state is sent in. So a hostile client cannot make a peer hold, and send,
+  what other peers refuse, nor spend long applying it. The host shares no
+  comments larger than that limit, so every peer can take the state the host
+  sends.
 - An update dropped for a gap is refused for now: the peer asks the room for
   what it is missing (a sync step 1, at once or, if it asked in the last 5
   seconds, then), and an honest sender's updates come back whole. So is one

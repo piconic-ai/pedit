@@ -1,8 +1,9 @@
+import * as encoding from 'lib0/encoding'
 import { describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
 // The Go side checks its own against the same file (internal/meta/check_test.go).
 import limits from '../../testdata/meta-limits.json'
-import { checkMetaUpdate, MAX_PLACE_ITEMS, META_LIMITS } from '../src/index.ts'
+import { checkMetaUpdate, MAX_LIST_ITEMS, META_LIMITS } from '../src/index.ts'
 
 function thread(doc: Y.Doc, id: string, quote: string) {
   doc.transact(() => {
@@ -39,10 +40,7 @@ describe('checkMetaUpdate', () => {
     const updates = updatesOf(guest)
     thread(guest, 'c1', 'one')
     thread(guest, 'c2', 'two')
-    expect(checkMetaUpdate(new Y.Doc(), updates[1] as Uint8Array)).toEqual({
-      reason: 'it needs updates not received yet',
-      retryLater: true,
-    })
+    expect(checkMetaUpdate(new Y.Doc(), updates[1] as Uint8Array)?.retryLater).toBe(true)
   })
 
   it('refuses deletions of what it has not, which Yjs would keep pending', () => {
@@ -85,7 +83,7 @@ describe('checkMetaUpdate', () => {
     expect(checkMetaUpdate(new Y.Doc(), new Uint8Array([0xff, 0xff, 0xff]))).not.toBeNull()
   })
 
-  it('refuses many items in one place', () => {
+  it('refuses a long list', () => {
     // From review: Yjs takes time in the square of the items set at once in
     // one place.
     const sets = (n: number) => {
@@ -97,10 +95,10 @@ describe('checkMetaUpdate', () => {
       }
       return Y.encodeStateAsUpdate(all)
     }
-    expect(checkMetaUpdate(new Y.Doc(), sets(MAX_PLACE_ITEMS))).toBeNull()
-    expect(checkMetaUpdate(new Y.Doc(), sets(MAX_PLACE_ITEMS + 1))?.reason).toMatch(/one place/)
+    expect(checkMetaUpdate(new Y.Doc(), sets(MAX_LIST_ITEMS))).toBeNull()
+    expect(checkMetaUpdate(new Y.Doc(), sets(MAX_LIST_ITEMS + 1))?.reason).toMatch(/list/)
     const host = new Y.Doc()
-    Y.applyUpdate(host, sets(MAX_PLACE_ITEMS))
+    Y.applyUpdate(host, sets(MAX_LIST_ITEMS))
     expect(checkMetaUpdate(host, sets(1))).not.toBeNull()
   })
 
@@ -134,4 +132,74 @@ describe('checkMetaUpdate', () => {
     const diff = Y.encodeStateAsUpdate(guest, before)
     expect(checkMetaUpdate(host, diff)?.reason).toMatch(/operations/)
   })
+
+  it('refuses a list made long along a chain of origins', () => {
+    // From review: no two items follow the same one, but the list is long.
+    const n = MAX_LIST_ITEMS
+    const chain: Block = { client: 1, items: [] }
+    for (let i = 0; i < n; i++) chain.items.push(i > 0 ? [1, i - 1] : null)
+    const blocks = [chain]
+    for (let i = 0; i < n; i++) blocks.push({ client: 1000 + i, items: [[1, i]] })
+    expect(checkMetaUpdate(new Y.Doc(), encodeUpdate(blocks))?.reason).toMatch(/list/)
+  })
+
+  it('refuses what Yjs would keep pending', () => {
+    const cases: Block[][] = [
+      [
+        { client: 5, items: [null] },
+        { client: 5, clock: 10, items: [null] },
+      ],
+      [
+        { client: 5, items: [[6, 0]] },
+        { client: 6, items: [[5, 0]] },
+      ],
+      [{ client: 5, items: [[5, 0]] }],
+      [{ client: 5, items: [[5, 1], null] }],
+    ]
+    for (const blocks of cases) {
+      expect(checkMetaUpdate(new Y.Doc(), encodeUpdate(blocks))).not.toBeNull()
+    }
+    const ok = encodeUpdate([
+      { client: 5, items: [[6, 0]] },
+      { client: 6, items: [null] },
+    ])
+    expect(checkMetaUpdate(new Y.Doc(), ok)).toBeNull()
+    const doc = new Y.Doc()
+    Y.applyUpdate(doc, ok)
+    expect(doc.store.pendingStructs).toBeNull()
+  })
 })
+
+/** A client's items on key "k" of the comments, each after an origin or first. */
+interface Block {
+  client: number
+  clock?: number
+  items: Array<[number, number] | null>
+}
+
+/** Writes blocks as a V1 update, as no honest peer would. */
+function encodeUpdate(blocks: Block[]): Uint8Array {
+  const e = encoding.createEncoder()
+  encoding.writeVarUint(e, blocks.length)
+  for (const b of blocks) {
+    encoding.writeVarUint(e, b.items.length)
+    encoding.writeVarUint(e, b.client)
+    encoding.writeVarUint(e, b.clock ?? 0)
+    for (const origin of b.items) {
+      if (origin) {
+        encoding.writeUint8(e, 0x80 | 8)
+        encoding.writeVarUint(e, origin[0])
+        encoding.writeVarUint(e, origin[1])
+      } else {
+        encoding.writeUint8(e, 0x20 | 8)
+        encoding.writeVarUint(e, 1)
+        encoding.writeVarString(e, 'comments')
+        encoding.writeVarString(e, 'k')
+      }
+      encoding.writeVarUint(e, 1)
+      encoding.writeAny(e, 1)
+    }
+  }
+  encoding.writeVarUint(e, 0)
+  return encoding.toUint8Array(e)
+}

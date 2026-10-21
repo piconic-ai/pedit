@@ -13,34 +13,26 @@ import (
 // V1 format without applying it, and refuses any other content, so that
 // CheckUpdate can tell what applying it would do from the update alone.
 
-// What an update's structs and deletions name, as scan reads them.
+// scanned is what an update's structs and deletions say, as scan reads them.
 type scanned struct {
-	// The clocks of each client's structs, from start to end.
-	start, end map[uint64]uint64
-	// The items each one depends on: origins and parents.
-	deps []id
-	// How many items share a place: a parent, a key and an origin. Yjs
-	// compares each item with the others in its place when it integrates
-	// it, so a place with many costs time in the square of their number.
-	places map[place]int
+	recs []record
 	// The end of the deleted ranges, by client, and their number.
 	deleted map[uint64]uint64
 	ranges  int
-	// known is the state of the doc the update is for: places count only
-	// the items it does not have yet. Nil for the doc itself.
-	known map[uint64]uint64
+}
+
+// record is one struct: an item, or a run of collected garbage.
+type record struct {
+	at     id
+	length uint64
+	item   bool
+	// An item goes after its origin, in the same list, or, without one, at
+	// the start of the list of key in its parent: an item, or a root type.
+	origin, parent *id
+	root, key      string
 }
 
 type id struct{ client, clock uint64 }
-
-// place is where an item goes: its parent (an item, or a root type by
-// name), its key in it, and the item it was inserted after (none: zero).
-type place struct {
-	parent    id
-	root, key string
-	origin    id
-	hasOrigin bool
-}
 
 // The wire format's info byte and content kinds (Yjs, internal/crdt).
 const (
@@ -60,34 +52,27 @@ const (
 
 var errContent = errors.New("not content a comments doc holds")
 
-// scan reads update, a V1 update of a metadata doc, adding to into, which
-// may hold another update's scan.
-func scan(update []byte, into *scanned) (err error) {
+// scan reads update, a V1 update of a metadata doc.
+func scan(update []byte) (*scanned, error) {
 	d := encoding.NewDecoder(update)
 	clients, err := d.ReadVarUint()
 	if err != nil {
-		return err
+		return nil, err
 	}
+	s := &scanned{deleted: map[uint64]uint64{}}
+	seen := map[uint64]bool{}
 	for range clients {
-		if err := scanClient(d, into); err != nil {
-			return err
+		if err := scanClient(d, s, seen); err != nil {
+			return nil, err
 		}
 	}
-	return scanDeletes(d, into)
+	return s, scanDeletes(d, s)
 }
 
-func newScanned(known map[uint64]uint64) *scanned {
-	return &scanned{
-		known:   known,
-		start:   map[uint64]uint64{},
-		end:     map[uint64]uint64{},
-		places:  map[place]int{},
-		deleted: map[uint64]uint64{},
-	}
-}
-
-// scanClient reads the structs of one client.
-func scanClient(d *encoding.Decoder, into *scanned) error {
+// scanClient reads the structs of one client. Yjs and ygo keep only the
+// last run of structs an update has for a client, so one with two is
+// refused: the first would wait for the gap before the second.
+func scanClient(d *encoding.Decoder, s *scanned, seen map[uint64]bool) error {
 	n, err := d.ReadVarUint()
 	if err != nil {
 		return err
@@ -100,79 +85,77 @@ func scanClient(d *encoding.Decoder, into *scanned) error {
 	if err != nil {
 		return err
 	}
-	if _, ok := into.start[client]; !ok || clock < into.start[client] {
-		into.start[client] = clock
+	if seen[client] {
+		return errors.New("structs of one client twice")
 	}
+	seen[client] = true
 	for range n {
-		length, err := scanStruct(d, id{client, clock}, into)
-		if err != nil {
+		r := record{at: id{client, clock}}
+		if err := scanStruct(d, &r); err != nil {
 			return err
 		}
-		if length == 0 || clock > math.MaxUint32-length {
+		if r.length == 0 || clock > math.MaxUint32-r.length {
 			return errors.New("struct out of range")
 		}
-		clock += length
+		clock += r.length
+		s.recs = append(s.recs, r)
 	}
-	into.end[client] = max(into.end[client], clock)
 	return nil
 }
 
-// scanStruct reads one struct at at, and returns its length.
-func scanStruct(d *encoding.Decoder, at id, into *scanned) (uint64, error) {
+// scanStruct reads one struct into r.
+func scanStruct(d *encoding.Decoder, r *record) (err error) {
 	info, err := d.ReadUint8()
 	if err != nil {
-		return 0, err
+		return err
 	}
 	switch info & refMask {
 	case refGC:
-		return d.ReadVarUint()
+		r.length, err = d.ReadVarUint()
+		return err
 	case refSkip:
-		return 0, errors.New("it skips structs")
+		return errors.New("it skips structs")
 	}
 	if info&hasRightOrigin != 0 {
 		// Map entries have none; only lists and text do.
-		return 0, errContent
+		return errContent
 	}
-	p := place{}
+	r.item = true
 	if info&hasOrigin != 0 {
 		o, err := readID(d)
 		if err != nil {
-			return 0, err
+			return err
 		}
-		p.origin, p.hasOrigin = o, true
-		into.deps = append(into.deps, o)
-	} else {
-		if err := readParent(d, info, &p, into); err != nil {
-			return 0, err
-		}
+		r.origin = &o
+	} else if err := readParent(d, info, r); err != nil {
+		return err
 	}
-	if at.clock >= into.known[at.client] {
-		into.places[p]++
-	}
-	return scanContent(d, info&refMask)
+	r.length, err = scanContent(d, info&refMask)
+	return err
 }
 
 // readParent reads where an item without an origin goes. One with an origin
 // goes where its origin is.
-func readParent(d *encoding.Decoder, info byte, p *place, into *scanned) error {
+func readParent(d *encoding.Decoder, info byte, r *record) error {
 	named, err := d.ReadVarUint()
 	if err != nil {
 		return err
 	}
 	if named == 1 {
-		if p.root, err = d.ReadVarString(); err != nil {
+		if r.root, err = d.ReadVarString(); err != nil {
 			return err
 		}
 	} else {
-		if p.parent, err = readID(d); err != nil {
+		p, err := readID(d)
+		if err != nil {
 			return err
 		}
-		into.deps = append(into.deps, p.parent)
+		r.parent = &p
 	}
 	if info&hasParentSub == 0 {
 		return errContent
 	}
-	p.key, err = d.ReadVarString()
+	r.key, err = d.ReadVarString()
 	return err
 }
 
@@ -218,7 +201,7 @@ func readID(d *encoding.Decoder) (id, error) {
 }
 
 // scanDeletes reads the delete set.
-func scanDeletes(d *encoding.Decoder, into *scanned) error {
+func scanDeletes(d *encoding.Decoder, s *scanned) error {
 	clients, err := d.ReadVarUint()
 	if err != nil {
 		return err
@@ -244,8 +227,8 @@ func scanDeletes(d *encoding.Decoder, into *scanned) error {
 			if clock > math.MaxUint32 || length > math.MaxUint32 {
 				return errors.New("deletion out of range")
 			}
-			into.deleted[client] = max(into.deleted[client], clock+length)
-			into.ranges++
+			s.deleted[client] = max(s.deleted[client], clock+length)
+			s.ranges++
 		}
 	}
 	return nil

@@ -10,6 +10,7 @@ import (
 	"github.com/piconic-ai/pedit/internal/meta"
 	"github.com/piconic-ai/pedit/internal/protocol"
 	"github.com/reearth/ygo/crdt"
+	"github.com/reearth/ygo/encoding"
 )
 
 // updatesOf records the updates a doc makes.
@@ -140,24 +141,116 @@ func concurrentSets(t *testing.T, n int) []byte {
 	return crdt.EncodeStateAsUpdateV1(all, nil)
 }
 
-func TestCheckUpdateRefusesManyItemsInOnePlace(t *testing.T) {
-	// From review: Yjs and ygo take time in the square of the items set at
-	// once in one place; 24,000 of them took 31s to apply.
-	if err := meta.CheckUpdate(crdt.New(), concurrentSets(t, meta.MaxPlaceItems)); err != nil {
-		t.Fatalf("refused %d: %v", meta.MaxPlaceItems, err)
+func TestCheckUpdateRefusesALongList(t *testing.T) {
+	// From review: Yjs and ygo take time in the square of the items of one
+	// list; 24,000 set at once on one key took 31s to apply.
+	if err := meta.CheckUpdate(crdt.New(), concurrentSets(t, meta.MaxListItems)); err != nil {
+		t.Fatalf("refused %d: %v", meta.MaxListItems, err)
 	}
-	err := meta.CheckUpdate(crdt.New(), concurrentSets(t, meta.MaxPlaceItems+1))
-	if !errors.Is(err, meta.ErrRefused) || !strings.Contains(err.Error(), "one place") {
+	err := meta.CheckUpdate(crdt.New(), concurrentSets(t, meta.MaxListItems+1))
+	if !errors.Is(err, meta.ErrRefused) || !strings.Contains(err.Error(), "list") {
 		t.Fatalf("CheckUpdate = %v", err)
 	}
 	// Nor a few at a time.
 	host := crdt.New()
-	if err := crdt.ApplyUpdateV1(host, concurrentSets(t, meta.MaxPlaceItems), nil); err != nil {
+	if err := crdt.ApplyUpdateV1(host, concurrentSets(t, meta.MaxListItems), nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := meta.CheckUpdate(host, concurrentSets(t, 1)); !errors.Is(err, meta.ErrRefused) {
 		t.Fatalf("CheckUpdate = %v", err)
 	}
+}
+
+func TestCheckUpdateRefusesAListMadeLongAlongAChain(t *testing.T) {
+	// From review: client 1 sets a key n times, then each of n clients
+	// inserts one item after one of those: no two items follow the same
+	// one, but the list is 2n long, and took 43s to apply for n = 20,000.
+	n := meta.MaxListItems
+	var blocks []block
+	chain := block{client: 1}
+	for i := range n {
+		it := item{}
+		if i > 0 {
+			it.origin = &[2]uint64{1, uint64(i - 1)}
+		}
+		chain.items = append(chain.items, it)
+	}
+	blocks = append(blocks, chain)
+	for i := range n {
+		blocks = append(blocks, block{client: uint64(1000 + i), items: []item{{origin: &[2]uint64{1, uint64(i)}}}})
+	}
+	err := meta.CheckUpdate(crdt.New(), encodeUpdate(blocks...))
+	if !errors.Is(err, meta.ErrRefused) || !strings.Contains(err.Error(), "list") {
+		t.Fatalf("CheckUpdate = %v", err)
+	}
+}
+
+func TestCheckUpdateRefusesWhatWouldWait(t *testing.T) {
+	// From review: each of these passed, and ygo and Yjs kept part of it
+	// pending.
+	for name, update := range map[string][]byte{
+		"one client twice": encodeUpdate(block{client: 5, items: []item{{}}}, block{client: 5, clock: 10, items: []item{{}}}),
+		"a cycle of origins": encodeUpdate(
+			block{client: 5, items: []item{{origin: &[2]uint64{6, 0}}}},
+			block{client: 6, items: []item{{origin: &[2]uint64{5, 0}}}},
+		),
+		"following itself":       encodeUpdate(block{client: 5, items: []item{{origin: &[2]uint64{5, 0}}}}),
+		"following a later item": encodeUpdate(block{client: 5, items: []item{{origin: &[2]uint64{5, 1}}, {}}}),
+	} {
+		err := meta.CheckUpdate(crdt.New(), update)
+		if !errors.Is(err, meta.ErrRefused) {
+			t.Errorf("%s: CheckUpdate = %v", name, err)
+		}
+	}
+	// Following an item later in the update, of another client, is fine.
+	ok := encodeUpdate(
+		block{client: 5, items: []item{{origin: &[2]uint64{6, 0}}}},
+		block{client: 6, items: []item{{}}},
+	)
+	if err := meta.CheckUpdate(crdt.New(), ok); err != nil {
+		t.Fatal(err)
+	}
+	doc := crdt.New()
+	if err := crdt.ApplyUpdateV1(doc, ok, nil); err != nil || doc.PendingStats().Items != 0 {
+		t.Fatalf("applied with %v, %+v pending", err, doc.PendingStats())
+	}
+}
+
+// block is a client's structs in an update, from clock: items set on key
+// "k" of the comments, after origin, or first.
+type block struct {
+	client, clock uint64
+	items         []item
+}
+
+type item struct{ origin *[2]uint64 }
+
+// encodeUpdate writes blocks as a V1 update, as no honest peer would.
+func encodeUpdate(blocks ...block) []byte {
+	e := encoding.NewEncoder()
+	e.WriteVarUint(uint64(len(blocks)))
+	for _, b := range blocks {
+		e.WriteVarUint(uint64(len(b.items)))
+		e.WriteVarUint(b.client)
+		e.WriteVarUint(b.clock)
+		for _, it := range b.items {
+			if it.origin != nil {
+				e.WriteUint8(0x80 | 8)
+				e.WriteVarUint(it.origin[0])
+				e.WriteVarUint(it.origin[1])
+			} else {
+				e.WriteUint8(0x20 | 8)
+				e.WriteVarUint(1)
+				e.WriteVarString(meta.CommentsKey)
+				e.WriteVarString("k")
+			}
+			e.WriteVarUint(1)
+			e.WriteUint8(125) // a varint
+			e.WriteVarInt(1)
+		}
+	}
+	e.WriteVarUint(0) // no deletions
+	return e.Bytes()
 }
 
 func TestCheckUpdateRefusesWhatCommentsDoNotHold(t *testing.T) {

@@ -22,11 +22,11 @@ const (
 	MaxClientClock = 1 << 16
 )
 
-// MaxPlaceItems bounds the items that share a place in the doc: a parent,
-// a key and the item they were inserted after. Honest peers make one, or a
-// few when they set the same key at once; Yjs and ygo take time in the
-// square of their number to apply them.
-const MaxPlaceItems = 64
+// MaxListItems bounds the items of one list in the doc: those set under
+// one key of a map, in the order Yjs keeps them. Honest peers add one each
+// time they set the key; Yjs and ygo take time in the square of a list's
+// length to apply items to it.
+const MaxListItems = 1024
 
 // ErrRefused marks an update a peer drops by these rules.
 var ErrRefused = errors.New("refused")
@@ -40,12 +40,12 @@ var ErrRefused = errors.New("refused")
 //     every check). This refusal wraps protocol.ErrRetryLater: the client
 //     asks the room again, and an honest peer's updates come back whole;
 //   - it takes one of its clients past MaxClientClock operations;
-//   - it puts more than MaxPlaceItems items in one place;
+//   - it makes a list longer than MaxListItems;
 //   - the doc could pass MaxDocBytes.
 //
 // It costs time in the size of the doc and the update, and applying an
-// update it passes costs no more. The caller holds the lock updates to doc
-// are applied under.
+// update it passes costs no more than its lists allow. The caller holds the
+// lock updates to doc are applied under.
 func CheckUpdate(doc *crdt.Doc, update []byte) (err error) {
 	// protocol.Client recovers too; this keeps the refusal an ErrRefused for
 	// every caller, and fuzzing going.
@@ -54,59 +54,43 @@ func CheckUpdate(doc *crdt.Doc, update []byte) (err error) {
 			err = fmt.Errorf("%w: update makes the check panic: %v", ErrRefused, r)
 		}
 	}()
-	sv := doc.StateVector()
-	known := make(map[uint64]uint64, len(sv))
-	for c, clock := range sv {
-		known[uint64(c)] = clock
-	}
-	u := newScanned(known)
-	if err := scan(update, u); err != nil {
+	u, err := scan(update)
+	if err != nil {
 		return fmt.Errorf("%w: %v", ErrRefused, err)
 	}
-	for client, end := range u.end {
-		if end > MaxClientClock {
-			return fmt.Errorf("%w: client %d passed %d operations", ErrRefused, client, MaxClientClock)
+	known := map[uint64]uint64{}
+	for c, clock := range doc.StateVector() {
+		known[uint64(c)] = clock
+	}
+	end := map[uint64]uint64{}
+	for _, r := range u.recs {
+		c := r.at.client
+		if _, ok := end[c]; !ok && r.at.clock > known[c] {
+			return fmt.Errorf("%w: %w: it skips structs of client %d", ErrRefused, protocol.ErrRetryLater, c)
+		}
+		if end[c] = r.at.clock + r.length; end[c] > MaxClientClock {
+			return fmt.Errorf("%w: client %d passed %d operations", ErrRefused, c, MaxClientClock)
 		}
 	}
-	if missing(u) {
-		return fmt.Errorf("%w: %w: it needs updates not received yet", ErrRefused, protocol.ErrRetryLater)
+	for c, e := range u.deleted {
+		if e > max(known[c], end[c]) {
+			return fmt.Errorf("%w: %w: it deletes what was not received", ErrRefused, protocol.ErrRetryLater)
+		}
 	}
 	state := crdt.EncodeStateAsUpdateV1(doc, nil)
 	if n := len(state) + len(update) + 32*u.ranges; n > MaxDocBytes {
 		return fmt.Errorf("%w: the comments could take %d bytes", ErrRefused, n)
 	}
-	have := newScanned(nil)
-	if err := scan(state, have); err != nil {
+	have, err := scan(state)
+	if err != nil {
 		return fmt.Errorf("%w: the doc: %v", ErrRefused, err)
 	}
-	for p, n := range u.places {
-		if n+have.places[p] > MaxPlaceItems {
-			return fmt.Errorf("%w: more than %d items in one place", ErrRefused, MaxPlaceItems)
-		}
+	missing, long := newLists(have.recs, u.recs, known).check()
+	if missing {
+		return fmt.Errorf("%w: %w: it needs updates not received yet", ErrRefused, protocol.ErrRetryLater)
+	}
+	if long {
+		return fmt.Errorf("%w: a list of more than %d items", ErrRefused, MaxListItems)
 	}
 	return nil
-}
-
-// missing tells whether an update, scanned, needs structs that neither it
-// nor the doc, at sv, has.
-func missing(u *scanned) bool {
-	for client, start := range u.start {
-		if start > u.known[client] {
-			return true
-		}
-	}
-	has := func(client, clock uint64) bool {
-		return clock < max(u.known[client], u.end[client])
-	}
-	for _, d := range u.deps {
-		if !has(d.client, d.clock) {
-			return true
-		}
-	}
-	for client, end := range u.deleted {
-		if end > 0 && !has(client, end-1) {
-			return true
-		}
-	}
-	return false
 }
