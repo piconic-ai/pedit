@@ -36,7 +36,9 @@ history.
   manifest entry of format `meta`, whose path is `.pedit/meta/` + the shared
   file's manifest path + `.json` (`MetaPath` in `internal/protocol/files.go`,
   `metaPath` in `packages/protocol/src/files.ts`). That path pairs it with its
-  file; it is a name for the pairing, not where the file is on disk.
+  file; it is a name for the pairing, not where the file is on disk. It is
+  longer than the file's path, so the host lists it only if it keeps the
+  limits on paths: one bad path refuses the whole manifest.
 - **Additive.** Peers leave out formats they do not know, so older browsers and
   CLIs never see comments. No new message type, no `PROTOCOL_VERSION` bump.
 - **Separate from the content.** One Yjs update can touch several roots of a
@@ -56,7 +58,7 @@ The metadata doc has one root map, `comments`, of threads keyed by a random id
 | `anchor` | where it points, in this session (below) |
 | `quote` | the text the anchor covered when the thread was made |
 | `resolved` | `true` once someone resolved it |
-| `messages` | a Y.Map of comments keyed by a random id, each `{author, time, body}`; `time` is RFC 3339 in UTC |
+| `messages` | a Y.Map of comments keyed by a random id, each `{author, time, body}`; `time` is RFC 3339 in UTC, as `toISOString` writes it |
 
 Comments are shown by `time`, then by id. Names are self-chosen and say nothing
 about who wrote a comment.
@@ -90,8 +92,9 @@ save, as a W3C TextQuoteSelector with a position as a hint:
 {"type": "text", "exact": "world", "prefix": "hello ", "suffix": "!", "offset": 6}
 ```
 
-`prefix` and `suffix` hold up to 32 characters, and `offset` counts UTF-16 code
-units, as Yjs does. A CSV anchor holds one of these per corner cell
+`prefix` and `suffix` hold up to 32 UTF-16 code units, and `offset` counts
+them too, as Yjs does. A text anchor always has `exact`; an empty cell is found
+by its neighbours. A CSV anchor holds one of these per corner cell
 (`{"type": "cells", "from": ..., "to": ...}`), and a canvas anchor is
 `{"type": "node", "id": "n1"}`.
 
@@ -107,8 +110,9 @@ for the next try.
 Everything in the metadata doc, and in the file on disk, may come from someone
 else: a guest, or a teammate through Git. Every peer checks it the same way.
 
-- Limits: 500 threads, 200 comments in a thread, 4,000 characters in a body,
-  200 in a name, 1,000 in a quote, 1 MiB for the file.
+- Limits: 500 threads, 200 comments in a thread, 4,000 UTF-16 code units in a
+  body (as JavaScript counts a string's length), 200 in a name, 1,000 in a
+  quote, 1 MiB for the file. pedit never writes a file it would refuse to read.
 - Names, bodies and quotes are shown as text, never as HTML, with control and
   bidi characters removed.
 - Updates to the doc are bounded per update and per client, and an update with

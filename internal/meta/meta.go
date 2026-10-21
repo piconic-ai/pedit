@@ -11,10 +11,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"regexp"
 	"slices"
 	"time"
+	"unicode/utf16"
 	"unicode/utf8"
 
 	"github.com/piconic-ai/pedit/internal/protocol"
@@ -26,7 +28,7 @@ import (
 const Version = 1
 
 // Limits on what a metadata file may hold, in bytes for the file and in
-// characters for text.
+// UTF-16 code units for text, as JavaScript counts a string's length.
 const (
 	MaxFileBytes = 1 << 20
 	MaxThreads   = 500
@@ -46,13 +48,19 @@ const (
 	AnchorNode  = "node"
 )
 
-var idPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
+var (
+	idPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
+	// RFC 3339 in UTC, as JavaScript's toISOString writes it, so that times
+	// sort as text and parse the same in every browser.
+	timePattern = regexp.MustCompile(`^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{1,9})?Z$`)
+)
 
 // ErrVersion marks a file of a version this pedit does not know.
 var ErrVersion = errors.New("written by a newer pedit")
 
 // File is a metadata file: the path of the file it belongs to, its comment
-// threads keyed by id, and any top-level keys a newer pedit wrote.
+// threads keyed by id, and any top-level keys a newer pedit wrote. To keep
+// those keys, change the File that Parse returned rather than build a new one.
 type File struct {
 	Path     string
 	Comments map[string]Thread
@@ -67,7 +75,8 @@ type Thread struct {
 	Messages map[string]Message `json:"messages"`
 }
 
-// Message is one comment in a thread. Time is RFC 3339, kept as written.
+// Message is one comment in a thread. Time is RFC 3339 in UTC, kept as
+// written.
 type Message struct {
 	Author string `json:"author"`
 	Time   string `json:"time"`
@@ -160,7 +169,7 @@ func strict(data []byte, v any) error {
 	if err := dec.Decode(v); err != nil {
 		return err
 	}
-	if dec.More() {
+	if _, err := dec.Token(); err != io.EOF {
 		return errors.New("trailing data")
 	}
 	return nil
@@ -248,7 +257,7 @@ func (m Message) check(id string) error {
 	if !idPattern.MatchString(id) {
 		return errors.New("invalid id")
 	}
-	if _, err := time.Parse(time.RFC3339, m.Time); err != nil {
+	if _, err := time.Parse(time.RFC3339, m.Time); err != nil || !timePattern.MatchString(m.Time) {
 		return errors.New("invalid time")
 	}
 	return errors.Join(text("author", m.Author, MaxAuthor), text("body", m.Body, MaxBody))
@@ -257,8 +266,8 @@ func (m Message) check(id string) error {
 func (a Anchor) check() error {
 	switch a.Type {
 	case AnchorText:
-		if a.Text == nil {
-			return errors.New("no selector")
+		if a.Text == nil || a.Text.Exact == "" {
+			return errors.New("no text")
 		}
 		return a.Text.check()
 	case AnchorCells:
@@ -279,6 +288,10 @@ func (s *Selector) check() error {
 	if s.Offset < 0 || s.Offset > maxOffset {
 		return errors.New("invalid offset")
 	}
+	// An empty cell has no text, but a place among its neighbours.
+	if s.Exact == "" && s.Prefix == "" && s.Suffix == "" {
+		return errors.New("nothing to find")
+	}
 	return errors.Join(
 		text("exact", s.Exact, MaxQuote),
 		text("prefix", s.Prefix, MaxContext),
@@ -290,16 +303,30 @@ func text(name, s string, max int) error {
 	if !utf8.ValidString(s) {
 		return fmt.Errorf("%s: invalid UTF-8", name)
 	}
-	if utf8.RuneCountInString(s) > max {
+	if units(s) > max {
 		return fmt.Errorf("%s: longer than %d characters", name, max)
 	}
 	return nil
 }
 
+// units is the length of s in UTF-16 code units.
+func units(s string) int {
+	n := 0
+	for _, r := range s {
+		n += utf16.RuneLen(r)
+	}
+	return n
+}
+
 // Render writes f as pedit saves it: indented, with version, path and
 // comments first, then the top-level keys a newer pedit wrote, and keys in
-// sorted order below, so the same metadata always gives the same bytes.
+// sorted order below, so the same metadata always gives the same bytes. It
+// refuses metadata that Parse would refuse, so pedit never writes a file it
+// cannot read back.
 func Render(f *File) ([]byte, error) {
+	if err := f.Check(); err != nil {
+		return nil, err
+	}
 	keys := []string{"version", "path", "comments"}
 	values := map[string]any{"version": Version, "path": f.Path, "comments": f.Comments}
 	if f.Comments == nil {
@@ -327,6 +354,9 @@ func Render(f *File) ([]byte, error) {
 		out.Write(v)
 	}
 	out.WriteString("\n}\n")
+	if out.Len() > MaxFileBytes {
+		return nil, fmt.Errorf("larger than %d bytes", MaxFileBytes)
+	}
 	return out.Bytes(), nil
 }
 

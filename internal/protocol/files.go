@@ -45,7 +45,9 @@ const (
 )
 
 // MetaPath is the path of the metadata of the file at path, in a manifest.
-// It pairs the two: it is not where the host keeps the metadata on disk.
+// It pairs the two: it is not where the host keeps the metadata on disk. It is
+// 17 bytes longer than path, so it can break a limit of CheckPath that path
+// keeps: check it before listing it, since one bad path refuses the manifest.
 func MetaPath(path string) string { return metaPrefix + path + metaSuffix }
 
 // MetaFiles pairs the files of a manifest with their metadata: it maps the ID

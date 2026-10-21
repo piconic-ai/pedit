@@ -8,7 +8,7 @@ The service and its CLI are both named `pedit`; it is served at edit.piconic.ai.
 - The host's local file is the source of truth. The server never sees plaintext. The only content it keeps is encrypted attachments (R2), and only while the room's host is connected; the room deletes them when the host leaves. No permanent storage, no public URLs.
 - Updates are end-to-end encrypted with a key held in the URL fragment; the server only relays ciphertext.
 - Never send the key to the server (not in requests, logs, or error reports).
-- The minimal version only co-edits a single text file. No auth, comments, or AI features.
+- No auth or AI features. Comments (#121) follow `docs/design/comments.md`: they never go into the shared file.
 
 ## Layout
 - cmd/pedit, internal/: the `pedit` command (Go, single binary). internal/protocol mirrors packages/protocol on top of reearth/ygo; keep the wire format in sync

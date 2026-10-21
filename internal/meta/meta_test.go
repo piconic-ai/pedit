@@ -138,31 +138,39 @@ func TestParseRefusesAFileThatBreaksARule(t *testing.T) {
 		return strings.Join(parts, ",")
 	}
 	for name, data := range map[string]string{
-		"not JSON":             `{"version":1,`,
-		"not an object":        `[1]`,
-		"null":                 `null`,
-		"trailing data":        `{"version":1,"path":"a.md"} {}`,
-		"no version":           `{"path":"a.md"}`,
-		"version zero":         `{"version":0,"path":"a.md"}`,
-		"version not a number": `{"version":"1","path":"a.md"}`,
-		"no path":              `{"version":1}`,
-		"unsafe path":          `{"version":1,"path":"../a.md"}`,
-		"comments not a map":   `{"version":1,"path":"a.md","comments":[]}`,
-		"thread id":            `{"version":1,"path":"a.md","comments":{"bad id":{"anchor":{"type":"node","id":"n"},"quote":"","resolved":false,"messages":{}}}}`,
-		"unknown thread key":   thread(`{"anchor":{"type":"node","id":"n"},"quote":"","resolved":false,"messages":{},"colour":"red"}`),
-		"unknown anchor":       anchor(`{"type":"edge","id":"e"}`),
-		"anchor extra key":     anchor(`{"type":"node","id":"n","exact":"x"}`),
-		"empty node id":        anchor(`{"type":"node","id":""}`),
-		"long node id":         anchor(`{"type":"node","id":"` + strings.Repeat("n", meta.MaxNodeID+1) + `"}`),
-		"cells without to":     anchor(`{"type":"cells","from":{"exact":"a","prefix":"","suffix":"","offset":0}}`),
-		"negative offset":      anchor(`{"type":"text","exact":"a","prefix":"","suffix":"","offset":-1}`),
-		"long prefix":          anchor(`{"type":"text","exact":"a","prefix":"` + strings.Repeat("p", meta.MaxContext+1) + `","suffix":"","offset":0}`),
-		"long quote":           thread(`{"anchor":{"type":"node","id":"n"},"quote":"` + strings.Repeat("q", meta.MaxQuote+1) + `","resolved":false,"messages":{}}`),
-		"message id":           message("m 1", okMessage),
-		"bad time":             message("m1", `{"author":"a","time":"yesterday","body":"b"}`),
-		"long body":            message("m1", `{"author":"a","time":"2026-10-21T00:00:00Z","body":"`+strings.Repeat("b", meta.MaxBody+1)+`"}`),
-		"long author":          message("m1", `{"author":"`+strings.Repeat("a", meta.MaxAuthor+1)+`","time":"2026-10-21T00:00:00Z","body":"b"}`),
-		"unknown message key":  message("m1", `{"author":"a","time":"2026-10-21T00:00:00Z","body":"b","html":"<b>"}`),
+		"not JSON":                  `{"version":1,`,
+		"not an object":             `[1]`,
+		"null":                      `null`,
+		"trailing data":             `{"version":1,"path":"a.md"} {}`,
+		"trailing brace":            `{"version":1,"path":"a.md"}}`,
+		"trailing bracket":          `{"version":1,"path":"a.md"}]`,
+		"no version":                `{"path":"a.md"}`,
+		"version zero":              `{"version":0,"path":"a.md"}`,
+		"version not a number":      `{"version":"1","path":"a.md"}`,
+		"no path":                   `{"version":1}`,
+		"unsafe path":               `{"version":1,"path":"../a.md"}`,
+		"comments not a map":        `{"version":1,"path":"a.md","comments":[]}`,
+		"thread id":                 `{"version":1,"path":"a.md","comments":{"bad id":{"anchor":{"type":"node","id":"n"},"quote":"","resolved":false,"messages":{}}}}`,
+		"unknown thread key":        thread(`{"anchor":{"type":"node","id":"n"},"quote":"","resolved":false,"messages":{},"colour":"red"}`),
+		"unknown anchor":            anchor(`{"type":"edge","id":"e"}`),
+		"anchor extra key":          anchor(`{"type":"node","id":"n","exact":"x"}`),
+		"empty node id":             anchor(`{"type":"node","id":""}`),
+		"long node id":              anchor(`{"type":"node","id":"` + strings.Repeat("n", meta.MaxNodeID+1) + `"}`),
+		"cells without to":          anchor(`{"type":"cells","from":{"exact":"a","prefix":"","suffix":"","offset":0}}`),
+		"negative offset":           anchor(`{"type":"text","exact":"a","prefix":"","suffix":"","offset":-1}`),
+		"long prefix":               anchor(`{"type":"text","exact":"a","prefix":"` + strings.Repeat("p", meta.MaxContext+1) + `","suffix":"","offset":0}`),
+		"long quote":                thread(`{"anchor":{"type":"node","id":"n"},"quote":"` + strings.Repeat("q", meta.MaxQuote+1) + `","resolved":false,"messages":{}}`),
+		"message id":                message("m 1", okMessage),
+		"bad time":                  message("m1", `{"author":"a","time":"yesterday","body":"b"}`),
+		"time not in UTC":           message("m1", `{"author":"a","time":"2026-10-21T09:00:00+09:00","body":"b"}`),
+		"time with a comma":         message("m1", `{"author":"a","time":"2026-10-21T00:00:00,5Z","body":"b"}`),
+		"empty text anchor":         anchor(`{"type":"text","exact":"","prefix":"a","suffix":"b","offset":0}`),
+		"cell with nothing to find": anchor(`{"type":"cells","from":{"exact":"","prefix":"","suffix":"","offset":0},"to":{"exact":"a","prefix":"","suffix":"","offset":0}}`),
+		// Emoji take two UTF-16 code units each, as in a browser.
+		"long prefix in UTF-16": anchor(`{"type":"text","exact":"a","prefix":"` + strings.Repeat("😀", meta.MaxContext/2+1) + `","suffix":"","offset":0}`),
+		"long body":             message("m1", `{"author":"a","time":"2026-10-21T00:00:00Z","body":"`+strings.Repeat("b", meta.MaxBody+1)+`"}`),
+		"long author":           message("m1", `{"author":"`+strings.Repeat("a", meta.MaxAuthor+1)+`","time":"2026-10-21T00:00:00Z","body":"b"}`),
+		"unknown message key":   message("m1", `{"author":"a","time":"2026-10-21T00:00:00Z","body":"b","html":"<b>"}`),
 		"too many messages": thread(`{"anchor":{"type":"node","id":"n"},"quote":"","resolved":false,"messages":{` +
 			many(meta.MaxMessages+1, func(i int) string { return `"m` + strconv.Itoa(i) + `":` + okMessage }) + `}}`),
 		"too many threads": `{"version":1,"path":"a.md","comments":{` +
@@ -174,6 +182,40 @@ func TestParseRefusesAFileThatBreaksARule(t *testing.T) {
 		if _, err := meta.Parse([]byte(data)); err == nil {
 			t.Errorf("%s: parsed", name)
 		}
+	}
+}
+
+func TestParseCountsTextInUTF16(t *testing.T) {
+	prefix := strings.Repeat("😀", meta.MaxContext/2)
+	data := `{"version":1,"path":"a.md","comments":{"c1":{"anchor":{"type":"text","exact":"a","prefix":"` + prefix +
+		`","suffix":"","offset":0},"quote":"","resolved":false,"messages":{"m1":{"author":"a","time":"2026-10-21T00:00:00.123Z","body":"b"}}}}}`
+	if _, err := meta.Parse([]byte(data)); err != nil {
+		t.Fatalf("%d emoji, %d code units: %v", meta.MaxContext/2, meta.MaxContext, err)
+	}
+	// A cell with no text is found by its neighbours.
+	cell := `{"version":1,"path":"a.csv","comments":{"c1":{"anchor":{"type":"cells","from":{"exact":"","prefix":"a,","suffix":",b","offset":2},"to":{"exact":"","prefix":"a,","suffix":",b","offset":2}},"quote":"","resolved":false,"messages":{}}}}`
+	if _, err := meta.Parse([]byte(cell)); err != nil {
+		t.Fatalf("an empty cell: %v", err)
+	}
+}
+
+func TestRenderRefusesWhatParseWouldRefuse(t *testing.T) {
+	// A text anchor without its selector would read back as another anchor.
+	broken := &meta.File{Path: "a.md", Comments: map[string]meta.Thread{"c1": {Anchor: meta.Anchor{Type: meta.AnchorText}}}}
+	if _, err := meta.Render(broken); err == nil {
+		t.Fatal("rendered a text anchor without its selector")
+	}
+	// Every limit kept, yet too large together: 500 threads of 200 messages.
+	big := &meta.File{Path: "a.md", Comments: map[string]meta.Thread{}}
+	for i := range meta.MaxThreads {
+		messages := map[string]meta.Message{}
+		for j := range 3 {
+			messages["m"+strconv.Itoa(j)] = meta.Message{Author: "a", Time: "2026-10-21T00:00:00Z", Body: strings.Repeat("b", meta.MaxBody)}
+		}
+		big.Comments["c"+strconv.Itoa(i)] = meta.Thread{Anchor: meta.Anchor{Type: meta.AnchorNode, ID: "n"}, Messages: messages}
+	}
+	if _, err := meta.Render(big); err == nil {
+		t.Fatal("rendered a file larger than MaxFileBytes")
 	}
 }
 
