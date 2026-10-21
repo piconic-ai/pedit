@@ -1,6 +1,6 @@
 import { META_LIMITS, metaUse, randomBase64Url } from '@pedit/protocol'
 import * as Y from 'yjs'
-import { type CanvasNode, read as readCanvas } from './canvas.ts'
+import { nodeText, read as readCanvas } from './canvas.ts'
 import type { Cell, Table } from './csv.ts'
 import { type Readable, Store } from './store.ts'
 import type { Position } from './table.ts'
@@ -529,11 +529,6 @@ function placeOf(anchor: unknown, here: Here): Place | null {
   const from = here.index().resolve(a.start)
   const to = from === null ? null : here.index().resolve(a.end)
   return from === null || to === null ? null : { from, to, cells: null, node: null }
-}
-
-/** What a node shows, as a thread on it quotes it: its text, label, file or link. */
-function nodeText(n: CanvasNode): string {
-  return n.text ?? n.label ?? n.file ?? n.url ?? ''
 }
 
 /**

@@ -623,9 +623,9 @@ async function joinRoom(
     const show = (t: readonly ShownThread[]) => {
       threadsShown.set(t)
       const cells = commentedCells(t)
-      if (!sameCells(cells, shown.table.commented.get())) shown.table.commented.set(cells)
+      if (!sameSet(cells, shown.table.commented.get())) shown.table.commented.set(cells)
       const nodes = new Set(t.flatMap((x) => (!x.resolved && x.node ? [x.node] : [])))
-      if (!sameCells(nodes, shown.board.commented.get())) shown.board.commented.set(nodes)
+      if (!sameSet(nodes, shown.board.commented.get())) shown.board.commented.set(nodes)
     }
     show(c?.threads.get() ?? [])
     stopThreads = c ? c.threads.subscribe(show) : () => {}
@@ -790,8 +790,8 @@ function commentedCells(threads: readonly ShownThread[]): ReadonlySet<string> {
   return keys
 }
 
-/** Whether two sets of cells hold the same keys. */
-function sameCells(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+/** Whether two sets hold the same keys. */
+function sameSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
   if (a.size !== b.size) return false
   for (const k of a) if (!b.has(k)) return false
   return true

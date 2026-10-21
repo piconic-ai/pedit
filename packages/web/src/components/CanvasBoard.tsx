@@ -3,6 +3,7 @@
 import { useContext } from '@barefootjs/client'
 import { type EdgeBase, type NodeBase, Position } from '@barefootjs/xyflow'
 import { BoardContext, type BoardView, MAX_ZOOM, MIN_ZOOM } from '../board.ts'
+import { nodeText } from '../canvas.ts'
 import type { JsonStatus } from '../jsonpane.ts'
 import { Flow, Handle } from './xyflow/index.tsx'
 
@@ -50,20 +51,10 @@ export function CanvasCard(props: NodeBase) {
   const nodeId = props.id
   const node = () => v.nodes.get(nodeId)?.get()
   const editing = () => v.editing.get() === nodeId
-  // What the body shows: a text node's text, a file's path, a group's label.
+  // What the body shows: a link's body is hidden for the link below it.
   const bodyText = () => {
     const n = node()
-    if (!n) return ''
-    switch (n.type) {
-      case 'text':
-        return shownText(n.text)
-      case 'file':
-        return shownText(n.file) + shownText(n.subpath)
-      case 'group':
-        return shownText(n.label)
-      default:
-        return shownText(n.type)
-    }
+    return n ? nodeText(n) : ''
   }
   // Others on this node; their colour is a hex colour, from participants().
   const peer = () => v.peers.get()[nodeId]
