@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"iter"
 	"maps"
+	"path/filepath"
 	"slices"
 	"strings"
 	"unicode/utf16"
@@ -56,15 +57,31 @@ const maxCandidates = 10_000
 type fileText struct {
 	*Tracker
 	units []uint16 // the content in UTF-16 code units, as Yjs counts
+	// The delimiter of a table's cells, by the file's name as the web
+	// editor tells it: ',' for .csv, '\t' for .tsv, else none.
+	delimiter uint16
 }
 
-// textOf reads the text tr follows, or returns nil for nil, as for a canvas,
-// whose anchors are node ids.
-func textOf(tr *Tracker) *fileText {
+// textOf reads the text tr follows, of the file at path, or returns nil for
+// nil, as for a canvas, whose anchors are node ids.
+func textOf(tr *Tracker, path string) *fileText {
 	if tr == nil {
 		return nil
 	}
-	return &fileText{Tracker: tr, units: utf16.Encode([]rune(tr.text.ToString()))}
+	t := &fileText{Tracker: tr, units: utf16.Encode([]rune(tr.text.ToString()))}
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".csv":
+		t.delimiter = ','
+	case ".tsv":
+		t.delimiter = '\t'
+	}
+	return t
+}
+
+// edge tells whether a code unit ends a cell: a line break, or the
+// delimiter.
+func (t *fileText) edge(u uint16) bool {
+	return u == '\n' || u == '\r' || t.delimiter != 0 && u == t.delimiter
 }
 
 // Load puts the threads of f into doc, a metadata doc that has none yet,
@@ -72,7 +89,7 @@ func textOf(tr *Tracker) *fileText {
 // place of a text or cells anchor is found again by its saved text. tr is
 // nil for a canvas.
 func Load(doc *crdt.Doc, f *File, tr *Tracker) {
-	t := textOf(tr)
+	t := textOf(tr, f.Path)
 	var hay *haystack
 	if t != nil {
 		hay = newHaystack(t.text.ToString())
@@ -252,7 +269,7 @@ func decodePosition(v any) (crdt.RelativePosition, bool) {
 // its quote. The caller holds the lock that remote updates are applied
 // under, so that the docs do not change while Read reads them.
 func Read(doc *crdt.Doc, prev *File, tr *Tracker) *File {
-	t := textOf(tr)
+	t := textOf(tr, prev.Path)
 	threads := map[string]Thread{}
 	// What threads may take in the file; the rest is for its own keys and
 	// those a newer pedit wrote.
@@ -381,12 +398,18 @@ func placeNow(kind string, raw map[string]any, t *fileText) (Anchor, bool) {
 }
 
 // selectorAt is the place between the start and end positions of r as it is
-// now, or false when it cannot be told. Only a cell may be empty.
-func selectorAt(r map[string]any, empty bool, t *fileText) (*Selector, bool) {
+// now, or false when it cannot be told. Only a cell may be empty. A cell's
+// place takes in what is typed at its edges, a row or column inserted
+// before it too: the delimiters and line breaks it starts with are left
+// out, as the web editor leaves them out to find the cell.
+func selectorAt(r map[string]any, cell bool, t *fileText) (*Selector, bool) {
 	start, ok1 := t.lookup(r[startKey])
 	end, ok2 := t.lookup(r[endKey])
 	if !ok1 || !ok2 || start > end || end > len(t.units) {
 		return nil, false
+	}
+	for cell && start < end && t.edge(t.units[start]) {
+		start++
 	}
 	exact := t.units[start:end]
 	if len(exact) > MaxQuote {
@@ -398,7 +421,7 @@ func selectorAt(r map[string]any, empty bool, t *fileText) (*Selector, bool) {
 		Suffix: decode(clip(t.units[end:], false)),
 		Offset: start,
 	}
-	return s, s.check() == nil && (s.Exact != "" || empty)
+	return s, s.check() == nil && (s.Exact != "" || cell)
 }
 
 // clip keeps MaxContext code units of the end of s (or its start), without

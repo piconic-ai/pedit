@@ -162,7 +162,8 @@ export class CommentsView {
     const from = table?.rows[Math.min(a.row, b.row)]?.cells[Math.min(a.col, b.col)]
     const to = table?.rows[Math.max(a.row, b.row)]?.cells[Math.max(a.col, b.col)]
     if (!table || !from || !to) return null
-    return this.#begin(table.text.slice(from.from, to.to), body, {
+    // A range's raw text quotes it, cut to the limit, so a long column takes one too.
+    return this.#begin(table.text.slice(from.from, to.to).slice(0, COMMENT_LIMITS.quote), body, {
       type: 'cells',
       from: this.#cell(from),
       to: this.#cell(to),
@@ -342,7 +343,7 @@ export class CommentsView {
     if (!ANCHORS.has(String((thread.get('anchor') as { type?: unknown } | undefined)?.type)))
       return null
     const place = placeOf(thread.get('anchor'), here)
-    const live = place ? here.text.slice(place.from, place.to) : ''
+    const live = place ? quoted(here.text.slice(place.from, place.to), place.cells !== null) : ''
     // Only a cell may be empty.
     const gone = !place || (place.cells === null && place.from >= place.to)
     const state: ThreadState = gone ? 'detached' : live === quote ? 'attached' : 'changed'
@@ -435,21 +436,35 @@ function placeOf(anchor: unknown, here: Here): Place | null {
   return from === null || to === null ? null : { from, to, cells: null }
 }
 
+/** The text of a place as its quote holds it: cells' cut to the limit, as startCells cuts it. */
+function quoted(text: string, cells: boolean): string {
+  return cells ? text.slice(0, COMMENT_LIMITS.quote) : text
+}
+
+/** Whether a character ends a cell: a delimiter, or a line break. */
+function ends(c: string | undefined, delimiter: string): boolean {
+  return c === delimiter || c === '\n' || c === '\r'
+}
+
 /**
- * The cell a cell's place holds now. It is there when its positions still
- * hold exactly one cell of the table, its raw text: a deleted cell takes a
- * delimiter with it, and leaves its positions on an empty span between its
- * neighbours, or on one that runs into a neighbour. An empty cell whose
- * column was deleted can pass to an empty neighbour: nothing in the text
- * tells them apart.
+ * The cell a cell's place holds now. A place takes in what is typed at its
+ * edges, so a row or column inserted beside its cell comes into it too:
+ * the cell is the one that starts where the place does, past the
+ * delimiters and line breaks it took in, and ends at a cell's edge inside
+ * it. A deleted cell takes a delimiter with it, and leaves its place on an
+ * empty span between its neighbours, where no cell starts and ends: its
+ * thread is detached. An empty cell whose column was deleted can pass to an
+ * empty neighbour: nothing in the text tells them apart.
  */
 function cellOf(v: unknown, here: Here): { cell: Cell; at: Position } | null {
   if (typeof v !== 'object' || v === null) return null
   const p = v as Record<string, unknown>
-  const start = here.index().resolve(p.start)
+  let start = here.index().resolve(p.start)
   const end = start === null ? null : here.index().resolve(p.end)
   const table = here.table()
   if (start === null || end === null || !table) return null
+  const { text, delimiter } = table
+  while (start < end && ends(text[start], delimiter)) start++
   // The last row that starts at or before it.
   let lo = 0
   let hi = table.rows.length
@@ -459,8 +474,11 @@ function cellOf(v: unknown, here: Here): { cell: Cell; at: Position } | null {
     else hi = mid
   }
   const row = lo - 1
-  const col = table.rows[row]?.cells.findIndex((c) => c.from === start && c.to === end) ?? -1
-  return col < 0 ? null : { cell: table.rows[row]!.cells[col]!, at: { row, col } }
+  const at = start
+  const col = table.rows[row]?.cells.findIndex((c) => c.from === at) ?? -1
+  const cell = table.rows[row]?.cells[col]
+  if (!cell || cell.to > end || (cell.to < end && !ends(text[cell.to], delimiter))) return null
+  return { cell, at: { row, col } }
 }
 
 /**

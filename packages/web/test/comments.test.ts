@@ -7,7 +7,15 @@ import {
   type ShownThread,
   TextIndex,
 } from '../src/comments.ts'
-import { deleteColumn, deleteRow, type Edit, parse, setCell } from '../src/csv.ts'
+import {
+  deleteColumn,
+  deleteRow,
+  type Edit,
+  insertColumn,
+  insertRow,
+  parse,
+  setCell,
+} from '../src/csv.ts'
 
 function setup(text: string, delimiter: string | null = null) {
   const meta = new Y.Doc()
@@ -297,6 +305,36 @@ describe('comments on cells', () => {
       state: 'changed',
       live: 'b',
     })
+  })
+
+  it('keeps a cell when rows and columns come in beside it', () => {
+    // From review: what was inserted at a cell's edges came into its place,
+    // and the cell was lost.
+    type Change = (t: ReturnType<typeof parse>) => Edit[]
+    const cases: Array<
+      [string, Change, { row: number; col: number }, { row: number; col: number }]
+    > = [
+      ['a row above', (t) => insertRow(t, 0), cell(0, 0), cell(1, 0)],
+      ['a column before', (t) => insertColumn(t, 0), cell(0, 0), cell(0, 1)],
+      ['a column after', (t) => insertColumn(t, 1), cell(0, 0), cell(0, 0)],
+      ['a row after the last', (t) => setCell(t, 3, 0, 'new'), cell(1, 0), cell(1, 0)],
+      ['values past a short row', (t) => setCell(t, 1, 2, 'x'), cell(1, 0), cell(1, 0)],
+    ]
+    for (const [name, change, was, now] of cases) {
+      const { view, shown, text } = setup('a,b\n1', ',')
+      view.startCells(was, was, name)
+      edit(text, change)
+      expect(only(shown()), name).toMatchObject({ state: 'attached', cells: { from: now } })
+    }
+  })
+
+  it('comments on a long column, its quote cut to the limit', () => {
+    const rows = Array.from({ length: 300 }, (_, i) => `name${i},${i}`).join('\n')
+    const { view, shown } = setup(`${rows}\n`, ',')
+    expect(view.startCells(cell(0, 1), cell(299, 1), 'the ages')).not.toBeNull()
+    const t = only(shown())
+    expect(t.quote).toHaveLength(COMMENT_LIMITS.quote)
+    expect(t).toMatchObject({ state: 'attached', cells: { from: cell(0, 1), to: cell(299, 1) } })
   })
 
   it('takes no cell that is not in the table, nor any in a file that is none', () => {

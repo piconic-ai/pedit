@@ -397,9 +397,12 @@ async function joinRoom(
     const t = new TableView(fileText, awareness, undo, {
       onError: (error) => tableErrors.report(id, error),
     })
-    t.selection.subscribe(() => {
+    // The cell selected can come or go with the table, as well as move.
+    const follow = () => {
       if (t === shown.table) aim()
-    })
+    }
+    t.selection.subscribe(follow)
+    t.shown.subscribe(follow)
     return t
   }
   // Other editors that follow the settings: each canvas's JSON.

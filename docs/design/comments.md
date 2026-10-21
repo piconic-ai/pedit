@@ -76,17 +76,19 @@ Each kind of file anchors on what survives its edits:
   false`, so every peer agrees after an undo.
 - **CSV and TSV:** a cell is a range of the same Y.Text that takes in what is
   typed at its edges (start assoc -1, end assoc 0), so a value rewritten in
-  place stays in it and an empty cell has a place. A cell is still there
-  while its two positions hold exactly one cell of the table as it parses
-  now, its raw text, quotes and all. Deleting a cell takes a delimiter with
-  it, so its positions close on an empty span between its neighbours, or
-  take in a neighbour, and hold no cell: the thread is detached. A cell whose
-  neighbour was deleted keeps its positions, and its thread. The one case
-  this cannot tell is an empty cell whose column goes beside another empty
-  cell: nothing left in the text tells them apart. While the file does not
-  parse as a table, its cells' threads are detached. A range of cells is its
-  two corner cells; the table marks a thread on its first, as spreadsheets
-  do.
+  place stays in it and an empty cell has a place. A row or column inserted
+  beside a cell comes into its place too, so the cell is the one that starts
+  where its place does, past the delimiters and line breaks it took in, and
+  ends at a cell's edge inside it; the host saves only that part. Deleting a
+  cell takes a delimiter with it, so its place closes on an empty span
+  between its neighbours, where no cell starts and ends: the thread is
+  detached. A cell whose neighbour was deleted keeps its place, and its
+  thread. The one case this cannot tell is an empty cell whose column goes
+  beside another empty cell: nothing left in the text tells them apart.
+  While the file does not parse as a table, its cells' threads are detached.
+  A range of cells is its two corner cells, and quotes their raw text, cut
+  to the quote's limit; the table marks a thread on its first cell, as
+  spreadsheets do.
 - **Canvas:** the node's `id`. Stacking changes and undo replace a node's
   Y.Map, but keep its id.
 

@@ -421,3 +421,30 @@ func TestTrackerFollowsWhatReadSaves(t *testing.T) {
 		t.Fatalf("selector %+v", s)
 	}
 }
+
+func TestReadLeavesOutWhatARowOrColumnInsertedBeforeACellBrought(t *testing.T) {
+	// A cell's place takes in what is typed at its start, a row or column
+	// inserted before it too: what is saved is the cell, as the web editor
+	// finds it, not the delimiters and line breaks it took in.
+	for _, tc := range []struct{ path, text, insert, want string }{
+		{"a.csv", "a,b\n1,2\n", ",\n", "a"},
+		{"a.csv", "a,b\n1,2\n", ",", "a"},
+		{"a.tsv", "a\tb\n1\t2\n", "\t\n", "a"},
+		// In a TSV, a comma is part of a cell.
+		{"a.tsv", "a\tb\n", ",", ",a"},
+	} {
+		doc, text := content(tc.text)
+		m := crdt.New()
+		guestThread(t, m, text, "c", map[string]any{
+			"type": "cells",
+			"from": map[string]any{"start": pos(text, 0, -1), "end": pos(text, 1, 0)},
+			"to":   map[string]any{"start": pos(text, 0, -1), "end": pos(text, 1, 0)},
+		}, "a")
+		trackerOf(doc).Learn(m)
+		doc.Transact(func(txn *crdt.Transaction) { text.Insert(txn, 0, tc.insert, nil) })
+		got := meta.Read(m, &meta.File{Path: tc.path}, trackerOf(doc))
+		if a := got.Comments["c"].Anchor; a.From == nil || a.From.Exact != tc.want {
+			t.Errorf("%s %q: saved %+v", tc.path, tc.insert, a.From)
+		}
+	}
+}
