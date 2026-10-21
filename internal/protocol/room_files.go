@@ -32,6 +32,14 @@ type fileDoc struct {
 type timeShare struct {
 	credit  time.Duration
 	counted time.Time
+	now     func() time.Time // time.Now when nil; tests set it
+}
+
+func (s *timeShare) clock() time.Time {
+	if s.now == nil {
+		return time.Now()
+	}
+	return s.now()
 }
 
 // UpdateCheck tells whether an update received for doc may be applied. It is
@@ -55,9 +63,6 @@ const (
 	checkBurst  = time.Second
 	resyncEvery = 5 * time.Second
 )
-
-// checkClock is time.Now; tests set it.
-var checkClock = time.Now
 
 // AddFile keeps doc in sync with the room as the file with this ID, from 1
 // up (file 0 is the Client's Doc): it sends
@@ -260,8 +265,8 @@ func (c *Client) receiveFileSync(id uint64, payload []byte) error {
 		return nil
 	}
 	c.applying.Lock()
-	reply, err := f.apply(payload, c, &c.checks)
-	resync := errors.Is(err, ErrRetryLater) && f.mayResync()
+	kind, reply, err := f.apply(payload, c, &c.checks)
+	resync := errors.Is(err, ErrRetryLater) && f.mayResync(c.checks.clock())
 	c.applying.Unlock()
 	if resync {
 		_ = c.sendFile(id, MessageSync, ysync.EncodeSyncStep1(f.doc))
@@ -272,7 +277,7 @@ func (c *Client) receiveFileSync(id uint64, payload []byte) error {
 	if len(reply) > 0 {
 		_ = c.sendFile(id, MessageSync, reply)
 	}
-	if kind, _, err := ysync.ReadSyncMessage(payload); err == nil && kind == ysync.MsgSyncStep2 {
+	if kind == ysync.MsgSyncStep2 {
 		c.mu.Lock()
 		first := !f.synced
 		f.synced = true
@@ -284,31 +289,35 @@ func (c *Client) receiveFileSync(id uint64, payload []byte) error {
 	return nil
 }
 
-// apply applies a sync message, after its check, if it has one. A panic in
-// ygo on a checked doc's message is an error: such a doc takes updates from
-// anyone in the room, and the host's process is the session.
-func (f *fileDoc) apply(payload []byte, origin any, share *timeShare) (reply []byte, err error) {
+// apply applies a sync message, after its check, if it has one, and returns
+// its kind. A panic in ygo on a checked doc's message is an error: such a
+// doc takes updates from anyone in the room, and the host's process is the
+// session.
+func (f *fileDoc) apply(payload []byte, origin any, share *timeShare) (kind int, reply []byte, err error) {
+	kind, update, err := ysync.ReadSyncMessage(payload)
+	if err != nil {
+		return 0, nil, err
+	}
 	if f.check == nil {
-		return ysync.ApplySyncMessage(f.doc, payload, origin)
+		reply, err = ysync.ApplySyncMessage(f.doc, payload, origin)
+		return kind, reply, err
 	}
 	defer func() {
 		if r := recover(); r != nil {
 			reply, err = nil, fmt.Errorf("sync message makes ygo panic: %v", r)
 		}
 	}()
-	kind, update, err := ysync.ReadSyncMessage(payload)
-	if err != nil {
-		return nil, err
-	}
 	if kind != ysync.MsgSyncStep2 && kind != ysync.MsgUpdate {
-		return ysync.ApplySyncMessage(f.doc, payload, origin)
+		reply, err = ysync.ApplySyncMessage(f.doc, payload, origin)
+		return kind, reply, err
 	}
-	return share.take(func() ([]byte, error) {
+	reply, err = share.take(func() ([]byte, error) {
 		if err := f.check(f.doc, update); err != nil {
 			return nil, err
 		}
 		return ysync.ApplySyncMessage(f.doc, payload, origin)
 	})
+	return kind, reply, err
 }
 
 // take checks and applies an update, in apply, unless that took its share
@@ -316,7 +325,7 @@ func (f *fileDoc) apply(payload []byte, origin any, share *timeShare) (reply []b
 // do with the update, such as placing the anchors of comments. The caller
 // holds Client.applying.
 func (s *timeShare) take(apply func() ([]byte, error)) ([]byte, error) {
-	now := checkClock()
+	now := s.clock()
 	if s.counted.IsZero() {
 		s.credit = checkBurst
 	} else {
@@ -327,17 +336,16 @@ func (s *timeShare) take(apply func() ([]byte, error)) ([]byte, error) {
 		return nil, fmt.Errorf("%w: checking updates took too long", ErrRetryLater)
 	}
 	defer func() {
-		end := checkClock()
+		end := s.clock()
 		s.credit -= end.Sub(now)
 		s.counted = end
 	}()
 	return apply()
 }
 
-// mayResync tells whether the Client may ask the room for what a check
-// refused for now. The caller holds Client.applying.
-func (f *fileDoc) mayResync() bool {
-	now := checkClock()
+// mayResync tells whether the Client may ask the room, now, for what a
+// check refused for now. The caller holds Client.applying.
+func (f *fileDoc) mayResync(now time.Time) bool {
 	if now.Before(f.resyncAt) {
 		return false
 	}

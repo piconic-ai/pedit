@@ -154,7 +154,7 @@ interface FileDoc {
   resyncAt: number
 }
 
-/** The ms checking updates may still take, as of `counted`. */
+/** The ms checking and applying updates may still take, as of `counted`. */
 interface TimeShare {
   credit: number
   counted: number
@@ -178,10 +178,10 @@ export interface Refusal {
 }
 
 /**
- * The checks of all checked files together may take a quarter of the time,
- * with up to a second in hand, so a peer flooding the room cannot keep the
- * client checking; an update past that is refused for now. As
- * internal/protocol does.
+ * Checking and applying the updates of all checked files together may take
+ * a quarter of the time, with up to a second in hand, so a peer flooding the
+ * room cannot keep the client checking; an update past that is refused for
+ * now. As internal/protocol does.
  */
 const CHECK_SHARE = 4
 const CHECK_BURST_MS = 1000
@@ -217,7 +217,7 @@ export class RoomClient {
   private readonly guard = new ReplayGuard(this.sender)
   private readonly files = new Map<number, FileDoc>()
   /** The time checked files' updates may take, as CHECK_SHARE says. */
-  private readonly checks: TimeShare = { credit: CHECK_BURST_MS, counted: Date.now() }
+  private readonly checks: TimeShare = { credit: CHECK_BURST_MS, counted: performance.now() }
   // Paces the frames sent on the current socket; see Pacer.
   private pacer = new Pacer()
   // Ends the pacing wait of the frame next in line, when its socket closes.
@@ -457,16 +457,19 @@ export class RoomClient {
   private receiveFileSync(id: number, payload: Uint8Array): void {
     const f = this.files.get(id)
     if (!f) return
-    const refused = f.check && checkSync(payload, f.doc, f.check, this.checks)
-    if (refused) {
-      this.opts.onError?.(new Error(`file ${id}: dropped an update: ${refused.reason}`))
-      if (refused.retryLater && Date.now() >= f.resyncAt) {
-        f.resyncAt = Date.now() + RESYNC_EVERY_MS
+    const read = f.check
+      ? checkedSync(payload, f.doc, f.check, this.checks, this)
+      : readSync(payload, f.doc, this)
+    if ('reason' in read) {
+      this.opts.onError?.(new Error(`file ${id}: dropped an update: ${read.reason}`))
+      const now = performance.now()
+      if (read.retryLater && now >= f.resyncAt) {
+        f.resyncAt = now + RESYNC_EVERY_MS
         this.sendFileSync(id, (encoder) => syncProtocol.writeSyncStep1(encoder, f.doc))
       }
       return
     }
-    const { kind, reply } = readSync(payload, f.doc, this)
+    const { kind, reply } = read
     if (reply) this.sendFile(id, MessageType.Sync, reply)
     if (kind === syncProtocol.messageYjsSyncStep2 && !f.synced) {
       f.synced = true
@@ -639,36 +642,43 @@ function decodeKnown<T>(
 }
 
 /**
- * Tells why check refuses the update a sync message carries, or null,
- * unless the file's checks took their share of the time.
+ * Applies a sync message to a checked file's `doc`, as readSync does, if
+ * `check` passes the update it carries; or tells why not. Checking and
+ * applying count against `share`, the time of all checked files: past it,
+ * an update is refused for now.
  */
-function checkSync(
+function checkedSync(
   payload: Uint8Array,
   doc: Y.Doc,
   check: UpdateCheck,
   share: TimeShare,
-): Refusal | null {
+  origin: unknown,
+): Refusal | { kind: number; reply: Uint8Array | null } {
   let update: Uint8Array
   try {
     const decoder = decoding.createDecoder(payload)
     const kind = decoding.readVarUint(decoder)
     if (kind !== syncProtocol.messageYjsSyncStep2 && kind !== syncProtocol.messageYjsUpdate) {
-      return null
+      return readSync(payload, doc, origin)
     }
     update = decoding.readVarUint8Array(decoder)
   } catch {
     return { reason: 'not a sync message' }
   }
-  const now = Date.now()
+  const now = performance.now()
   share.credit = Math.min(CHECK_BURST_MS, share.credit + (now - share.counted) / CHECK_SHARE)
   share.counted = now
   if (share.credit <= 0) return { reason: 'checking updates took too long', retryLater: true }
   try {
-    return check(doc, update)
-  } catch {
-    return { reason: 'the check failed' }
+    let refused: Refusal | null
+    try {
+      refused = check(doc, update)
+    } catch {
+      refused = { reason: 'the check failed' }
+    }
+    return refused ?? readSync(payload, doc, origin)
   } finally {
-    const end = Date.now()
+    const end = performance.now()
     share.credit -= end - now
     share.counted = end
   }

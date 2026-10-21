@@ -37,6 +37,8 @@ var ErrRefused = errors.New("refused")
 //
 // The caller holds the lock updates to doc are applied under.
 func CheckUpdate(doc *crdt.Doc, update []byte) (err error) {
+	// protocol.Client recovers too; this keeps the refusal an ErrRefused for
+	// every caller, and fuzzing going.
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("%w: update makes ygo panic: %v", ErrRefused, r)
@@ -46,20 +48,21 @@ func CheckUpdate(doc *crdt.Doc, update []byte) (err error) {
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrRefused, err)
 	}
+	// Cheap first: the clocks the update brings its clients to.
+	for client, clock := range want {
+		if clock > MaxClientClock {
+			return fmt.Errorf("%w: client %d passed %d operations", ErrRefused, client, MaxClientClock)
+		}
+	}
 	copied := crdt.New()
 	if err := crdt.ApplyUpdateV1(copied, crdt.EncodeStateAsUpdateV1(doc, nil), nil); err != nil {
-		return err
+		return fmt.Errorf("%w: %v", ErrRefused, err)
 	}
 	if err := crdt.ApplyUpdateV1(copied, update, nil); err != nil {
 		return fmt.Errorf("%w: %v", ErrRefused, err)
 	}
 	if p := copied.PendingStats(); p.Items > 0 || p.DeleteRanges > 0 {
 		return fmt.Errorf("%w: %w: it needs updates not received yet", ErrRefused, protocol.ErrRetryLater)
-	}
-	for client, clock := range want {
-		if clock > MaxClientClock {
-			return fmt.Errorf("%w: client %d passed %d operations", ErrRefused, client, MaxClientClock)
-		}
 	}
 	if n := len(crdt.EncodeStateAsUpdateV1(copied, nil)); n > MaxDocBytes {
 		return fmt.Errorf("%w: the comments would take %d bytes", ErrRefused, n)

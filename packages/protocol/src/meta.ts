@@ -31,9 +31,13 @@ export const META_LIMITS = {
  */
 export function checkMetaUpdate(doc: Y.Doc, update: Uint8Array): Refusal | null {
   const copy = new Y.Doc()
-  let clocks: Map<number, number>
   try {
-    clocks = Y.decodeStateVector(Y.encodeStateVectorFromUpdate(update))
+    // Cheap first: the clocks the update brings its clients to.
+    for (const [client, clock] of Y.decodeStateVector(Y.encodeStateVectorFromUpdate(update))) {
+      if (clock > META_LIMITS.maxClientClock) {
+        return { reason: `client ${client} passed ${META_LIMITS.maxClientClock} operations` }
+      }
+    }
     Y.applyUpdate(copy, Y.encodeStateAsUpdate(doc))
     Y.applyUpdate(copy, update)
   } catch {
@@ -41,11 +45,6 @@ export function checkMetaUpdate(doc: Y.Doc, update: Uint8Array): Refusal | null 
   }
   if (copy.store.pendingStructs !== null || copy.store.pendingDs !== null) {
     return { reason: 'it needs updates not received yet', retryLater: true }
-  }
-  for (const [client, clock] of clocks) {
-    if (clock > META_LIMITS.maxClientClock) {
-      return { reason: `client ${client} passed ${META_LIMITS.maxClientClock} operations` }
-    }
   }
   const size = Y.encodeStateAsUpdate(copy).length
   if (size > META_LIMITS.maxDocBytes) return { reason: `the comments would take ${size} bytes` }

@@ -372,7 +372,7 @@ describe('RoomClient with a checked file', () => {
 
   it('stops checking any file once its checks took their share of the time', async () => {
     let now = 1_000_000
-    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => now)
     try {
       const relay = new Relay()
       const key = await importKey(generateKey())
