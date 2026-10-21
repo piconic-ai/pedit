@@ -37,6 +37,13 @@ type metaFile struct {
 	delay   time.Duration
 	notices *notices
 
+	// saving keeps saves in order from rendering to the writer, and lets
+	// Stop wait for a save under way.
+	saving sync.Mutex
+	// beforeSchedule, when set, runs between rendering and scheduling a save;
+	// tests set it.
+	beforeSchedule func()
+
 	mu    sync.Mutex
 	timer *time.Timer
 	file  *meta.File // as last read or saved, with the keys a newer pedit wrote
@@ -120,7 +127,7 @@ func orDefault(d, def time.Duration) time.Duration {
 // It returns why the file offers no comments, if it cannot be read: a file
 // over meta.MaxFileBytes is refused before it is read.
 func (m *metaFile) read(rel string) string {
-	bound, err := filewriter.OpenBoundIn(m.project, m.name)
+	bound, err := openMetaFile(m.project, m.name, false)
 	if errors.Is(err, fs.ErrNotExist) {
 		// No .pedit/meta/ yet: made with the first comment.
 		return ""
@@ -159,15 +166,77 @@ func projectPath(project *os.Root, file string) (string, bool) {
 	return filepath.ToSlash(rel), true
 }
 
+// openMetaFile binds name, a metadata file under the project's .pedit/meta/,
+// creating its directories when create is set. Each directory on the way must
+// be a real one: a symlink, even to elsewhere in the project, such as one a
+// cloned repository holds, would have pedit write the comments there.
+func openMetaFile(project *os.Root, name string, create bool) (*filewriter.BoundFile, error) {
+	dir := project
+	for _, part := range strings.Split(filepath.ToSlash(filepath.Dir(name)), "/") {
+		next, err := openRealDir(dir, part, create)
+		if dir != project {
+			_ = dir.Close()
+		}
+		if err != nil {
+			return nil, err
+		}
+		dir = next
+	}
+	defer dir.Close()
+	return filewriter.OpenBoundIn(dir, filepath.Base(name))
+}
+
+// openRealDir opens the directory name in dir, making it when create is set,
+// and refuses a symlink or anything swapped in for the directory meanwhile.
+func openRealDir(dir *os.Root, name string, create bool) (*os.Root, error) {
+	info, err := dir.Lstat(name)
+	if errors.Is(err, fs.ErrNotExist) && create {
+		if err := dir.Mkdir(name, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
+			return nil, err
+		}
+		info, err = dir.Lstat(name)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("%s is not a directory", filepath.Join(dir.Name(), name))
+	}
+	next, err := dir.OpenRoot(name)
+	if err != nil {
+		return nil, err
+	}
+	if opened, err := next.Stat("."); err != nil || !os.SameFile(info, opened) {
+		_ = next.Close()
+		return nil, fmt.Errorf("%s changed while pedit opened it", filepath.Join(dir.Name(), name))
+	}
+	return next, nil
+}
+
 // keepsComments tells whether file is under the .pedit/meta/ of project,
 // which may be nil, where pedit writes itself: sharing such a file would give
-// it two writers. Case does not count, as on macOS and Windows.
+// it two writers. Case does not count, as on macOS and Windows, and neither
+// does a symlinked directory on the way to it.
 func keepsComments(project *os.Root, file string) bool {
 	if project == nil {
 		return false
 	}
-	rel, ok := projectPath(project, file)
-	return ok && strings.HasPrefix(strings.ToLower(rel)+"/", metaDir+"/")
+	if rel, ok := projectPath(project, file); ok && inMetaDir(rel) {
+		return true
+	}
+	dir, err1 := filepath.EvalSymlinks(filepath.Dir(file))
+	root, err2 := filepath.EvalSymlinks(project.Name())
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	rel, err := filepath.Rel(root, filepath.Join(dir, filepath.Base(file)))
+	return err == nil && filepath.IsLocal(rel) && inMetaDir(filepath.ToSlash(rel))
+}
+
+// inMetaDir tells whether rel, a slash path in the project, is under
+// .pedit/meta/, in any case.
+func inMetaDir(rel string) bool {
+	return strings.HasPrefix(strings.ToLower(rel)+"/", metaDir+"/")
 }
 
 // errKeepsComments refuses to share a file of .pedit/meta/.
@@ -252,6 +321,8 @@ func (m *metaFile) schedule() {
 // saveNow renders the metadata under the client's lock and saves it, waiting
 // for the write when flush is set.
 func (m *metaFile) saveNow(flush bool) error {
+	m.saving.Lock()
+	defer m.saving.Unlock()
 	var out []byte
 	var err error
 	m.client.Do(func() { out, err = m.render() })
@@ -281,6 +352,9 @@ func (m *metaFile) save(out []byte, err error, flush bool) error {
 	if writer == nil {
 		return err
 	}
+	if m.beforeSchedule != nil {
+		m.beforeSchedule()
+	}
 	// Not under m.mu: a write that finds the file changed calls hold.
 	writer.Schedule(string(out))
 	if flush {
@@ -307,6 +381,7 @@ func (m *metaFile) writerFor(out []byte, err error, flush bool) (*filewriter.Wri
 	if m.writer == nil {
 		if err := m.create(); err != nil {
 			m.notices.saveError(err)
+			m.retry()
 			return nil, err
 		}
 	}
@@ -318,10 +393,7 @@ func (m *metaFile) writerFor(out []byte, err error, flush bool) (*filewriter.Wri
 // holds m.mu.
 func (m *metaFile) create() error {
 	if m.bound == nil {
-		if err := m.project.MkdirAll(filepath.Dir(m.name), 0o755); err != nil {
-			return err
-		}
-		bound, err := filewriter.OpenBoundIn(m.project, m.name)
+		bound, err := openMetaFile(m.project, m.name, true)
 		if err != nil {
 			return err
 		}
@@ -330,6 +402,15 @@ func (m *metaFile) create() error {
 	m.bound.CreateOnly()
 	m.openWriter("")
 	return nil
+}
+
+// retry tries a save that could not start again later, as the writer tries
+// one that failed, unless saving stopped. The caller holds m.mu.
+func (m *metaFile) retry() {
+	if m.held || m.stopped || m.timer == nil {
+		return
+	}
+	m.timer.Reset(5 * m.delay)
 }
 
 // hold stops saving the metadata file, which changed outside pedit: saving
@@ -365,8 +446,10 @@ func (m *metaFile) finish() error {
 	m.mu.Lock()
 	held := m.held
 	m.mu.Unlock()
+	m.saving.Lock()
 	out, err := m.render()
 	err = m.save(out, err, true)
+	m.saving.Unlock()
 	m.notices.stop()
 	if held {
 		return nil

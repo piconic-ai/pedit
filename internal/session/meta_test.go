@@ -306,3 +306,125 @@ func TestAHugeFileOfCommentsIsNotRead(t *testing.T) {
 	}
 	_ = f
 }
+
+func TestCommentsAreNotWrittenThroughASymlinkedDirectory(t *testing.T) {
+	// From review: a cloned repository can hold .pedit/meta as a link to
+	// elsewhere in the project.
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, ".pedit"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("..", filepath.Join(dir, ".pedit", "meta")); err != nil {
+		t.Skip("no symlinks:", err)
+	}
+	project, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer project.Close()
+	for _, create := range []bool{false, true} {
+		if b, err := openMetaFile(project, filepath.FromSlash(".pedit/meta/package.json"), create); err == nil {
+			_ = b.Close()
+			t.Fatalf("opened through the link (create %v)", create)
+		}
+	}
+	// Real directories are made as needed.
+	if err := os.Remove(filepath.Join(dir, ".pedit", "meta")); err != nil {
+		t.Fatal(err)
+	}
+	b, err := openMetaFile(project, filepath.FromSlash(".pedit/meta/a/b.md.json"), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = b.Close()
+	if info, err := os.Stat(filepath.Join(dir, ".pedit", "meta", "a")); err != nil || !info.IsDir() {
+		t.Fatalf("made %v, %v", info, err)
+	}
+}
+
+func TestPeditDoesNotShareItsFilesOfCommentsThroughALink(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".pedit", "meta"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(".pedit", "meta"), filepath.Join(dir, "alias")); err != nil {
+		t.Skip("no symlinks:", err)
+	}
+	project, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer project.Close()
+	if !keepsComments(project, filepath.Join(dir, "alias", "x.md.json")) {
+		t.Fatal("shared a file of comments through a link")
+	}
+	if keepsComments(project, filepath.Join(dir, "notes.md")) {
+		t.Fatal("refused an ordinary file")
+	}
+}
+
+func TestStopWaitsForASaveUnderWayAndSavesLast(t *testing.T) {
+	// From review: a save of older comments, under way when Stop came, must
+	// not reach the writer after Stop's own.
+	f := setup(t, "hello world!\n", setupOpts{project: true})
+	g := joinFiles(t, f.relay, f.session.URL)
+	prototest.WaitFor(t, wait, func() bool { return len(g.files()) == 2 }, "the manifest")
+	metaDoc := g.open(t, 1)
+	prototest.WaitFor(t, wait, func() bool { return g.String() == "hello world!\n" }, "the text")
+	m := f.session.sharedFile.meta
+	entered, release := make(chan struct{}, 1), make(chan struct{})
+	m.beforeSchedule = func() {
+		select {
+		case entered <- struct{}{}:
+			<-release
+		default:
+		}
+	}
+	comment(t, metaDoc, g.doc, "old", 0, 5, "first")
+	<-entered // the debounced save rendered "old" alone, and waits
+	comment(t, metaDoc, g.doc, "new", 6, 11, "second")
+	prototest.WaitFor(t, wait, func() bool {
+		var n int
+		f.session.Client.Do(func() { n = len(m.doc.GetMap(meta.CommentsKey).Keys()) })
+		return n == 2
+	}, "both comments at the host")
+	stopped := make(chan error, 1)
+	go func() { stopped <- f.session.Stop() }()
+	select {
+	case err := <-stopped:
+		t.Fatalf("Stop did not wait for the save under way: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(release)
+	if err := <-stopped; err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond) // a late write would land by now
+	if got := readMetaFile(t, metaPathOf(f, "notes.md")); len(got.Comments) != 2 {
+		t.Fatalf("saved %d comments", len(got.Comments))
+	}
+}
+
+func TestAFirstSaveThatCannotStartIsTriedAgain(t *testing.T) {
+	// From review: the comments' directory cannot be made at first; once it
+	// can, they are saved without another change.
+	f := setup(t, "hello world!\n", setupOpts{project: true, writeDelay: 10 * time.Millisecond})
+	g := joinFiles(t, f.relay, f.session.URL)
+	prototest.WaitFor(t, wait, func() bool { return len(g.files()) == 2 }, "the manifest")
+	metaDoc := g.open(t, 1)
+	prototest.WaitFor(t, wait, func() bool { return g.String() == "hello world!\n" }, "the text")
+	blocker := filepath.Join(filepath.Dir(f.file), ".pedit", "meta")
+	if err := os.MkdirAll(filepath.Dir(blocker), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(blocker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	comment(t, metaDoc, g.doc, "c1", 6, 11, "Which world?")
+	time.Sleep(100 * time.Millisecond) // a few tries fail
+	if err := os.Remove(blocker); err != nil {
+		t.Fatal(err)
+	}
+	path := metaPathOf(f, "notes.md")
+	prototest.WaitFor(t, wait, func() bool { _, err := os.Stat(path); return err == nil }, "the comments, saved on a later try")
+}
