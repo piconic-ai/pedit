@@ -1,4 +1,4 @@
-import { META_LIMITS, metaDocSize, randomBase64Url } from '@pedit/protocol'
+import { META_LIMITS, metaUse, randomBase64Url } from '@pedit/protocol'
 import * as Y from 'yjs'
 import { Store } from './store.ts'
 
@@ -95,8 +95,11 @@ export class CommentsView {
   readonly #mine = new Set<string>()
   #timer: ReturnType<typeof setTimeout> | null = null
   #shown = '[]'
-  /** The comments' measure, and whether they changed since it was worked out. */
-  #size = 0
+  /**
+   * What the comments take of the limits every peer holds them to, and
+   * whether they changed since it was worked out.
+   */
+  #use = { bytes: 0, listWork: 0 }
   #measure = true
   readonly #metaChanged = () => {
     this.#measure = true
@@ -228,13 +231,20 @@ export class CommentsView {
   #writable(): boolean {
     if (this.#opts.locked?.()) return false
     if (this.#measure) this.#measureNow()
-    return this.#size + COMMENT_LIMITS.margin < META_LIMITS.maxDocBytes
+    const { bytes, listWork } = this.#use
+    // A change adds an item to one list at most, of no more than the square
+    // root of the work, and starts a few lists of one.
+    const added = 2 * Math.sqrt(listWork) + 16
+    return (
+      bytes + COMMENT_LIMITS.margin < META_LIMITS.maxDocBytes &&
+      listWork + added <= META_LIMITS.maxListWork
+    )
   }
 
   #measureNow(): void {
     this.#measure = false
-    this.#size = metaDocSize(this.#meta)
-    this.roomForMore.set(this.#size < COMMENT_LIMITS.docBytes)
+    this.#use = metaUse(this.#meta)
+    this.roomForMore.set(this.#use.bytes < COMMENT_LIMITS.docBytes)
   }
 
   #schedule(): void {
@@ -279,9 +289,11 @@ export class CommentsView {
     const quote = thread.get('quote')
     if (typeof quote !== 'string' || quote.length > COMMENT_LIMITS.quote) return null
     // The host saves no thread without an anchor of a kind it knows.
-    if (!ANCHORS.has(String((thread.get('anchor') as { type?: unknown } | undefined)?.type)))
-      return null
-    const place = placeOf(thread.get('anchor'), at)
+    const anchor = thread.get('anchor')
+    const type =
+      typeof anchor === 'object' && anchor !== null ? (anchor as { type?: unknown }).type : null
+    if (typeof type !== 'string' || !ANCHORS.has(type)) return null
+    const place = placeOf(anchor, at)
     const live = place ? text.slice(place.from, place.to) : ''
     const state: ThreadState =
       !place || place.from >= place.to ? 'detached' : live === quote ? 'attached' : 'changed'

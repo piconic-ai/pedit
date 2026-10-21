@@ -90,10 +90,19 @@ function checkClocks(u: Scanned, known: Map<number, number>): Refusal | null {
  * internal/meta's DocSize.
  */
 export function metaDocSize(doc: Y.Doc): number {
+  return metaUse(doc).bytes
+}
+
+/**
+ * What `doc`, a metadata doc, takes of the limits checkMetaUpdate holds it
+ * to: its measure, and the work applying its lists takes. A change that
+ * adds an item to one of its lists, of n items, adds 2n + 1 to the work.
+ */
+export function metaUse(doc: Y.Doc): { bytes: number; listWork: number } {
   const s = scan(Y.encodeStateAsUpdate(doc))
   const lists = new Lists(s.recs, [])
   lists.resolve()
-  return lists.size(s.deleted)
+  return { bytes: lists.size(s.deleted), listWork: lists.work() }
 }
 
 /**
@@ -361,6 +370,12 @@ class Lists {
    */
   check(): { missing: boolean; long: boolean } {
     this.resolve()
+    const missing = this.list.slice(this.doc).includes(null)
+    return { missing, long: this.work() > META_LIMITS.maxListWork }
+  }
+
+  /** The work applying the lists takes, resolved: the sum of the squares of their lengths. */
+  work(): number {
     const { list } = this
     const lengths = new Map<string, number>()
     this.recs.forEach((r, i) => {
@@ -369,7 +384,7 @@ class Lists {
     })
     let work = 0
     for (const n of lengths.values()) work += n * n
-    return { missing: list.slice(this.doc).includes(null), long: work > META_LIMITS.maxListWork }
+    return work
   }
 
   /**
