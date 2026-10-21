@@ -46,6 +46,25 @@ export function checkMetaUpdate(doc: Y.Doc, update: Uint8Array): Refusal | null 
   } catch (e) {
     return { reason: e instanceof ScanError ? e.message : 'not a valid update' }
   }
+  const clocks = checkClocks(u, known)
+  if (clocks) return clocks
+  const state = Y.encodeStateAsUpdate(doc)
+  const have = scan(state)
+  const lists = new Lists(have.recs, freshOf(u.recs, known))
+  const { missing, long } = lists.check()
+  if (missing) return { reason: 'it needs updates not received yet', retryLater: true }
+  if (long) return { reason: 'its lists would take too long to apply' }
+  const n = size([...have.recs, ...lists.recs.slice(lists.doc)], merged(have.deleted, u.deleted))
+  if (n > META_LIMITS.maxDocBytes) return { reason: `the comments could take ${n} bytes` }
+  return null
+}
+
+/**
+ * Refuses an update that skips structs, deletes what was not received, or
+ * takes a client past maxClientClock operations, as internal/meta's
+ * CheckUpdate.
+ */
+function checkClocks(u: Scanned, known: Map<number, number>): Refusal | null {
   const end = new Map<number, number>()
   for (const r of u.recs) {
     if (!end.has(r.client) && r.clock > (known.get(r.client) ?? 0)) {
@@ -63,14 +82,6 @@ export function checkMetaUpdate(doc: Y.Doc, update: Uint8Array): Refusal | null 
       }
     }
   }
-  const state = Y.encodeStateAsUpdate(doc)
-  const have = scan(state)
-  const lists = new Lists(have.recs, freshOf(u.recs, known))
-  const { missing, long } = lists.check()
-  if (missing) return { reason: 'it needs updates not received yet', retryLater: true }
-  if (long) return { reason: 'its lists would take too long to apply' }
-  const n = size([...have.recs, ...lists.recs.slice(lists.doc)], merged(have.deleted, u.deleted))
-  if (n > META_LIMITS.maxDocBytes) return { reason: `the comments could take ${n} bytes` }
   return null
 }
 
