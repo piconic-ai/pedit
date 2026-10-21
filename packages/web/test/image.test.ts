@@ -202,6 +202,56 @@ describe('stripMetadata on JPEG photos', () => {
     expect(stripMetadata(scanned, 'image/jpeg')).toEqual(scanned)
   })
 
+  it('drops fill bytes and keeps markers that stand alone', () => {
+    const filled = bytes(
+      [0xff, 0xd8],
+      [0xff, 0xff, 0xff],
+      segment(0xdb, 'quant'),
+      [0xff, 0x01, 0xff, 0xd3],
+      [0xff, 0xda],
+      u16be(2),
+      'scan',
+      [0xff, 0xd9],
+    )
+    expect(text(stripMetadata(filled, 'image/jpeg'))).toBe(
+      text(
+        bytes(
+          [0xff, 0xd8],
+          segment(0xdb, 'quant'),
+          [0xff, 0x01, 0xff, 0xd3],
+          [0xff, 0xda],
+          u16be(2),
+          'scan',
+          [0xff, 0xd9],
+        ),
+      ),
+    )
+  })
+
+  it('keeps the orientation of the first EXIF that has one', () => {
+    const twice = bytes(
+      [0xff, 0xd8],
+      segment(0xe1, exif(1, false)),
+      segment(0xe1, exif(3, true)),
+      segment(0xe1, exif(6, false)),
+      [0xff, 0xda],
+      u16be(2),
+      'scan',
+      [0xff, 0xd9],
+    )
+    const out = stripMetadata(twice, 'image/jpeg')
+    expect(orientationOf(out)).toBe(3)
+    expect(text(out).split('Exif').length).toBe(2)
+  })
+
+  it.each([
+    ['a byte where a marker should be', [0xff, 0xd8, 0x00, 0xd9]],
+    ['a marker cut off', [0xff, 0xd8, 0xff]],
+    ['a length below two', [0xff, 0xd8, 0xff, 0xe0, 0x00, 0x01, 0xff, 0xd9]],
+  ])('refuses %s', (_, jpeg) => {
+    expect(() => stripMetadata(bytes(jpeg), 'image/jpeg')).toThrow(ImageError)
+  })
+
   it('refuses a scan that never ends', () => {
     const cut = bytes([0xff, 0xd8, 0xff, 0xda], u16be(2), 'scan')
     expect(() => stripMetadata(cut, 'image/jpeg')).toThrow(ImageError)

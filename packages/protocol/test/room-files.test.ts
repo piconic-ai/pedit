@@ -202,7 +202,12 @@ describe('RoomClient with several files', () => {
     const relay = new Relay()
     const key = await importKey(generateKey())
     const errors: unknown[] = []
-    const b = join(relay, key, { onError: (e) => errors.push(e) })
+    const heard: unknown[] = []
+    const b = join(relay, key, {
+      onError: (e) => errors.push(e),
+      onFileCanvas: (...args) => heard.push(args),
+      onFileAttachment: (...args) => heard.push(args),
+    })
     const notes = file()
     b.addFile(1, notes)
     await vi.waitFor(() => expect(b.status).toBe('connected'))
@@ -212,6 +217,11 @@ describe('RoomClient with several files', () => {
     const frames = [
       encodeMessage(MessageType.Files, new Uint8Array([9, 1, 2, 3])),
       encodeMessage(MessageType.Files, new Uint8Array([1, 1, 9, 1, 2, 3])),
+      encodeMessage(MessageType.Files, encodeFileDoc(1, MessageType.Canvas, new Uint8Array([9]))),
+      encodeMessage(
+        MessageType.Files,
+        encodeFileDoc(1, MessageType.Attachment, new Uint8Array([9])),
+      ),
     ]
     for (const [i, m] of frames.entries()) {
       newer.send(await encrypt(key, encodeFrame(sender, i + 1, m)))
@@ -220,6 +230,7 @@ describe('RoomClient with several files', () => {
     a.addFile(1, file('after'))
     await vi.waitFor(() => expect(text(notes)).toBe('after'))
     expect(errors).toEqual([])
+    expect(heard).toEqual([])
     expect(encodeFileDoc(1, MessageType.Sync, new Uint8Array()).length).toBe(3)
     newer.close()
   })

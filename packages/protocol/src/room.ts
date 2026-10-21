@@ -351,101 +351,77 @@ export class RoomClient {
   }
 
   private async receive(data: Uint8Array): Promise<void> {
-    let message: Message
-    try {
-      const frame = decodeFrame(await decrypt(this.opts.key, data))
-      if (!this.guard.accept(frame.sender, frame.counter)) throw new ReplayedFrameError()
-      message = decodeMessage(frame.message)
-    } catch (error) {
-      // A newer peer may send message types we do not know yet.
-      if (error instanceof UnknownMessageTypeError) return
-      throw error
-    }
-    const decoder = decoding.createDecoder(message.payload)
-    if (message.type === MessageType.Sync) {
-      const encoder = encoding.createEncoder()
-      syncProtocol.readSyncMessage(decoder, encoder, this.doc, this)
-      if (encoding.length(encoder) > 0) {
-        this.send(MessageType.Sync, encoding.toUint8Array(encoder))
+    const message = await this.readFrame(data)
+    if (!message) return
+    const { payload } = message
+    switch (message.type) {
+      case MessageType.Sync: {
+        const reply = readSync(payload, this.doc, this).reply
+        if (reply) this.send(MessageType.Sync, reply)
+        break
       }
-    } else if (message.type === MessageType.Awareness) {
-      awarenessProtocol.applyAwarenessUpdate(
-        this.awareness,
-        decoding.readVarUint8Array(decoder),
-        this,
-      )
-    } else if (message.type === MessageType.Files) {
-      this.receiveFiles(message.payload)
-    } else if (message.type === MessageType.Canvas) {
-      let canvas: CanvasMessage
-      try {
-        canvas = decodeCanvas(message.payload)
-      } catch (error) {
-        // Likewise for canvas kinds.
-        if (error instanceof UnknownCanvasKindError) return
-        throw error
+      case MessageType.Awareness:
+        awarenessProtocol.applyAwarenessUpdate(
+          this.awareness,
+          decoding.readVarUint8Array(decoding.createDecoder(payload)),
+          this,
+        )
+        break
+      case MessageType.Files:
+        this.receiveFiles(payload)
+        break
+      case MessageType.Canvas: {
+        const canvas = decodeKnown(decodeCanvas, payload, UnknownCanvasKindError)
+        if (canvas) this.opts.onCanvas?.(canvas)
+        break
       }
-      this.opts.onCanvas?.(canvas)
-    } else {
-      let attachment: Attachment
-      try {
-        attachment = decodeAttachment(message.payload)
-      } catch (error) {
-        // Likewise for attachment kinds.
-        if (error instanceof UnknownAttachmentKindError) return
-        throw error
+      default: {
+        const attachment = decodeKnown(decodeAttachment, payload, UnknownAttachmentKindError)
+        if (attachment) this.opts.onAttachment?.(attachment)
       }
-      this.opts.onAttachment?.(attachment)
     }
   }
 
+  /** Decrypts a frame, taking it once, and decodes its message; null for an unknown type. */
+  private async readFrame(data: Uint8Array): Promise<Message | null> {
+    const frame = decodeFrame(await decrypt(this.opts.key, data))
+    if (!this.guard.accept(frame.sender, frame.counter)) throw new ReplayedFrameError()
+    // A newer peer may send message types we do not know yet.
+    return decodeKnown(decodeMessage, frame.message, UnknownMessageTypeError)
+  }
+
   private receiveFiles(payload: Uint8Array): void {
-    let m: ReturnType<typeof decodeFiles>
-    try {
-      m = decodeFiles(payload)
-    } catch (error) {
-      // Likewise for files kinds, and message types about a file.
-      if (error instanceof UnknownFilesKindError || error instanceof UnknownMessageTypeError) return
-      throw error
-    }
+    // As in readFrame, for files kinds and message types about a file.
+    const m = decodeKnown(decodeFiles, payload, UnknownFilesKindError, UnknownMessageTypeError)
+    if (!m) return
     if (m.kind === 'manifest') {
       this.opts.onManifest?.(m.files)
       return
     }
-    if (m.type === MessageType.Sync) {
-      const f = this.files.get(m.file)
-      if (!f) return
-      const encoder = encoding.createEncoder()
-      const kind = syncProtocol.readSyncMessage(
-        decoding.createDecoder(m.payload),
-        encoder,
-        f.doc,
-        this,
-      )
-      if (encoding.length(encoder) > 0)
-        this.sendFile(m.file, MessageType.Sync, encoding.toUint8Array(encoder))
-      if (kind === syncProtocol.messageYjsSyncStep2 && !f.synced) {
-        f.synced = true
-        this.opts.onFileSynced?.(m.file)
+    switch (m.type) {
+      case MessageType.Sync:
+        this.receiveFileSync(m.file, m.payload)
+        break
+      case MessageType.Canvas: {
+        const canvas = decodeKnown(decodeCanvas, m.payload, UnknownCanvasKindError)
+        if (canvas) this.opts.onFileCanvas?.(m.file, canvas)
+        break
       }
-    } else if (m.type === MessageType.Canvas) {
-      let canvas: CanvasMessage
-      try {
-        canvas = decodeCanvas(m.payload)
-      } catch (error) {
-        if (error instanceof UnknownCanvasKindError) return
-        throw error
+      default: {
+        const attachment = decodeKnown(decodeAttachment, m.payload, UnknownAttachmentKindError)
+        if (attachment) this.opts.onFileAttachment?.(m.file, attachment)
       }
-      this.opts.onFileCanvas?.(m.file, canvas)
-    } else {
-      let attachment: Attachment
-      try {
-        attachment = decodeAttachment(m.payload)
-      } catch (error) {
-        if (error instanceof UnknownAttachmentKindError) return
-        throw error
-      }
-      this.opts.onFileAttachment?.(m.file, attachment)
+    }
+  }
+
+  private receiveFileSync(id: number, payload: Uint8Array): void {
+    const f = this.files.get(id)
+    if (!f) return
+    const { kind, reply } = readSync(payload, f.doc, this)
+    if (reply) this.sendFile(id, MessageType.Sync, reply)
+    if (kind === syncProtocol.messageYjsSyncStep2 && !f.synced) {
+      f.synced = true
+      this.opts.onFileSynced?.(id)
     }
   }
 
@@ -592,6 +568,36 @@ interface AwarenessChanges {
   added: number[]
   updated: number[]
   removed: number[]
+}
+
+/**
+ * Decodes a payload, or returns null when it throws one of `unknown`: a kind
+ * this version does not know yet, from a newer peer, which is skipped.
+ */
+function decodeKnown<T>(
+  decode: (payload: Uint8Array) => T,
+  payload: Uint8Array,
+  ...unknown: (abstract new (
+    ...args: never[]
+  ) => Error)[]
+): T | null {
+  try {
+    return decode(payload)
+  } catch (error) {
+    if (unknown.some((type) => error instanceof type)) return null
+    throw error
+  }
+}
+
+/** Applies a sync message to `doc`, with the reply it calls for, if any. */
+function readSync(
+  payload: Uint8Array,
+  doc: Y.Doc,
+  origin: unknown,
+): { kind: number; reply: Uint8Array | null } {
+  const encoder = encoding.createEncoder()
+  const kind = syncProtocol.readSyncMessage(decoding.createDecoder(payload), encoder, doc, origin)
+  return { kind, reply: encoding.length(encoder) > 0 ? encoding.toUint8Array(encoder) : null }
 }
 
 // Node.js (undici) accepts `{ headers }` as the second argument; browsers take

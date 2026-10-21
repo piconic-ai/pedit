@@ -72,60 +72,69 @@ export function parse(text: string, delimiter = ','): Table {
   const eol = /\r?\n/.exec(text)?.[0] ?? '\n'
   let i = 0
   while (i < text.length) {
-    const rowFrom = i
-    const cells: Cell[] = []
-    let rowTo = i
-    let end = i
-    for (;;) {
-      const from = i
-      let value = ''
-      let quoted = false
-      if (text[i] === '"') {
-        quoted = true
-        i++
-        for (;;) {
-          if (i >= text.length) {
-            throw new CsvError('A quoted value is never closed', lineAt(text, from))
-          }
-          if (text[i] === '"') {
-            if (text[i + 1] === '"') {
-              value += '"'
-              i += 2
-              continue
-            }
-            i++
-            break
-          }
-          value += text[i]
-          i++
-        }
-        const next = text[i]
-        if (i < text.length && next !== delimiter && next !== '\n' && next !== '\r') {
-          throw new CsvError('Text follows a closing quote', lineAt(text, i))
-        }
-      } else {
-        while (i < text.length) {
-          const c = text[i]
-          if (c === delimiter || c === '\n' || c === '\r') break
-          value += c
-          i++
-        }
-      }
-      cells.push({ from, to: i, value, quoted })
-      if (text[i] === delimiter) {
-        i++
-        continue
-      }
-      rowTo = i
-      if (text[i] === '\r' && text[i + 1] === '\n') i += 2
-      else if (text[i] === '\n' || text[i] === '\r') i += 1
-      end = i
-      break
-    }
-    rows.push({ from: rowFrom, to: rowTo, end, cells })
+    const row = parseRow(text, i, delimiter)
+    rows.push(row)
+    i = row.end
   }
   const columns = rows.reduce((n, r) => Math.max(n, r.cells.length), 0)
   return { delimiter, eol, rows, columns, text }
+}
+
+function isBreak(c: string | undefined): boolean {
+  return c === '\n' || c === '\r'
+}
+
+/** One row starting at `from`, up to and including its line break. */
+function parseRow(text: string, from: number, delimiter: string): Row {
+  const cells: Cell[] = []
+  let i = from
+  for (;;) {
+    const cell =
+      text[i] === '"' ? parseQuoted(text, i, delimiter) : parseUnquoted(text, i, delimiter)
+    cells.push(cell)
+    i = cell.to
+    if (text[i] !== delimiter) break
+    i++
+  }
+  return { from, to: i, end: skipBreak(text, i), cells }
+}
+
+/** A quoted cell starting at the opening quote at `from`. */
+function parseQuoted(text: string, from: number, delimiter: string): Cell {
+  let value = ''
+  let i = from + 1
+  for (;;) {
+    if (i >= text.length) {
+      throw new CsvError('A quoted value is never closed', lineAt(text, from))
+    }
+    if (text[i] !== '"') {
+      value += text[i]
+      i++
+    } else if (text[i + 1] === '"') {
+      value += '"'
+      i += 2
+    } else {
+      i++
+      break
+    }
+  }
+  if (i < text.length && text[i] !== delimiter && !isBreak(text[i])) {
+    throw new CsvError('Text follows a closing quote', lineAt(text, i))
+  }
+  return { from, to: i, value, quoted: true }
+}
+
+function parseUnquoted(text: string, from: number, delimiter: string): Cell {
+  let i = from
+  while (i < text.length && text[i] !== delimiter && !isBreak(text[i])) i++
+  return { from, to: i, value: text.slice(from, i), quoted: false }
+}
+
+/** Where the text continues after a line break (CRLF, LF or CR) at `i`. */
+function skipBreak(text: string, i: number): number {
+  if (text[i] === '\r' && text[i + 1] === '\n') return i + 2
+  if (isBreak(text[i])) return i + 1
+  return i
 }
 
 /** Parses, or returns the error instead of throwing it. */
