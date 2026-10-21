@@ -19,10 +19,12 @@ func TestTrackerDoesNotAskAgainForWhatItCannotPlace(t *testing.T) {
 	content.Transact(func(txn *crdt.Transaction) { text.Delete(txn, 1, 1) })
 	unknown := encodePosition(crdt.RelativePosition{Item: &crdt.ID{Client: 7, Clock: 3}})
 
-	if _, ok := tr.resolve(gone); ok {
+	tr.learn(gone)
+	tr.learn(unknown)
+	if _, ok := tr.lookup(gone); ok {
 		t.Fatal("placed a deleted character")
 	}
-	if _, ok := tr.resolve(unknown); ok {
+	if _, ok := tr.lookup(unknown); ok {
 		t.Fatal("placed a character not received")
 	}
 	if !tr.gone[gone] || tr.unknown[unknown] != tr.gen {
@@ -30,13 +32,13 @@ func TestTrackerDoesNotAskAgainForWhatItCannotPlace(t *testing.T) {
 	}
 	// Neither costs a try again; the unknown one does once the text changes.
 	tried := tr.tried
-	tr.resolve(gone)
-	tr.resolve(unknown)
+	tr.learn(gone)
+	tr.learn(unknown)
 	if tr.tried != tried {
 		t.Fatalf("tried %d, then %d", tried, tr.tried)
 	}
 	content.Transact(func(txn *crdt.Transaction) { text.Insert(txn, 0, "x", nil) })
-	tr.resolve(unknown)
+	tr.learn(unknown)
 	if tr.tried != tried+1 {
 		t.Fatalf("did not ask again after the text changed: %d", tr.tried)
 	}
@@ -95,6 +97,8 @@ func followBatch(t *testing.T, content *crdt.Doc, at, n int) {
 	})
 	tr := NewTracker(content)
 	defer tr.Close()
+	// However slow the test runs (such as with -race), no time passes.
+	tr.now = func() time.Time { return time.Unix(1, 0) }
 	tr.Learn(doc)
 	last := at + 3*(n-1) + 1
 	content.Transact(func(txn *crdt.Transaction) { text.Delete(txn, last, 1) })
@@ -102,6 +106,93 @@ func followBatch(t *testing.T, content *crdt.Doc, at, n int) {
 	got := f.Comments[fmt.Sprintf("t%03d", n-1)].Anchor.Text
 	if got == nil || got.Exact != "c" || got.Offset != last {
 		t.Fatalf("saved %+v", got)
+	}
+}
+
+func TestTrackerKeysAPositionHoweverItIsWritten(t *testing.T) {
+	// From review: base64 with a line break in it, and an assoc of 5, name
+	// the same position as pedit's own encoding with assoc 0.
+	content := crdt.New()
+	text := content.GetText(ContentText)
+	content.Transact(func(txn *crdt.Transaction) { text.Insert(txn, 0, "abc", nil) })
+	tr := NewTracker(content)
+	defer tr.Close()
+	p := crdt.CreateRelativePositionFromIndex(text, 1, 0)
+	own := encodePosition(p)
+	p.Assoc = 5
+	other := encodePosition(p)
+	other = other[:4] + "\n" + other[4:]
+	for _, k := range []string{own, other} {
+		key, ok := canonical(k)
+		if !ok || key != own {
+			t.Fatalf("canonical(%q) = %q, %v", k, key, ok)
+		}
+	}
+	tr.learn(own)
+	if i, ok := tr.lookup(other); !ok || i != 1 {
+		t.Fatalf("lookup = %d, %v", i, ok)
+	}
+}
+
+func TestLearnStopsPlacingAfterMaxLearn(t *testing.T) {
+	content := crdt.New()
+	text := content.GetText(ContentText)
+	content.Transact(func(txn *crdt.Transaction) { text.Insert(txn, 0, strings.Repeat("abc", 4), nil) })
+	doc := crdt.New()
+	comments := doc.GetMap(CommentsKey)
+	doc.Transact(func(txn *crdt.Transaction) {
+		for i := range 4 {
+			thread := crdt.NewMapPrelim()
+			comments.Set(txn, fmt.Sprintf("t%d", i), thread)
+			thread.Set(txn, AnchorKey, map[string]any{
+				typeKey:  AnchorText,
+				startKey: encodePosition(crdt.CreateRelativePositionFromIndex(text, 3*i, 0)),
+				endKey:   encodePosition(crdt.CreateRelativePositionFromIndex(text, 3*i+1, -1)),
+			})
+		}
+	})
+	tr := NewTracker(content)
+	defer tr.Close()
+	// Each look at the clock is a quarter of maxLearn later.
+	now := time.Unix(1, 0)
+	tr.now = func() time.Time {
+		now = now.Add(maxLearn / 4)
+		return now
+	}
+	tr.Learn(doc)
+	if tr.tried == 0 || tr.tried >= 8 {
+		t.Fatalf("placed %d of 8 positions", tr.tried)
+	}
+	// The next Learn places the rest.
+	tr.now = time.Now
+	tr.Learn(doc)
+	if len(tr.pos) != 8 {
+		t.Fatalf("follows %d of 8 positions", len(tr.pos))
+	}
+}
+
+func TestReadFollowsNoNewPosition(t *testing.T) {
+	// From review: Read runs outside the time protocol.AddCheckedFile
+	// bounds, so only Learn may ask ygo.
+	content := crdt.New()
+	text := content.GetText(ContentText)
+	content.Transact(func(txn *crdt.Transaction) { text.Insert(txn, 0, "abc", nil) })
+	doc := crdt.New()
+	comments := doc.GetMap(CommentsKey)
+	doc.Transact(func(txn *crdt.Transaction) {
+		thread := crdt.NewMapPrelim()
+		comments.Set(txn, "t", thread)
+		thread.Set(txn, AnchorKey, map[string]any{
+			typeKey:  AnchorText,
+			startKey: encodePosition(crdt.CreateRelativePositionFromIndex(text, 1, 0)),
+			endKey:   encodePosition(crdt.CreateRelativePositionFromIndex(text, 3, -1)),
+		})
+	})
+	tr := NewTracker(content)
+	defer tr.Close()
+	Read(doc, &File{}, tr)
+	if tr.tried != 0 {
+		t.Fatalf("Read asked ygo for %d positions", tr.tried)
 	}
 }
 

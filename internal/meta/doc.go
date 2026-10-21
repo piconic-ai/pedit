@@ -383,8 +383,8 @@ func placeNow(kind string, raw map[string]any, t *fileText) (Anchor, bool) {
 // selectorAt is the place between the start and end positions of r as it is
 // now, or false when it cannot be told. Only a cell may be empty.
 func selectorAt(r map[string]any, empty bool, t *fileText) (*Selector, bool) {
-	start, ok1 := t.resolve(r[startKey])
-	end, ok2 := t.resolve(r[endKey])
+	start, ok1 := t.lookup(r[startKey])
+	end, ok2 := t.lookup(r[endKey])
 	if !ok1 || !ok2 || start > end || end > len(t.units) {
 		return nil, false
 	}

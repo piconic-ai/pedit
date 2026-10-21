@@ -116,7 +116,11 @@ of a deleted run cannot be told from outside it, so the host does not ask
 ygo then: a `Tracker` takes each position while its character is still in the
 text (as the room makes it, or as it arrives) and follows it through every
 change to the text, as Yjs would place it. The one case it cannot follow is
-text inserted concurrently right where a deleted character was. An anchor
+text inserted concurrently right where a deleted character was. Placing a
+position costs time in the length of the text, deleted characters included,
+so only the host's handling of each update of the comments places new ones,
+for up to a second per update, and under the time the room's checks allow
+(see below); saving follows only those already placed. An anchor
 whose text is gone keeps the place it last saved, or, for a thread made this
 session, its quote, so it can be found if the text comes back. The doc's
 shape and these rules are in `internal/meta/doc.go` and `track.go`.

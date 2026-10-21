@@ -161,6 +161,7 @@ func TestReadSavesAThreadAGuestMade(t *testing.T) {
 		messages.Set(txn, "m2", map[string]any{"author": "Bo", "time": "now", "body": "dropped"})
 		messages.Set(txn, "m3", "not a message")
 	})
+	trackerOf(doc).Learn(m)
 	got := meta.Read(m, &meta.File{Path: "a.md"}, trackerOf(doc))
 	if s := selectorOf(t, got, "g1"); s != (meta.Selector{Exact: "two", Prefix: "one ", Suffix: " three\n", Offset: 4}) {
 		t.Fatalf("selector %+v", s)

@@ -2,6 +2,7 @@ package meta
 
 import (
 	"sync"
+	"time"
 
 	"github.com/reearth/ygo/crdt"
 )
@@ -35,6 +36,7 @@ type Tracker struct {
 	gen     uint64
 	// tried counts the positions asked of ygo, for tests.
 	tried int
+	now   func() time.Time // time.Now; tests set it
 }
 
 // tracked is a position: its index in the text, and whether its character
@@ -54,6 +56,7 @@ func NewTracker(content *crdt.Doc) *Tracker {
 		pos:     map[string]*tracked{},
 		gone:    map[string]bool{},
 		unknown: map[string]uint64{},
+		now:     time.Now,
 	}
 	t.stop = t.text.Observe(func(e crdt.YTextEvent) { t.apply(e.Delta) })
 	return t
@@ -69,48 +72,67 @@ func (t *Tracker) add(key string, index, assoc int) {
 	t.pos[key] = &tracked{index: index, assoc: assoc}
 }
 
-// resolve returns where the position key is now. One not tracked yet is
-// taken from ygo, if its character is still in the text; the caller holds
-// the lock remote updates are applied under, so the text does not change
-// meanwhile.
-func (t *Tracker) resolve(key any) (int, bool) {
-	s, ok := key.(string)
+// lookup returns where the position key is now, if the Tracker follows it.
+func (t *Tracker) lookup(key any) (int, bool) {
+	s, ok := canonical(key)
 	if !ok {
 		return 0, false
 	}
 	t.mu.Lock()
+	defer t.mu.Unlock()
 	p, ok := t.pos[s]
-	var index int
-	if ok {
-		index = p.index
+	if !ok {
+		return 0, false
 	}
-	gen, unknown := t.unknown[s]
-	skip := !ok && (t.gone[s] || unknown && gen == t.gen)
-	if !ok && !skip {
+	return p.index, true
+}
+
+// learn follows the position key, canonical, from now if it is not followed
+// yet and its character is still in the text. A position it cannot place is
+// not asked of ygo again until that could answer otherwise. The caller holds
+// the lock remote updates are applied under, so the text does not change
+// meanwhile.
+func (t *Tracker) learn(key string) {
+	t.mu.Lock()
+	_, ok := t.pos[key]
+	gen, unknown := t.unknown[key]
+	skip := ok || t.gone[key] || unknown && gen == t.gen
+	if !skip {
 		t.tried++
 	}
 	t.mu.Unlock()
-	if ok {
-		return index, true
-	}
 	if skip {
-		return 0, false
+		return
 	}
-	index, assoc, found := t.place(s)
+	index, assoc, found := t.place(key)
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	switch found {
 	case placed:
-		t.pos[s] = &tracked{index: index, assoc: assoc}
-		delete(t.unknown, s)
-		return index, true
+		t.pos[key] = &tracked{index: index, assoc: assoc}
+		delete(t.unknown, key)
 	case notYet:
-		t.unknown[s] = t.gen
+		t.unknown[key] = t.gen
 	default:
-		t.gone[s] = true
-		delete(t.unknown, s)
+		t.gone[key] = true
+		delete(t.unknown, key)
 	}
-	return 0, false
+}
+
+// canonical is the position v, a base64 string, encoded as pedit encodes
+// positions, so that one position has one key however a peer wrote it.
+// Only the sign of assoc counts.
+func canonical(v any) (string, bool) {
+	p, ok := decodePosition(v)
+	if !ok {
+		return "", false
+	}
+	if p.Assoc < 0 {
+		p.Assoc = -1
+	} else {
+		p.Assoc = 0
+	}
+	return encodePosition(p), true
 }
 
 // What place found.
@@ -151,34 +173,53 @@ func (t *Tracker) place(key string) (int, int, int) {
 	return abs.Index, p.Assoc, placed
 }
 
-// Learn tracks the positions of the anchors in doc, a metadata doc, that it
-// does not track yet, while their characters are still in the text, and
-// forgets those of anchors gone from it. It places every one, however long
-// that takes (up to MaxThreads threads of up to four positions, each in time
-// in the length of the text): one left for later could have its character
-// deleted first, and be lost. What bounds the work is how many updates a
-// peer may have checked and applied (protocol.AddCheckedFile). It looks at the threads Read may
-// save (candidates). Call it on each update to doc, under the lock
-// remote updates are applied under, so that a position is known before an
-// edit deletes its character.
+// Learn follows the positions of the anchors in doc, a metadata doc, that it
+// does not follow yet, while their characters are still in the text, and
+// forgets those of anchors gone from it. It looks at the threads Read may
+// save (candidates), and only at the positions their kind of anchor has.
+// Call it on each update to doc, under the lock remote updates are applied
+// under, so that a position is known before an edit deletes its character:
+// Read follows no new position.
+//
+// Each position costs time in the length of the text, deleted characters
+// included, and one update can name thousands. Learn places them for up to
+// maxLearn, which is far more than any honest update of an ordinary text
+// takes; past that, the update's other positions are tried again by the
+// next Learn, and lost if their characters are deleted first. How often a
+// peer can make the host Learn is bounded by protocol.AddCheckedFile.
 func (t *Tracker) Learn(doc *crdt.Doc) {
+	deadline := t.now().Add(maxLearn)
 	keys := map[string]bool{}
 	for _, thread := range candidates(doc) {
 		raw, _ := get[map[string]any](thread, AnchorKey)
-		for _, r := range []any{raw, raw[fromKey], raw[toKey]} {
-			r, ok := r.(map[string]any)
+		for _, k := range positionsOf(raw) {
+			s, ok := canonical(k)
 			if !ok {
 				continue
 			}
-			for _, k := range []any{r[startKey], r[endKey]} {
-				if s, ok := k.(string); ok {
-					keys[s] = true
-					t.resolve(s)
-				}
+			keys[s] = true
+			if t.now().Before(deadline) {
+				t.learn(s)
 			}
 		}
 	}
 	t.keep(keys)
+}
+
+// maxLearn is how long one Learn may place positions.
+const maxLearn = time.Second
+
+// positionsOf lists the positions an anchor of the doc has, by its kind.
+func positionsOf(raw map[string]any) []any {
+	switch raw[typeKey] {
+	case AnchorText:
+		return []any{raw[startKey], raw[endKey]}
+	case AnchorCells:
+		from, _ := raw[fromKey].(map[string]any)
+		to, _ := raw[toKey].(map[string]any)
+		return []any{from[startKey], from[endKey], to[startKey], to[endKey]}
+	}
+	return nil
 }
 
 // keep forgets every position but those in keys.
