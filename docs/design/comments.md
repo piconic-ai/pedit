@@ -96,8 +96,8 @@ Each kind of file anchors on what survives its edits:
   marks the nodes open threads are on.
 
 A thread is **attached** when its anchor resolves to what the quote says,
-**changed** when it resolves to something else, **detached** when its place is
-gone, and **pending** while the content it names has not arrived.
+**changed** when it resolves to something else, and **detached** when its
+place is gone, or the content it names has not arrived yet.
 
 ## The next session
 
@@ -199,6 +199,30 @@ else: a guest, or a teammate through Git. Every peer checks it the same way.
 - A metadata file that breaks these rules is left untouched, and its shared
   file offers no comments.
 
+## How the goals of #121 are met
+
+- **Comment on text, cells or a node, live, with replies and resolving:**
+  the web editor's comments panel (`packages/web/src/comments.ts`,
+  `components/CommentsPanel.tsx`) on the selection, the table's cells or the
+  board's node; marks in the text (`commentmarks.ts`), the table and the
+  board. Tests: `packages/web/test/comments*.test.ts`.
+- **Never in the file, only ciphertext on the relay:** the comments are a
+  doc of their own, a `meta` file of the room (`internal/protocol/files.go`,
+  `packages/protocol/src/files.ts`), synced and encrypted as every file is.
+- **Outlive the session, re-anchored:** the host saves them to
+  `.pedit/meta/<path>.json` (`internal/session/meta.go`) and finds each place
+  again by its saved text (`internal/meta/doc.go`, `Load`). Tests:
+  `internal/meta/doc_test.go`, `internal/session/meta_test.go`.
+- **Follow edits, from the room or from disk, alike on every peer:** anchors
+  are Yjs positions, resolved with `followUndoneDeletions` off; the host
+  follows them through every change to the text, its own disk writes
+  included (`internal/meta/track.go`), and every peer checks every update to
+  the comments by the same rules (`internal/meta/check.go`,
+  `packages/protocol/src/meta.ts`), so all hold the same doc.
+- **Older clients keep working, no version bump:** a peer leaves out a file
+  whose format it does not know (#113), so an older browser or CLI never
+  sees the comments' file.
+
 ## Not yet
 
 - Following a renamed file (a `pedit doctor` could list and repair).
@@ -206,4 +230,6 @@ else: a guest, or a teammate through Git. Every peer checks it the same way.
 - Merging edits made to the metadata file on disk while it is shared: pedit
   stops writing it and says so.
 - Comments in the Markdown preview, on canvas edges, or in a CLI guest.
+- A pending state, for a thread whose content has not arrived yet: it shows
+  as gone until it does.
 - Comment-only links (#122).
