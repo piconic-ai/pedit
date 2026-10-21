@@ -398,18 +398,17 @@ func placeNow(kind string, raw map[string]any, t *fileText) (Anchor, bool) {
 }
 
 // selectorAt is the place between the start and end positions of r as it is
-// now, or false when it cannot be told. Only a cell may be empty. A cell's
-// place takes in what is typed at its edges, a row or column inserted
-// before it too: the delimiters and line breaks it starts with are left
-// out, as the web editor leaves them out to find the cell.
+// now, or false when it cannot be told. Only a cell may be empty.
 func selectorAt(r map[string]any, cell bool, t *fileText) (*Selector, bool) {
 	start, ok1 := t.lookup(r[startKey])
 	end, ok2 := t.lookup(r[endKey])
 	if !ok1 || !ok2 || start > end || end > len(t.units) {
 		return nil, false
 	}
-	for cell && start < end && t.edge(t.units[start]) {
-		start++
+	if cell {
+		if start, end, ok1 = t.cellIn(start, end); !ok1 {
+			return nil, false
+		}
 	}
 	exact := t.units[start:end]
 	if len(exact) > MaxQuote {
@@ -422,6 +421,42 @@ func selectorAt(r map[string]any, cell bool, t *fileText) (*Selector, bool) {
 		Offset: start,
 	}
 	return s, s.check() == nil && (s.Exact != "" || cell)
+}
+
+// cellIn is the cell a cell's place, [start, end), holds now, as the web
+// editor finds it. The place takes in what is typed at its edges, a row or
+// column inserted beside it too, so the cell starts past the delimiters and
+// line breaks the place starts with, and ends at its first edge, or at the
+// closing quote of a quoted cell. It looks at no more than MaxQuote code
+// units for either, as no more is saved, and is false past them.
+func (t *fileText) cellIn(start, end int) (int, int, bool) {
+	limit := min(end, start+MaxQuote+1)
+	for start < limit && t.edge(t.units[start]) {
+		start++
+	}
+	if start == limit && limit < end {
+		return 0, 0, false
+	}
+	limit = min(end, start+MaxQuote+1)
+	i := start
+	if i < limit && t.units[i] == '"' {
+		// Past the closing quote; a doubled quote is one inside.
+		for i++; i < limit; i++ {
+			if t.units[i] == '"' {
+				if i+1 < limit && t.units[i+1] == '"' {
+					i++
+					continue
+				}
+				i++
+				break
+			}
+		}
+	} else {
+		for i < limit && !t.edge(t.units[i]) {
+			i++
+		}
+	}
+	return start, i, i < start+MaxQuote+1
 }
 
 // clip keeps MaxContext code units of the end of s (or its start), without

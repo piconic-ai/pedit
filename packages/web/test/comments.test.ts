@@ -353,3 +353,33 @@ describe('comments on cells', () => {
     expect(only(shown()).state).toBe('attached')
   })
 })
+
+describe('comments on cells, from a peer', () => {
+  it('places threads over a long run of delimiters in time', () => {
+    // From review: a line of delimiters, and threads whose places took in
+    // all of it, made each refresh walk the line once per thread.
+    const n = 200_000
+    const { meta, view, text } = setup(','.repeat(n), ',')
+    const b64 = (index: number, assoc: number) =>
+      btoa(
+        String.fromCharCode(
+          ...Y.encodeRelativePosition(Y.createRelativePositionFromTypeIndex(text, index, assoc)),
+        ),
+      )
+    meta.transact(() => {
+      for (let i = 0; i < 500; i++) {
+        const thread = new Y.Map<unknown>()
+        meta.getMap('comments').set(`t${String(i).padStart(4, '0')}`, thread)
+        const place =
+          i % 2 ? { start: b64(1, -1), end: b64(n, 0) } : { start: b64(n, -1), end: b64(n, 0) }
+        thread.set('anchor', { type: 'cells', from: place, to: place })
+        thread.set('quote', '')
+        thread.set('messages', new Y.Map())
+      }
+    })
+    const began = performance.now()
+    view.refresh()
+    expect(performance.now() - began).toBeLessThan(1000)
+    expect(view.threads.get()).toHaveLength(500)
+  })
+})

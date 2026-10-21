@@ -448,3 +448,56 @@ func TestReadLeavesOutWhatARowOrColumnInsertedBeforeACellBrought(t *testing.T) {
 		}
 	}
 }
+
+func TestReadSavesTheCellAPlaceHolds(t *testing.T) {
+	// What is typed after a cell comes into its place too, and the cell
+	// ends at its first edge, or its closing quote.
+	for _, tc := range []struct{ text, insert, want string }{
+		{"a,b\n", ",x", "a"},
+		{"a,b\n", "\"q,\"\"r\"", "a\"q"}, // not quoted at its start: up to the comma
+	} {
+		doc, text := content(tc.text)
+		m := crdt.New()
+		place := map[string]any{"start": pos(text, 0, -1), "end": pos(text, 1, 0)}
+		guestThread(t, m, text, "c", map[string]any{"type": "cells", "from": place, "to": place}, "a")
+		trackerOf(doc).Learn(m)
+		doc.Transact(func(txn *crdt.Transaction) { text.Insert(txn, 1, tc.insert, nil) })
+		got := meta.Read(m, &meta.File{Path: "a.csv"}, trackerOf(doc))
+		if a := got.Comments["c"].Anchor; a.From == nil || a.From.Exact != tc.want {
+			t.Errorf("%q: saved %+v", tc.insert, a.From)
+		}
+	}
+	// A quoted cell, with a comma and a doubled quote in it.
+	doc, text := content("\"a,\"\"b\",c\n")
+	m := crdt.New()
+	place := map[string]any{"start": pos(text, 0, -1), "end": pos(text, 8, 0)}
+	guestThread(t, m, text, "q", map[string]any{"type": "cells", "from": place, "to": place}, "")
+	trackerOf(doc).Learn(m)
+	doc.Transact(func(txn *crdt.Transaction) { text.Insert(txn, 8, ",x", nil) })
+	got := meta.Read(m, &meta.File{Path: "a.csv"}, trackerOf(doc))
+	if a := got.Comments["q"].Anchor; a.From == nil || a.From.Exact != "\"a,\"\"b\"" {
+		t.Errorf("quoted: saved %+v", a.From)
+	}
+}
+
+func TestReadLooksNoFurtherThanItSaves(t *testing.T) {
+	// From review: a place over a long run of delimiters was walked whole
+	// on every save, under the lock updates are applied under.
+	n := 1 << 20
+	doc, text := content(strings.Repeat(",", n))
+	m := crdt.New()
+	place := map[string]any{"start": pos(text, 1, -1), "end": pos(text, n, 0)}
+	for i := range 200 {
+		guestThread(t, m, text, fmt.Sprintf("c%03d", i), map[string]any{"type": "cells", "from": place, "to": place}, "")
+	}
+	tr := trackerOf(doc)
+	tr.Learn(m)
+	began := time.Now()
+	got := meta.Read(m, &meta.File{Path: "a.csv"}, tr)
+	if d := time.Since(began); d > 200*time.Millisecond {
+		t.Errorf("Read took %v", d)
+	}
+	if len(got.Comments) != 0 {
+		t.Errorf("saved %d threads with no place to tell", len(got.Comments))
+	}
+}

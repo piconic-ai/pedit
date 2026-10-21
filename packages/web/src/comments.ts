@@ -307,6 +307,7 @@ export class CommentsView {
     }
     let index: TextIndex | null = null
     let table: Table | null | undefined
+    let cells: Cells | null | undefined
     const here: Here = {
       text: this.#text.toString(),
       index: () => {
@@ -316,6 +317,13 @@ export class CommentsView {
       table: () => {
         if (table === undefined) table = this.#table()
         return table
+      },
+      cells: () => {
+        if (cells === undefined) {
+          const t = here.table()
+          cells = t && cellsOf(t)
+        }
+        return cells
       },
     }
     const shown: ShownThread[] = []
@@ -412,6 +420,30 @@ interface Here {
   text: string
   index: () => TextIndex
   table: () => Table | null
+  cells: () => Cells | null
+}
+
+/**
+ * Every cell of a table in the order of the text, and for each the first
+ * cell from it on that is not empty, so a place that took in a run of
+ * delimiters is followed past it at once.
+ */
+interface Cells {
+  table: Table
+  all: Array<{ cell: Cell; at: Position }>
+  full: number[]
+}
+
+function cellsOf(table: Table): Cells {
+  const all = table.rows.flatMap((r, row) =>
+    r.cells.map((cell, col) => ({ cell, at: { row, col } })),
+  )
+  const full = new Array<number>(all.length)
+  for (let i = all.length - 1; i >= 0; i--) {
+    const { cell } = all[i]!
+    full[i] = cell.to > cell.from || i === all.length - 1 ? i : full[i + 1]!
+  }
+  return { table, all, full }
 }
 
 interface Place {
@@ -459,26 +491,39 @@ function ends(c: string | undefined, delimiter: string): boolean {
 function cellOf(v: unknown, here: Here): { cell: Cell; at: Position } | null {
   if (typeof v !== 'object' || v === null) return null
   const p = v as Record<string, unknown>
-  let start = here.index().resolve(p.start)
+  const start = here.index().resolve(p.start)
   const end = start === null ? null : here.index().resolve(p.end)
-  const table = here.table()
-  if (start === null || end === null || !table) return null
-  const { text, delimiter } = table
-  while (start < end && ends(text[start], delimiter)) start++
-  // The last row that starts at or before it.
+  const cells = here.cells()
+  if (start === null || end === null || !cells) return null
+  const { all, full, table } = cells
+  // Found by halves, not by walking what the place took in: between cells
+  // there are only delimiters and line breaks, so a start in no cell's text
+  // is before the next cell, and empty cells after it are delimiters too.
+  let i = firstFrom(all, start, (c) => c.cell.from)
+  if (i > 0 && all[i - 1]!.cell.to > start) return null
+  if (i < all.length && all[i]!.cell.to === all[i]!.cell.from && all[i]!.cell.from < end) {
+    const next = all[full[i]!]!.cell
+    const at = Math.min(end, next.to > next.from ? next.from : end)
+    i = firstFrom(all, at, (c) => c.cell.from)
+    if (all[i]?.cell.from !== at) return null
+  }
+  const found = all[i]
+  if (!found) return null
+  const { cell } = found
+  if (cell.to > end || (cell.to < end && !ends(table.text[cell.to], table.delimiter))) return null
+  return found
+}
+
+/** The first of `items`, sorted by `key`, whose key is at least `at`; their length for none. */
+function firstFrom<T>(items: readonly T[], at: number, key: (item: T) => number): number {
   let lo = 0
-  let hi = table.rows.length
+  let hi = items.length
   while (lo < hi) {
     const mid = (lo + hi) >> 1
-    if (table.rows[mid]!.from <= start) lo = mid + 1
+    if (key(items[mid]!) < at) lo = mid + 1
     else hi = mid
   }
-  const row = lo - 1
-  const at = start
-  const col = table.rows[row]?.cells.findIndex((c) => c.from === at) ?? -1
-  const cell = table.rows[row]?.cells[col]
-  if (!cell || cell.to > end || (cell.to < end && !ends(text[cell.to], delimiter))) return null
-  return { cell, at: { row, col } }
+  return lo
 }
 
 /**
