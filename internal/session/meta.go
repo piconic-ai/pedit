@@ -98,8 +98,7 @@ func (s *Session) openMeta(f *sharedFile) (*metaFile, string) {
 	}
 	meta.Load(m.doc, m.file, m.tracker)
 	// Every peer refuses comments larger: they could not take the state.
-	// With room for what a peer's check adds to its estimate.
-	if size := len(crdt.EncodeStateAsUpdateV1(m.doc, nil)); size+64 > meta.MaxDocBytes {
+	if meta.DocSize(m.doc) > meta.MaxDocBytes {
 		m.close()
 		return nil, "its comments are too large to share"
 	}

@@ -12,10 +12,11 @@ import (
 // receives, so a hostile key holder cannot make a peer hold more than it can
 // send: the relay closes the socket of a peer whose frame passes 1 MiB.
 const (
-	// MaxDocBytes bounds the doc, encoded, so its whole state fits the frame
-	// it is sent in, with room for the frame's headers. The host shares no
-	// comments larger (session.openMeta), so every peer can take the state
-	// the host sends.
+	// MaxDocBytes bounds the doc, by the measure DocSize takes, which its
+	// state encoded passes in neither Yjs nor ygo, so it fits the frame it is
+	// sent in, with room for the frame's headers. The host shares no comments
+	// larger (session.openMeta), so every peer can take the state the host
+	// sends.
 	MaxDocBytes = protocol.MaxFrameBytes - 4<<10
 	// MaxClientClock bounds the operations of one client: setting a key, or
 	// adding a comment, is one.
@@ -42,7 +43,9 @@ var ErrRefused = errors.New("refused")
 //     asks the room again, and an honest peer's updates come back whole;
 //   - it takes one of its clients past MaxClientClock operations;
 //   - applying the doc's lists, with it, could take more than MaxListWork;
-//   - the doc could pass MaxDocBytes.
+//   - the doc could pass MaxDocBytes, by the measure DocSize takes, which
+//     every peer works out alike, and neither Yjs's encoding nor ygo's
+//     passes.
 //
 // It costs time in the size of the doc and the update, and applying an
 // update it passes costs no more than its lists allow. The caller holds the
@@ -85,19 +88,15 @@ func CheckUpdate(doc *crdt.Doc, update []byte) (err error) {
 	if err != nil {
 		return fmt.Errorf("%w: the doc: %v", ErrRefused, err)
 	}
-	l := newLists(have.recs, freshOf(u.recs, known))
-	missing, long := l.check()
+	fresh := freshOf(u.recs, known)
+	missing, long := newLists(have.recs, fresh).check()
 	if missing {
 		return fmt.Errorf("%w: %w: it needs updates not received yet", ErrRefused, protocol.ErrRetryLater)
 	}
 	if long {
 		return fmt.Errorf("%w: its lists would take too long to apply", ErrRefused)
 	}
-	n, err := sizeAfter(len(state), have, u, l, update, doc.StateVector())
-	if err != nil {
-		return fmt.Errorf("%w: %v", ErrRefused, err)
-	}
-	if n > MaxDocBytes {
+	if n := size(append(have.recs, fresh...), merged(have.deleted, u.deleted)); n > MaxDocBytes {
 		return fmt.Errorf("%w: the comments could take %d bytes", ErrRefused, n)
 	}
 	return nil
@@ -117,41 +116,12 @@ func freshOf(recs []record, known map[uint64]uint64) []record {
 			r.length -= k - r.at.clock
 			r.at.clock = k
 			if r.item {
+				content := r.bytes - r.header()
 				r.origin, r.parent = &id{r.at.client, k - 1}, nil
+				r.bytes = r.header() + content
 			}
 		}
 		fresh = append(fresh, r)
 	}
 	return fresh
-}
-
-// sizeAfter is about how many bytes the doc, of state bytes, would take with
-// the update: its new structs, as they are encoded alone, the deleted ranges
-// the doc does not have, and a struct header for each split those make.
-// Honest updates the doc has, and the whole state of the doc for a peer that
-// has none, come to the size of the doc.
-func sizeAfter(state int, have, u *scanned, l *lists, update []byte, sv crdt.StateVector) (int, error) {
-	diff, err := crdt.DiffUpdateV1(update, sv)
-	if err != nil {
-		return 0, err
-	}
-	d, err := scan(diff)
-	if err != nil {
-		return 0, err
-	}
-	n := state + len(diff) - d.deletedBytes() + 16
-	for c, rs := range u.deleted {
-		newClient := len(have.deleted[c]) == 0
-		for _, r := range rs {
-			if have.deletes(c, r[0], r[1]) {
-				continue
-			}
-			if newClient {
-				n += varLen(c) + 1
-				newClient = false
-			}
-			n += varLen(r[0]) + varLen(r[1]) + 24*l.splits(c, r[0], r[1])
-		}
-	}
-	return n, nil
 }

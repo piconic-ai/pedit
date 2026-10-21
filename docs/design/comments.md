@@ -145,20 +145,24 @@ else: a guest, or a teammate through Git. Every peer checks it the same way.
   map, a run of values counting as many) to apply items to it, and a copy
   would pay that for the whole doc on every update. It finds the list of each
   item as Yjs would, by its parent and key or along the chain of items it
-  follows, and drops an update that holds anything but maps and plain values;
-  that needs structs or deletions not received yet, or follows an item, or
-  sits in one, in a cycle or ahead of itself (Yjs keeps those as pending, and
-  sends them on with the doc, past every check); that takes one of its clients
-  past 65,536 operations; after which applying the doc's lists could take more
-  than the sum of the squares of their lengths allows (1,048,576: honest
-  comments stay far under it, and Yjs applies a doc at it in well under a
-  second); or after which the doc could no longer fit the 1 MiB frame its
-  state is sent in, as told by its new structs and deletions alone, so that
-  the state of a doc a peer has, or the whole of it for a peer that has none,
-  comes to the size of the doc. So a hostile client cannot make a peer hold,
+  follows, and drops an update that holds anything but maps and plain values,
+  under the comments map and keys of at most 64 bytes; that needs structs or
+  deletions not received yet, or follows an item, or sits in one, in a cycle
+  or ahead of itself (Yjs keeps those as pending, and sends them on with the
+  doc, past every check); that takes one of its clients past 65,536
+  operations; after which applying the doc's lists could take more than the
+  sum of the squares of their lengths allows (1,048,576: honest comments stay
+  far under it, and Yjs applies a doc at it in well under a second); or after
+  which the doc would pass about 1 MiB. Yjs and ygo encode one doc in
+  different sizes (Yjs merges deleted runs; ygo keeps each), so the limit is
+  on a measure every peer works out alike from the structs, which neither
+  encoding passes, and so fits the frame the state is sent in: a live item
+  counts what Yjs writes for it, each deleted clock 96 bytes, and each client
+  a few. A doc a peer has, or its whole state to a peer that has none,
+  measures the same everywhere. So a hostile client cannot make a peer hold,
   and send, what other peers refuse, nor spend long applying it. The host
-  shares no comments within 64 bytes of that limit, so every peer can take the
-  state the host sends.
+  shares no comments over that limit, so every peer can take the state the
+  host sends.
 - An update dropped for a gap is refused for now: the peer asks the room for
   what it is missing (a sync step 1, at once or, if it asked in the last 5
   seconds, then), and an honest sender's updates come back whole. So is one

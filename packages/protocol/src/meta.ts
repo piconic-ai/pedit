@@ -39,8 +39,7 @@ export const META_LIMITS = {
  * - the doc could pass maxDocBytes.
  */
 export function checkMetaUpdate(doc: Y.Doc, update: Uint8Array): Refusal | null {
-  const sv = Y.encodeStateVector(doc)
-  const known = Y.decodeStateVector(sv)
+  const known = Y.decodeStateVector(Y.encodeStateVector(doc))
   let u: Scanned
   try {
     u = scan(update)
@@ -70,9 +69,18 @@ export function checkMetaUpdate(doc: Y.Doc, update: Uint8Array): Refusal | null 
   const { missing, long } = lists.check()
   if (missing) return { reason: 'it needs updates not received yet', retryLater: true }
   if (long) return { reason: 'its lists would take too long to apply' }
-  const size = sizeAfter(state.length, have, u, lists, Y.diffUpdate(update, sv))
-  if (size > META_LIMITS.maxDocBytes) return { reason: `the comments could take ${size} bytes` }
+  const n = size([...have.recs, ...lists.recs.slice(lists.doc)], merged(have.deleted, u.deleted))
+  if (n > META_LIMITS.maxDocBytes) return { reason: `the comments could take ${n} bytes` }
   return null
+}
+
+/**
+ * The measure checkMetaUpdate limits, of `doc`, a metadata doc, as
+ * internal/meta's DocSize.
+ */
+export function metaDocSize(doc: Y.Doc): number {
+  const s = scan(Y.encodeStateAsUpdate(doc))
+  return size(s.recs, merged(s.deleted))
 }
 
 /**
@@ -87,6 +95,10 @@ interface Rec {
   item: boolean
   /** An item of plain values, which a map's are one of. */
   values: boolean
+  /** An item whose content is gone. */
+  deleted: boolean
+  /** What a live item takes, by the measure size uses. */
+  bytes: number
   origin: Y.ID | null
   parent: Y.ID | null
   root: string | null
@@ -132,12 +144,16 @@ function scan(update: Uint8Array): Scanned {
   return u
 }
 
+type Place = Pick<
+  Rec,
+  'item' | 'values' | 'deleted' | 'bytes' | 'origin' | 'parent' | 'root' | 'key'
+>
+
 /** Where a struct goes, refusing content, or a place, no comments have. */
-function placeOf(
-  s: Y.Item | Y.GC,
-): Pick<Rec, 'item' | 'values' | 'origin' | 'parent' | 'root' | 'key'> {
+function placeOf(s: Y.Item | Y.GC): Place {
   const none = { origin: null, parent: null, root: null, key: null }
-  if (!(s instanceof Y.Item)) return { item: false, values: false, ...none }
+  if (!(s instanceof Y.Item))
+    return { item: false, values: false, deleted: false, bytes: 0, ...none }
   const c = s.content
   const fits =
     c instanceof Y.ContentAny ||
@@ -145,17 +161,40 @@ function placeOf(
     (c instanceof Y.ContentType && c.type instanceof Y.Map)
   const parent = s.parent as unknown
   const placed = s.origin !== null || s.parentSub !== null
-  if (!fits || !placed || s.rightOrigin !== null) {
+  const root = s.origin === null && typeof parent === 'string' ? parent : null
+  if (!fits || !placed || s.rightOrigin !== null || (root !== null && root !== 'comments')) {
     throw new ScanError('not content a comments doc holds')
   }
-  return {
+  if (s.origin === null && utf8Len(s.parentSub ?? '') > MAX_KEY) {
+    throw new ScanError('not content a comments doc holds: a long key')
+  }
+  const place: Place = {
     item: true,
     values: c instanceof Y.ContentAny,
+    deleted: c instanceof Y.ContentDeleted,
+    bytes: 0,
     origin: s.origin,
     parent: s.origin === null && parent instanceof Y.ID ? parent : null,
-    root: s.origin === null && typeof parent === 'string' ? parent : null,
+    root,
     key: s.parentSub,
   }
+  let content = 1 // a map
+  if (c instanceof Y.ContentAny)
+    content = c.arr.reduce((n, v) => n + anyLen(v), varLen(c.arr.length))
+  else if (c instanceof Y.ContentDeleted) content = varLen(c.len)
+  place.bytes = header(place) + content
+  return place
+}
+
+/** A key in the comments: ids of threads and comments are at most 32 characters. */
+const MAX_KEY = 64
+
+/** What an item's place takes, as Yjs writes it. */
+function header(r: Pick<Rec, 'origin' | 'parent' | 'root' | 'key'>): number {
+  if (r.origin) return 1 + varLen(r.origin.client) + varLen(r.origin.clock)
+  const n = 2 + strLen(r.key ?? '')
+  if (r.parent) return n + varLen(r.parent.client) + varLen(r.parent.clock)
+  return n + strLen(r.root ?? '')
 }
 
 /**
@@ -274,54 +313,111 @@ class Lists {
     for (const n of lengths.values()) work += n * n
     return { missing: list.slice(this.doc).includes(null), long: work > META_LIMITS.maxListWork }
   }
-
-  /** How many ends of a deleted range fall inside a struct, splitting it. */
-  splits(client: number, clock: number, len: number): number {
-    let n = 0
-    for (const x of [clock, clock + len]) {
-      const i = this.find(client, x)
-      if (i >= 0 && this.recs[i]!.clock !== x) n++
-    }
-    return n
-  }
 }
 
 /**
- * About how many bytes the doc would take with the update: its new structs,
- * as `diff` encodes them alone, the deleted ranges the doc does not have,
- * and a struct header for each split those make. See internal/meta/check.go.
+ * Yjs and ygo encode one doc in different sizes: Yjs merges the runs of
+ * structs a doc deletes, and ygo keeps each. So the limit on a doc is on a
+ * measure every peer works out alike from its structs, and that neither
+ * encoding passes, as internal/meta/size.go: a live item takes what Yjs
+ * writes for it, each clock of deleted content DEAD_BYTES, and each client
+ * CLIENT_BYTES plus its id twice.
  */
-function sizeAfter(
-  state: number,
-  have: Scanned,
-  u: Scanned,
-  lists: Lists,
-  diff: Uint8Array,
-): number {
-  let n = state + diff.length - deletedBytes(scan(diff)) + 16
-  for (const [client, ranges] of u.deleted) {
-    const theirs = have.deleted.get(client) ?? []
-    let newClient = theirs.length === 0
-    for (const [clock, len] of ranges) {
-      if (theirs.some(([c, l]) => c <= clock && clock + len <= c + l)) continue
-      if (newClient) {
-        n += varLen(client) + 1
-        newClient = false
-      }
-      n += varLen(clock) + varLen(len) + 24 * lists.splits(client, clock, len)
+const DEAD_BYTES = 96
+const CLIENT_BYTES = 12
+
+/** The measure of a doc of `recs`, with `deleted`, sorted and joined. */
+function size(recs: Rec[], deleted: Map<number, Array<[number, number]>>): number {
+  let n = 2
+  const clients = new Set<number>(deleted.keys())
+  for (const r of recs) {
+    clients.add(r.client)
+    let gone = r.length
+    if (r.item && !r.deleted) {
+      gone = overlap(deleted.get(r.client) ?? [], r.clock, r.length)
+      if (gone < r.length) n += r.bytes
     }
+    n += DEAD_BYTES * gone
+  }
+  for (const c of clients) n += CLIENT_BYTES + 2 * varLen(c)
+  return n
+}
+
+/** Each client's deleted ranges, of all of `sets`, sorted and joined. */
+function merged(
+  ...sets: Array<Map<number, Array<[number, number]>>>
+): Map<number, Array<[number, number]>> {
+  const out = new Map<number, Array<[number, number]>>()
+  for (const set of sets) {
+    for (const [c, ranges] of set) out.set(c, [...(out.get(c) ?? []), ...ranges])
+  }
+  for (const [c, ranges] of out) {
+    ranges.sort((a, b) => a[0] - b[0])
+    const joined: Array<[number, number]> = []
+    for (const [clock, len] of ranges) {
+      const last = joined[joined.length - 1]
+      if (last && clock <= last[0] + last[1]) last[1] = Math.max(last[1], clock + len - last[0])
+      else joined.push([clock, len])
+    }
+    out.set(c, joined)
+  }
+  return out
+}
+
+/** How much of [clock, clock+len) `ranges`, sorted and joined, cover. */
+function overlap(ranges: Array<[number, number]>, clock: number, len: number): number {
+  const end = clock + len
+  let lo = 0
+  let hi = ranges.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    const r = ranges[mid]!
+    if (r[0] + r[1] > clock) hi = mid
+    else lo = mid + 1
+  }
+  let n = 0
+  for (let i = lo; i < ranges.length && ranges[i]![0] < end; i++) {
+    const [c, l] = ranges[i]!
+    n += Math.min(end, c + l) - Math.max(clock, c)
   }
   return n
 }
 
-/** How many bytes a delete set takes, encoded. */
-function deletedBytes(s: Scanned): number {
-  let n = varLen(s.deleted.size)
-  for (const [client, ranges] of s.deleted) {
-    n += varLen(client) + varLen(ranges.length)
-    for (const [clock, len] of ranges) n += varLen(clock) + varLen(len)
+/** How many bytes lib0 writes for a value, as decoded. */
+function anyLen(v: unknown): number {
+  if (v === null || v === undefined || typeof v === 'boolean') return 1
+  if (typeof v === 'number') return numberLen(v)
+  if (typeof v === 'bigint') return 9
+  if (typeof v === 'string') return 1 + strLen(v)
+  if (v instanceof Uint8Array) return 1 + varLen(v.length) + v.length
+  if (Array.isArray(v)) return v.reduce((n: number, x) => n + anyLen(x), 1 + varLen(v.length))
+  const entries = Object.entries(v as object)
+  return entries.reduce((n, [k, x]) => n + strLen(k) + anyLen(x), 1 + varLen(entries.length))
+}
+
+/**
+ * How many bytes lib0 writes for a number: a varint for an integer of 31
+ * bits, else a float32 when it holds it, else a float64.
+ */
+function numberLen(x: number): number {
+  if (Number.isInteger(x) && Math.abs(x) <= 0x7fffffff) {
+    let n = 1
+    for (let a = Math.floor(Math.abs(x) / 64); a > 0; a = Math.floor(a / 128)) n++
+    return n
   }
-  return n
+  return Math.fround(x) === x ? 5 : 9
+}
+
+const utf8 = new TextEncoder()
+
+function utf8Len(s: string): number {
+  return utf8.encode(s).length
+}
+
+/** How many bytes a string takes, with its length. */
+function strLen(s: string): number {
+  const n = utf8Len(s)
+  return varLen(n) + n
 }
 
 /** How many bytes x takes as a varuint. */

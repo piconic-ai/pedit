@@ -148,15 +148,3 @@ func (l *lists) check() (missing, long bool) {
 	}
 	return missing, work > MaxListWork
 }
-
-// splits counts the ends of a deleted range [clock, clock+length) of client
-// that fall inside a struct, which deleting it splits in two.
-func (l *lists) splits(client, clock, length uint64) int {
-	n := 0
-	for _, x := range [2]uint64{clock, clock + length} {
-		if i := l.find(id{client, x}); i >= 0 && l.recs[i].at.clock != x {
-			n++
-		}
-	}
-	return n
-}

@@ -25,8 +25,11 @@ type record struct {
 	at     id
 	length uint64
 	item   bool
-	// values: an item of plain values, which a map's are one of.
-	values bool
+	// values: an item of plain values, which a map's are one of; deleted:
+	// one whose content is gone.
+	values, deleted bool
+	// bytes is what a live item takes, by the measure size uses.
+	bytes int
 	// An item goes after its origin, in the same list, or, without one, at
 	// the start of the list of key in its parent: an item, or a root type.
 	origin, parent *id
@@ -132,8 +135,27 @@ func scanStruct(d *encoding.Decoder, r *record) (err error) {
 		return err
 	}
 	r.values = info&refMask == refAny
-	r.length, err = scanContent(d, info&refMask)
+	r.deleted = info&refMask == refDeleted
+	var content int
+	r.length, content, err = scanContent(d, info&refMask)
+	r.bytes = r.header() + content
 	return err
+}
+
+// maxKey bounds a key in the comments: ids of threads and comments are
+// at most 32 characters.
+const maxKey = 64
+
+// header is what an item's place takes, as Yjs writes it.
+func (r *record) header() int {
+	if r.origin != nil {
+		return 1 + varLen(r.origin.client) + varLen(r.origin.clock)
+	}
+	n := 2 + strLen(r.key)
+	if r.parent != nil {
+		return n + varLen(r.parent.client) + varLen(r.parent.clock)
+	}
+	return n + strLen(r.root)
 }
 
 // readParent reads where an item without an origin goes. One with an origin
@@ -147,6 +169,9 @@ func readParent(d *encoding.Decoder, info byte, r *record) error {
 		if r.root, err = d.ReadVarString(); err != nil {
 			return err
 		}
+		if r.root != CommentsKey {
+			return errContent
+		}
 	} else {
 		p, err := readID(d)
 		if err != nil {
@@ -157,40 +182,50 @@ func readParent(d *encoding.Decoder, info byte, r *record) error {
 	if info&hasParentSub == 0 {
 		return errContent
 	}
-	r.key, err = d.ReadVarString()
-	return err
+	if r.key, err = d.ReadVarString(); err != nil {
+		return err
+	}
+	if len(r.key) > maxKey {
+		return fmt.Errorf("%w: a key of %d bytes", errContent, len(r.key))
+	}
+	return nil
 }
 
-// scanContent reads an item's content, and returns its length.
-func scanContent(d *encoding.Decoder, ref byte) (uint64, error) {
+// scanContent reads an item's content, and returns its length and what it
+// takes, by the measure size uses.
+func scanContent(d *encoding.Decoder, ref byte) (length uint64, bytes int, err error) {
 	switch ref {
 	case refDeleted:
-		return d.ReadVarUint()
+		n, err := d.ReadVarUint()
+		return n, varLen(n), err
 	case refType:
 		t, err := d.ReadUint8()
 		if err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 		if t != typeMap {
-			return 0, errContent
+			return 0, 0, errContent
 		}
-		return 1, nil
+		return 1, 1, nil
 	case refAny:
 		n, err := d.ReadVarUint()
 		if err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 		if n > uint64(d.Remaining()) {
-			return 0, errors.New("more values than bytes")
+			return 0, 0, errors.New("more values than bytes")
 		}
+		bytes := varLen(n)
 		for range n {
-			if _, err := d.ReadAny(); err != nil {
-				return 0, err
+			v, err := d.ReadAny()
+			if err != nil {
+				return 0, 0, err
 			}
+			bytes += anyLen(v)
 		}
-		return n, nil
+		return n, bytes, nil
 	}
-	return 0, fmt.Errorf("%w: content %d", errContent, ref)
+	return 0, 0, fmt.Errorf("%w: content %d", errContent, ref)
 }
 
 func readID(d *encoding.Decoder) (id, error) {
@@ -233,28 +268,6 @@ func scanDeletes(d *encoding.Decoder, s *scanned) error {
 		}
 	}
 	return nil
-}
-
-// deletedBytes is how many bytes the delete set of s takes, encoded.
-func (s *scanned) deletedBytes() int {
-	n := varLen(uint64(len(s.deleted)))
-	for c, rs := range s.deleted {
-		n += varLen(c) + varLen(uint64(len(rs)))
-		for _, r := range rs {
-			n += varLen(r[0]) + varLen(r[1])
-		}
-	}
-	return n
-}
-
-// deletes tells whether s deletes all of [clock, clock+length) of client.
-func (s *scanned) deletes(client, clock, length uint64) bool {
-	for _, r := range s.deleted[client] {
-		if r[0] <= clock && clock+length <= r[0]+r[1] {
-			return true
-		}
-	}
-	return false
 }
 
 // varLen is how many bytes x takes as a varuint.

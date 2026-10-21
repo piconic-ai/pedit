@@ -239,7 +239,7 @@ func TestCheckUpdateTakesTheStateOfALargeDoc(t *testing.T) {
 	m := host.GetMap(meta.CommentsKey)
 	host.Transact(func(txn *crdt.Transaction) {
 		for i := range 31 {
-			m.Set(txn, fmt.Sprintf("q%d", i), strings.Repeat("x", 29500))
+			m.Set(txn, fmt.Sprintf("q%d", i), strings.Repeat("x", 20000))
 		}
 	})
 	for i := range 6000 {
@@ -249,8 +249,8 @@ func TestCheckUpdateTakesTheStateOfALargeDoc(t *testing.T) {
 		host.Transact(func(txn *crdt.Transaction) { m.Delete(txn, fmt.Sprintf("k%d", 2*i)) })
 	}
 	state := crdt.EncodeStateAsUpdateV1(host, nil)
-	if len(state)+64 > meta.MaxDocBytes || len(state) < meta.MaxDocBytes*3/4 {
-		t.Fatalf("a state of %d bytes", len(state))
+	if n := meta.DocSize(host); n > meta.MaxDocBytes || n < meta.MaxDocBytes*3/4 {
+		t.Fatalf("a doc of %d by its measure", n)
 	}
 	if err := meta.CheckUpdate(crdt.New(), state); err != nil {
 		t.Fatalf("a new peer: %v", err)
@@ -409,5 +409,35 @@ func TestCheckUpdateTakesWhatTheHostLoaded(t *testing.T) {
 		if err := crdt.ApplyUpdateV1(host, u, nil); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestTheMeasureIsTheBrowsers(t *testing.T) {
+	// A doc Yjs made, with an UndoManager's run of values and a deleted
+	// thread, and its measure there: ygo, which encodes it larger, measures
+	// it alike.
+	data, err := os.ReadFile("../../packages/testdata/meta-measure.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		State   []byte `json:"state"`
+		Measure int    `json:"measure"`
+	}
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	doc := crdt.New()
+	if err := meta.CheckUpdate(doc, fixture.State); err != nil {
+		t.Fatal(err)
+	}
+	if err := crdt.ApplyUpdateV1(doc, fixture.State, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := meta.DocSize(doc); got != fixture.Measure {
+		t.Fatalf("measured %d; Yjs measured %d", got, fixture.Measure)
+	}
+	if n := len(crdt.EncodeStateAsUpdateV1(doc, nil)); n > fixture.Measure {
+		t.Fatalf("ygo encodes it in %d bytes, past its measure", n)
 	}
 }

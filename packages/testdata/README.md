@@ -23,3 +23,8 @@ writes the same bytes.
 `meta-limits.json` holds the limits every peer applies to an update of a
 file's comments (#121) before applying it. `internal/meta/check_test.go` and
 `packages/protocol/test/meta.test.ts` both check their constants against it.
+
+`meta-measure.json` is the state of a comments doc Yjs made (with an
+UndoManager's run of values and a deleted thread) and its measure, which
+`internal/meta`'s `DocSize` and `packages/protocol`'s `metaDocSize` must both
+work out.

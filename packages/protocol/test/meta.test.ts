@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
 // The Go side checks its own against the same file (internal/meta/check_test.go).
 import limits from '../../testdata/meta-limits.json'
-import { checkMetaUpdate, META_LIMITS } from '../src/index.ts'
+// internal/meta/check_test.go checks the Go measure against the same file.
+import measured from '../../testdata/meta-measure.json'
+import { checkMetaUpdate, META_LIMITS, metaDocSize } from '../src/index.ts'
 
 function thread(doc: Y.Doc, id: string, quote: string) {
   doc.transact(() => {
@@ -22,6 +24,15 @@ function updatesOf(doc: Y.Doc): Uint8Array[] {
 describe('checkMetaUpdate', () => {
   it('has the limits the Go side has', () => {
     expect(META_LIMITS).toEqual(limits)
+  })
+
+  it('measures a doc as the Go side does', () => {
+    // Made by Yjs, with an UndoManager's run of values and a deleted thread.
+    const state = Uint8Array.from(atob(measured.state), (c) => c.charCodeAt(0))
+    expect(checkMetaUpdate(new Y.Doc(), state)).toBeNull()
+    const doc = new Y.Doc()
+    Y.applyUpdate(doc, state)
+    expect(metaDocSize(doc)).toBe(measured.measure)
   })
 
   it('takes an honest update', () => {
@@ -57,7 +68,11 @@ describe('checkMetaUpdate', () => {
     })
     const guest = new Y.Doc()
     thread(guest, 'c1', 'hello')
-    expect(checkMetaUpdate(host, Y.encodeStateAsUpdate(guest))).toBeNull()
+    // The host's own 65,537 operations make it too large by its measure, but
+    // the guest's update is not refused for them.
+    expect(checkMetaUpdate(host, Y.encodeStateAsUpdate(guest))?.reason ?? '').not.toMatch(
+      /operations/,
+    )
   })
 
   it('refuses too many operations from one client', () => {
@@ -169,12 +184,11 @@ describe('checkMetaUpdate', () => {
     // a whole by a new peer, and its state again by peers that had it.
     const host = new Y.Doc()
     const m = host.getMap('comments')
-    for (let i = 0; i < 31; i++) m.set(`q${i}`, 'x'.repeat(29500))
+    for (let i = 0; i < 31; i++) m.set(`q${i}`, 'x'.repeat(20000))
     for (let i = 0; i < 6000; i++) m.set(`k${i}`, i)
     for (let i = 0; i < 3000; i++) m.delete(`k${2 * i}`)
     const state = Y.encodeStateAsUpdate(host)
-    expect(state.length + 64).toBeLessThanOrEqual(META_LIMITS.maxDocBytes)
-    expect(state.length).toBeGreaterThan((META_LIMITS.maxDocBytes * 3) / 4)
+    expect(state.length).toBeGreaterThan(META_LIMITS.maxDocBytes / 2)
     expect(checkMetaUpdate(new Y.Doc(), state)).toBeNull()
     expect(checkMetaUpdate(host, state)).toBeNull()
   })

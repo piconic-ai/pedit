@@ -10,34 +10,19 @@ import (
 	"github.com/reearth/ygo/encoding"
 )
 
-// estimate is what CheckUpdate takes the doc's size with update to be.
-func estimate(t *testing.T, doc *crdt.Doc, update []byte) int {
+// measure is the measure of doc: size, from its state.
+func measure(t *testing.T, doc *crdt.Doc) int {
 	t.Helper()
-	u, err := scan(update)
+	s, err := scan(crdt.EncodeStateAsUpdateV1(doc, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	known := map[uint64]uint64{}
-	for c, clock := range doc.StateVector() {
-		known[uint64(c)] = clock
-	}
-	state := crdt.EncodeStateAsUpdateV1(doc, nil)
-	have, err := scan(state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	l := newLists(have.recs, freshOf(u.recs, known))
-	l.check()
-	n, err := sizeAfter(len(state), have, u, l, update, doc.StateVector())
-	if err != nil {
-		t.Fatal(err)
-	}
-	return n
+	return size(s.recs, s.deleted)
 }
 
-func TestSizeAfterDoesNotCountLow(t *testing.T) {
-	// Peers edit comments at random; every update is checked, and the doc
-	// it makes must be no larger than the estimate.
+func TestNeitherEncodingPassesTheMeasure(t *testing.T) {
+	// Peers edit comments at random; every update is checked, and the doc it
+	// makes, encoded, must be no larger than its measure.
 	rng := rand.New(rand.NewPCG(1, 2))
 	host := crdt.New()
 	peers := make([]*crdt.Doc, 4)
@@ -70,32 +55,19 @@ func TestSizeAfterDoesNotCountLow(t *testing.T) {
 		if err := CheckUpdate(host, update); err != nil {
 			t.Fatalf("round %d: %v", round, err)
 		}
-		want := estimate(t, host, update)
 		if err := crdt.ApplyUpdateV1(host, update, nil); err != nil {
 			t.Fatal(err)
 		}
-		got := len(crdt.EncodeStateAsUpdateV1(host, nil))
+		got, want := len(crdt.EncodeStateAsUpdateV1(host, nil)), measure(t, host)
 		if got > want {
-			t.Fatalf("round %d: the doc took %d bytes, more than the %d estimated", round, got, want)
+			t.Fatalf("round %d: the doc took %d bytes, more than its measure, %d", round, got, want)
 		}
 		worst = max(worst, float64(want)/float64(got))
 	}
-	t.Logf("estimates at most %.2f times the size", worst)
+	t.Logf("the measure is at most %.2f times the size", worst)
 }
 
-func TestSizeAfterOfAStateToANewPeer(t *testing.T) {
-	host := crdt.New()
-	m := host.GetMap(CommentsKey)
-	for i := range 2000 {
-		host.Transact(func(txn *crdt.Transaction) { m.Set(txn, fmt.Sprintf("k%d", i%300), i) })
-	}
-	state := crdt.EncodeStateAsUpdateV1(host, nil)
-	if n := estimate(t, crdt.New(), state); n > len(state)+64 {
-		t.Fatalf("estimated %d for a state of %d", n, len(state))
-	}
-}
-
-func TestSizeAfterOfDeletionsThatSplitARun(t *testing.T) {
+func TestTheMeasureOfDeletionsThatSplitARun(t *testing.T) {
 	// A run of values, as an UndoManager keeps them, then a deletion of
 	// every other value: each one splits the run.
 	n := 900
@@ -115,12 +87,11 @@ func TestSizeAfterOfDeletionsThatSplitARun(t *testing.T) {
 	if err := CheckUpdate(host, update); err != nil {
 		t.Fatal(err)
 	}
-	want := estimate(t, host, update)
 	if err := crdt.ApplyUpdateV1(host, update, nil); err != nil {
 		t.Fatal(err)
 	}
-	if got := len(crdt.EncodeStateAsUpdateV1(host, nil)); got > want {
-		t.Fatalf("the doc took %d bytes, more than the %d estimated", got, want)
+	if got, want := len(crdt.EncodeStateAsUpdateV1(host, nil)), measure(t, host); got > want {
+		t.Fatalf("the doc took %d bytes, more than its measure, %d", got, want)
 	}
 }
 
