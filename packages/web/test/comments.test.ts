@@ -332,6 +332,27 @@ describe('comments on cells', () => {
     }
   })
 
+  it('keeps an empty cell when values come after it, or columns before it', () => {
+    // From review: a value set past an empty cell came into its place, and
+    // the thread moved onto the value.
+    const after = setup('a,\n', ',')
+    after.view.startCells(cell(0, 1), cell(0, 1), 'empty')
+    edit(after.text, (t) => setCell(t, 0, 2, 'x'))
+    expect(after.text.toString()).toBe('a,,x\n')
+    expect(only(after.shown())).toMatchObject({ state: 'attached', cells: { from: cell(0, 1) } })
+    const before = setup('a,,c\n', ',')
+    before.view.startCells(cell(0, 1), cell(0, 1), 'empty')
+    edit(before.text, (t) => insertColumn(t, 1))
+    expect(only(before.shown())).toMatchObject({ state: 'attached', cells: { from: cell(0, 2) } })
+  })
+
+  it('takes no cell longer than a quote, which the host could not keep', () => {
+    // From review: the host saved such a thread as one on text.
+    const { view } = setup(`${'a'.repeat(COMMENT_LIMITS.quote + 1)},b\n`, ',')
+    expect(view.startCells(cell(0, 0), cell(0, 0), 'long')).toBeNull()
+    expect(view.startCells(cell(0, 1), cell(0, 1), 'short')).not.toBeNull()
+  })
+
   it('comments on a long column, its quote cut to the limit', () => {
     const rows = Array.from({ length: 300 }, (_, i) => `name${i},${i}`).join('\n')
     const { view, shown } = setup(`${rows}\n`, ',')

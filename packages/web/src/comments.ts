@@ -168,7 +168,9 @@ export class CommentsView {
     const table = this.#table(this.#text.toString())
     const from = table?.rows[Math.min(a.row, b.row)]?.cells[Math.min(a.col, b.col)]
     const to = table?.rows[Math.max(a.row, b.row)]?.cells[Math.max(a.col, b.col)]
-    if (!table || !from || !to) return null
+    // The host saves no corner longer than a quote; it would lose the cells.
+    const long = (c: Cell) => c.to - c.from > COMMENT_LIMITS.quote
+    if (!table || !from || !to || long(from) || long(to)) return null
     // A range's raw text quotes it, cut to the limit, so a long column takes one too.
     return this.#begin(cutQuote(table.text.slice(from.from, to.to)), body, {
       type: 'cells',
@@ -359,10 +361,8 @@ export class CommentsView {
     if (typeof quote !== 'string' || quote.length > COMMENT_LIMITS.quote) return null
     // The host saves no thread without an anchor of a kind it knows.
     const anchor = thread.get('anchor')
-    const type =
-      typeof anchor === 'object' && anchor !== null ? (anchor as { type?: unknown }).type : null
-    if (typeof type !== 'string' || !ANCHORS.has(type)) return null
-    const place = placeOf(anchor, here)
+    if (!ANCHORS.has(kindOf(anchor))) return null
+    const place = placeOf(anchor, here, quote)
     // Cells quote their text cut to the limit, as startCells cuts it.
     const text = place ? here.text.slice(place.from, place.to) : ''
     const live = place?.cells ? cutQuote(text) : text
@@ -473,12 +473,16 @@ interface Place {
 }
 
 /** Where an anchor is now, or null. */
-function placeOf(anchor: unknown, here: Here): Place | null {
+function placeOf(anchor: unknown, here: Here, quote: string): Place | null {
   if (typeof anchor !== 'object' || anchor === null) return null
   const a = anchor as Record<string, unknown>
   if (a.type === 'cells') {
-    const from = cellOf(a.from, here)
-    const to = from && cellOf(a.to, here)
+    // Whether each corner was empty, as the thread quotes the cells' text:
+    // an empty corner's quote starts, or ends, at a delimiter or line break.
+    const edge = (c: string | undefined) =>
+      c === undefined || ends(c, here.cells()?.table.delimiter ?? ',')
+    const from = cellOf(a.from, here, edge(quote[0]))
+    const to = from && cellOf(a.to, here, edge(quote.at(-1)))
     if (!from || !to) return null
     return { from: from.cell.from, to: to.cell.to, cells: { from: from.at, to: to.at } }
   }
@@ -514,30 +518,49 @@ function ends(c: string | undefined, delimiter: string): boolean {
  * thread is detached. An empty cell whose column was deleted can pass to an
  * empty neighbour: nothing in the text tells them apart.
  */
-function cellOf(v: unknown, here: Here): { cell: Cell; at: Position } | null {
+function cellOf(v: unknown, here: Here, empty: boolean): { cell: Cell; at: Position } | null {
   if (typeof v !== 'object' || v === null) return null
   const p = v as Record<string, unknown>
   const start = here.index().resolve(p.start)
   const end = start === null ? null : here.index().resolve(p.end)
   const cells = here.cells()
   if (start === null || end === null || !cells) return null
-  const { all, full, table } = cells
+  const { all, table } = cells
   // Found by halves, not by walking what the place took in: between cells
   // there are only delimiters and line breaks, so a start in no cell's text
   // is before the next cell, and empty cells after it are delimiters too.
   let i = firstFrom(all, start, (c) => c.cell.from)
   if (i > 0 && all[i - 1]!.cell.to > start) return null
-  if (i < all.length && all[i]!.cell.to === all[i]!.cell.from && all[i]!.cell.from < end) {
-    const next = all[full[i]!]!.cell
-    const at = Math.min(end, next.to > next.from ? next.from : end)
-    i = firstFrom(all, at, (c) => c.cell.from)
-    if (all[i]?.cell.from !== at) return null
-  }
+  i = pastEmpty(cells, i, end, empty)
   const found = all[i]
-  if (!found) return null
+  if (i < 0 || !found) return null
   const { cell } = found
   if (cell.to > end || (cell.to < end && !ends(table.text[cell.to], table.delimiter))) return null
   return found
+}
+
+/** An anchor's kind, or '' when it has none that is a string. */
+function kindOf(anchor: unknown): string {
+  const type =
+    typeof anchor === 'object' && anchor !== null ? (anchor as { type?: unknown }).type : null
+  return typeof type === 'string' ? type : ''
+}
+
+/**
+ * Where the cell a place holds starts, from the first cell at its start, i,
+ * or -1. A cell that was empty took in what was typed after it, or a row or
+ * column before it: it is the empty cell at the start when something came
+ * in, else the one at the end. Any other is the first with text.
+ */
+function pastEmpty({ all, full }: Cells, i: number, end: number, empty: boolean): number {
+  const first = all[i]?.cell
+  if (!first || first.to !== first.from || first.from >= end) return i
+  const next = all[full[i]!]!.cell
+  const content = next.to > next.from && next.from < end
+  if (empty && content) return i
+  const at = content ? next.from : end
+  const j = firstFrom(all, at, (c) => c.cell.from)
+  return all[j]?.cell.from === at ? j : -1
 }
 
 /** The first of `items`, sorted by `key`, whose key is at least `at`; their length for none. */
