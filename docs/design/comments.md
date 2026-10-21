@@ -145,17 +145,17 @@ else: a guest, or a teammate through Git. Every peer checks it the same way.
   map) to apply items to it, and a copy would pay that for the whole doc on
   every update. It finds the list of each item as Yjs would, by its parent and
   key or along the chain of items it follows, and drops an update that holds
-  anything but maps and plain values; that needs structs or deletions not
-  received yet, or follows an item, or sits in one, in a cycle or ahead of
-  itself (Yjs keeps those as pending, and sends them on with the doc, past
-  every check); that takes one of its clients past 65,536 operations; after
-  which applying the doc's lists could take more than the sum of the squares
-  of their lengths allows (2,097,152: honest comments stay far under it, and
-  Yjs applies a doc at it in well under a second); or after which the doc
-  could no longer fit the 1 MiB frame its state is sent in. So a hostile
-  client cannot make a peer hold, and send, what other peers refuse, nor spend
-  long applying it. The host shares no comments larger than that limit, so
-  every peer can take the state the host sends.
+  anything but maps and plain values, set one at a time; that needs structs or
+  deletions not received yet, or follows an item, or sits in one, in a cycle
+  or ahead of itself (Yjs keeps those as pending, and sends them on with the
+  doc, past every check); that takes one of its clients past 65,536
+  operations; after which applying the doc's lists could take more than the
+  sum of the squares of their lengths allows (2,097,152: honest comments stay
+  far under it, and Yjs applies a doc at it in well under a second); or after
+  which the doc could no longer fit the 1 MiB frame its state is sent in. So a
+  hostile client cannot make a peer hold, and send, what other peers refuse,
+  nor spend long applying it. The host shares no comments larger than that
+  limit, so every peer can take the state the host sends.
 - An update dropped for a gap is refused for now: the peer asks the room for
   what it is missing (a sync step 1, at once or, if it asked in the last 5
   seconds, then), and an honest sender's updates come back whole. So is one

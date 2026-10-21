@@ -65,6 +65,12 @@ func CheckUpdate(doc *crdt.Doc, update []byte) (err error) {
 	}
 	end := map[uint64]uint64{}
 	for _, r := range u.recs {
+		if r.values && r.length > 1 {
+			// A map sets one value at a time, and ygo copies a run of them
+			// each time it splits one: inserting after each of 65,000
+			// values took 12s.
+			return fmt.Errorf("%w: %v: a run of values", ErrRefused, errContent)
+		}
 		c := r.at.client
 		if _, ok := end[c]; !ok && r.at.clock > known[c] {
 			return fmt.Errorf("%w: %w: it skips structs of client %d", ErrRefused, protocol.ErrRetryLater, c)

@@ -49,6 +49,11 @@ export function checkMetaUpdate(doc: Y.Doc, update: Uint8Array): Refusal | null 
   }
   const end = new Map<number, number>()
   for (const r of u.recs) {
+    if (r instanceof Y.Item && r.content instanceof Y.ContentAny && r.length > 1) {
+      // A map sets one value at a time, and ygo copies a run of them each
+      // time it splits one, as internal/meta/check.go says.
+      return { reason: 'not content a comments doc holds: a run of values' }
+    }
     const { client, clock } = r.id
     if (!end.has(client) && clock > (known.get(client) ?? 0)) {
       return { reason: `it skips structs of client ${client}`, retryLater: true }

@@ -26,6 +26,8 @@ type record struct {
 	at     id
 	length uint64
 	item   bool
+	// values: an item of plain values, which a map's are one of.
+	values bool
 	// An item goes after its origin, in the same list, or, without one, at
 	// the start of the list of key in its parent: an item, or a root type.
 	origin, parent *id
@@ -130,6 +132,7 @@ func scanStruct(d *encoding.Decoder, r *record) (err error) {
 	} else if err := readParent(d, info, r); err != nil {
 		return err
 	}
+	r.values = info&refMask == refAny
 	r.length, err = scanContent(d, info&refMask)
 	return err
 }

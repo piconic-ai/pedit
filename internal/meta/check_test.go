@@ -189,6 +189,30 @@ func TestCheckUpdateRefusesAListMadeLongAlongAChain(t *testing.T) {
 	}
 }
 
+func TestCheckUpdateRefusesARunOfValues(t *testing.T) {
+	// From review: one item of 65,000 values counted as one in its list, and
+	// ygo copied the rest of it for each item inserted inside it.
+	e := encoding.NewEncoder()
+	e.WriteVarUint(1)
+	e.WriteVarUint(1)
+	e.WriteVarUint(7)
+	e.WriteVarUint(0)
+	e.WriteUint8(0x20 | 8)
+	e.WriteVarUint(1)
+	e.WriteVarString(meta.CommentsKey)
+	e.WriteVarString("k")
+	e.WriteVarUint(2)
+	e.WriteUint8(125)
+	e.WriteVarInt(1)
+	e.WriteUint8(125)
+	e.WriteVarInt(2)
+	e.WriteVarUint(0)
+	err := meta.CheckUpdate(crdt.New(), e.Bytes())
+	if !errors.Is(err, meta.ErrRefused) || !strings.Contains(err.Error(), "run of values") {
+		t.Fatalf("CheckUpdate = %v", err)
+	}
+}
+
 func TestCheckUpdateRefusesWhatWouldWait(t *testing.T) {
 	// From review: each of these passed, and ygo and Yjs kept part of it
 	// pending.
