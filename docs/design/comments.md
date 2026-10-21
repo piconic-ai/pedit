@@ -115,7 +115,10 @@ else: a guest, or a teammate through Git. Every peer checks it the same way.
 
 - Limits: 500 threads, 200 comments in a thread, 4,000 UTF-16 code units in a
   body (as JavaScript counts a string's length), 200 in a name, 1,000 in a
-  quote, 1 MiB for the file. pedit never writes a file it would refuse to read.
+  quote, 1 MiB for the file, nested at most 32 deep. pedit never writes a file
+  it would refuse to read.
+- Keys must match exactly: JSON decoders that match names in any case would
+  let a file show reviewers one comment and pedit another.
 - Names, bodies and quotes are shown as text, never as HTML, with control and
   bidi characters removed.
 - Updates to the doc are bounded per update and per client, and an update with

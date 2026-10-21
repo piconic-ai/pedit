@@ -61,12 +61,7 @@ const sample = `{
       "messages": {}
     }
   },
-  "suggestions": {
-    "s1": [
-      1,
-      2
-    ]
-  }
+  "suggestions": {"s1":[1,2]}
 }
 `
 
@@ -167,10 +162,15 @@ func TestParseRefusesAFileThatBreaksARule(t *testing.T) {
 		"empty text anchor":         anchor(`{"type":"text","exact":"","prefix":"a","suffix":"b","offset":0}`),
 		"cell with nothing to find": anchor(`{"type":"cells","from":{"exact":"","prefix":"","suffix":"","offset":0},"to":{"exact":"a","prefix":"","suffix":"","offset":0}}`),
 		// Emoji take two UTF-16 code units each, as in a browser.
-		"long prefix in UTF-16": anchor(`{"type":"text","exact":"a","prefix":"` + strings.Repeat("😀", meta.MaxContext/2+1) + `","suffix":"","offset":0}`),
-		"long body":             message("m1", `{"author":"a","time":"2026-10-21T00:00:00Z","body":"`+strings.Repeat("b", meta.MaxBody+1)+`"}`),
-		"long author":           message("m1", `{"author":"`+strings.Repeat("a", meta.MaxAuthor+1)+`","time":"2026-10-21T00:00:00Z","body":"b"}`),
-		"unknown message key":   message("m1", `{"author":"a","time":"2026-10-21T00:00:00Z","body":"b","html":"<b>"}`),
+		"long prefix in UTF-16":          anchor(`{"type":"text","exact":"a","prefix":"` + strings.Repeat("😀", meta.MaxContext/2+1) + `","suffix":"","offset":0}`),
+		"long body":                      message("m1", `{"author":"a","time":"2026-10-21T00:00:00Z","body":"`+strings.Repeat("b", meta.MaxBody+1)+`"}`),
+		"long author":                    message("m1", `{"author":"`+strings.Repeat("a", meta.MaxAuthor+1)+`","time":"2026-10-21T00:00:00Z","body":"b"}`),
+		"unknown message key":            message("m1", `{"author":"a","time":"2026-10-21T00:00:00Z","body":"b","html":"<b>"}`),
+		"a key in another case":          message("m1", `{"author":"a","time":"2026-10-21T00:00:00Z","body":"b","BODY":"other"}`),
+		"a type in another case":         anchor(`{"type":"node","id":"n","ID":"m"}`),
+		"a thread key in another case":   thread(`{"anchor":{"type":"node","id":"n"},"quote":"","Quote":"x","resolved":false,"messages":{}}`),
+		"a selector key in another case": anchor(`{"type":"cells","from":{"exact":"a","prefix":"","suffix":"","offset":0,"Exact":"b"},"to":{"exact":"a","prefix":"","suffix":"","offset":0}}`),
+		"nested too deep":                `{"version":1,"path":"a.md","x":` + strings.Repeat("[", 33) + strings.Repeat("]", 33) + `}`,
 		"too many messages": thread(`{"anchor":{"type":"node","id":"n"},"quote":"","resolved":false,"messages":{` +
 			many(meta.MaxMessages+1, func(i int) string { return `"m` + strconv.Itoa(i) + `":` + okMessage }) + `}}`),
 		"too many threads": `{"version":1,"path":"a.md","comments":{` +
@@ -223,5 +223,24 @@ func TestParseTellsANewerVersionApart(t *testing.T) {
 	_, err := meta.Parse([]byte(`{"version":2,"path":"a.md","comments":{"x":"anything"}}`))
 	if !errors.Is(err, meta.ErrVersion) {
 		t.Fatalf("version 2: %v", err)
+	}
+}
+
+func TestRenderWritesANewerPeditsKeysAsTheyAre(t *testing.T) {
+	// Nested as deep as Parse allows, many times over: indenting it again
+	// would write far more than was read.
+	deep := strings.Repeat("[", 31) + strings.Repeat("]", 31)
+	var keys []string
+	for i := range 1000 {
+		keys = append(keys, `"k`+strconv.Itoa(i)+`":`+deep)
+	}
+	data := `{"version":1,"path":"a.md",` + strings.Join(keys, ",") + `}`
+	f, err := meta.Parse([]byte(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := meta.Render(f)
+	if err != nil || len(out) > 2*len(data) {
+		t.Fatalf("rendered %d bytes from %d, %v", len(out), len(data), err)
 	}
 }

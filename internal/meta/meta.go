@@ -129,20 +129,23 @@ func (a *Anchor) UnmarshalJSON(data []byte) error {
 	switch head.Type {
 	case AnchorText:
 		var v struct {
-			Type string `json:"type"`
-			Selector
+			Type   string `json:"type"`
+			Exact  string `json:"exact"`
+			Prefix string `json:"prefix"`
+			Suffix string `json:"suffix"`
+			Offset int    `json:"offset"`
 		}
-		if err := strict(data, &v); err != nil {
+		if err := strict(data, &v, "type", "exact", "prefix", "suffix", "offset"); err != nil {
 			return err
 		}
-		a.Text = &v.Selector
+		a.Text = &Selector{Exact: v.Exact, Prefix: v.Prefix, Suffix: v.Suffix, Offset: v.Offset}
 	case AnchorCells:
 		var v struct {
 			Type string    `json:"type"`
 			From *Selector `json:"from"`
 			To   *Selector `json:"to"`
 		}
-		if err := strict(data, &v); err != nil {
+		if err := strict(data, &v, "type", "from", "to"); err != nil {
 			return err
 		}
 		a.From, a.To = v.From, v.To
@@ -151,7 +154,7 @@ func (a *Anchor) UnmarshalJSON(data []byte) error {
 			Type string `json:"type"`
 			ID   string `json:"id"`
 		}
-		if err := strict(data, &v); err != nil {
+		if err := strict(data, &v, "type", "id"); err != nil {
 			return err
 		}
 		a.ID = v.ID
@@ -161,9 +164,41 @@ func (a *Anchor) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// strict decodes data into v, refusing keys v does not have and anything
-// after the value.
-func strict(data []byte, v any) error {
+// UnmarshalJSON reads a thread, refusing keys that do not belong to it.
+func (t *Thread) UnmarshalJSON(data []byte) error {
+	type plain Thread
+	return strict(data, (*plain)(t), "anchor", "quote", "resolved", "messages")
+}
+
+// UnmarshalJSON reads a message, refusing keys that do not belong to it.
+func (m *Message) UnmarshalJSON(data []byte) error {
+	type plain Message
+	return strict(data, (*plain)(m), "author", "time", "body")
+}
+
+// UnmarshalJSON reads a selector, refusing keys that do not belong to it.
+func (s *Selector) UnmarshalJSON(data []byte) error {
+	type plain Selector
+	return strict(data, (*plain)(s), "exact", "prefix", "suffix", "offset")
+}
+
+// strict decodes data into v, refusing anything after the value, and, for an
+// object, keys other than keys. encoding/json matches a struct's fields by
+// name in any case, so {"body": ..., "BODY": ...} would pass its own check
+// and take the second: what a reviewer reads in Git would not be what pedit
+// shows.
+func strict(data []byte, v any, keys ...string) error {
+	if keys != nil {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(data, &fields); err != nil {
+			return err
+		}
+		for k := range fields {
+			if !slices.Contains(keys, k) {
+				return fmt.Errorf("unknown key %q", k)
+			}
+		}
+	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
@@ -181,6 +216,9 @@ func strict(data []byte, v any) error {
 func Parse(data []byte) (*File, error) {
 	if len(data) > MaxFileBytes {
 		return nil, fmt.Errorf("larger than %d bytes", MaxFileBytes)
+	}
+	if err := checkDepth(data); err != nil {
+		return nil, err
 	}
 	var top map[string]json.RawMessage
 	if err := strict(data, &top); err != nil {
@@ -214,6 +252,34 @@ func Parse(data []byte) (*File, error) {
 		return nil, err
 	}
 	return f, nil
+}
+
+// maxDepth bounds how deep a metadata file nests: its own keys go five deep,
+// and a newer pedit's are kept as they are.
+const maxDepth = 32
+
+// checkDepth refuses JSON that nests deeper than maxDepth, which would cost
+// far more to decode and write back than its size suggests.
+func checkDepth(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	depth := 0
+	for {
+		t, err := dec.Token()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		switch t {
+		case json.Delim('{'), json.Delim('['):
+			if depth++; depth > maxDepth {
+				return fmt.Errorf("nested more than %d deep", maxDepth)
+			}
+		case json.Delim('}'), json.Delim(']'):
+			depth--
+		}
+	}
 }
 
 // Check tells whether f keeps every limit and rule, as Parse requires.
@@ -349,8 +415,12 @@ func Render(f *File) ([]byte, error) {
 		comments = map[string]Thread{}
 	}
 	err := errors.Join(write("version", Version), write("path", f.Path), write("comments", comments))
+	// A newer pedit's keys as they were, on one line: indenting them again
+	// could multiply their size.
 	for _, k := range slices.Sorted(maps.Keys(f.extra)) {
-		err = errors.Join(err, write(k, f.extra[k]))
+		key, _ := json.Marshal(k)
+		out.WriteString(sep + "\n  " + string(key) + ": ")
+		err = errors.Join(err, json.Compact(&out, f.extra[k]))
 	}
 	if err != nil {
 		return nil, err
