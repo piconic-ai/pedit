@@ -22,9 +22,10 @@ type fileDoc struct {
 	unsub  func()
 	synced bool
 
-	// When the Client may next ask the room for what the check refused;
-	// under Client.applying.
-	resyncAt time.Time
+	// When the Client may next ask the room for what the check refused, and
+	// the timer that asks then; under Client.applying.
+	resyncAt    time.Time
+	resyncTimer *time.Timer
 }
 
 // timeShare is the time checking and applying updates may still take, as of
@@ -59,10 +60,12 @@ var ErrRetryLater = errors.New("refused for now")
 // a quarter of the time, with up to a second in hand, so a peer flooding the
 // room cannot keep the Client busy.
 const (
-	checkShare  = 4
-	checkBurst  = time.Second
-	resyncEvery = 5 * time.Second
+	checkShare = 4
+	checkBurst = time.Second
 )
+
+// resyncEvery spaces out the Client's asking again; tests shorten it.
+var resyncEvery = 5 * time.Second
 
 // AddFile keeps doc in sync with the room as the file with this ID, from 1
 // up (file 0 is the Client's Doc): it sends
@@ -266,7 +269,7 @@ func (c *Client) receiveFileSync(id uint64, payload []byte) error {
 	}
 	c.applying.Lock()
 	kind, reply, err := f.apply(payload, c, &c.checks)
-	resync := errors.Is(err, ErrRetryLater) && f.mayResync(c.checks.clock())
+	resync := errors.Is(err, ErrRetryLater) && c.askAgain(id, f, c.checks.clock())
 	c.applying.Unlock()
 	if resync {
 		_ = c.sendFile(id, MessageSync, ysync.EncodeSyncStep1(f.doc))
@@ -343,14 +346,30 @@ func (s *timeShare) take(apply func() ([]byte, error)) ([]byte, error) {
 	return apply()
 }
 
-// mayResync tells whether the Client may ask the room, now, for what a
-// check refused for now. The caller holds Client.applying.
-func (f *fileDoc) mayResync(now time.Time) bool {
-	if now.Before(f.resyncAt) {
-		return false
+// askAgain has the Client ask the room for what a check refused for now:
+// at once, telling the caller to, or once resyncEvery has passed since it
+// last asked, so that an update refused while it waited is not left out.
+// The caller holds Client.applying.
+func (c *Client) askAgain(id uint64, f *fileDoc, now time.Time) bool {
+	if !now.Before(f.resyncAt) {
+		f.resyncAt = now.Add(resyncEvery)
+		return true
 	}
-	f.resyncAt = now.Add(resyncEvery)
-	return true
+	if f.resyncTimer == nil {
+		f.resyncTimer = time.AfterFunc(f.resyncAt.Sub(now), func() {
+			c.applying.Lock()
+			f.resyncTimer = nil
+			f.resyncAt = c.checks.clock().Add(resyncEvery)
+			c.applying.Unlock()
+			c.mu.Lock()
+			destroyed := c.destroyed
+			c.mu.Unlock()
+			if !destroyed {
+				_ = c.sendFile(id, MessageSync, ysync.EncodeSyncStep1(f.doc))
+			}
+		})
+	}
+	return false
 }
 
 // unsubscribeFiles stops following every file's doc, on Destroy.

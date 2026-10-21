@@ -150,8 +150,9 @@ interface FileDoc {
   check?: UpdateCheck
   onUpdate: (update: Uint8Array, origin: unknown) => void
   synced: boolean
-  /** When the client may next ask the room for what a check refused. */
+  /** When the client may next ask the room for what a check refused, and the timer that will. */
   resyncAt: number
+  resyncTimer: ReturnType<typeof setTimeout> | null
 }
 
 /** The ms checking and applying updates may still take, as of `counted`. */
@@ -320,7 +321,10 @@ export class RoomClient {
     this.doc.off('update', this.handleDocUpdate)
     this.awareness.off('update', this.handleAwarenessUpdate)
     this.awareness.off('change', this.handleAwarenessChange)
-    for (const f of this.files.values()) f.doc.off('update', f.onUpdate)
+    for (const f of this.files.values()) {
+      f.doc.off('update', f.onUpdate)
+      if (f.resyncTimer) clearTimeout(f.resyncTimer)
+    }
     const socket = this.socket
     this.socket = null
     socket?.close()
@@ -369,7 +373,7 @@ export class RoomClient {
       this.sendFileSync(id, (encoder) => syncProtocol.writeUpdate(encoder, update))
     }
     doc.on('update', onUpdate)
-    this.files.set(id, { doc, check, onUpdate, synced: false, resyncAt: 0 })
+    this.files.set(id, { doc, check, onUpdate, synced: false, resyncAt: 0, resyncTimer: null })
     const open = this.status === 'connected' || this.status === 'waiting'
     if (this.socket?.readyState === OPEN && open) this.syncFile(id, doc)
   }
@@ -462,11 +466,7 @@ export class RoomClient {
       : readSync(payload, f.doc, this)
     if ('reason' in read) {
       this.opts.onError?.(new Error(`file ${id}: dropped an update: ${read.reason}`))
-      const now = performance.now()
-      if (read.retryLater && now >= f.resyncAt) {
-        f.resyncAt = now + RESYNC_EVERY_MS
-        this.sendFileSync(id, (encoder) => syncProtocol.writeSyncStep1(encoder, f.doc))
-      }
+      if (read.retryLater) this.askAgain(id, f)
       return
     }
     const { kind, reply } = read
@@ -475,6 +475,22 @@ export class RoomClient {
       f.synced = true
       this.opts.onFileSynced?.(id)
     }
+  }
+
+  /**
+   * Asks the room for what a check refused for now: at once, or once
+   * RESYNC_EVERY_MS has passed since it last asked, so that an update refused
+   * while it waited is not left out. As internal/protocol does.
+   */
+  private askAgain(id: number, f: FileDoc): void {
+    const ask = () => {
+      f.resyncTimer = null
+      f.resyncAt = performance.now() + RESYNC_EVERY_MS
+      this.sendFileSync(id, (encoder) => syncProtocol.writeSyncStep1(encoder, f.doc))
+    }
+    const wait = f.resyncAt - performance.now()
+    if (wait <= 0) ask()
+    else f.resyncTimer ??= setTimeout(ask, wait)
   }
 
   /** Sends a file's state to the room, as onopen does for `doc`. */

@@ -22,59 +22,91 @@ const (
 	MaxClientClock = 1 << 16
 )
 
+// MaxPlaceItems bounds the items that share a place in the doc: a parent,
+// a key and the item they were inserted after. Honest peers make one, or a
+// few when they set the same key at once; Yjs and ygo take time in the
+// square of their number to apply them.
+const MaxPlaceItems = 64
+
 // ErrRefused marks an update a peer drops by these rules.
 var ErrRefused = errors.New("refused")
 
 // CheckUpdate tells whether update, received for doc, a metadata doc, may be
-// applied. It applies it to a copy of doc first, and refuses it when:
+// applied. It reads the update without applying it, and refuses it when:
 //
+//   - it holds anything but maps and plain values, as no comments do;
 //   - part of it, structs or deletions, would wait for updates not received
 //     yet (Yjs keeps those as pending, and sends them on with the doc, past
 //     every check). This refusal wraps protocol.ErrRetryLater: the client
 //     asks the room again, and an honest peer's updates come back whole;
 //   - it takes one of its clients past MaxClientClock operations;
-//   - the doc would pass MaxDocBytes.
+//   - it puts more than MaxPlaceItems items in one place;
+//   - the doc could pass MaxDocBytes.
 //
-// The caller holds the lock updates to doc are applied under.
+// It costs time in the size of the doc and the update, and applying an
+// update it passes costs no more. The caller holds the lock updates to doc
+// are applied under.
 func CheckUpdate(doc *crdt.Doc, update []byte) (err error) {
 	// protocol.Client recovers too; this keeps the refusal an ErrRefused for
 	// every caller, and fuzzing going.
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("%w: update makes ygo panic: %v", ErrRefused, r)
+			err = fmt.Errorf("%w: update makes the check panic: %v", ErrRefused, r)
 		}
 	}()
-	want, err := stateOf(update)
-	if err != nil {
+	sv := doc.StateVector()
+	known := make(map[uint64]uint64, len(sv))
+	for c, clock := range sv {
+		known[uint64(c)] = clock
+	}
+	u := newScanned(known)
+	if err := scan(update, u); err != nil {
 		return fmt.Errorf("%w: %v", ErrRefused, err)
 	}
-	// Cheap first: the clocks the update brings its clients to.
-	for client, clock := range want {
-		if clock > MaxClientClock {
+	for client, end := range u.end {
+		if end > MaxClientClock {
 			return fmt.Errorf("%w: client %d passed %d operations", ErrRefused, client, MaxClientClock)
 		}
 	}
-	copied := crdt.New()
-	if err := crdt.ApplyUpdateV1(copied, crdt.EncodeStateAsUpdateV1(doc, nil), nil); err != nil {
-		return fmt.Errorf("%w: %v", ErrRefused, err)
-	}
-	if err := crdt.ApplyUpdateV1(copied, update, nil); err != nil {
-		return fmt.Errorf("%w: %v", ErrRefused, err)
-	}
-	if p := copied.PendingStats(); p.Items > 0 || p.DeleteRanges > 0 {
+	if missing(u) {
 		return fmt.Errorf("%w: %w: it needs updates not received yet", ErrRefused, protocol.ErrRetryLater)
 	}
-	if n := len(crdt.EncodeStateAsUpdateV1(copied, nil)); n > MaxDocBytes {
-		return fmt.Errorf("%w: the comments would take %d bytes", ErrRefused, n)
+	state := crdt.EncodeStateAsUpdateV1(doc, nil)
+	if n := len(state) + len(update) + 32*u.ranges; n > MaxDocBytes {
+		return fmt.Errorf("%w: the comments could take %d bytes", ErrRefused, n)
+	}
+	have := newScanned(nil)
+	if err := scan(state, have); err != nil {
+		return fmt.Errorf("%w: the doc: %v", ErrRefused, err)
+	}
+	for p, n := range u.places {
+		if n+have.places[p] > MaxPlaceItems {
+			return fmt.Errorf("%w: more than %d items in one place", ErrRefused, MaxPlaceItems)
+		}
 	}
 	return nil
 }
 
-// stateOf is the state an update brings each client to.
-func stateOf(update []byte) (crdt.StateVector, error) {
-	sv, err := crdt.EncodeStateVectorFromUpdate(update)
-	if err != nil {
-		return nil, err
+// missing tells whether an update, scanned, needs structs that neither it
+// nor the doc, at sv, has.
+func missing(u *scanned) bool {
+	for client, start := range u.start {
+		if start > u.known[client] {
+			return true
+		}
 	}
-	return crdt.DecodeStateVectorV1(sv)
+	has := func(client, clock uint64) bool {
+		return clock < max(u.known[client], u.end[client])
+	}
+	for _, d := range u.deps {
+		if !has(d.client, d.clock) {
+			return true
+		}
+	}
+	for client, end := range u.deleted {
+		if end > 0 && !has(client, end-1) {
+			return true
+		}
+	}
+	return false
 }

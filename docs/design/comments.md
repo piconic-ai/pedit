@@ -138,23 +138,28 @@ else: a guest, or a teammate through Git. Every peer checks it the same way.
   let a file show reviewers one comment and pedit another.
 - Names, bodies and quotes are shown as text, never as HTML, with control and
   bidi characters removed.
-- Every peer tries each update to the doc on a copy first
-  (`internal/meta/check.go`, `packages/protocol/src/meta.ts`) and drops it
-  when part of it, structs or deletions, would wait for updates not received
-  yet, when it takes one of its clients past 65,536 operations, or when the
-  doc would no longer fit the 1 MiB frame its state is sent in, so a hostile
-  client cannot make a peer hold, and send, what other peers refuse. The host
-  shares no comments larger than that limit, so every peer can take the state
-  the host sends.
+- Every peer reads each update to the doc before applying it
+  (`internal/meta/check.go` and `scan.go`, `packages/protocol/src/meta.ts`),
+  without applying it to a copy: Yjs takes time in the square of the items
+  that share a place (a parent, a key and the item they follow), and a copy
+  would pay that for the whole doc on every update. It drops an update that
+  holds anything but maps and plain values; that needs structs or deletions
+  not received yet (Yjs keeps those as pending, and sends them on with the
+  doc, past every check); that takes one of its clients past 65,536
+  operations; that puts more than 64 items in one place; or after which the
+  doc could no longer fit the 1 MiB frame its state is sent in. So a hostile
+  client cannot make a peer hold, and send, what other peers refuse, nor
+  spend long applying it. The host shares no comments larger than that
+  limit, so every peer can take the state the host sends.
 - An update dropped for a gap is refused for now: the peer asks the room for
-  what it is missing (a sync step 1, at most every 5 seconds), and an honest
-  sender's updates come back whole. So is one that comes while checking and
-  applying the updates of all checked files have taken a quarter of the time
-  (up to a second in hand), so a flood of updates cannot keep a peer checking
-  copies, or the host placing anchors: the host places the anchors of each
-  update as it applies it (for up to a second), since one left for later could
-  lose its character first. The host also turns a panic in ygo on such an
-  update into an error.
+  what it is missing (a sync step 1, at once or, if it asked in the last 5
+  seconds, then), and an honest sender's updates come back whole. So is one
+  that comes while checking and applying the updates of all checked files have
+  taken a quarter of the time (up to a second in hand), so a flood of updates
+  cannot keep a peer checking updates, or the host placing anchors: the host
+  places the anchors of each update as it applies it (for up to a second),
+  since one left for later could lose its character first. The host also turns
+  a panic in ygo on such an update into an error.
 - A metadata file that breaks these rules is left untouched, and its shared
   file offers no comments.
 

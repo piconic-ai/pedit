@@ -407,4 +407,34 @@ describe('RoomClient with a checked file', () => {
       clock.mockRestore()
     }
   })
+
+  it('asks the room again for what it refused while it waited', async () => {
+    // From review: the answer to asking again was refused too, and nothing
+    // came after it to have the client ask once more.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
+    try {
+      const relay = new Relay()
+      const key = await importKey(generateKey())
+      const host = join(relay, key, { onError: () => {} })
+      const checked = new Y.Doc()
+      let refusals = 0
+      host.addFile(1, checked, (_, update) => {
+        if (refusals >= 2 || Y.decodeUpdate(update).structs.length === 0) return null
+        refusals++
+        return { reason: 'for the test', retryLater: true }
+      })
+      await vi.waitFor(() => expect(host.status).toBe('connected'))
+      const guest = join(relay, key)
+      const gDoc = new Y.Doc()
+      guest.addFile(1, gDoc)
+      await vi.waitFor(() => expect(guest.status).toBe('connected'))
+      gDoc.getMap('m').set('one', 1)
+      await vi.waitFor(() => expect(refusals).toBe(2))
+      expect(checked.getMap('m').get('one')).toBeUndefined()
+      await vi.advanceTimersByTimeAsync(6000)
+      await vi.waitFor(() => expect(checked.getMap('m').get('one')).toBe(1))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

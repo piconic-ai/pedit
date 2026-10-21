@@ -123,3 +123,92 @@ func TestCheckLimitsMatchPackagesProtocol(t *testing.T) {
 		t.Fatalf("meta-limits.json says %+v", limits)
 	}
 }
+
+// concurrentSets is an update of n clients each setting the same key of the
+// comments at once, as no honest room does for long.
+func concurrentSets(t *testing.T, n int) []byte {
+	t.Helper()
+	all := crdt.New()
+	for range n {
+		peer := crdt.New()
+		m := peer.GetMap(meta.CommentsKey)
+		peer.Transact(func(txn *crdt.Transaction) { m.Set(txn, "k", 1) })
+		if err := crdt.ApplyUpdateV1(all, crdt.EncodeStateAsUpdateV1(peer, nil), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return crdt.EncodeStateAsUpdateV1(all, nil)
+}
+
+func TestCheckUpdateRefusesManyItemsInOnePlace(t *testing.T) {
+	// From review: Yjs and ygo take time in the square of the items set at
+	// once in one place; 24,000 of them took 31s to apply.
+	if err := meta.CheckUpdate(crdt.New(), concurrentSets(t, meta.MaxPlaceItems)); err != nil {
+		t.Fatalf("refused %d: %v", meta.MaxPlaceItems, err)
+	}
+	err := meta.CheckUpdate(crdt.New(), concurrentSets(t, meta.MaxPlaceItems+1))
+	if !errors.Is(err, meta.ErrRefused) || !strings.Contains(err.Error(), "one place") {
+		t.Fatalf("CheckUpdate = %v", err)
+	}
+	// Nor a few at a time.
+	host := crdt.New()
+	if err := crdt.ApplyUpdateV1(host, concurrentSets(t, meta.MaxPlaceItems), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := meta.CheckUpdate(host, concurrentSets(t, 1)); !errors.Is(err, meta.ErrRefused) {
+		t.Fatalf("CheckUpdate = %v", err)
+	}
+}
+
+func TestCheckUpdateRefusesWhatCommentsDoNotHold(t *testing.T) {
+	for name, edit := range map[string]func(*crdt.Doc){
+		"text": func(d *crdt.Doc) {
+			text := d.GetText("t")
+			d.Transact(func(txn *crdt.Transaction) { text.Insert(txn, 0, "x", nil) })
+		},
+		"array": func(d *crdt.Doc) {
+			array := d.GetArray("a")
+			d.Transact(func(txn *crdt.Transaction) { array.Push(txn, []any{1}) })
+		},
+		"a text in the comments": func(d *crdt.Doc) {
+			comments := d.GetMap(meta.CommentsKey)
+			d.Transact(func(txn *crdt.Transaction) { comments.Set(txn, "t", crdt.NewTextPrelim()) })
+		},
+	} {
+		guest := crdt.New()
+		edit(guest)
+		if err := meta.CheckUpdate(crdt.New(), crdt.EncodeStateAsUpdateV1(guest, nil)); !errors.Is(err, meta.ErrRefused) {
+			t.Fatalf("%s: CheckUpdate = %v", name, err)
+		}
+	}
+}
+
+func TestCheckUpdateTakesWhatTheHostLoaded(t *testing.T) {
+	// A guest's update on top of the host's own comments, and the host's
+	// whole state, as a new peer gets it.
+	host := crdt.New()
+	meta.Load(host, &meta.File{Path: "a.md", Comments: map[string]meta.Thread{
+		"c1": {Anchor: meta.Anchor{Type: meta.AnchorNode, ID: "n1"}, Quote: "q", Messages: map[string]meta.Message{
+			"m1": {Author: "Ada", Time: "2026-10-21T00:00:00Z", Body: "hi"},
+		}},
+	}}, nil)
+	if err := meta.CheckUpdate(crdt.New(), crdt.EncodeStateAsUpdateV1(host, nil)); err != nil {
+		t.Fatal(err)
+	}
+	guest := crdt.New()
+	if err := crdt.ApplyUpdateV1(guest, crdt.EncodeStateAsUpdateV1(host, nil), nil); err != nil {
+		t.Fatal(err)
+	}
+	updates := updatesOf(guest)
+	thread := guest.GetMap(meta.CommentsKey)
+	guest.Transact(func(txn *crdt.Transaction) { thread.Delete(txn, "c1") })
+	setThread(guest, "c2", "two")
+	for _, u := range *updates {
+		if err := meta.CheckUpdate(host, u); err != nil {
+			t.Fatal(err)
+		}
+		if err := crdt.ApplyUpdateV1(host, u, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

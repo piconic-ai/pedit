@@ -44,17 +44,6 @@ func TestChecksTakeTheirShareOfTheTimeOnly(t *testing.T) {
 	}
 }
 
-func TestResyncsAreSpacedOut(t *testing.T) {
-	at := time.Unix(1, 0)
-	f := &fileDoc{}
-	if !f.mayResync(at) || f.mayResync(at) {
-		t.Fatal("not one resync at first")
-	}
-	if !f.mayResync(at.Add(resyncEvery)) {
-		t.Fatal("no resync later")
-	}
-}
-
 func TestCheckedFilesShareTheirTime(t *testing.T) {
 	now, clock := fakeClock()
 	slow := func(*crdt.Doc, []byte) error {

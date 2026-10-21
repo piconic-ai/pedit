@@ -421,3 +421,34 @@ func TestACheckedFileAsksAgainForWhatItRefusedForNow(t *testing.T) {
 	// Refused once, then asked for again, and applied with the answer.
 	prototest.WaitFor(t, wait, func() bool { return checked.String() == "later" }, "the refused update, asked for again")
 }
+
+func TestACheckedFileAsksAgainForWhatItRefusedWhileItWaited(t *testing.T) {
+	// From review: the answer to the Client's asking again was refused too,
+	// and nothing came after it to have the Client ask once more.
+	protocol.ShortenResyncForTest(t, 50*time.Millisecond)
+	relay := prototest.NewRelay(true)
+	key := protocol.GenerateKey()
+	host := join(t, relay, key, joinOpts{header: hostHeader(), onError: func(error) {}})
+	checked := newFileText("")
+	var mu sync.Mutex
+	refusals := 0
+	check := func(doc *crdt.Doc, update []byte) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if strings.Contains(string(update), "later") && refusals < 2 {
+			refusals++
+			return fmt.Errorf("%w: for the test", protocol.ErrRetryLater)
+		}
+		return nil
+	}
+	if err := host.AddCheckedFile(1, checked.doc, check); err != nil {
+		t.Fatal(err)
+	}
+	prototest.WaitFor(t, wait, func() bool { return host.Status() == protocol.StatusConnected }, "host connected")
+	guest := join(t, relay, key, joinOpts{})
+	g := newFileText("")
+	addFile(t, guest, 1, g)
+	prototest.WaitFor(t, wait, func() bool { return guest.Status() == protocol.StatusConnected }, "guest connected")
+	g.insert(0, "later")
+	prototest.WaitFor(t, wait, func() bool { return checked.String() == "later" }, "the update, asked for a second time")
+}

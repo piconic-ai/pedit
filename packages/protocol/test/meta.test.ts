@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
 // The Go side checks its own against the same file (internal/meta/check_test.go).
 import limits from '../../testdata/meta-limits.json'
-import { checkMetaUpdate, META_LIMITS } from '../src/index.ts'
+import { checkMetaUpdate, MAX_PLACE_ITEMS, META_LIMITS } from '../src/index.ts'
 
 function thread(doc: Y.Doc, id: string, quote: string) {
   doc.transact(() => {
@@ -83,5 +83,55 @@ describe('checkMetaUpdate', () => {
 
   it('refuses what is not an update', () => {
     expect(checkMetaUpdate(new Y.Doc(), new Uint8Array([0xff, 0xff, 0xff]))).not.toBeNull()
+  })
+
+  it('refuses many items in one place', () => {
+    // From review: Yjs takes time in the square of the items set at once in
+    // one place.
+    const sets = (n: number) => {
+      const all = new Y.Doc()
+      for (let i = 0; i < n; i++) {
+        const peer = new Y.Doc()
+        peer.getMap('comments').set('k', i)
+        Y.applyUpdate(all, Y.encodeStateAsUpdate(peer))
+      }
+      return Y.encodeStateAsUpdate(all)
+    }
+    expect(checkMetaUpdate(new Y.Doc(), sets(MAX_PLACE_ITEMS))).toBeNull()
+    expect(checkMetaUpdate(new Y.Doc(), sets(MAX_PLACE_ITEMS + 1))?.reason).toMatch(/one place/)
+    const host = new Y.Doc()
+    Y.applyUpdate(host, sets(MAX_PLACE_ITEMS))
+    expect(checkMetaUpdate(host, sets(1))).not.toBeNull()
+  })
+
+  it('refuses what comments do not hold', () => {
+    const edits: Array<(d: Y.Doc) => void> = [
+      (d) => d.getText('t').insert(0, 'x'),
+      (d) => d.getArray('a').push([1]),
+      (d) => d.getMap('comments').set('t', new Y.Text('x')),
+    ]
+    for (const edit of edits) {
+      const guest = new Y.Doc()
+      edit(guest)
+      expect(checkMetaUpdate(new Y.Doc(), Y.encodeStateAsUpdate(guest))?.reason).toMatch(
+        /comments doc holds/,
+      )
+    }
+  })
+
+  it('counts the clocks an update reaches, not only from 0', () => {
+    // From review: Yjs' encodeStateVectorFromUpdate counts no client whose
+    // structs do not start at clock 0.
+    const guest = new Y.Doc()
+    const m = guest.getMap('comments')
+    guest.transact(() => {
+      for (let i = 0; i < META_LIMITS.maxClientClock; i++) m.set('k', i)
+    })
+    const host = new Y.Doc()
+    Y.applyUpdate(host, Y.encodeStateAsUpdate(guest))
+    const before = Y.encodeStateVector(guest)
+    m.set('k', -1)
+    const diff = Y.encodeStateAsUpdate(guest, before)
+    expect(checkMetaUpdate(host, diff)?.reason).toMatch(/operations/)
   })
 })
