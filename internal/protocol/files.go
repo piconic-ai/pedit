@@ -65,7 +65,10 @@ func MetaFiles(files []FileEntry) map[uint64]uint64 {
 			continue
 		}
 		path, ok := metaTarget(m.Path)
-		if f, listed := byPath[path]; ok && listed && f.Format != FormatMeta {
+		if !ok {
+			continue
+		}
+		if f, listed := byPath[path]; listed && f.Format != FormatMeta {
 			pairs[f.ID] = m.ID
 		}
 	}

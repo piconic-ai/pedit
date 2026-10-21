@@ -53,7 +53,9 @@ export function metaFiles(files: FileEntry[]): Map<number, number> {
   const byPath = new Map(files.map((f) => [f.path, f]))
   const pairs = new Map<number, number>()
   for (const m of files) {
-    const file = m.format === META_FORMAT ? byPath.get(metaTarget(m.path) ?? '') : undefined
+    const target = metaTarget(m.path)
+    if (m.format !== META_FORMAT || target === undefined) continue
+    const file = byPath.get(target)
     if (file && file.format !== META_FORMAT) pairs.set(file.id, m.id)
   }
   return pairs

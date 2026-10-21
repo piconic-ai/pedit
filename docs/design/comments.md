@@ -38,7 +38,10 @@ history.
   `metaPath` in `packages/protocol/src/files.ts`). That path pairs it with its
   file; it is a name for the pairing, not where the file is on disk. It is
   longer than the file's path, so the host lists it only if it keeps the
-  limits on paths: one bad path refuses the whole manifest.
+  limits on paths and names no file the room already shares: one bad path
+  refuses the whole manifest. A field naming the file would be cleaner, but
+  a manifest entry is a fixed (id, path, format), and older peers refuse a
+  manifest with bytes they do not expect.
 - **Additive.** Peers leave out formats they do not know, so older browsers and
   CLIs never see comments. No new message type, no `PROTOCOL_VERSION` bump.
 - **Separate from the content.** One Yjs update can touch several roots of a

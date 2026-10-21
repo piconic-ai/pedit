@@ -225,17 +225,21 @@ func (f *File) Check() error {
 		return fmt.Errorf("more than %d threads", MaxThreads)
 	}
 	for id, t := range f.Comments {
-		if err := t.check(id); err != nil {
+		if err := errors.Join(checkID(id), t.check()); err != nil {
 			return fmt.Errorf("thread %q: %w", id, err)
 		}
 	}
 	return nil
 }
 
-func (t Thread) check(id string) error {
+func checkID(id string) error {
 	if !idPattern.MatchString(id) {
 		return errors.New("invalid id")
 	}
+	return nil
+}
+
+func (t Thread) check() error {
 	if err := t.Anchor.check(); err != nil {
 		return fmt.Errorf("anchor: %w", err)
 	}
@@ -246,17 +250,14 @@ func (t Thread) check(id string) error {
 		return fmt.Errorf("more than %d messages", MaxMessages)
 	}
 	for mid, m := range t.Messages {
-		if err := m.check(mid); err != nil {
+		if err := errors.Join(checkID(mid), m.check()); err != nil {
 			return fmt.Errorf("message %q: %w", mid, err)
 		}
 	}
 	return nil
 }
 
-func (m Message) check(id string) error {
-	if !idPattern.MatchString(id) {
-		return errors.New("invalid id")
-	}
+func (m Message) check() error {
 	if _, err := time.Parse(time.RFC3339, m.Time); err != nil || !timePattern.MatchString(m.Time) {
 		return errors.New("invalid time")
 	}
@@ -327,51 +328,36 @@ func Render(f *File) ([]byte, error) {
 	if err := f.Check(); err != nil {
 		return nil, err
 	}
-	keys := []string{"version", "path", "comments"}
-	values := map[string]any{"version": Version, "path": f.Path, "comments": f.Comments}
-	if f.Comments == nil {
-		values["comments"] = map[string]Thread{}
-	}
-	for _, k := range slices.Sorted(maps.Keys(f.extra)) {
-		keys = append(keys, k)
-		values[k] = f.extra[k]
-	}
-
 	var out bytes.Buffer
-	out.WriteString("{")
-	for i, k := range keys {
-		if i > 0 {
-			out.WriteString(",")
+	enc := json.NewEncoder(&out)
+	// <, > and & only matter in HTML.
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("  ", "  ")
+	sep := "{"
+	write := func(k string, v any) error {
+		key, _ := json.Marshal(k) // not strconv.Quote, which is Go syntax
+		out.WriteString(sep + "\n  " + string(key) + ": ")
+		sep = ","
+		if err := enc.Encode(v); err != nil {
+			return err
 		}
-		v, err := marshal(values[k])
-		if err != nil {
-			return nil, err
-		}
-		key, _ := marshal(k)
-		out.WriteString("\n  ")
-		out.Write(key)
-		out.WriteString(": ")
-		out.Write(v)
+		out.Truncate(out.Len() - 1) // Encode ends with a newline
+		return nil
+	}
+	comments := f.Comments
+	if comments == nil {
+		comments = map[string]Thread{}
+	}
+	err := errors.Join(write("version", Version), write("path", f.Path), write("comments", comments))
+	for _, k := range slices.Sorted(maps.Keys(f.extra)) {
+		err = errors.Join(err, write(k, f.extra[k]))
+	}
+	if err != nil {
+		return nil, err
 	}
 	out.WriteString("\n}\n")
 	if out.Len() > MaxFileBytes {
 		return nil, fmt.Errorf("larger than %d bytes", MaxFileBytes)
-	}
-	return out.Bytes(), nil
-}
-
-// marshal writes v as indented JSON inside the top-level object, without
-// escaping <, > and &, which only matter in HTML.
-func marshal(v any) ([]byte, error) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(v); err != nil {
-		return nil, err
-	}
-	var out bytes.Buffer
-	if err := json.Indent(&out, bytes.TrimRight(buf.Bytes(), "\n"), "  ", "  "); err != nil {
-		return nil, err
 	}
 	return out.Bytes(), nil
 }
