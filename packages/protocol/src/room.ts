@@ -150,13 +150,38 @@ interface FileDoc {
   check?: UpdateCheck
   onUpdate: (update: Uint8Array, origin: unknown) => void
   synced: boolean
+  /** The ms the checks may still take, as of `counted`. */
+  credit: number
+  counted: number
+  /** When the client may next ask the room for what a check refused. */
+  resyncAt: number
 }
 
 /**
  * Tells why an update received for `doc` must not be applied, or returns
  * null. See addFile.
  */
-export type UpdateCheck = (doc: Y.Doc, update: Uint8Array) => string | null
+export type UpdateCheck = (doc: Y.Doc, update: Uint8Array) => Refusal | null
+
+/**
+ * Why a check refused an update. With `retryLater`, it is refused for now
+ * only, such as one that needs updates not received yet: the client sends
+ * the room a sync step 1 for the file then, at most every RESYNC_EVERY_MS,
+ * so an honest peer's updates come back whole.
+ */
+export interface Refusal {
+  reason: string
+  retryLater?: boolean
+}
+
+/**
+ * The checks of one file may take a quarter of the time, with up to a second
+ * in hand, so a peer flooding the room cannot keep the client checking; an
+ * update past that is refused for now. As internal/protocol does.
+ */
+const CHECK_SHARE = 4
+const CHECK_BURST_MS = 1000
+const RESYNC_EVERY_MS = 5000
 
 const OPEN = 1
 
@@ -325,7 +350,8 @@ export class RoomClient {
    * state now if connected, and on every connection after. Messages about a
    * file that was not added are dropped, so a peer follows only the files it
    * added. With `check`, an update anyone sends for the file is applied only
-   * if it passes: one that does not is dropped and reported to onError.
+   * if it passes: one that does not is dropped and reported to onError (see
+   * Refusal for one refused for now).
    */
   addFile(id: number, doc: Y.Doc, check?: UpdateCheck): void {
     if (!Number.isInteger(id) || id < 1 || id > MAX_FILE_ID)
@@ -337,7 +363,16 @@ export class RoomClient {
       this.sendFileSync(id, (encoder) => syncProtocol.writeUpdate(encoder, update))
     }
     doc.on('update', onUpdate)
-    this.files.set(id, { doc, check, onUpdate, synced: false })
+    const now = Date.now()
+    this.files.set(id, {
+      doc,
+      check,
+      onUpdate,
+      synced: false,
+      credit: CHECK_BURST_MS,
+      counted: now,
+      resyncAt: now,
+    })
     const open = this.status === 'connected' || this.status === 'waiting'
     if (this.socket?.readyState === OPEN && open) this.syncFile(id, doc)
   }
@@ -425,9 +460,13 @@ export class RoomClient {
   private receiveFileSync(id: number, payload: Uint8Array): void {
     const f = this.files.get(id)
     if (!f) return
-    const refused = f.check && checkSync(payload, f.doc, f.check)
+    const refused = f.check && checkSync(payload, f, f.check)
     if (refused) {
-      this.opts.onError?.(new Error(`file ${id}: dropped an update: ${refused}`))
+      this.opts.onError?.(new Error(`file ${id}: dropped an update: ${refused.reason}`))
+      if (refused.retryLater && Date.now() >= f.resyncAt) {
+        f.resyncAt = Date.now() + RESYNC_EVERY_MS
+        this.sendFileSync(id, (encoder) => syncProtocol.writeSyncStep1(encoder, f.doc))
+      }
       return
     }
     const { kind, reply } = readSync(payload, f.doc, this)
@@ -602,17 +641,34 @@ function decodeKnown<T>(
   }
 }
 
-/** Tells why check refuses the update a sync message carries, or null. */
-function checkSync(payload: Uint8Array, doc: Y.Doc, check: UpdateCheck): string | null {
+/**
+ * Tells why check refuses the update a sync message carries, or null,
+ * unless the file's checks took their share of the time.
+ */
+function checkSync(payload: Uint8Array, f: FileDoc, check: UpdateCheck): Refusal | null {
+  let update: Uint8Array
   try {
     const decoder = decoding.createDecoder(payload)
     const kind = decoding.readVarUint(decoder)
     if (kind !== syncProtocol.messageYjsSyncStep2 && kind !== syncProtocol.messageYjsUpdate) {
       return null
     }
-    return check(doc, decoding.readVarUint8Array(decoder))
+    update = decoding.readVarUint8Array(decoder)
   } catch {
-    return 'not a sync message'
+    return { reason: 'not a sync message' }
+  }
+  const now = Date.now()
+  f.credit = Math.min(CHECK_BURST_MS, f.credit + (now - f.counted) / CHECK_SHARE)
+  f.counted = now
+  if (f.credit <= 0) return { reason: 'checking updates took too long', retryLater: true }
+  try {
+    return check(f.doc, update)
+  } catch {
+    return { reason: 'the check failed' }
+  } finally {
+    const end = Date.now()
+    f.credit -= end - now
+    f.counted = end
   }
 }
 

@@ -330,7 +330,7 @@ describe('RoomClient with a checked file', () => {
     const host = join(relay, key, { onError: (e) => errors.push(e) })
     const checked = new Y.Doc()
     host.addFile(1, checked, (_, update) =>
-      Y.decodeUpdate(update).structs.length > 1 ? 'too many' : null,
+      Y.decodeUpdate(update).structs.length > 1 ? { reason: 'too many' } : null,
     )
     await vi.waitFor(() => expect(host.status).toBe('connected'))
 
@@ -347,5 +347,57 @@ describe('RoomClient with a checked file', () => {
       expect(String(errors.at(-1))).toMatch(/file 1: dropped an update: too many/),
     )
     expect(checked.getMap('other').get('a')).toBeUndefined()
+  })
+
+  it('asks the room again for what its check refused for now', async () => {
+    const relay = new Relay()
+    const key = await importKey(generateKey())
+    const host = join(relay, key, { onError: () => {} })
+    const checked = new Y.Doc()
+    let refused = false
+    host.addFile(1, checked, (_, update) => {
+      if (refused || Y.decodeUpdate(update).structs.length === 0) return null
+      refused = true
+      return { reason: 'for the test', retryLater: true }
+    })
+    await vi.waitFor(() => expect(host.status).toBe('connected'))
+    const guest = join(relay, key)
+    const gDoc = new Y.Doc()
+    guest.addFile(1, gDoc)
+    await vi.waitFor(() => expect(guest.status).toBe('connected'))
+    gDoc.getMap('m').set('one', 1)
+    // Refused once, then asked for again, and applied with the answer.
+    await vi.waitFor(() => expect(checked.getMap('m').get('one')).toBe(1))
+  })
+
+  it('stops checking once its checks took their share of the time', async () => {
+    const relay = new Relay()
+    const key = await importKey(generateKey())
+    const errors: unknown[] = []
+    const host = join(relay, key, { onError: (e) => errors.push(e) })
+    const checked = new Y.Doc()
+    let checks = 0
+    let now = 1_000_000
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      host.addFile(1, checked, () => {
+        checks++
+        now += 2000 // longer than all in hand
+        return null
+      })
+      await vi.waitFor(() => expect(host.status).toBe('connected'))
+      const guest = join(relay, key)
+      const gDoc = new Y.Doc()
+      guest.addFile(1, gDoc)
+      // Before the guest connects: in its first state, one check.
+      gDoc.getMap('m').set('one', 1)
+      await vi.waitFor(() => expect(checked.getMap('m').get('one')).toBe(1))
+      const before = checks
+      gDoc.getMap('m').set('two', 2)
+      await vi.waitFor(() => expect(String(errors.at(-1))).toMatch(/took too long/))
+      expect(checks).toBe(before)
+    } finally {
+      clock.mockRestore()
+    }
   })
 })

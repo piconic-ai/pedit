@@ -3,6 +3,7 @@ package protocol
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/reearth/ygo/crdt"
 	"github.com/reearth/ygo/encoding"
@@ -20,11 +21,38 @@ type fileDoc struct {
 	check  UpdateCheck
 	unsub  func()
 	synced bool
+
+	// Under Client.applying: the time check may still take, as of when it
+	// was last counted, and when the Client may next ask the room for what
+	// it refused.
+	credit   time.Duration
+	counted  time.Time
+	resyncAt time.Time
 }
 
 // UpdateCheck tells whether an update received for doc may be applied. It is
-// called under the lock updates are applied under.
+// called under the lock updates are applied under. An error that wraps
+// ErrRetryLater refuses an update for now only: the Client asks the room for
+// what it is missing again.
 type UpdateCheck func(doc *crdt.Doc, update []byte) error
+
+// ErrRetryLater marks an update refused for now: one that needs updates not
+// received yet, or one that came while the checks had taken their share of
+// the time. The Client sends the room a SyncStep1 for the file then, at most
+// every resyncEvery, so an honest peer's updates come back whole, with
+// everything the refused one needed.
+var ErrRetryLater = errors.New("refused for now")
+
+// The checks of one file may take a quarter of the time, with up to a second
+// in hand, so a peer flooding the room cannot keep the Client checking.
+const (
+	checkShare  = 4
+	checkBurst  = time.Second
+	resyncEvery = 5 * time.Second
+)
+
+// checkClock is time.Now; tests set it.
+var checkClock = time.Now
 
 // AddFile keeps doc in sync with the room as the file with this ID, from 1
 // up (file 0 is the Client's Doc): it sends
@@ -44,7 +72,7 @@ func (c *Client) AddCheckedFile(id uint64, doc *crdt.Doc, check UpdateCheck) err
 	}
 	// Subscribed outside c.mu: an update in another goroutine holds the
 	// doc's lock while it sends, which takes c.mu.
-	f := &fileDoc{doc: doc, check: check}
+	f := &fileDoc{doc: doc, check: check, credit: checkBurst}
 	f.unsub = doc.OnUpdate(func(update []byte, origin any) {
 		if origin == c {
 			return
@@ -228,7 +256,11 @@ func (c *Client) receiveFileSync(id uint64, payload []byte) error {
 	}
 	c.applying.Lock()
 	reply, err := f.apply(payload, c)
+	resync := errors.Is(err, ErrRetryLater) && f.mayResync()
 	c.applying.Unlock()
+	if resync {
+		_ = c.sendFile(id, MessageSync, ysync.EncodeSyncStep1(f.doc))
+	}
 	if err != nil {
 		return fmt.Errorf("file %d: %w", id, err)
 	}
@@ -264,11 +296,38 @@ func (f *fileDoc) apply(payload []byte, origin any) (reply []byte, err error) {
 		return nil, err
 	}
 	if kind == ysync.MsgSyncStep2 || kind == ysync.MsgUpdate {
-		if err := f.check(f.doc, update); err != nil {
+		if err := f.timedCheck(update); err != nil {
 			return nil, err
 		}
 	}
 	return ysync.ApplySyncMessage(f.doc, payload, origin)
+}
+
+// timedCheck checks update, unless the checks took their share of the time.
+// The caller holds Client.applying.
+func (f *fileDoc) timedCheck(update []byte) error {
+	now := checkClock()
+	f.credit = min(checkBurst, f.credit+now.Sub(f.counted)/checkShare)
+	f.counted = now
+	if f.credit <= 0 {
+		return fmt.Errorf("%w: checking updates took too long", ErrRetryLater)
+	}
+	err := f.check(f.doc, update)
+	end := checkClock()
+	f.credit -= end.Sub(now)
+	f.counted = end
+	return err
+}
+
+// mayResync tells whether the Client may ask the room for what a check
+// refused for now. The caller holds Client.applying.
+func (f *fileDoc) mayResync() bool {
+	now := checkClock()
+	if now.Before(f.resyncAt) {
+		return false
+	}
+	f.resyncAt = now.Add(resyncEvery)
+	return true
 }
 
 // unsubscribeFiles stops following every file's doc, on Destroy.

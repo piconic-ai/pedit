@@ -140,11 +140,18 @@ else: a guest, or a teammate through Git. Every peer checks it the same way.
   bidi characters removed.
 - Every peer tries each update to the doc on a copy first
   (`internal/meta/check.go`, `packages/protocol/src/meta.ts`) and drops it
-  when part of it would wait for updates not received yet, when it takes one
-  client past 65,536 operations, or when the doc would pass 512 KiB, so a
-  hostile client cannot make a peer hold, and send, frames the relay refuses.
-  An honest update dropped for a gap comes back with the next sync. The host
-  also turns a panic in ygo on such an update into an error.
+  when part of it, structs or deletions, would wait for updates not received
+  yet, when it takes one of its clients past 65,536 operations, or when the
+  doc would no longer fit the 1 MiB frame its state is sent in, so a hostile
+  client cannot make a peer hold, and send, what other peers refuse. The host
+  shares no comments larger than that limit, so every peer can take the state
+  the host sends.
+- An update dropped for a gap is refused for now: the peer asks the room for
+  what it is missing (a sync step 1, at most every 5 seconds), and an honest
+  sender's updates come back whole. So is one that comes while a file's
+  checks have taken a quarter of the time (up to a second in hand), so a
+  flood of updates cannot keep a peer checking copies. The host also turns a
+  panic in ygo on such an update into an error.
 - A metadata file that breaks these rules is left untouched, and its shared
   file offers no comments.
 

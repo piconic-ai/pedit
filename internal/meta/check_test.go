@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/piconic-ai/pedit/internal/meta"
+	"github.com/piconic-ai/pedit/internal/protocol"
 	"github.com/reearth/ygo/crdt"
 )
 
@@ -48,8 +49,25 @@ func TestCheckUpdateRefusesAGap(t *testing.T) {
 	setThread(guest, "c2", "two")
 	// The second update without the first: Yjs would keep it pending.
 	err := meta.CheckUpdate(host, (*updates)[1])
-	if !errors.Is(err, meta.ErrRefused) || !strings.Contains(err.Error(), "skips") {
+	if !errors.Is(err, meta.ErrRefused) || !errors.Is(err, protocol.ErrRetryLater) {
 		t.Fatalf("CheckUpdate = %v", err)
+	}
+}
+
+func TestCheckUpdateRefusesDeletionsOfWhatItHasNot(t *testing.T) {
+	// From review: no structs, and a deletion of client 999's clocks 0-9,
+	// which ygo would keep pending and send on with the doc.
+	update := []byte{0, 1, 0xe7, 0x07, 1, 0, 10}
+	err := meta.CheckUpdate(crdt.New(), update)
+	if !errors.Is(err, meta.ErrRefused) || !errors.Is(err, protocol.ErrRetryLater) {
+		t.Fatalf("CheckUpdate = %v", err)
+	}
+}
+
+func TestEveryPeerCanTakeTheLargestDocItKeeps(t *testing.T) {
+	// The file's headers in a FilesDoc frame are a few bytes.
+	if protocol.FrameBytes(meta.MaxDocBytes+64) > protocol.MaxFrameBytes {
+		t.Fatalf("a doc of %d bytes does not fit a frame", meta.MaxDocBytes)
 	}
 }
 

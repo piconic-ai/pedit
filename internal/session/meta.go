@@ -97,7 +97,8 @@ func (s *Session) openMeta(f *sharedFile) (*metaFile, string) {
 		m.tracker = meta.NewTracker(f.doc)
 	}
 	meta.Load(m.doc, m.file, m.tracker)
-	if frame := protocol.FileStateFrameBytes(m.id, m.doc); frame > protocol.MaxFrameBytes {
+	// Every peer refuses comments larger: they could not take the state.
+	if size := len(crdt.EncodeStateAsUpdateV1(m.doc, nil)); size > meta.MaxDocBytes {
 		m.close()
 		return nil, "its comments are too large to share"
 	}

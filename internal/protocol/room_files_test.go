@@ -2,6 +2,7 @@ package protocol_test
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -390,4 +391,33 @@ func TestACheckedFileAppliesOnlyWhatItsCheckPasses(t *testing.T) {
 	if !errors.Is(errs[0], refuse) || !strings.Contains(errs[1].Error(), "panic") {
 		t.Fatalf("errors %v", errs)
 	}
+}
+
+func TestACheckedFileAsksAgainForWhatItRefusedForNow(t *testing.T) {
+	relay := prototest.NewRelay(true)
+	key := protocol.GenerateKey()
+	host := join(t, relay, key, joinOpts{header: hostHeader(), onError: func(error) {}})
+	checked := newFileText("")
+	var mu sync.Mutex
+	refused := false
+	check := func(doc *crdt.Doc, update []byte) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if strings.Contains(string(update), "later") && !refused {
+			refused = true
+			return fmt.Errorf("%w: for the test", protocol.ErrRetryLater)
+		}
+		return nil
+	}
+	if err := host.AddCheckedFile(1, checked.doc, check); err != nil {
+		t.Fatal(err)
+	}
+	prototest.WaitFor(t, wait, func() bool { return host.Status() == protocol.StatusConnected }, "host connected")
+	guest := join(t, relay, key, joinOpts{})
+	g := newFileText("")
+	addFile(t, guest, 1, g)
+	prototest.WaitFor(t, wait, func() bool { return guest.Status() == protocol.StatusConnected }, "guest connected")
+	g.insert(0, "later")
+	// Refused once, then asked for again, and applied with the answer.
+	prototest.WaitFor(t, wait, func() bool { return checked.String() == "later" }, "the refused update, asked for again")
 }

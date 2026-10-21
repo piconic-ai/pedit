@@ -39,7 +39,27 @@ describe('checkMetaUpdate', () => {
     const updates = updatesOf(guest)
     thread(guest, 'c1', 'one')
     thread(guest, 'c2', 'two')
-    expect(checkMetaUpdate(new Y.Doc(), updates[1] as Uint8Array)).toMatch(/skips/)
+    expect(checkMetaUpdate(new Y.Doc(), updates[1] as Uint8Array)).toEqual({
+      reason: 'it needs updates not received yet',
+      retryLater: true,
+    })
+  })
+
+  it('refuses deletions of what it has not, which Yjs would keep pending', () => {
+    // A deletion of client 999's clocks 0-9, and no structs.
+    const update = new Uint8Array([0, 1, 0xe7, 0x07, 1, 0, 10])
+    expect(checkMetaUpdate(new Y.Doc(), update)?.retryLater).toBe(true)
+  })
+
+  it("looks only at the clocks of the update's clients", () => {
+    const host = new Y.Doc()
+    const m = host.getMap('comments')
+    host.transact(() => {
+      for (let i = 0; i <= META_LIMITS.maxClientClock; i++) m.set('k', i)
+    })
+    const guest = new Y.Doc()
+    thread(guest, 'c1', 'hello')
+    expect(checkMetaUpdate(host, Y.encodeStateAsUpdate(guest))).toBeNull()
   })
 
   it('refuses too many operations from one client', () => {
@@ -48,13 +68,17 @@ describe('checkMetaUpdate', () => {
     guest.transact(() => {
       for (let i = 0; i <= META_LIMITS.maxClientClock; i++) m.set('k', i)
     })
-    expect(checkMetaUpdate(new Y.Doc(), Y.encodeStateAsUpdate(guest))).toMatch(/operations/)
+    expect(checkMetaUpdate(new Y.Doc(), Y.encodeStateAsUpdate(guest))).toMatchObject({
+      reason: expect.stringMatching(/operations/),
+    })
   })
 
   it('refuses a doc too large', () => {
     const guest = new Y.Doc()
     thread(guest, 'c1', 'x'.repeat(META_LIMITS.maxDocBytes))
-    expect(checkMetaUpdate(new Y.Doc(), Y.encodeStateAsUpdate(guest))).toMatch(/bytes/)
+    expect(checkMetaUpdate(new Y.Doc(), Y.encodeStateAsUpdate(guest))).toMatchObject({
+      reason: expect.stringMatching(/bytes/),
+    })
   })
 
   it('refuses what is not an update', () => {
