@@ -74,10 +74,12 @@ Each kind of file anchors on what survives its edits:
   the start with assoc 0 and the end with assoc -1, so text typed at either
   edge stays outside. Positions are resolved with `followUndoneDeletions =
   false`, so every peer agrees after an undo.
-- **CSV and TSV:** a cell is a range of the same Y.Text, plus positions of the
-  delimiters and line breaks around it. The cell is deleted when its range has
-  collapsed and one of those characters is gone; a value rewritten in place
-  only collapses the range. A range of cells is its two corner cells.
+- **CSV and TSV:** a cell is a range of the same Y.Text that takes in what is
+  typed at its edges (start assoc -1, end assoc 0), so a value rewritten in
+  place stays in it and an empty cell has a place. Telling a deleted cell from
+  one whose neighbour was deleted takes the positions of the delimiters and
+  line breaks around it too; the change that brings comments to tables
+  settles that rule. A range of cells is its two corner cells.
 - **Canvas:** the node's `id`. Stacking changes and undo replace a node's
   Y.Map, but keep its id.
 
@@ -107,6 +109,14 @@ It then writes the thread's RelativePositions into the doc. Re-anchoring
 happens once and on the host, so every peer starts from the same anchors. Text
 that is not found leaves its thread detached, with its last saved place kept
 for the next try.
+
+When the host saves, it writes each anchor's place as it is then, read from
+the thread's RelativePositions, resolved as Yjs resolves them. ygo places a
+position whose character was deleted after the deleted characters before it
+in their run, unlike Yjs, so the host walks back to the run's first
+character. An anchor whose text is gone keeps the place it last saved, or,
+for a thread made this session, its quote, so it can be found if the text
+comes back. The doc's shape and these rules are in `internal/meta/doc.go`.
 
 ## Input from other people
 

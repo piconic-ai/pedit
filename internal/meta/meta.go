@@ -385,6 +385,16 @@ func units(s string) int {
 	return n
 }
 
+// encoder writes JSON as Render does, its lines after the first starting
+// with prefix.
+func encoder(w io.Writer, prefix string) *json.Encoder {
+	enc := json.NewEncoder(w)
+	// <, > and & only matter in HTML.
+	enc.SetEscapeHTML(false)
+	enc.SetIndent(prefix, "  ")
+	return enc
+}
+
 // Render writes f as pedit saves it: indented, with version, path and
 // comments first, then the top-level keys a newer pedit wrote, and keys in
 // sorted order below, so the same metadata always gives the same bytes. It
@@ -395,10 +405,7 @@ func Render(f *File) ([]byte, error) {
 		return nil, err
 	}
 	var out bytes.Buffer
-	enc := json.NewEncoder(&out)
-	// <, > and & only matter in HTML.
-	enc.SetEscapeHTML(false)
-	enc.SetIndent("  ", "  ")
+	enc := encoder(&out, "  ")
 	sep := "{"
 	write := func(k string, v any) error {
 		key, _ := json.Marshal(k) // not strconv.Quote, which is Go syntax
