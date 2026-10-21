@@ -413,3 +413,32 @@ func TestDebugLog(t *testing.T) {
 		t.Fatalf("printed without PEDIT_DEBUG: %q", out.String())
 	}
 }
+
+func TestShownPath(t *testing.T) {
+	cwd := filepath.Join(t.TempDir(), "project")
+	file := filepath.Join(cwd, "notes.md")
+	for _, tt := range []struct{ path, want string }{
+		{file, "./notes.md"},
+		{filepath.Join(cwd, "docs", "a.md"), filepath.Join("docs", "a.md")},
+		{filepath.Join(filepath.Dir(cwd), "other.md"), filepath.Join(filepath.Dir(cwd), "other.md")},
+	} {
+		if got := shownPath(tt.path, file, "./notes.md", cwd); got != tt.want {
+			t.Errorf("shownPath(%q) = %q, want %q", tt.path, got, tt.want)
+		}
+	}
+}
+
+func TestCheckFilesNamesTheFirstProblem(t *testing.T) {
+	dir := t.TempDir()
+	ok := filepath.Join(dir, "ok.md")
+	if err := os.WriteFile(ok, []byte("# ok\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if msg := checkFiles([]string{ok, ok}); msg != "" {
+		t.Fatalf("checkFiles on readable files = %q", msg)
+	}
+	gone := filepath.Join(dir, "gone", "a.md")
+	if msg := checkFiles([]string{ok, gone, dir}); msg != checkFile(gone) || msg == "" {
+		t.Fatalf("checkFiles = %q, want the message for %s", msg, gone)
+	}
+}

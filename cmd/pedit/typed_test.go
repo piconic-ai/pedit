@@ -123,6 +123,8 @@ func TestEditor(t *testing.T) {
 		{"backspace", []string{"ab\x7f", "c\x08d\r"}, []string{"edited:a", "edited:ad", "entered:ad"}},
 		{"backspace on nothing", []string{"\x7f"}, nil},
 		{"Ctrl+U", []string{"abc\x15x\r"}, []string{"edited:x", "entered:x"}},
+		{"Ctrl+U on nothing", []string{"\x15"}, nil},
+		{"CR last in a read, LF first in the next", []string{"a\r", "\n"}, []string{"edited:a", "entered:a", "entered:"}},
 		{"Ctrl+C", []string{"ab\x03"}, []string{"edited:ab", "interrupted"}},
 		{"arrows are ignored", []string{"a\x1b[D\x1b[Cb\x1bOA\r"}, []string{"edited:ab", "entered:ab"}},
 		{"an escape sequence split across reads", []string{"a\x1b[", "1;5", "Db\r"}, []string{"edited:a", "edited:ab", "entered:ab"}},

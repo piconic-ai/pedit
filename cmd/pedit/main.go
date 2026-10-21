@@ -135,12 +135,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 	debug := debugLog(rawErr, os.Getenv("PEDIT_DEBUG") != "")
 	scratch := opts.File == ""
 	arg, created, err := prepareFile(cfg, opts.File, opts.Template, opts.Directory, func() string { return time.Now().Format("2006-01-02-150405") })
+	if err != nil && scratch {
+		fmt.Fprintf(stderr, "pedit: could not create a scratch file in %s: %v\nRun pedit <file> to share an existing file instead.\n", outputDirectory(cfg, opts.Directory), err)
+		return 1
+	}
 	if err != nil {
-		if scratch {
-			fmt.Fprintf(stderr, "pedit: could not create a scratch file in %s: %v\nRun pedit <file> to share an existing file instead.\n", outputDirectory(cfg, opts.Directory), err)
-		} else {
-			fmt.Fprintln(stderr, "pedit:", err)
-		}
+		fmt.Fprintln(stderr, "pedit:", err)
 		return 1
 	}
 	scratch = created
@@ -156,11 +156,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "pedit:", err)
 		return 1
 	}
-	for _, a := range append([]string{arg}, opts.More...) {
-		if msg := checkFile(a); msg != "" {
-			fmt.Fprintln(stderr, msg)
-			return 1
-		}
+	if msg := checkFiles(append([]string{arg}, opts.More...)); msg != "" {
+		fmt.Fprintln(stderr, msg)
+		return 1
 	}
 
 	server := cfg.Server
@@ -188,16 +186,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	resumable := isTerminal(os.Stdin)
 	out.resumable = resumable
 	var ended atomic.Value // the final protocol.Status, once the server turned us away
-	// Notices name the file they are about, as the user named it.
-	shown := func(path string) string {
-		if path == file {
-			return arg
-		}
-		if rel, err := filepath.Rel(cwd, path); err == nil && filepath.IsLocal(rel) {
-			return rel
-		}
-		return path
-	}
+	shown := func(path string) string { return shownPath(path, file, arg, cwd) }
 	s, err := start(ctx, signIn, session.Options{
 		File:   file,
 		Root:   cwd,
@@ -206,10 +195,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		Watch:  true,
 		OnStatus: func(st protocol.Status) {
 			out.setStatus(st)
-			if st == protocol.StatusMaintenance && resumable {
-				return
-			}
-			if st.Final() {
+			if st.Final() && (st != protocol.StatusMaintenance || !resumable) {
 				ended.Store(st)
 				cancel()
 			}
@@ -224,24 +210,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 		},
 		OnError: debug,
 	})
-	switch {
-	case errors.Is(err, errSignInCancelled):
-		out.signInCancelled()
-		return 130
-	case errors.Is(err, errSignInTimedOut):
-		out.signInTimedOut(signInLimit)
-		return 1
-	case err != nil:
-		fmt.Fprintln(stderr, "pedit:", err)
-		return 1
+	if err != nil {
+		return startFailed(out, stderr, err)
 	}
-
-	for _, more := range opts.More {
-		if _, err := s.AddFile(more); err != nil {
-			fmt.Fprintln(stderr, "pedit:", err)
-			_ = s.Stop()
-			return 1
-		}
+	if err := addFiles(s, opts.More); err != nil {
+		fmt.Fprintln(stderr, "pedit:", err)
+		_ = s.Stop()
+		return 1
 	}
 	files := []string{arg}
 	for _, f := range s.Files()[1:] {
@@ -251,49 +226,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	shared = true
 	stopTyping := func() {}
 	if resumable {
-		add := func(path string) {
-			if entry, err := s.AddFile(path); err != nil {
-				out.notAdded(path, err)
-			} else {
-				out.added(entry.Path)
-			}
-		}
-		fd := int(os.Stdin.Fd())
-		var state *term.State
-		if out.tty {
-			state, _ = term.MakeRaw(fd)
-		}
-		if state != nil {
-			rawOut.raw.Store(true)
-			rawErr.raw.Store(true)
-			out.width = func() int {
-				w, _, err := term.GetSize(int(os.Stdout.Fd()))
-				if err != nil {
-					return 0
-				}
-				return w
-			}
-			out.startTyping()
-			var once sync.Once
-			stopTyping = func() {
-				once.Do(func() {
-					out.stopTyping()
-					_ = term.Restore(fd, state)
-					rawOut.raw.Store(false)
-					rawErr.raw.Store(false)
-				})
-			}
-			defer stopTyping()
-			interrupt := func() {
-				select {
-				case signals <- os.Interrupt:
-				default:
-				}
-			}
-			go readTyped(ctx, os.Stdin, out, s.Client.Resume, add, interrupt)
-		} else {
-			go readLines(os.Stdin, s.Client.Resume, add)
-		}
+		stopTyping = readInput(ctx, s, out, rawOut, rawErr, signals)
+		defer stopTyping()
 	}
 
 	<-ctx.Done()
@@ -308,6 +242,102 @@ func run(args []string, stdout, stderr io.Writer) int {
 	code = max(code, hostEnded(out, arg, st, s.Client.TimeLimit(), selfUpgradeCommand))
 	notifyUpdate(out, latest)
 	return code
+}
+
+// checkFiles says why the first of paths that cannot be shared cannot be,
+// or "" when all can.
+func checkFiles(paths []string) string {
+	for _, path := range paths {
+		if msg := checkFile(path); msg != "" {
+			return msg
+		}
+	}
+	return ""
+}
+
+// addFiles adds paths to the session, stopping at the first that fails.
+func addFiles(s *session.Session, paths []string) error {
+	for _, path := range paths {
+		if _, err := s.AddFile(path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// shownPath names a file in notices as the user named it: arg for the file
+// they shared, or relative to cwd when it is inside.
+func shownPath(path, file, arg, cwd string) string {
+	if path == file {
+		return arg
+	}
+	if rel, err := filepath.Rel(cwd, path); err == nil && filepath.IsLocal(rel) {
+		return rel
+	}
+	return path
+}
+
+// startFailed reports why the session did not start and returns the exit code.
+func startFailed(out *ui, stderr io.Writer, err error) int {
+	switch {
+	case errors.Is(err, errSignInCancelled):
+		out.signInCancelled()
+		return 130
+	case errors.Is(err, errSignInTimedOut):
+		out.signInTimedOut(signInLimit)
+		return 1
+	default:
+		fmt.Fprintln(stderr, "pedit:", err)
+		return 1
+	}
+}
+
+// readInput reads what the host types while sharing: Enter resumes after
+// maintenance, and a path adds that file. On a terminal it switches to raw
+// mode, and the function it returns switches back.
+func readInput(ctx context.Context, s *session.Session, out *ui, rawOut, rawErr *crlfWriter, signals chan os.Signal) (stopTyping func()) {
+	add := func(path string) {
+		if entry, err := s.AddFile(path); err != nil {
+			out.notAdded(path, err)
+		} else {
+			out.added(entry.Path)
+		}
+	}
+	fd := int(os.Stdin.Fd())
+	var state *term.State
+	if out.tty {
+		state, _ = term.MakeRaw(fd)
+	}
+	if state == nil {
+		go readLines(os.Stdin, s.Client.Resume, add)
+		return func() {}
+	}
+	rawOut.raw.Store(true)
+	rawErr.raw.Store(true)
+	out.width = func() int {
+		w, _, err := term.GetSize(int(os.Stdout.Fd()))
+		if err != nil {
+			return 0
+		}
+		return w
+	}
+	out.startTyping()
+	interrupt := func() {
+		select {
+		case signals <- os.Interrupt:
+		default:
+		}
+	}
+	go readTyped(ctx, os.Stdin, out, s.Client.Resume, add, interrupt)
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			out.stopTyping()
+			_ = term.Restore(fd, state)
+			rawOut.raw.Store(false)
+			rawErr.raw.Store(false)
+		})
+	}
 }
 
 // hostEnded says why a shared session ended on its own: st is the final
