@@ -1,5 +1,6 @@
 import { META_LIMITS, metaDocSize, randomBase64Url } from '@pedit/protocol'
 import * as Y from 'yjs'
+import { type CanvasNode, read as readCanvas } from './canvas.ts'
 import type { Cell, Table } from './csv.ts'
 import { type Readable, Store } from './store.ts'
 import type { Position } from './table.ts'
@@ -39,12 +40,15 @@ export interface ShownThread {
   to: number
   /** The corner cells of a thread on a table's cells, while attached or changed. */
   cells: { from: Position; to: Position } | null
+  /** The node of a thread on a canvas, while attached or changed. */
+  node: string | null
 }
 
 /** What a new comment goes on: the editor's selection, or cells of the table. */
 export type CommentTarget =
   | { kind: 'text'; from: number; to: number }
   | { kind: 'cells'; from: Position; to: Position }
+  | { kind: 'node'; id: string }
 
 /** Limits on what a comment holds, as internal/meta/meta.go keeps them. */
 export const COMMENT_LIMITS = {
@@ -87,6 +91,8 @@ export interface CommentsOptions {
   locked?: () => boolean
   /** The file parsed as a table, when it is CSV or TSV, so threads can go on cells. */
   table?: Readable<Table | null>
+  /** Whether the file is a canvas, whose threads go on its nodes. */
+  canvas?: boolean
 }
 
 /**
@@ -101,6 +107,7 @@ export class CommentsView {
   readonly roomForMore = new Store(true)
 
   readonly #meta: Y.Doc
+  readonly #content: Y.Doc
   readonly #text: Y.Text
   readonly #opts: CommentsOptions
   readonly #mine = new Set<string>()
@@ -121,6 +128,7 @@ export class CommentsView {
 
   constructor(meta: Y.Doc, content: Y.Doc, opts: CommentsOptions) {
     this.#meta = meta
+    this.#content = content
     this.#text = content.getText('content')
     this.#opts = opts
     meta.on('update', this.#metaChanged)
@@ -174,11 +182,28 @@ export class CommentsView {
     })
   }
 
-  /** Starts a thread on a target, as start or startCells. */
+  /**
+   * Starts a thread on a node of a canvas, as start does on text: it quotes
+   * what the node shows, cut to the limit. Null as for start, or when there
+   * is no such node.
+   */
+  startNode(id: string, body: string): string | null {
+    const shown = this.#nodes().get(id)
+    if (shown === undefined) return null
+    return this.#begin(shown.slice(0, COMMENT_LIMITS.quote), body, { type: 'node', id })
+  }
+
+  /** Starts a thread on a target, as start, startCells or startNode. */
   startOn(target: CommentTarget, body: string): string | null {
-    return target.kind === 'text'
-      ? this.start(target.from, target.to, body)
-      : this.startCells(target.from, target.to, body)
+    if (target.kind === 'text') return this.start(target.from, target.to, body)
+    if (target.kind === 'node') return this.startNode(target.id, body)
+    return this.startCells(target.from, target.to, body)
+  }
+
+  /** What each node of the canvas shows, by id; none for a file that is no canvas. */
+  #nodes(): Map<string, string> {
+    if (!this.#opts.canvas) return new Map()
+    return new Map(readCanvas(this.#content).nodes.map((n) => [n.id, nodeText(n)]))
   }
 
   /** A cell's place: it takes in what is typed at its edges, as typing into it does. */
@@ -312,8 +337,13 @@ export class CommentsView {
     }
     let index: TextIndex | null = null
     let cells: Cells | null | undefined
+    let nodes: Map<string, string> | undefined
     const here: Here = {
       text: this.#text.toString(),
+      nodes: () => {
+        nodes ??= this.#nodes()
+        return nodes
+      },
       index: () => {
         index ??= new TextIndex(this.#text)
         return index
@@ -351,11 +381,11 @@ export class CommentsView {
     if (!ANCHORS.has(String((thread.get('anchor') as { type?: unknown } | undefined)?.type)))
       return null
     const place = placeOf(thread.get('anchor'), here)
-    // Cells quote their text cut to the limit, as startCells cuts it.
-    const text = place ? here.text.slice(place.from, place.to) : ''
-    const live = place?.cells ? text.slice(0, COMMENT_LIMITS.quote) : text
-    // Only a cell may be empty.
-    const gone = !place || (place.cells === null && place.from >= place.to)
+    // Cells and nodes quote their text cut to the limit, as they are started.
+    const text = place?.node ? place.node.shows : place ? here.text.slice(place.from, place.to) : ''
+    const live = place?.cells || place?.node ? text.slice(0, COMMENT_LIMITS.quote) : text
+    // Only a cell or a node may be empty.
+    const gone = !place || (!place.cells && !place.node && place.from >= place.to)
     const state: ThreadState = gone ? 'detached' : live === quote ? 'attached' : 'changed'
     return {
       id,
@@ -367,6 +397,7 @@ export class CommentsView {
       from: state === 'detached' ? -1 : (place?.from ?? -1),
       to: state === 'detached' ? -1 : (place?.to ?? -1),
       cells: state === 'detached' ? null : (place?.cells ?? null),
+      node: state === 'detached' ? null : (place?.node?.id ?? null),
     }
   }
 
@@ -420,6 +451,7 @@ function position(text: Y.Text, index: number, assoc: number): string {
 /** The text on screen, looked at once a refresh, and what is costly worked out once. */
 interface Here {
   text: string
+  nodes: () => Map<string, string>
   index: () => TextIndex
   cells: () => Cells | null
 }
@@ -458,6 +490,8 @@ interface Place {
   from: number
   to: number
   cells: { from: Position; to: Position } | null
+  /** A node's id, and what it shows now. */
+  node: { id: string; shows: string } | null
 }
 
 /** Where an anchor is now, or null. */
@@ -468,12 +502,22 @@ function placeOf(anchor: unknown, here: Here): Place | null {
     const from = cellOf(a.from, here)
     const to = from && cellOf(a.to, here)
     if (!from || !to) return null
-    return { from: from.cell.from, to: to.cell.to, cells: { from: from.at, to: to.at } }
+    return { from: from.cell.from, to: to.cell.to, cells: { from: from.at, to: to.at }, node: null }
+  }
+  if (a.type === 'node') {
+    const shows = typeof a.id === 'string' ? here.nodes().get(a.id) : undefined
+    if (shows === undefined) return null
+    return { from: -1, to: -1, cells: null, node: { id: a.id as string, shows } }
   }
   if (a.type !== 'text') return null
   const from = here.index().resolve(a.start)
   const to = from === null ? null : here.index().resolve(a.end)
-  return from === null || to === null ? null : { from, to, cells: null }
+  return from === null || to === null ? null : { from, to, cells: null, node: null }
+}
+
+/** What a node shows, as a thread on it quotes it: its text, label, file or link. */
+function nodeText(n: CanvasNode): string {
+  return n.text ?? n.label ?? n.file ?? n.url ?? ''
 }
 
 /** Whether a character ends a cell: a delimiter, or a line break. */

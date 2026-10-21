@@ -259,9 +259,9 @@ async function joinRoom(
   // The comments of the files the host keeps them for (#121): which file of
   // the room holds each file's, those on screen, and what they act on.
   const metaOf = new Map<number, number>()
-  // The files of the room the host lists as text: only those get comments
-  // here, as a canvas's anchors are its nodes.
-  const textFiles = new Set<number>()
+  // The format the host lists each file of the room in: text files and
+  // canvases get comments, a canvas's on its nodes.
+  const formats = new Map<number, string>()
   const comments = new Store<CommentsView | null>(null)
   const threadsShown = new Store<readonly ShownThread[]>([])
   const commentFocus = new Store<string | null>(null)
@@ -427,6 +427,9 @@ async function joinRoom(
     themeFollowers.push({ view: json.view, compartment: jsonTheme })
     themes?.follow(json.view, jsonTheme)
     const board = new BoardView(fileDoc, awareness, { json, here: inFile(id) })
+    board.selected.subscribe(() => {
+      if (board === shown.board) aim()
+    })
     return { json, board }
   }
   let themes: ThemeSwitcher | undefined
@@ -593,7 +596,9 @@ async function joinRoom(
   // whose every update is checked: anyone in the room can send one.
   const followComments = (f: OpenFile) => {
     const metaId = metaOf.get(f.id)
-    if (f.comments || !textFiles.has(f.id) || metaId === undefined || !client) return
+    const format = formats.get(f.id)
+    if (f.comments || (format !== 'text' && format !== 'canvas')) return
+    if (metaId === undefined || !client) return
     const metaDoc = new Y.Doc()
     client.addFile(metaId, metaDoc, checkMetaUpdate)
     const name = () => {
@@ -604,6 +609,7 @@ async function joinRoom(
       name,
       locked: editLocked,
       table: f.table.parsed,
+      canvas: format === 'canvas',
     })
     if (f === shown) showComments()
   }
@@ -618,6 +624,8 @@ async function joinRoom(
       threadsShown.set(t)
       const cells = commentedCells(t)
       if (!sameCells(cells, shown.table.commented.get())) shown.table.commented.set(cells)
+      const nodes = new Set(t.flatMap((x) => (!x.resolved && x.node ? [x.node] : [])))
+      if (!sameCells(nodes, shown.board.commented.get())) shown.board.commented.set(nodes)
     }
     show(c?.threads.get() ?? [])
     stopThreads = c ? c.threads.subscribe(show) : () => {}
@@ -625,7 +633,11 @@ async function joinRoom(
   // Works out what a new comment would go on, when the selection, the view
   // or the file changes. Declared so showView, which runs first, can call it.
   function aim() {
-    const next = shown.table.active ? cellsTarget(shown.table) : textTarget(selection.get())
+    const next = shown.board.active
+      ? nodeTarget(shown.board.selected.get())
+      : shown.table.active
+        ? cellsTarget(shown.table)
+        : textTarget(selection.get())
     if (!sameTarget(next, commentTarget.get())) commentTarget.set(next)
   }
   selection.subscribe(aim)
@@ -658,9 +670,9 @@ async function joinRoom(
 
   const takeManifest = (list: FileEntry[]) => {
     metaOf.clear()
-    textFiles.clear()
+    formats.clear()
     for (const [file, meta] of metaFiles(list)) metaOf.set(file, meta)
-    for (const f of list) if (f.format === 'text') textFiles.add(f.id)
+    for (const f of list) formats.set(f.id, f.format)
     for (const f of opened.values()) followComments(f)
     // A file of a format this version does not know is left out, and so is
     // the metadata of a file, shown with it.
@@ -714,6 +726,10 @@ async function joinRoom(
         shown.table.select(t.cells.from)
         return
       }
+      if (t.node && shown.board.active) {
+        shown.board.selectNode(t.node)
+        return
+      }
       if (t.from < 0 || t.to > editor.state.doc.length) return
       editor.dispatch({ selection: { anchor: t.from, head: t.to }, scrollIntoView: true })
       editor.focus()
@@ -725,6 +741,11 @@ async function joinRoom(
   client.connect()
   renderPeople()
   window.addEventListener('pagehide', () => void client?.destroy())
+}
+
+/** The board's selection as a comment's target: one node. */
+function nodeTarget(selected: readonly string[]): CommentTarget | null {
+  return selected.length === 1 ? { kind: 'node', id: selected[0]! } : null
 }
 
 /** The editor's selection as a comment's target: text, if any is selected. */
@@ -780,6 +801,7 @@ function sameCells(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
 function sameTarget(a: CommentTarget | null, b: CommentTarget | null): boolean {
   if (a === null || b === null || a.kind !== b.kind) return a === b
   if (a.kind === 'text' && b.kind === 'text') return a.from === b.from && a.to === b.to
+  if (a.kind === 'node' && b.kind === 'node') return a.id === b.id
   if (a.kind !== 'cells' || b.kind !== 'cells') return false
   const same = (x: { row: number; col: number }, y: { row: number; col: number }) =>
     x.row === y.row && x.col === y.col

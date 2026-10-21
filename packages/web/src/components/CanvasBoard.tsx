@@ -80,6 +80,7 @@ export function CanvasCard(props: NodeBase) {
       data-color={presetOf(node()?.color)}
       data-editing={editing() ? '' : undefined}
       data-peer={peer() ? '' : undefined}
+      data-comment={v.commented.get().has(nodeId) ? '' : undefined}
       style={style()}
       ref={(el) => v.attachNode(el, nodeId)}
     >

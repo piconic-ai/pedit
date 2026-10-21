@@ -36,8 +36,9 @@ export function CommentsPanel(props: CommentsPanelProps) {
   const selected = () => props.target.get() !== null
   const prompt = () => {
     const t = props.target.get()
-    if (!t) return 'Select text or a cell to comment on it'
+    if (!t) return 'Select something to comment on it'
     if (t.kind === 'text') return 'Comment on the selection'
+    if (t.kind === 'node') return 'Comment on the node'
     const one = t.from.row === t.to.row && t.from.col === t.to.col
     return one ? 'Comment on the cell' : 'Comment on the cells'
   }

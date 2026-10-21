@@ -90,7 +90,10 @@ Each kind of file anchors on what survives its edits:
   to the quote's limit; the table marks a thread on its first cell, as
   spreadsheets do.
 - **Canvas:** the node's `id`. Stacking changes and undo replace a node's
-  Y.Map, but keep its id.
+  Y.Map, but keep its id. A thread quotes what the node shows, its text,
+  label, file or link, cut to the quote's limit: it is changed when the node
+  shows something else, and detached while no node has its id. The board
+  marks the nodes open threads are on.
 
 A thread is **attached** when its anchor resolves to what the quote says,
 **changed** when it resolves to something else, **detached** when its place is

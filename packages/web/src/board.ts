@@ -126,6 +126,10 @@ export class BoardView {
   readonly showJson = new Store(false)
   /** Others on each node, by id: who has it selected or is typing in it. */
   readonly peers = new Store<Readonly<Record<string, NodePeers>>>({})
+  /** The ids of the nodes selected here. */
+  readonly selected = new Store<readonly string[]>([])
+  /** The nodes open comments are on. */
+  readonly commented = new Store<ReadonlySet<string>>(new Set())
   /** What this browser shares of where it is on the canvas. */
   #presence: Presence = { selected: [] }
   #layer: EdgeLayer | null = null
@@ -289,7 +293,10 @@ export class BoardView {
           .nodes()
           .filter((n) => n.selected)
           .map((n) => n.id)
-        untrack(() => this.#share({ ...this.#presence, selected }))
+        untrack(() => {
+          this.#share({ ...this.#presence, selected })
+          if (!sameItems(selected, this.selected.get())) this.selected.set(selected)
+        })
       })
       createEffect(() => {
         this.#edgesChanged.get()
@@ -315,6 +322,15 @@ export class BoardView {
         layer.draw(shapesOf(this.#canvas.edges, boxes, selected))
       })
     })
+  }
+
+  /** Selects one node, as a click would: to show a comment's place. */
+  selectNode(id: string): void {
+    const store = this.#store
+    if (!store) return
+    store.domNode()?.focus()
+    store.unselectNodesAndEdges()
+    store.setNodes((prev) => prev.map((n) => (n.id === id ? { ...n, selected: true } : n)))
   }
 
   #selectEdge(id: string): void {

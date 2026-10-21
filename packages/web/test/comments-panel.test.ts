@@ -114,4 +114,10 @@ describe('CommentsPanel', () => {
     click(thread?.querySelector('.comment-quote') as Element)
     expect(shown.at(-1)?.cells).toEqual({ from: { row: 1, col: 1 }, to: { row: 1, col: 1 } })
   })
+
+  it('offers to comment on a node', () => {
+    const { $, selection } = mount()
+    selection.set({ kind: 'node', id: 'n1' })
+    expect($<HTMLTextAreaElement>('.comments-new textarea').placeholder).toBe('Comment on the node')
+  })
 })

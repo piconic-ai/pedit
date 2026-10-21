@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
+import { addNode, deleteNodes, textOf } from '../src/canvas.ts'
 import {
   COMMENT_LIMITS,
   CommentsView,
@@ -383,5 +384,57 @@ describe('comments on cells, from a peer', () => {
     view.refresh()
     expect(performance.now() - began).toBeLessThan(1000)
     expect(view.threads.get()).toHaveLength(500)
+  })
+})
+
+describe('comments on a canvas', () => {
+  const canvas = () => {
+    const meta = new Y.Doc()
+    const content = new Y.Doc()
+    addNode(
+      content,
+      { id: 'n1', type: 'text', x: 0, y: 0, width: 100, height: 50, text: 'Idea' },
+      null,
+    )
+    addNode(
+      content,
+      { id: 'g1', type: 'group', x: 0, y: 0, width: 300, height: 200, label: 'Plan' },
+      null,
+    )
+    const view = new CommentsView(meta, content, { name: () => 'Ada', delayMs: 0, canvas: true })
+    const shown = () => {
+      view.refresh()
+      return view.threads.get()
+    }
+    return { content, view, shown }
+  }
+
+  it('follows a node: what it shows, and whether it is there', () => {
+    const { content, view, shown } = canvas()
+    expect(view.startNode('n1', 'Why?')).not.toBeNull()
+    expect(only(shown())).toMatchObject({ state: 'attached', quote: 'Idea', node: 'n1', from: -1 })
+    const text = textOf(content, 'n1') as Y.Text
+    text.insert(4, 's')
+    expect(only(shown())).toMatchObject({ state: 'changed', live: 'Ideas', node: 'n1' })
+    deleteNodes(content, ['n1'], null)
+    expect(only(shown())).toMatchObject({ state: 'detached', node: null })
+  })
+
+  it('quotes a group by its label, and takes no node it has not', () => {
+    const { view, shown } = canvas()
+    expect(view.startOn({ kind: 'node', id: 'g1' }, 'Scope')).not.toBeNull()
+    expect(only(shown())).toMatchObject({ state: 'attached', quote: 'Plan' })
+    expect(view.startNode('nope', 'Lost')).toBeNull()
+  })
+
+  it('places no node in a file that is no canvas', () => {
+    const { view, shown, meta } = setup('hello')
+    expect(view.startNode('n1', 'Why?')).toBeNull()
+    const thread = new Y.Map<unknown>()
+    meta.getMap('comments').set('t1', thread)
+    thread.set('anchor', { type: 'node', id: 'n1' })
+    thread.set('quote', 'Idea')
+    thread.set('messages', new Y.Map())
+    expect(only(shown()).state).toBe('detached')
   })
 })
