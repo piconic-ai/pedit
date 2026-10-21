@@ -5,6 +5,7 @@ import {
   COMMENT_LIMITS,
   CommentsView,
   clean,
+  cutQuote,
   type ShownThread,
   TextIndex,
 } from '../src/comments.ts'
@@ -429,5 +430,15 @@ describe('comments from peers, at the limits', () => {
     view.resolve(id, false)
     view.reply(id, 'and?')
     for (const u of sent) expect(checkMetaUpdate(peer, u)).toBeNull()
+  })
+})
+
+describe('cutQuote', () => {
+  it('cuts to the limit, not inside a surrogate pair', () => {
+    const max = COMMENT_LIMITS.quote
+    expect(cutQuote('a'.repeat(max + 5))).toHaveLength(max)
+    const pair = `${'a'.repeat(max - 1)}😀`
+    expect(cutQuote(pair)).toBe('a'.repeat(max - 1))
+    expect(cutQuote('short')).toBe('short')
   })
 })

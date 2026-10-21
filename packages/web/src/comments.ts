@@ -170,7 +170,7 @@ export class CommentsView {
     const to = table?.rows[Math.max(a.row, b.row)]?.cells[Math.max(a.col, b.col)]
     if (!table || !from || !to) return null
     // A range's raw text quotes it, cut to the limit, so a long column takes one too.
-    return this.#begin(table.text.slice(from.from, to.to).slice(0, COMMENT_LIMITS.quote), body, {
+    return this.#begin(cutQuote(table.text.slice(from.from, to.to)), body, {
       type: 'cells',
       from: this.#cell(from),
       to: this.#cell(to),
@@ -365,7 +365,7 @@ export class CommentsView {
     const place = placeOf(anchor, here)
     // Cells quote their text cut to the limit, as startCells cuts it.
     const text = place ? here.text.slice(place.from, place.to) : ''
-    const live = place?.cells ? text.slice(0, COMMENT_LIMITS.quote) : text
+    const live = place?.cells ? cutQuote(text) : text
     // Only a cell may be empty.
     const gone = !place || (place.cells === null && place.from >= place.to)
     const state: ThreadState = gone ? 'detached' : live === quote ? 'attached' : 'changed'
@@ -486,6 +486,17 @@ function placeOf(anchor: unknown, here: Here): Place | null {
   const from = here.index().resolve(a.start)
   const to = from === null ? null : here.index().resolve(a.end)
   return from === null || to === null ? null : { from, to, cells: null }
+}
+
+/**
+ * Text cut to a quote's limit, not inside a surrogate pair: half of one
+ * reaches the others as U+FFFD, and the quote would never match again.
+ */
+export function cutQuote(text: string): string {
+  const max = COMMENT_LIMITS.quote
+  if (text.length <= max) return text
+  const high = text.charCodeAt(max - 1)
+  return text.slice(0, high >= 0xd800 && high <= 0xdbff ? max - 1 : max)
 }
 
 /** Whether a character ends a cell: a delimiter, or a line break. */
