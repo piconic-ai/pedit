@@ -53,7 +53,6 @@ const maxCandidates = 10_000
 type fileText struct {
 	*Tracker
 	units []uint16 // the content in UTF-16 code units, as Yjs counts
-	seen  map[string]bool
 }
 
 // textOf reads the text tr follows, or returns nil for nil, as for a canvas,
@@ -62,7 +61,7 @@ func textOf(tr *Tracker) *fileText {
 	if tr == nil {
 		return nil
 	}
-	return &fileText{Tracker: tr, units: utf16.Encode([]rune(tr.text.ToString())), seen: map[string]bool{}}
+	return &fileText{Tracker: tr, units: utf16.Encode([]rune(tr.text.ToString()))}
 }
 
 // Load puts the threads of f into doc, a metadata doc that has none yet,
@@ -258,9 +257,6 @@ func decodePosition(v any) (crdt.RelativePosition, bool) {
 // under, so that the docs do not change while Read reads them.
 func Read(doc *crdt.Doc, prev *File, tr *Tracker) *File {
 	t := textOf(tr)
-	if t != nil {
-		defer func() { t.keep(t.seen) }()
-	}
 	threads := map[string]Thread{}
 	// What threads may take in the file; the rest is for its own keys and
 	// those a newer pedit wrote.
@@ -379,8 +375,8 @@ func placeNow(kind string, raw map[string]any, t *fileText) (Anchor, bool) {
 // selectorAt is the place between the start and end positions of r as it is
 // now, or false when it cannot be told. Only a cell may be empty.
 func selectorAt(r map[string]any, empty bool, t *fileText) (*Selector, bool) {
-	start, ok1 := t.resolveSeen(r[startKey])
-	end, ok2 := t.resolveSeen(r[endKey])
+	start, ok1 := t.resolve(r[startKey])
+	end, ok2 := t.resolve(r[endKey])
 	if !ok1 || !ok2 || start > end || end > len(t.units) {
 		return nil, false
 	}
@@ -421,11 +417,3 @@ func isHighSurrogate(u uint16) bool { return u >= 0xd800 && u < 0xdc00 }
 func isLowSurrogate(u uint16) bool  { return u >= 0xdc00 && u < 0xe000 }
 
 func decode(s []uint16) string { return string(utf16.Decode(s)) }
-
-// resolveSeen resolves a position of the doc, and keeps it tracked.
-func (t *fileText) resolveSeen(v any) (int, bool) {
-	if s, ok := v.(string); ok {
-		t.seen[s] = true
-	}
-	return t.resolve(v)
-}

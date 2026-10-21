@@ -1,8 +1,8 @@
 package meta
 
 import (
+	"slices"
 	"sync"
-	"unicode/utf16"
 
 	"github.com/reearth/ygo/crdt"
 )
@@ -65,9 +65,13 @@ func (t *Tracker) resolve(key any) (int, bool) {
 	}
 	t.mu.Lock()
 	p, ok := t.pos[s]
+	var index int
+	if ok {
+		index = p.index
+	}
 	t.mu.Unlock()
 	if ok {
-		return p.index, true
+		return index, true
 	}
 	index, assoc, ok := t.place(s)
 	if !ok {
@@ -106,12 +110,16 @@ func (t *Tracker) place(key string) (int, int, bool) {
 }
 
 // Learn tracks the positions of the anchors in doc, a metadata doc, that it
-// does not track yet, while their characters are still in the text. Call it
-// on each update to doc, under the lock remote updates are applied under, so
-// that a position is known before an edit deletes its character.
+// does not track yet, while their characters are still in the text, and
+// forgets those of anchors gone from it. It looks at the threads Read saves:
+// the first MaxThreads by id. Call it on each update to doc, under the lock
+// remote updates are applied under, so that a position is known before an
+// edit deletes its character.
 func (t *Tracker) Learn(doc *crdt.Doc) {
+	keys := map[string]bool{}
 	comments := doc.GetMap(CommentsKey)
-	for _, id := range comments.Keys() {
+	ids := slices.Sorted(slices.Values(comments.Keys()))
+	for _, id := range ids[:min(len(ids), MaxThreads)] {
 		v, _ := comments.Get(id)
 		thread, ok := v.(*crdt.YMap)
 		if !ok {
@@ -119,12 +127,19 @@ func (t *Tracker) Learn(doc *crdt.Doc) {
 		}
 		raw, _ := get[map[string]any](thread, AnchorKey)
 		for _, r := range []any{raw, raw[fromKey], raw[toKey]} {
-			if r, ok := r.(map[string]any); ok {
-				t.resolve(r[startKey])
-				t.resolve(r[endKey])
+			r, ok := r.(map[string]any)
+			if !ok {
+				continue
+			}
+			for _, k := range []any{r[startKey], r[endKey]} {
+				if s, ok := k.(string); ok {
+					keys[s] = true
+					t.resolve(s)
+				}
 			}
 		}
 	}
+	t.keep(keys)
 }
 
 // keep forgets every position but those in keys.
@@ -150,7 +165,7 @@ func (t *Tracker) apply(delta []crdt.Delta) {
 		case crdt.DeltaOpInsert:
 			n := 1 // an embed
 			if s, ok := d.Insert.(string); ok {
-				n = len(utf16.Encode([]rune(s)))
+				n = units(s)
 			}
 			for _, p := range t.pos {
 				p.inserted(at, n)

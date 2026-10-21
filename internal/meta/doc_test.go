@@ -30,8 +30,12 @@ func trackerOf(doc *crdt.Doc) *meta.Tracker {
 	if doc == nil {
 		return nil
 	}
-	tr, _ := trackers.Load(doc)
-	return tr.(*meta.Tracker)
+	if tr, ok := trackers.Load(doc); ok {
+		return tr.(*meta.Tracker)
+	}
+	tr := meta.NewTracker(doc)
+	trackers.Store(doc, tr)
+	return tr
 }
 
 func textThread(exact, prefix, suffix string, offset int) meta.Thread {
