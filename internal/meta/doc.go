@@ -440,23 +440,29 @@ func (t *fileText) cellIn(start, end int) (int, int, bool) {
 	limit = min(end, start+MaxQuote+1)
 	i := start
 	if i < limit && t.units[i] == '"' {
-		// Past the closing quote; a doubled quote is one inside.
-		for i++; i < limit; i++ {
-			if t.units[i] == '"' {
-				if i+1 < limit && t.units[i+1] == '"' {
-					i++
-					continue
-				}
-				i++
-				break
-			}
-		}
+		i = t.closingQuote(i+1, limit)
 	} else {
 		for i < limit && !t.edge(t.units[i]) {
 			i++
 		}
 	}
 	return start, i, i < start+MaxQuote+1
+}
+
+// closingQuote is where a quoted cell whose text starts at i ends, past its
+// closing quote, or limit: a doubled quote is one inside it.
+func (t *fileText) closingQuote(i, limit int) int {
+	for ; i < limit; i++ {
+		if t.units[i] != '"' {
+			continue
+		}
+		if i+1 < limit && t.units[i+1] == '"' {
+			i++
+			continue
+		}
+		return i + 1
+	}
+	return limit
 }
 
 // clip keeps MaxContext code units of the end of s (or its start), without
