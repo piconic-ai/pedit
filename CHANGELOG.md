@@ -1,5 +1,14 @@
 # Changelog
 
+## [v0.1.14](https://github.com/piconic-ai/pedit/compare/v0.1.13...v0.1.14) - 2026-10-21
+
+- Check cognitive complexity in CI with cccc by @kfly8 in https://github.com/piconic-ai/pedit/pull/185
+- Split the heaviest CLI functions into named steps by @kfly8 in https://github.com/piconic-ai/pedit/pull/186
+- Split the heaviest TypeScript functions into named steps by @kfly8 in https://github.com/piconic-ai/pedit/pull/188
+- Split the heaviest internal Go functions into named steps by @kfly8 in https://github.com/piconic-ai/pedit/pull/189
+- Lower the cognitive complexity limit to 20 by @kfly8 in https://github.com/piconic-ai/pedit/pull/190
+- Make two tests hold on busy machines and as root by @kfly8 in https://github.com/piconic-ai/pedit/pull/187
+
 ## [v0.1.13](https://github.com/piconic-ai/pedit/compare/v0.1.12...v0.1.13) - 2026-10-20
 
 - Log why a room's session ended by @kfly8 in https://github.com/piconic-ai/pedit/pull/180
