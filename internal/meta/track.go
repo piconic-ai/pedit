@@ -2,6 +2,7 @@ package meta
 
 import (
 	"sync"
+	"time"
 
 	"github.com/reearth/ygo/crdt"
 )
@@ -33,13 +34,23 @@ type Tracker struct {
 	gone    map[string]bool
 	unknown map[string]uint64
 	gen     uint64
-	// tries bounds how many positions one Learn or Read asks ygo for.
-	tries int
+	// tried is how many positions this Learn or Read asked ygo for, and
+	// deadline when it stops asking, past the first minTries.
+	tried    int
+	deadline time.Time
+	now      func() time.Time // time.Now; tests set it
 }
 
-// maxTries is how many positions not tracked yet one Learn or Read places:
-// each costs time in the length of the text.
-const maxTries = 64
+// Each position not tracked yet costs time in the length of the text to
+// place. One Learn or Read places them for up to maxWork, and at least
+// minTries of them: on a text of ordinary length, that is every anchor a
+// room can hold, so a batch of comments from one peer is followed whole.
+// Only a room making the host place thousands of positions on a long text
+// is cut short, and a position left untried is tried by the next Learn.
+const (
+	maxWork  = 50 * time.Millisecond
+	minTries = 64
+)
 
 // tracked is a position: its index in the text, and whether its character
 // was deleted.
@@ -58,6 +69,7 @@ func NewTracker(content *crdt.Doc) *Tracker {
 		pos:     map[string]*tracked{},
 		gone:    map[string]bool{},
 		unknown: map[string]uint64{},
+		now:     time.Now,
 	}
 	t.stop = t.text.Observe(func(e crdt.YTextEvent) { t.apply(e.Delta) })
 	return t
@@ -89,9 +101,9 @@ func (t *Tracker) resolve(key any) (int, bool) {
 		index = p.index
 	}
 	gen, unknown := t.unknown[s]
-	skip := t.gone[s] || unknown && gen == t.gen || t.tries <= 0
+	skip := !ok && (t.gone[s] || unknown && gen == t.gen || !t.mayTry())
 	if !ok && !skip {
-		t.tries--
+		t.tried++
 	}
 	t.mu.Unlock()
 	if ok {
@@ -117,11 +129,18 @@ func (t *Tracker) resolve(key any) (int, bool) {
 	return 0, false
 }
 
-// startTries lets one Learn or Read place up to maxTries positions.
+// startTries starts the work one Learn or Read may do placing positions.
 func (t *Tracker) startTries() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.tries = maxTries
+	t.tried = 0
+	t.deadline = t.now().Add(maxWork)
+}
+
+// mayTry tells whether this Learn or Read may place another position. The
+// caller holds t.mu.
+func (t *Tracker) mayTry() bool {
+	return t.tried < minTries || t.now().Before(t.deadline)
 }
 
 // What place found.

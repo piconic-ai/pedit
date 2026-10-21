@@ -1,6 +1,7 @@
 package meta
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -29,16 +30,16 @@ func TestTrackerDoesNotAskAgainForWhatItCannotPlace(t *testing.T) {
 		t.Fatalf("gone %v unknown %v", tr.gone, tr.unknown)
 	}
 	// Neither costs a try again; the unknown one does once the text changes.
-	tries := tr.tries
+	tried := tr.tried
 	tr.resolve(gone)
 	tr.resolve(unknown)
-	if tr.tries != tries {
-		t.Fatalf("tries %d, then %d", tries, tr.tries)
+	if tr.tried != tried {
+		t.Fatalf("tried %d, then %d", tried, tr.tried)
 	}
 	content.Transact(func(txn *crdt.Transaction) { text.Insert(txn, 0, "x", nil) })
 	tr.resolve(unknown)
-	if tr.tries != tries-1 {
-		t.Fatalf("did not ask again after the text changed: %d", tr.tries)
+	if tr.tried != tried+1 {
+		t.Fatalf("did not ask again after the text changed: %d", tr.tried)
 	}
 	// Forgotten with their anchors.
 	tr.keep(map[string]bool{})
@@ -47,21 +48,66 @@ func TestTrackerDoesNotAskAgainForWhatItCannotPlace(t *testing.T) {
 	}
 }
 
-func TestTrackerTriesABoundedNumberOfPositions(t *testing.T) {
+func TestTrackerStopsPlacingOnceItsWorkIsSpent(t *testing.T) {
 	content := crdt.New()
 	text := content.GetText(ContentText)
-	content.Transact(func(txn *crdt.Transaction) { text.Insert(txn, 0, strings.Repeat("a", 2*maxTries), nil) })
+	content.Transact(func(txn *crdt.Transaction) { text.Insert(txn, 0, strings.Repeat("a", 2*minTries), nil) })
 	tr := NewTracker(content)
 	defer tr.Close()
+	start := time.Now()
+	tr.now = func() time.Time { return start }
 	tr.startTries()
+	// Each position costs longer than all the work allowed.
+	tr.now = func() time.Time { return start.Add(maxWork) }
 	placed := 0
-	for i := range 2 * maxTries {
+	for i := range 2 * minTries {
 		if _, ok := tr.resolve(encodePosition(crdt.CreateRelativePositionFromIndex(text, i, 0))); ok {
 			placed++
 		}
 	}
-	if placed != maxTries {
+	if placed != minTries {
 		t.Fatalf("placed %d", placed)
+	}
+	// The next Learn or Read tries the rest.
+	tr.now = func() time.Time { return start }
+	tr.startTries()
+	if _, ok := tr.resolve(encodePosition(crdt.CreateRelativePositionFromIndex(text, 2*minTries-1, 0))); !ok {
+		t.Fatal("did not try again")
+	}
+}
+
+func TestTrackerFollowsABatchOfCommentsWhole(t *testing.T) {
+	// From review: 33 comments in one update, then the first character of
+	// the last one deleted, before anything else reads the comments.
+	content := crdt.New()
+	text := content.GetText(ContentText)
+	content.Transact(func(txn *crdt.Transaction) { text.Insert(txn, 0, strings.Repeat("abc", 33), nil) })
+	doc := crdt.New()
+	comments := doc.GetMap(CommentsKey)
+	doc.Transact(func(txn *crdt.Transaction) {
+		for i := range 33 {
+			thread := crdt.NewMapPrelim()
+			comments.Set(txn, fmt.Sprintf("t%02d", i), thread)
+			thread.Set(txn, AnchorKey, map[string]any{
+				typeKey:  AnchorText,
+				startKey: encodePosition(crdt.CreateRelativePositionFromIndex(text, 3*i+1, 0)),
+				endKey:   encodePosition(crdt.CreateRelativePositionFromIndex(text, 3*i+3, -1)),
+			})
+			thread.Set(txn, QuoteKey, "bc")
+			thread.Set(txn, ResolvedKey, false)
+			messages := crdt.NewMapPrelim()
+			thread.Set(txn, MessagesKey, messages)
+			messages.Set(txn, "m", map[string]any{"author": "a", "time": "2026-01-01T00:00:00Z", "body": "b"})
+		}
+	})
+	tr := NewTracker(content)
+	defer tr.Close()
+	tr.Learn(doc)
+	content.Transact(func(txn *crdt.Transaction) { text.Delete(txn, 97, 1) })
+	f := Read(doc, &File{}, tr)
+	got := f.Comments["t32"].Anchor.Text
+	if got == nil || got.Exact != "c" || got.Offset != 97 {
+		t.Fatalf("saved %+v", got)
 	}
 }
 
