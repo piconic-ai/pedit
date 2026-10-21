@@ -131,8 +131,15 @@ func (l *lists) check() (missing, long bool) {
 		if i >= l.doc && !l.placed[i] {
 			missing = true
 		}
-		if l.placed[i] && l.list[i] != "" {
-			lengths[l.list[i]]++
+		if r := l.recs[i]; l.placed[i] && l.list[i] != "" {
+			// A run of values splits, copying the rest of it, each time an
+			// item goes inside it: it weighs as many items. Deleted runs,
+			// as a peer keeps many, split for free.
+			if r.values {
+				lengths[l.list[i]] += int(r.length)
+			} else {
+				lengths[l.list[i]]++
+			}
 		}
 	}
 	work := 0
@@ -140,4 +147,16 @@ func (l *lists) check() (missing, long bool) {
 		work += n * n
 	}
 	return missing, work > MaxListWork
+}
+
+// splits counts the ends of a deleted range [clock, clock+length) of client
+// that fall inside a struct, which deleting it splits in two.
+func (l *lists) splits(client, clock, length uint64) int {
+	n := 0
+	for _, x := range [2]uint64{clock, clock + length} {
+		if i := l.find(id{client, x}); i >= 0 && l.recs[i].at.clock != x {
+			n++
+		}
+	}
+	return n
 }

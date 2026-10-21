@@ -65,12 +65,6 @@ func CheckUpdate(doc *crdt.Doc, update []byte) (err error) {
 	}
 	end := map[uint64]uint64{}
 	for _, r := range u.recs {
-		if r.values && r.length > 1 {
-			// A map sets one value at a time, and ygo copies a run of them
-			// each time it splits one: inserting after each of 65,000
-			// values took 12s.
-			return fmt.Errorf("%w: %v: a run of values", ErrRefused, errContent)
-		}
 		c := r.at.client
 		if _, ok := end[c]; !ok && r.at.clock > known[c] {
 			return fmt.Errorf("%w: %w: it skips structs of client %d", ErrRefused, protocol.ErrRetryLater, c)
@@ -79,31 +73,85 @@ func CheckUpdate(doc *crdt.Doc, update []byte) (err error) {
 			return fmt.Errorf("%w: client %d passed %d operations", ErrRefused, c, MaxClientClock)
 		}
 	}
-	for c, e := range u.deleted {
-		if e > max(known[c], end[c]) {
-			return fmt.Errorf("%w: %w: it deletes what was not received", ErrRefused, protocol.ErrRetryLater)
+	for c, rs := range u.deleted {
+		for _, r := range rs {
+			if r[0]+r[1] > max(known[c], end[c]) {
+				return fmt.Errorf("%w: %w: it deletes what was not received", ErrRefused, protocol.ErrRetryLater)
+			}
 		}
 	}
 	state := crdt.EncodeStateAsUpdateV1(doc, nil)
-	if n := len(state) + len(update) + 32*u.ranges; n > MaxDocBytes {
-		return fmt.Errorf("%w: the comments could take %d bytes", ErrRefused, n)
-	}
 	have, err := scan(state)
 	if err != nil {
 		return fmt.Errorf("%w: the doc: %v", ErrRefused, err)
 	}
-	var fresh []record
-	for _, r := range u.recs {
-		if r.at.clock+r.length > known[r.at.client] {
-			fresh = append(fresh, r)
-		}
-	}
-	missing, long := newLists(have.recs, fresh).check()
+	l := newLists(have.recs, freshOf(u.recs, known))
+	missing, long := l.check()
 	if missing {
 		return fmt.Errorf("%w: %w: it needs updates not received yet", ErrRefused, protocol.ErrRetryLater)
 	}
 	if long {
 		return fmt.Errorf("%w: its lists would take too long to apply", ErrRefused)
 	}
+	n, err := sizeAfter(len(state), have, u, l, update, doc.StateVector())
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrRefused, err)
+	}
+	if n > MaxDocBytes {
+		return fmt.Errorf("%w: the comments could take %d bytes", ErrRefused, n)
+	}
 	return nil
+}
+
+// freshOf is the records of an update the doc, at known, does not have: a
+// struct it has the start of is cut to the rest, which follows the last
+// clock the doc has, as Yjs and ygo apply it.
+func freshOf(recs []record, known map[uint64]uint64) []record {
+	var fresh []record
+	for _, r := range recs {
+		k := known[r.at.client]
+		if r.at.clock+r.length <= k {
+			continue
+		}
+		if r.at.clock < k {
+			r.length -= k - r.at.clock
+			r.at.clock = k
+			if r.item {
+				r.origin, r.parent = &id{r.at.client, k - 1}, nil
+			}
+		}
+		fresh = append(fresh, r)
+	}
+	return fresh
+}
+
+// sizeAfter is about how many bytes the doc, of state bytes, would take with
+// the update: its new structs, as they are encoded alone, the deleted ranges
+// the doc does not have, and a struct header for each split those make.
+// Honest updates the doc has, and the whole state of the doc for a peer that
+// has none, come to the size of the doc.
+func sizeAfter(state int, have, u *scanned, l *lists, update []byte, sv crdt.StateVector) (int, error) {
+	diff, err := crdt.DiffUpdateV1(update, sv)
+	if err != nil {
+		return 0, err
+	}
+	d, err := scan(diff)
+	if err != nil {
+		return 0, err
+	}
+	n := state + len(diff) - d.deletedBytes() + 16
+	for c, rs := range u.deleted {
+		newClient := len(have.deleted[c]) == 0
+		for _, r := range rs {
+			if have.deletes(c, r[0], r[1]) {
+				continue
+			}
+			if newClient {
+				n += varLen(c) + 1
+				newClient = false
+			}
+			n += varLen(r[0]) + varLen(r[1]) + 24*l.splits(c, r[0], r[1])
+		}
+	}
+	return n, nil
 }

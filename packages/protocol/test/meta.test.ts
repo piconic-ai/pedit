@@ -144,20 +144,39 @@ describe('checkMetaUpdate', () => {
     expect(checkMetaUpdate(new Y.Doc(), encodeUpdate(blocks))?.reason).toMatch(/lists/)
   })
 
-  it('refuses a run of values', () => {
-    // From review: one item of many values counts as one in its list, and
-    // ygo copies the rest of it for each item inserted inside it.
+  it('weighs a run of values by its length', () => {
+    // From review: an UndoManager keeps overwritten values, which Yjs sends
+    // as one run; one of many counted as one item.
+    const peer = new Y.Doc()
+    const comments = peer.getMap('comments')
+    new Y.UndoManager(comments)
+    for (let i = 0; i < 5; i++) comments.set('resolved', i % 2 === 0)
+    expect(checkMetaUpdate(new Y.Doc(), Y.encodeStateAsUpdate(peer))).toBeNull()
     const e = encoding.createEncoder()
     for (const n of [1, 1, 7, 0]) encoding.writeVarUint(e, n)
     encoding.writeUint8(e, 0x20 | 8)
     encoding.writeVarUint(e, 1)
     encoding.writeVarString(e, 'comments')
     encoding.writeVarString(e, 'k')
-    encoding.writeVarUint(e, 2)
-    encoding.writeAny(e, 1)
-    encoding.writeAny(e, 2)
+    encoding.writeVarUint(e, 1100)
+    for (let i = 0; i < 1100; i++) encoding.writeAny(e, i)
     encoding.writeVarUint(e, 0)
-    expect(checkMetaUpdate(new Y.Doc(), encoding.toUint8Array(e))?.reason).toMatch(/run of values/)
+    expect(checkMetaUpdate(new Y.Doc(), encoding.toUint8Array(e))?.reason).toMatch(/lists/)
+  })
+
+  it('takes the state of a large doc, again and anew', () => {
+    // From review: a doc near the limit, with many deletions, was refused as
+    // a whole by a new peer, and its state again by peers that had it.
+    const host = new Y.Doc()
+    const m = host.getMap('comments')
+    for (let i = 0; i < 31; i++) m.set(`q${i}`, 'x'.repeat(29500))
+    for (let i = 0; i < 6000; i++) m.set(`k${i}`, i)
+    for (let i = 0; i < 3000; i++) m.delete(`k${2 * i}`)
+    const state = Y.encodeStateAsUpdate(host)
+    expect(state.length + 64).toBeLessThanOrEqual(META_LIMITS.maxDocBytes)
+    expect(state.length).toBeGreaterThan((META_LIMITS.maxDocBytes * 3) / 4)
+    expect(checkMetaUpdate(new Y.Doc(), state)).toBeNull()
+    expect(checkMetaUpdate(host, state)).toBeNull()
   })
 
   it('refuses what Yjs would keep pending', () => {

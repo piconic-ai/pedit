@@ -3,6 +3,7 @@ package meta_test
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -190,27 +191,91 @@ func TestCheckUpdateRefusesAListMadeLongAlongAChain(t *testing.T) {
 	}
 }
 
-func TestCheckUpdateRefusesARunOfValues(t *testing.T) {
-	// From review: one item of 65,000 values counted as one in its list, and
-	// ygo copied the rest of it for each item inserted inside it.
+// runOfValues is an update of one item of n values under key "k", as Yjs
+// keeps a run of overwritten values when it does not collect them, deleted
+// when deleted is set.
+func runOfValues(n int, deleted bool) []byte {
 	e := encoding.NewEncoder()
-	e.WriteVarUint(1)
-	e.WriteVarUint(1)
-	e.WriteVarUint(7)
-	e.WriteVarUint(0)
+	for _, v := range []uint64{1, 1, 7, 0} {
+		e.WriteVarUint(v)
+	}
 	e.WriteUint8(0x20 | 8)
 	e.WriteVarUint(1)
 	e.WriteVarString(meta.CommentsKey)
 	e.WriteVarString("k")
-	e.WriteVarUint(2)
-	e.WriteUint8(125)
-	e.WriteVarInt(1)
-	e.WriteUint8(125)
-	e.WriteVarInt(2)
-	e.WriteVarUint(0)
-	err := meta.CheckUpdate(crdt.New(), e.Bytes())
-	if !errors.Is(err, meta.ErrRefused) || !strings.Contains(err.Error(), "run of values") {
+	e.WriteVarUint(uint64(n))
+	for i := range n {
+		e.WriteUint8(125)
+		e.WriteVarInt(int64(i))
+	}
+	if deleted {
+		for _, v := range []uint64{1, 7, 1, 0, uint64(n - 1)} {
+			e.WriteVarUint(v)
+		}
+	} else {
+		e.WriteVarUint(0)
+	}
+	return e.Bytes()
+}
+
+func TestCheckUpdateWeighsARunOfValuesByItsLength(t *testing.T) {
+	// From review: an honest peer with an UndoManager, or without garbage
+	// collection, sends overwritten values as a run, which passes; one of
+	// 65,000 counted as one item, and ygo copied the rest of it each time
+	// an item went inside it.
+	if err := meta.CheckUpdate(crdt.New(), runOfValues(5, true)); err != nil {
+		t.Fatal(err)
+	}
+	err := meta.CheckUpdate(crdt.New(), runOfValues(1100, false))
+	if !errors.Is(err, meta.ErrRefused) || !strings.Contains(err.Error(), "lists") {
 		t.Fatalf("CheckUpdate = %v", err)
+	}
+}
+
+func TestCheckUpdateTakesTheStateOfALargeDoc(t *testing.T) {
+	// From review: a doc near the limit, with many deletions, was refused
+	// as a whole by a new peer, and its state again by peers that had it.
+	host := crdt.New()
+	m := host.GetMap(meta.CommentsKey)
+	host.Transact(func(txn *crdt.Transaction) {
+		for i := range 31 {
+			m.Set(txn, fmt.Sprintf("q%d", i), strings.Repeat("x", 29500))
+		}
+	})
+	for i := range 6000 {
+		host.Transact(func(txn *crdt.Transaction) { m.Set(txn, fmt.Sprintf("k%d", i), i) })
+	}
+	for i := range 3000 {
+		host.Transact(func(txn *crdt.Transaction) { m.Delete(txn, fmt.Sprintf("k%d", 2*i)) })
+	}
+	state := crdt.EncodeStateAsUpdateV1(host, nil)
+	if len(state)+64 > meta.MaxDocBytes || len(state) < meta.MaxDocBytes*3/4 {
+		t.Fatalf("a state of %d bytes", len(state))
+	}
+	if err := meta.CheckUpdate(crdt.New(), state); err != nil {
+		t.Fatalf("a new peer: %v", err)
+	}
+	if err := meta.CheckUpdate(host, state); err != nil {
+		t.Fatalf("a peer that has it: %v", err)
+	}
+}
+
+func TestCheckUpdateTakesAStructItHasTheStartOf(t *testing.T) {
+	// From review: a deleted run of which the doc has the first items.
+	peer := crdt.New()
+	m := peer.GetMap(meta.CommentsKey)
+	updates := updatesOf(peer)
+	for i := range 4 {
+		peer.Transact(func(txn *crdt.Transaction) { m.Set(txn, "k", i) })
+	}
+	host := crdt.New()
+	for _, u := range (*updates)[:2] {
+		if err := crdt.ApplyUpdateV1(host, u, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := meta.CheckUpdate(host, crdt.EncodeStateAsUpdateV1(peer, nil)); err != nil {
+		t.Fatal(err)
 	}
 }
 

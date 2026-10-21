@@ -16,9 +16,8 @@ import (
 // scanned is what an update's structs and deletions say, as scan reads them.
 type scanned struct {
 	recs []record
-	// The end of the deleted ranges, by client, and their number.
-	deleted map[uint64]uint64
-	ranges  int
+	// The deleted ranges, [clock, clock+length), by client.
+	deleted map[uint64][][2]uint64
 }
 
 // record is one struct: an item, or a run of collected garbage.
@@ -61,7 +60,7 @@ func scan(update []byte) (*scanned, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &scanned{deleted: map[uint64]uint64{}}
+	s := &scanned{deleted: map[uint64][][2]uint64{}}
 	seen := map[uint64]bool{}
 	for range clients {
 		if err := scanClient(d, s, seen); err != nil {
@@ -230,9 +229,39 @@ func scanDeletes(d *encoding.Decoder, s *scanned) error {
 			if clock > math.MaxUint32 || length > math.MaxUint32 {
 				return errors.New("deletion out of range")
 			}
-			s.deleted[client] = max(s.deleted[client], clock+length)
-			s.ranges++
+			s.deleted[client] = append(s.deleted[client], [2]uint64{clock, length})
 		}
 	}
 	return nil
+}
+
+// deletedBytes is how many bytes the delete set of s takes, encoded.
+func (s *scanned) deletedBytes() int {
+	n := varLen(uint64(len(s.deleted)))
+	for c, rs := range s.deleted {
+		n += varLen(c) + varLen(uint64(len(rs)))
+		for _, r := range rs {
+			n += varLen(r[0]) + varLen(r[1])
+		}
+	}
+	return n
+}
+
+// deletes tells whether s deletes all of [clock, clock+length) of client.
+func (s *scanned) deletes(client, clock, length uint64) bool {
+	for _, r := range s.deleted[client] {
+		if r[0] <= clock && clock+length <= r[0]+r[1] {
+			return true
+		}
+	}
+	return false
+}
+
+// varLen is how many bytes x takes as a varuint.
+func varLen(x uint64) int {
+	n := 1
+	for ; x >= 0x80; x >>= 7 {
+		n++
+	}
+	return n
 }
