@@ -19,7 +19,6 @@ func TestTrackerDoesNotAskAgainForWhatItCannotPlace(t *testing.T) {
 	content.Transact(func(txn *crdt.Transaction) { text.Delete(txn, 1, 1) })
 	unknown := encodePosition(crdt.RelativePosition{Item: &crdt.ID{Client: 7, Clock: 3}})
 
-	tr.startTries()
 	if _, ok := tr.resolve(gone); ok {
 		t.Fatal("placed a deleted character")
 	}
@@ -48,50 +47,44 @@ func TestTrackerDoesNotAskAgainForWhatItCannotPlace(t *testing.T) {
 	}
 }
 
-func TestTrackerStopsPlacingOnceItsWorkIsSpent(t *testing.T) {
-	content := crdt.New()
-	text := content.GetText(ContentText)
-	content.Transact(func(txn *crdt.Transaction) { text.Insert(txn, 0, strings.Repeat("a", 2*minTries), nil) })
-	tr := NewTracker(content)
-	defer tr.Close()
-	start := time.Now()
-	tr.now = func() time.Time { return start }
-	tr.startTries()
-	// Each position costs longer than all the work allowed.
-	tr.now = func() time.Time { return start.Add(maxWork) }
-	placed := 0
-	for i := range 2 * minTries {
-		if _, ok := tr.resolve(encodePosition(crdt.CreateRelativePositionFromIndex(text, i, 0))); ok {
-			placed++
-		}
-	}
-	if placed != minTries {
-		t.Fatalf("placed %d", placed)
-	}
-	// The next Learn or Read tries the rest.
-	tr.now = func() time.Time { return start }
-	tr.startTries()
-	if _, ok := tr.resolve(encodePosition(crdt.CreateRelativePositionFromIndex(text, 2*minTries-1, 0))); !ok {
-		t.Fatal("did not try again")
-	}
-}
-
 func TestTrackerFollowsABatchOfCommentsWhole(t *testing.T) {
 	// From review: 33 comments in one update, then the first character of
 	// the last one deleted, before anything else reads the comments.
 	content := crdt.New()
 	text := content.GetText(ContentText)
 	content.Transact(func(txn *crdt.Transaction) { text.Insert(txn, 0, strings.Repeat("abc", 33), nil) })
+	followBatch(t, content, 0, 33)
+}
+
+func TestTrackerFollowsABatchOfCommentsWholeOnALongText(t *testing.T) {
+	// From review: 300,000 characters in 10,000 items, and MaxThreads
+	// comments in one update.
+	content := crdt.New()
+	text := content.GetText(ContentText)
+	content.Transact(func(txn *crdt.Transaction) {
+		for range 10000 {
+			text.Insert(txn, 0, strings.Repeat("abc", 10), nil)
+		}
+	})
+	followBatch(t, content, 297999, MaxThreads)
+}
+
+// followBatch adds n comments in one update, each on the "bc" of an "abc"
+// from at, and checks the last still covers what is left of it once its "b"
+// is deleted.
+func followBatch(t *testing.T, content *crdt.Doc, at, n int) {
+	t.Helper()
+	text := content.GetText(ContentText)
 	doc := crdt.New()
 	comments := doc.GetMap(CommentsKey)
 	doc.Transact(func(txn *crdt.Transaction) {
-		for i := range 33 {
+		for i := range n {
 			thread := crdt.NewMapPrelim()
-			comments.Set(txn, fmt.Sprintf("t%02d", i), thread)
+			comments.Set(txn, fmt.Sprintf("t%03d", i), thread)
 			thread.Set(txn, AnchorKey, map[string]any{
 				typeKey:  AnchorText,
-				startKey: encodePosition(crdt.CreateRelativePositionFromIndex(text, 3*i+1, 0)),
-				endKey:   encodePosition(crdt.CreateRelativePositionFromIndex(text, 3*i+3, -1)),
+				startKey: encodePosition(crdt.CreateRelativePositionFromIndex(text, at+3*i+1, 0)),
+				endKey:   encodePosition(crdt.CreateRelativePositionFromIndex(text, at+3*i+3, -1)),
 			})
 			thread.Set(txn, QuoteKey, "bc")
 			thread.Set(txn, ResolvedKey, false)
@@ -103,10 +96,11 @@ func TestTrackerFollowsABatchOfCommentsWhole(t *testing.T) {
 	tr := NewTracker(content)
 	defer tr.Close()
 	tr.Learn(doc)
-	content.Transact(func(txn *crdt.Transaction) { text.Delete(txn, 97, 1) })
+	last := at + 3*(n-1) + 1
+	content.Transact(func(txn *crdt.Transaction) { text.Delete(txn, last, 1) })
 	f := Read(doc, &File{}, tr)
-	got := f.Comments["t32"].Anchor.Text
-	if got == nil || got.Exact != "c" || got.Offset != 97 {
+	got := f.Comments[fmt.Sprintf("t%03d", n-1)].Anchor.Text
+	if got == nil || got.Exact != "c" || got.Offset != last {
 		t.Fatalf("saved %+v", got)
 	}
 }

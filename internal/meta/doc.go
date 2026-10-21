@@ -253,9 +253,6 @@ func decodePosition(v any) (crdt.RelativePosition, bool) {
 // under, so that the docs do not change while Read reads them.
 func Read(doc *crdt.Doc, prev *File, tr *Tracker) *File {
 	t := textOf(tr)
-	if tr != nil {
-		tr.startTries()
-	}
 	threads := map[string]Thread{}
 	// What threads may take in the file; the rest is for its own keys and
 	// those a newer pedit wrote.

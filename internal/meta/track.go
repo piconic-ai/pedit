@@ -2,7 +2,6 @@ package meta
 
 import (
 	"sync"
-	"time"
 
 	"github.com/reearth/ygo/crdt"
 )
@@ -34,23 +33,9 @@ type Tracker struct {
 	gone    map[string]bool
 	unknown map[string]uint64
 	gen     uint64
-	// tried is how many positions this Learn or Read asked ygo for, and
-	// deadline when it stops asking, past the first minTries.
-	tried    int
-	deadline time.Time
-	now      func() time.Time // time.Now; tests set it
+	// tried counts the positions asked of ygo, for tests.
+	tried int
 }
-
-// Each position not tracked yet costs time in the length of the text to
-// place. One Learn or Read places them for up to maxWork, and at least
-// minTries of them: on a text of ordinary length, that is every anchor a
-// room can hold, so a batch of comments from one peer is followed whole.
-// Only a room making the host place thousands of positions on a long text
-// is cut short, and a position left untried is tried by the next Learn.
-const (
-	maxWork  = 50 * time.Millisecond
-	minTries = 64
-)
 
 // tracked is a position: its index in the text, and whether its character
 // was deleted.
@@ -69,7 +54,6 @@ func NewTracker(content *crdt.Doc) *Tracker {
 		pos:     map[string]*tracked{},
 		gone:    map[string]bool{},
 		unknown: map[string]uint64{},
-		now:     time.Now,
 	}
 	t.stop = t.text.Observe(func(e crdt.YTextEvent) { t.apply(e.Delta) })
 	return t
@@ -101,7 +85,7 @@ func (t *Tracker) resolve(key any) (int, bool) {
 		index = p.index
 	}
 	gen, unknown := t.unknown[s]
-	skip := !ok && (t.gone[s] || unknown && gen == t.gen || !t.mayTry())
+	skip := !ok && (t.gone[s] || unknown && gen == t.gen)
 	if !ok && !skip {
 		t.tried++
 	}
@@ -127,20 +111,6 @@ func (t *Tracker) resolve(key any) (int, bool) {
 		delete(t.unknown, s)
 	}
 	return 0, false
-}
-
-// startTries starts the work one Learn or Read may do placing positions.
-func (t *Tracker) startTries() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.tried = 0
-	t.deadline = t.now().Add(maxWork)
-}
-
-// mayTry tells whether this Learn or Read may place another position. The
-// caller holds t.mu.
-func (t *Tracker) mayTry() bool {
-	return t.tried < minTries || t.now().Before(t.deadline)
 }
 
 // What place found.
@@ -183,12 +153,15 @@ func (t *Tracker) place(key string) (int, int, int) {
 
 // Learn tracks the positions of the anchors in doc, a metadata doc, that it
 // does not track yet, while their characters are still in the text, and
-// forgets those of anchors gone from it. It looks at the threads Read may
+// forgets those of anchors gone from it. It places every one, however long
+// that takes (up to MaxThreads threads of up to four positions, each in time
+// in the length of the text): one left for later could have its character
+// deleted first, and be lost. What bounds the work is how many updates a
+// peer may have checked and applied (protocol.AddCheckedFile). It looks at the threads Read may
 // save (candidates). Call it on each update to doc, under the lock
 // remote updates are applied under, so that a position is known before an
 // edit deletes its character.
 func (t *Tracker) Learn(doc *crdt.Doc) {
-	t.startTries()
 	keys := map[string]bool{}
 	for _, thread := range candidates(doc) {
 		raw, _ := get[map[string]any](thread, AnchorKey)
