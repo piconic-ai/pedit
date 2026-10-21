@@ -6,7 +6,9 @@ import (
 	"iter"
 	"maps"
 	"slices"
+	"strings"
 	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/reearth/ygo/crdt"
 )
@@ -71,9 +73,9 @@ func textOf(tr *Tracker) *fileText {
 // nil for a canvas.
 func Load(doc *crdt.Doc, f *File, tr *Tracker) {
 	t := textOf(tr)
-	var hay []byte
+	var hay *haystack
 	if t != nil {
-		hay = unitBytes(t.units)
+		hay = newHaystack(t.text.ToString())
 	}
 	comments := doc.GetMap(CommentsKey)
 	doc.Transact(func(txn *crdt.Transaction) {
@@ -109,8 +111,8 @@ func messageOut(v any) (Message, bool) {
 }
 
 // anchorIn is a saved anchor as the doc holds it, with the positions of the
-// place found in t, whose UTF-16 code units hay holds as bytes.
-func anchorIn(a Anchor, t *fileText, hay []byte) map[string]any {
+// place found in t, which hay holds to be searched.
+func anchorIn(a Anchor, t *fileText, hay *haystack) map[string]any {
 	out := map[string]any{typeKey: a.Type}
 	switch a.Type {
 	case AnchorNode:
@@ -131,7 +133,7 @@ func anchorIn(a Anchor, t *fileText, hay []byte) map[string]any {
 
 // rangeIn finds s in t and returns its start and end positions, with these
 // assocs.
-func rangeIn(s *Selector, startAssoc, endAssoc int, t *fileText, hay []byte) (map[string]any, bool) {
+func rangeIn(s *Selector, startAssoc, endAssoc int, t *fileText, hay *haystack) (map[string]any, bool) {
 	if s == nil || t == nil {
 		return nil, false
 	}
@@ -152,67 +154,60 @@ func (t *fileText) make(index, assoc int) string {
 	return key
 }
 
+// haystack is a text to find selectors in: its UTF-8, which strings.Index
+// searches in linear time and never matches in the middle of a character,
+// and the UTF-16 offset of each of its bytes.
+type haystack struct {
+	s     string
+	units []int32 // by byte offset, up to len(s)
+}
+
+func newHaystack(s string) *haystack {
+	h := &haystack{s: s, units: make([]int32, len(s)+1)}
+	n := int32(0)
+	for i, r := range s {
+		h.units[i] = n
+		n += int32(utf16.RuneLen(r))
+	}
+	h.units[len(s)] = n
+	return h
+}
+
 // find returns where s is in content, in UTF-16 code units, or -1, -1; hay
-// is content as bytes. Where its text appears more than once, the most
-// context around it decides, then the nearest to its saved offset, among the
-// first maxCandidates. A selector without text, an empty cell, is found by
-// its context alone.
-func find(s *Selector, content []uint16, hay []byte) (int, int) {
+// is the same text, to be searched. Where its text appears more than once,
+// the most context around it decides, then the nearest to its saved offset,
+// among the first maxCandidates. A selector without text, an empty cell, is
+// found by its context alone.
+func find(s *Selector, content []uint16, hay *haystack) (int, int) {
 	exact := utf16.Encode([]rune(s.Exact))
 	prefix := utf16.Encode([]rune(s.Prefix))
 	suffix := utf16.Encode([]rune(s.Suffix))
-	needle, skip := exact, 0
-	if len(exact) == 0 {
-		needle, skip = append(slices.Clone(prefix), suffix...), len(prefix)
+	needle, skip := s.Exact, 0
+	if needle == "" {
+		needle, skip = s.Prefix+s.Suffix, len(prefix)
 	}
-	if len(needle) == 0 {
+	if needle == "" {
 		return -1, -1
 	}
-	sub := unitBytes(needle)
 	best, bestScore, bestDistance := -1, -1, 0
-	for from, n := 0, 0; n < maxCandidates; n++ {
-		i := index(hay, sub, from)
+	for from, n := 0, 0; n < maxCandidates && from <= len(hay.s); n++ {
+		i := strings.Index(hay.s[from:], needle)
 		if i < 0 {
 			break
 		}
-		at := i + skip
+		at := int(hay.units[from+i]) + skip
 		score := commonSuffix(content[:at], prefix) + commonPrefix(content[at+len(exact):], suffix)
 		distance := max(at-s.Offset, s.Offset-at)
 		if score > bestScore || (score == bestScore && distance < bestDistance) {
 			best, bestScore, bestDistance = at, score, distance
 		}
-		from = i + 1
+		_, size := utf8.DecodeRuneInString(hay.s[from+i:])
+		from += i + size
 	}
 	if best < 0 {
 		return -1, -1
 	}
 	return best, best + len(exact)
-}
-
-// index returns where sub next is in hay from the code unit from, in code
-// units, or -1. bytes.Index takes linear time, where comparing at every
-// offset would not; a match must start on a code unit.
-func index(hay, sub []byte, from int) int {
-	for off := 2 * from; off <= len(hay); {
-		i := bytes.Index(hay[off:], sub)
-		if i < 0 {
-			return -1
-		}
-		if (off+i)%2 == 0 {
-			return (off + i) / 2
-		}
-		off += i + 1
-	}
-	return -1
-}
-
-// unitBytes is s in big-endian bytes.
-func unitBytes(s []uint16) []byte {
-	b := make([]byte, 2*len(s))
-	for i, u := range s {
-		b[2*i], b[2*i+1] = byte(u>>8), byte(u)
-	}
-	return b
 }
 
 func commonPrefix(a, b []uint16) int {
@@ -258,6 +253,9 @@ func decodePosition(v any) (crdt.RelativePosition, bool) {
 // under, so that the docs do not change while Read reads them.
 func Read(doc *crdt.Doc, prev *File, tr *Tracker) *File {
 	t := textOf(tr)
+	if tr != nil {
+		tr.startTries()
+	}
 	threads := map[string]Thread{}
 	// What threads may take in the file; the rest is for its own keys and
 	// those a newer pedit wrote.

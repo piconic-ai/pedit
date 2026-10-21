@@ -25,7 +25,21 @@ type Tracker struct {
 
 	mu  sync.Mutex
 	pos map[string]*tracked // by the position, base64, as the doc holds it
+	// Positions that cannot be placed: gone for good (their character was
+	// deleted, or they are not positions on the text), or naming a character
+	// not received yet, as of the text's generation then. Asking ygo costs
+	// time in the length of the text, so neither is asked again until it
+	// could answer otherwise.
+	gone    map[string]bool
+	unknown map[string]uint64
+	gen     uint64
+	// tries bounds how many positions one Learn or Read asks ygo for.
+	tries int
 }
+
+// maxTries is how many positions not tracked yet one Learn or Read places:
+// each costs time in the length of the text.
+const maxTries = 64
 
 // tracked is a position: its index in the text, and whether its character
 // was deleted.
@@ -38,7 +52,13 @@ type tracked struct {
 // NewTracker follows positions in content, the doc of a text file. Close
 // stops it.
 func NewTracker(content *crdt.Doc) *Tracker {
-	t := &Tracker{content: content, text: content.GetText(ContentText), pos: map[string]*tracked{}}
+	t := &Tracker{
+		content: content,
+		text:    content.GetText(ContentText),
+		pos:     map[string]*tracked{},
+		gone:    map[string]bool{},
+		unknown: map[string]uint64{},
+	}
 	t.stop = t.text.Observe(func(e crdt.YTextEvent) { t.apply(e.Delta) })
 	return t
 }
@@ -68,28 +88,62 @@ func (t *Tracker) resolve(key any) (int, bool) {
 	if ok {
 		index = p.index
 	}
+	gen, unknown := t.unknown[s]
+	skip := t.gone[s] || unknown && gen == t.gen || t.tries <= 0
+	if !ok && !skip {
+		t.tries--
+	}
 	t.mu.Unlock()
 	if ok {
 		return index, true
 	}
-	index, assoc, ok := t.place(s)
-	if !ok {
+	if skip {
 		return 0, false
 	}
-	t.add(s, index, assoc)
-	return index, true
+	index, assoc, found := t.place(s)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	switch found {
+	case placed:
+		t.pos[s] = &tracked{index: index, assoc: assoc}
+		delete(t.unknown, s)
+		return index, true
+	case notYet:
+		t.unknown[s] = t.gen
+	default:
+		t.gone[s] = true
+		delete(t.unknown, s)
+	}
+	return 0, false
 }
+
+// startTries lets one Learn or Read place up to maxTries positions.
+func (t *Tracker) startTries() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.tries = maxTries
+}
+
+// What place found.
+const (
+	placed = iota
+	notYet // names a character not received yet
+	never  // its character was deleted, or it is not a position on the text
+)
 
 // place resolves a position whose character, if it has one, is still in the
 // text: ygo resolves those as Yjs does.
-func (t *Tracker) place(key string) (int, int, bool) {
+func (t *Tracker) place(key string) (int, int, int) {
 	p, ok := decodePosition(key)
 	if !ok {
-		return 0, 0, false
+		return 0, 0, never
 	}
 	abs, ok := crdt.ToAbsolutePosition(t.content, p)
-	if !ok || abs.Name != ContentText || abs.Index < 0 || abs.Index > t.text.Len() {
-		return 0, 0, false
+	if !ok {
+		return 0, 0, notYet
+	}
+	if abs.Name != ContentText || abs.Index < 0 || abs.Index > t.text.Len() {
+		return 0, 0, never
 	}
 	if p.Item != nil {
 		// The character the position is on: after it with assoc < 0.
@@ -98,14 +152,14 @@ func (t *Tracker) place(key string) (int, int, bool) {
 			char--
 		}
 		if char < 0 || char >= t.text.Len() {
-			return 0, 0, false
+			return 0, 0, never
 		}
 		again := crdt.CreateRelativePositionFromIndex(t.text, char, 0)
 		if again.Item == nil || *again.Item != *p.Item {
-			return 0, 0, false
+			return 0, 0, never
 		}
 	}
-	return abs.Index, p.Assoc, true
+	return abs.Index, p.Assoc, placed
 }
 
 // Learn tracks the positions of the anchors in doc, a metadata doc, that it
@@ -115,6 +169,7 @@ func (t *Tracker) place(key string) (int, int, bool) {
 // remote updates are applied under, so that a position is known before an
 // edit deletes its character.
 func (t *Tracker) Learn(doc *crdt.Doc) {
+	t.startTries()
 	keys := map[string]bool{}
 	for _, thread := range candidates(doc) {
 		raw, _ := get[map[string]any](thread, AnchorKey)
@@ -143,12 +198,23 @@ func (t *Tracker) keep(keys map[string]bool) {
 			delete(t.pos, k)
 		}
 	}
+	for k := range t.gone {
+		if !keys[k] {
+			delete(t.gone, k)
+		}
+	}
+	for k := range t.unknown {
+		if !keys[k] {
+			delete(t.unknown, k)
+		}
+	}
 }
 
 // apply moves the positions through a change to the text.
 func (t *Tracker) apply(delta []crdt.Delta) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	t.gen++
 	at := 0
 	for _, d := range delta {
 		switch d.Op {
