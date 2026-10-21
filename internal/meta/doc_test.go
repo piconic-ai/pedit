@@ -507,12 +507,29 @@ func TestReadKeepsAnEmptyCellWhenAValueComesAfterIt(t *testing.T) {
 	// the host saved the thread on the value.
 	doc, text := content("a,\n")
 	m := crdt.New()
-	place := map[string]any{"start": pos(text, 2, -1), "end": pos(text, 2, 0)}
+	place := map[string]any{"start": pos(text, 2, -1), "end": pos(text, 2, 0), "empty": true}
 	guestThread(t, m, text, "c", map[string]any{"type": "cells", "from": place, "to": place}, "")
 	trackerOf(doc).Learn(m)
 	doc.Transact(func(txn *crdt.Transaction) { text.Insert(txn, 2, ",x", nil) })
 	got := meta.Read(m, &meta.File{Path: "a.csv"}, trackerOf(doc))
 	if a := got.Comments["c"].Anchor; a.Type != meta.AnchorCells || a.From == nil || a.From.Exact != "" || a.From.Offset != 2 {
 		t.Fatalf("saved %+v %+v", a, a.From)
+	}
+}
+
+func TestLoadMarksAnEmptyCellSoAValueAfterItStaysOut(t *testing.T) {
+	// A corner saved as an empty cell is marked so when loaded, and keeps
+	// its place when a value is set after it in the next session.
+	doc, text := content("a,\n")
+	cell := meta.Selector{Exact: "", Prefix: "a,", Suffix: "\n", Offset: 2}
+	f := &meta.File{Path: "a.csv", Comments: map[string]meta.Thread{
+		"c": {Anchor: meta.Anchor{Type: meta.AnchorCells, From: &cell, To: &cell}, Messages: map[string]meta.Message{}},
+	}}
+	m, tr := crdt.New(), trackerOf(doc)
+	meta.Load(m, f, tr)
+	doc.Transact(func(txn *crdt.Transaction) { text.Insert(txn, 2, ",x", nil) })
+	got := meta.Read(m, f, tr)
+	if a := got.Comments["c"].Anchor; a.From == nil || a.From.Exact != "" || a.From.Offset != 2 {
+		t.Fatalf("saved %+v", a.From)
 	}
 }

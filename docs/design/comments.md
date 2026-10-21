@@ -79,9 +79,10 @@ Each kind of file anchors on what survives its edits:
   place stays in it and an empty cell has a place. A row or column inserted
   beside a cell comes into its place too, so the cell is the one that starts
   where its place does, past the delimiters and line breaks it took in, and
-  ends at a cell's edge inside it; the host saves only that part. A cell
-  that was empty, as the thread's quote tells, takes in what is typed after
-  it as well: it is the empty cell at the start when its place holds
+  ends at a cell's edge inside it; the host saves only that part. A corner
+  that was an empty cell says so (`"empty": true` beside its positions, set
+  by the editor that made it and by the host when it loads one saved empty),
+  as it takes in what is typed after it as well: it is the empty cell at the start when its place holds
   something, and the one at the end when it holds only delimiters. A cell
   longer than a quote takes no thread, as the host could not keep its place. Deleting a
   cell takes a delimiter with it, so its place closes on an empty span

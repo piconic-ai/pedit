@@ -215,9 +215,13 @@ export class CommentsView {
     return new Map(readCanvas(this.#content).nodes.map((n) => [n.id, nodeText(n)]))
   }
 
-  /** A cell's place: it takes in what is typed at its edges, as typing into it does. */
-  #cell(c: Cell): { start: string; end: string } {
-    return { start: position(this.#text, c.from, -1), end: position(this.#text, c.to, 0) }
+  /**
+   * A cell's place: it takes in what is typed at its edges, as typing into
+   * it does. An empty cell says so: it takes in what is typed after it too.
+   */
+  #cell(c: Cell): { start: string; end: string; empty?: true } {
+    const place = { start: position(this.#text, c.from, -1), end: position(this.#text, c.to, 0) }
+    return c.to === c.from ? { ...place, empty: true } : place
   }
 
   #begin(quote: string, body: string, anchor: Record<string, unknown>): string | null {
@@ -396,7 +400,7 @@ export class CommentsView {
     // The host saves no thread without an anchor of a kind it knows.
     const anchor = thread.get('anchor')
     if (!ANCHORS.has(kindOf(anchor))) return null
-    const place = placeOf(anchor, here, quote)
+    const place = placeOf(anchor, here)
     const { live, gone } = liveOf(place, here)
     const state: ThreadState = gone ? 'detached' : live === quote ? 'attached' : 'changed'
     return {
@@ -507,16 +511,12 @@ interface Place {
 }
 
 /** Where an anchor is now, or null. */
-function placeOf(anchor: unknown, here: Here, quote: string): Place | null {
+function placeOf(anchor: unknown, here: Here): Place | null {
   if (typeof anchor !== 'object' || anchor === null) return null
   const a = anchor as Record<string, unknown>
   if (a.type === 'cells') {
-    // Whether each corner was empty, as the thread quotes the cells' text:
-    // an empty corner's quote starts, or ends, at a delimiter or line break.
-    const edge = (c: string | undefined) =>
-      c === undefined || ends(c, here.cells()?.table.delimiter ?? ',')
-    const from = cellOf(a.from, here, edge(quote[0]))
-    const to = from && cellOf(a.to, here, edge(quote.at(-1)))
+    const from = cellOf(a.from, here)
+    const to = from && cellOf(a.to, here)
     if (!from || !to) return null
     return { from: from.cell.from, to: to.cell.to, cells: { from: from.at, to: to.at }, node: null }
   }
@@ -557,9 +557,11 @@ function ends(c: string | undefined, delimiter: string): boolean {
  * thread is detached. An empty cell whose column was deleted can pass to an
  * empty neighbour: nothing in the text tells them apart.
  */
-function cellOf(v: unknown, here: Here, empty: boolean): { cell: Cell; at: Position } | null {
+function cellOf(v: unknown, here: Here): { cell: Cell; at: Position } | null {
   if (typeof v !== 'object' || v === null) return null
   const p = v as Record<string, unknown>
+  // A corner that was an empty cell says so (internal/meta/doc.go too).
+  const empty = p.empty === true
   const start = here.index().resolve(p.start)
   const end = start === null ? null : here.index().resolve(p.end)
   const cells = here.cells()
