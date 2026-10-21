@@ -145,6 +145,8 @@ export class TableView {
   readonly mirror = new Store('')
   /** Others' cells, keyed "row:col". */
   readonly peers = new Store<Readonly<Record<string, CellPeers>>>({})
+  /** The latest parse of the text, on screen or not; null when it is no table, or does not parse. */
+  readonly parsed = new Store<Table | null>(null)
   /** The cells open comments start on, keyed "row:col". */
   readonly commented = new Store<ReadonlySet<string>>(new Set())
   #span: Span = 'cell'
@@ -224,11 +226,6 @@ export class TableView {
 
   get table(): Table | null {
     return this.#table
-  }
-
-  /** The delimiter for the shared file, or null when it is not a table. */
-  get delimiter(): string | null {
-    return this.#delimiter
   }
 
   /** The delimiter for the shared file, or null when it is not a table. */
@@ -498,6 +495,7 @@ export class TableView {
     const result = this.#delimiter ? tryParse(this.#text.toString(), this.#delimiter) : null
     const error = result instanceof CsvError ? result : null
     this.#table = result instanceof CsvError ? null : result
+    this.parsed.set(this.#table)
     const changed = error?.message !== this.#error?.message || error?.line !== this.#error?.line
     this.#error = error
     if (changed) this.#onError(error)

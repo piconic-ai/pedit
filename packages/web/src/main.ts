@@ -533,8 +533,6 @@ async function joinRoom(
     const lang = resolveLanguage(fileName)
     const delimiter = delimiterFor(fileName)
     shown.table.setDelimiter(delimiter)
-    // Threads on cells need the table to be placed.
-    shown.comments?.refresh()
     view.setKind(lang.kind === 'markdown' ? 'markdown' : delimiter ? 'table' : 'plain')
     let support: Extension
     try {
@@ -605,7 +603,7 @@ async function joinRoom(
     f.comments = new CommentsView(metaDoc, f.doc, {
       name,
       locked: editLocked,
-      delimiter: () => f.table.delimiter,
+      table: f.table.parsed,
     })
     if (f === shown) showComments()
   }
@@ -628,7 +626,7 @@ async function joinRoom(
   // or the file changes. Declared so showView, which runs first, can call it.
   function aim() {
     const next = shown.table.active ? cellsTarget(shown.table) : textTarget(selection.get())
-    if (JSON.stringify(next) !== JSON.stringify(commentTarget.get())) commentTarget.set(next)
+    if (!sameTarget(next, commentTarget.get())) commentTarget.set(next)
   }
   selection.subscribe(aim)
 
@@ -748,9 +746,12 @@ function cellsTarget(view: TableView): CommentTarget | null {
     return n > 0 ? { kind: 'cells', from: { row, col: 0 }, to: { row, col: n - 1 } } : null
   }
   if (s.span === 'column') {
-    const rows = table.rows.flatMap((r, i) => (r.cells[col] ? [i] : []))
-    if (rows.length === 0) return null
-    return { kind: 'cells', from: { row: rows[0]!, col }, to: { row: rows.at(-1)!, col } }
+    const has = (r: number) => table.rows[r]?.cells[col] !== undefined
+    let first = 0
+    while (first < table.rows.length && !has(first)) first++
+    let last = table.rows.length - 1
+    while (last > first && !has(last)) last--
+    return has(first) ? { kind: 'cells', from: { row: first, col }, to: { row: last, col } } : null
   }
   return table.rows[row]?.cells[col] ? { kind: 'cells', from: s.at, to: s.at } : null
 }
@@ -770,7 +771,19 @@ function commentedCells(threads: readonly ShownThread[]): ReadonlySet<string> {
 
 /** Whether two sets of cells hold the same keys. */
 function sameCells(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
-  return a.size === b.size && [...a].every((k) => b.has(k))
+  if (a.size !== b.size) return false
+  for (const k of a) if (!b.has(k)) return false
+  return true
+}
+
+/** Whether two comment targets are the same. */
+function sameTarget(a: CommentTarget | null, b: CommentTarget | null): boolean {
+  if (a === null || b === null || a.kind !== b.kind) return a === b
+  if (a.kind === 'text' && b.kind === 'text') return a.from === b.from && a.to === b.to
+  if (a.kind !== 'cells' || b.kind !== 'cells') return false
+  const same = (x: { row: number; col: number }, y: { row: number; col: number }) =>
+    x.row === y.row && x.col === y.col
+  return same(a.from, b.from) && same(a.to, b.to)
 }
 
 // A file dropped outside the editor would open in place of the page, and

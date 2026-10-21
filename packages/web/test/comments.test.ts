@@ -16,17 +16,19 @@ import {
   parse,
   setCell,
 } from '../src/csv.ts'
+import { parsedAs } from './parsed.ts'
 
 function setup(text: string, delimiter: string | null = null) {
   const meta = new Y.Doc()
   const content = new Y.Doc()
   content.getText('content').insert(0, text)
+  const table = parsedAs(content.getText('content'), delimiter)
   let tick = 0
   const view = new CommentsView(meta, content, {
     name: () => 'Ada',
     now: () => new Date(Date.UTC(2026, 9, 21, 0, 0, tick++)),
     delayMs: 0,
-    delimiter: () => delimiter,
+    table,
   })
   const shown = () => {
     view.refresh()

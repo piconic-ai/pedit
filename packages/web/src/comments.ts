@@ -1,7 +1,7 @@
 import { META_LIMITS, metaDocSize, randomBase64Url } from '@pedit/protocol'
 import * as Y from 'yjs'
-import { type Cell, CsvError, type Table, tryParse } from './csv.ts'
-import { Store } from './store.ts'
+import type { Cell, Table } from './csv.ts'
+import { type Readable, Store } from './store.ts'
 import type { Position } from './table.ts'
 
 /**
@@ -85,8 +85,8 @@ export interface CommentsOptions {
   delayMs?: number
   /** Whether the room takes no changes now: it has ended, or waits for the host. */
   locked?: () => boolean
-  /** The file's delimiter when it is a table, CSV or TSV, so threads can go on cells. */
-  delimiter?: () => string | null
+  /** The file parsed as a table, when it is CSV or TSV, so threads can go on cells. */
+  table?: Readable<Table | null>
 }
 
 /**
@@ -109,6 +109,7 @@ export class CommentsView {
   /** The comments' measure, and whether they changed since it was worked out. */
   #size = 0
   #measure = true
+  readonly #stopTable: () => void
   readonly #metaChanged = () => {
     this.#measure = true
     this.#schedule()
@@ -124,12 +125,15 @@ export class CommentsView {
     this.#opts = opts
     meta.on('update', this.#metaChanged)
     content.on('update', this.#textChanged)
+    // A file becomes a table once the editor knows its name.
+    this.#stopTable = opts.table?.subscribe(this.#textChanged) ?? (() => {})
     this.refresh()
   }
 
   destroy(): void {
     this.#meta.off('update', this.#metaChanged)
     this.#text.doc?.off('update', this.#textChanged)
+    this.#stopTable()
     if (this.#timer !== null) clearTimeout(this.#timer)
   }
 
@@ -158,7 +162,7 @@ export class CommentsView {
    * corner is not a cell of the table now.
    */
   startCells(a: Position, b: Position, body: string): string | null {
-    const table = this.#table()
+    const table = this.#table(this.#text.toString())
     const from = table?.rows[Math.min(a.row, b.row)]?.cells[Math.min(a.col, b.col)]
     const to = table?.rows[Math.max(a.row, b.row)]?.cells[Math.max(a.col, b.col)]
     if (!table || !from || !to) return null
@@ -201,12 +205,13 @@ export class CommentsView {
     return id
   }
 
-  /** The table the text is now, or null when it is none, or does not parse. */
-  #table(): Table | null {
-    const delimiter = this.#opts.delimiter?.()
-    if (!delimiter) return null
-    const table = tryParse(this.#text.toString(), delimiter)
-    return table instanceof CsvError ? null : table
+  /**
+   * The table the text is now, or null when it is none, or does not parse:
+   * the table view's parse, while it is of this very text.
+   */
+  #table(text: string): Table | null {
+    const table = this.#opts.table?.get() ?? null
+    return table?.text === text ? table : null
   }
 
   /** Adds a comment to a thread. */
@@ -306,7 +311,6 @@ export class CommentsView {
       this.#timer = null
     }
     let index: TextIndex | null = null
-    let table: Table | null | undefined
     let cells: Cells | null | undefined
     const here: Here = {
       text: this.#text.toString(),
@@ -314,13 +318,9 @@ export class CommentsView {
         index ??= new TextIndex(this.#text)
         return index
       },
-      table: () => {
-        if (table === undefined) table = this.#table()
-        return table
-      },
       cells: () => {
         if (cells === undefined) {
-          const t = here.table()
+          const t = this.#table(here.text)
           cells = t && cellsOf(t)
         }
         return cells
@@ -351,7 +351,9 @@ export class CommentsView {
     if (!ANCHORS.has(String((thread.get('anchor') as { type?: unknown } | undefined)?.type)))
       return null
     const place = placeOf(thread.get('anchor'), here)
-    const live = place ? quoted(here.text.slice(place.from, place.to), place.cells !== null) : ''
+    // Cells quote their text cut to the limit, as startCells cuts it.
+    const text = place ? here.text.slice(place.from, place.to) : ''
+    const live = place?.cells ? text.slice(0, COMMENT_LIMITS.quote) : text
     // Only a cell may be empty.
     const gone = !place || (place.cells === null && place.from >= place.to)
     const state: ThreadState = gone ? 'detached' : live === quote ? 'attached' : 'changed'
@@ -419,7 +421,6 @@ function position(text: Y.Text, index: number, assoc: number): string {
 interface Here {
   text: string
   index: () => TextIndex
-  table: () => Table | null
   cells: () => Cells | null
 }
 
@@ -434,7 +435,12 @@ interface Cells {
   full: number[]
 }
 
+/** Each table's cells, worked out once: the table view parses each text once. */
+const cellsCache = new WeakMap<Table, Cells>()
+
 function cellsOf(table: Table): Cells {
+  const known = cellsCache.get(table)
+  if (known) return known
   const all = table.rows.flatMap((r, row) =>
     r.cells.map((cell, col) => ({ cell, at: { row, col } })),
   )
@@ -443,7 +449,9 @@ function cellsOf(table: Table): Cells {
     const { cell } = all[i]!
     full[i] = cell.to > cell.from || i === all.length - 1 ? i : full[i + 1]!
   }
-  return { table, all, full }
+  const cells = { table, all, full }
+  cellsCache.set(table, cells)
+  return cells
 }
 
 interface Place {
@@ -466,11 +474,6 @@ function placeOf(anchor: unknown, here: Here): Place | null {
   const from = here.index().resolve(a.start)
   const to = from === null ? null : here.index().resolve(a.end)
   return from === null || to === null ? null : { from, to, cells: null }
-}
-
-/** The text of a place as its quote holds it: cells' cut to the limit, as startCells cuts it. */
-function quoted(text: string, cells: boolean): string {
-  return cells ? text.slice(0, COMMENT_LIMITS.quote) : text
 }
 
 /** Whether a character ends a cell: a delimiter, or a line break. */

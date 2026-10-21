@@ -5,15 +5,17 @@ import * as Y from 'yjs'
 import { CommentsView, type CommentTarget, type ShownThread } from '../src/comments.ts'
 import '../src/components/CommentsPanel.tsx'
 import { Store } from '../src/store.ts'
+import { parsedAs } from './parsed.ts'
 
 function mount(text = 'hello world!\n', delimiter: string | null = null) {
   const meta = new Y.Doc()
   const content = new Y.Doc()
   content.getText('content').insert(0, text)
+  const table = parsedAs(content.getText('content'), delimiter)
   const view = new CommentsView(meta, content, {
     name: () => 'Ada',
     delayMs: 0,
-    delimiter: () => delimiter,
+    table,
   })
   const comments = new Store<CommentsView | null>(view)
   const selection = new Store<CommentTarget | null>(null)

@@ -430,14 +430,16 @@ func selectorAt(r map[string]any, cell bool, t *fileText) (*Selector, bool) {
 // closing quote of a quoted cell. It looks at no more than MaxQuote code
 // units for either, as no more is saved, and is false past them.
 func (t *fileText) cellIn(start, end int) (int, int, bool) {
-	limit := min(end, start+MaxQuote+1)
+	// One code unit past the most that is read, or saved.
+	past := func(i int) int { return min(end, i+MaxQuote+1) }
+	limit := past(start)
 	for start < limit && t.edge(t.units[start]) {
 		start++
 	}
 	if start == limit && limit < end {
 		return 0, 0, false
 	}
-	limit = min(end, start+MaxQuote+1)
+	limit = past(start)
 	i := start
 	if i < limit && t.units[i] == '"' {
 		i = t.closingQuote(i+1, limit)
