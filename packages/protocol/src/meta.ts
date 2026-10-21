@@ -376,8 +376,11 @@ class Lists {
    * The measure of the doc the records make, resolved, with the deleted
    * ranges of all of `sets`, as internal/meta/size.go: an item that applying
    * them could delete, being one of more than one under a key of a map, or
-   * in a map that could be deleted, takes DEAD_BYTES a clock at least, and
-   * one partly deleted SPLIT_BYTES more for each clock deleted.
+   * in a map that could be deleted, takes DEAD_BYTES a clock at least. Such
+   * a run of values may be split, by a deletion or an item that follows one
+   * of its values, into pieces that each take that or what Yjs writes for
+   * them: it takes its bytes, SPLIT_BYTES a clock but one, and DEAD_BYTES a
+   * clock, which no pieces pass.
    */
   size(...sets: Array<Map<number, Array<[number, number]>>>): number {
     const dead = merged(...sets)
@@ -411,7 +414,7 @@ class Lists {
       const all = DEAD_BYTES * r.length
       if (fate[i] === Fate.Gone) n += all
       else if (fate[i] === Fate.Stays) n += r.bytes
-      else if (deleted[i]! > 0) n += r.bytes + SPLIT_BYTES * deleted[i]! + all
+      else if (r.length > 1) n += r.bytes + SPLIT_BYTES * (r.length - 1) + all
       else n += Math.max(r.bytes, all)
     })
     for (const c of clients) n += CLIENT_BYTES + 2 * varLen(c)

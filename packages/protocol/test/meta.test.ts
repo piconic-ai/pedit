@@ -259,6 +259,36 @@ describe('the measure of comments', () => {
     expect(checkMetaUpdate(host, Y.encodeStateAsUpdate(peer))).not.toBeNull()
   })
 
+  it('refuses an item inside a run that would take the doc past the limit', () => {
+    // From review: a run of a long string and false, and another client's
+    // item after its first value, split it into pieces that measured more
+    // than the run, with no deletions at all.
+    const host = new Y.Doc()
+    host.getMap('comments').set('pad', 'x'.repeat(META_LIMITS.maxDocBytes - 1200))
+    const e = encoding.createEncoder()
+    encoding.writeVarUint(e, 2)
+    for (const v of [1, 7, 0]) encoding.writeVarUint(e, v)
+    encoding.writeUint8(e, 0x20 | 8)
+    encoding.writeVarUint(e, 1)
+    encoding.writeVarString(e, 'comments')
+    encoding.writeVarString(e, 'k')
+    encoding.writeVarUint(e, 2)
+    encoding.writeAny(e, 'x'.repeat(1000))
+    encoding.writeAny(e, false)
+    for (const v of [1, 8, 0]) encoding.writeVarUint(e, v)
+    encoding.writeUint8(e, 0x80 | 8)
+    encoding.writeVarUint(e, 7)
+    encoding.writeVarUint(e, 0)
+    encoding.writeVarUint(e, 1)
+    encoding.writeAny(e, true)
+    encoding.writeVarUint(e, 0)
+    const update = encoding.toUint8Array(e)
+    const refused = checkMetaUpdate(host, update) !== null
+    Y.applyUpdate(host, update)
+    if (!refused) expect(metaDocSize(host)).toBeLessThanOrEqual(META_LIMITS.maxDocBytes)
+    expect(refused).toBe(true)
+  })
+
   it('foresees what concurrent sets delete', () => {
     // Peers that seldom catch up set values and maps under the same keys.
     // Every doc the host comes to, a new peer takes whole, and it measures

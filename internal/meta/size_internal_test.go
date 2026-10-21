@@ -319,3 +319,101 @@ func TestAConcurrentSetAtTheLimitIsRefused(t *testing.T) {
 		t.Fatal("took it")
 	}
 }
+
+func TestAnItemInsideARunAtTheLimitIsRefused(t *testing.T) {
+	// From review: a run of a long string and false, under a key, and
+	// another client's item following its first value, split it in two
+	// pieces, the second of which took deadBytes on its own: the doc passed
+	// the limit with no deletions at all.
+	host := crdt.New()
+	comments := host.GetMap(CommentsKey) // not inside Transact: ygo would deadlock
+	host.Transact(func(txn *crdt.Transaction) {
+		comments.Set(txn, "pad", strings.Repeat("x", MaxDocBytes-1200))
+	})
+	e := encoding.NewEncoder()
+	e.WriteVarUint(2)
+	// Client 7: one item of two values under key "k".
+	for _, v := range []uint64{1, 7, 0} {
+		e.WriteVarUint(v)
+	}
+	e.WriteUint8(hasParentSub | refAny)
+	e.WriteVarUint(1)
+	e.WriteVarString(CommentsKey)
+	e.WriteVarString("k")
+	e.WriteVarUint(2)
+	e.WriteAny(strings.Repeat("x", 1000))
+	e.WriteAny(false)
+	// Client 8: an item after its first value.
+	for _, v := range []uint64{1, 8, 0} {
+		e.WriteVarUint(v)
+	}
+	e.WriteUint8(hasOrigin | refAny)
+	e.WriteVarUint(7)
+	e.WriteVarUint(0)
+	e.WriteVarUint(1)
+	e.WriteAny(true)
+	e.WriteVarUint(0)
+	update := e.Bytes()
+	checked := CheckUpdate(host, update)
+	want := predicted(t, host, update)
+	if err := crdt.ApplyUpdateV1(host, update, nil); err != nil {
+		t.Fatal(err)
+	}
+	got := DocSize(host)
+	if got > want {
+		t.Fatalf("the doc measures %d, past the %d foreseen", got, want)
+	}
+	if checked == nil && got > MaxDocBytes {
+		t.Fatalf("took it, and the doc measures %d", got)
+	}
+}
+
+func TestRunsSplitByItemsMeasureNoMoreThanForeseen(t *testing.T) {
+	// Runs of values of all sizes, and items following any of their values,
+	// from other clients: the doc applied measures no more than foreseen.
+	rng := rand.New(rand.NewPCG(5, 6))
+	for round := range 200 {
+		host := crdt.New()
+		e := encoding.NewEncoder()
+		n := 2 + rng.IntN(6)
+		followers := 1 + rng.IntN(3)
+		e.WriteVarUint(uint64(1 + followers))
+		for _, v := range []uint64{1, 7, 0} {
+			e.WriteVarUint(v)
+		}
+		e.WriteUint8(hasParentSub | refAny)
+		e.WriteVarUint(1)
+		e.WriteVarString(CommentsKey)
+		e.WriteVarString("k")
+		e.WriteVarUint(uint64(n))
+		for range n {
+			if rng.IntN(2) == 0 {
+				e.WriteAny(strings.Repeat("x", rng.IntN(300)))
+			} else {
+				e.WriteAny(rng.IntN(2) == 0)
+			}
+		}
+		for f := range followers {
+			for _, v := range []uint64{1, uint64(20 + f), 0} {
+				e.WriteVarUint(v)
+			}
+			e.WriteUint8(hasOrigin | refAny)
+			e.WriteVarUint(7)
+			e.WriteVarUint(uint64(rng.IntN(n)))
+			e.WriteVarUint(1)
+			e.WriteAny(int64(f))
+		}
+		e.WriteVarUint(0)
+		update := e.Bytes()
+		if err := CheckUpdate(host, update); err != nil {
+			t.Fatalf("round %d: %v", round, err)
+		}
+		want := predicted(t, host, update)
+		if err := crdt.ApplyUpdateV1(host, update, nil); err != nil {
+			t.Fatal(err)
+		}
+		if got := DocSize(host); got > want {
+			t.Fatalf("round %d: the doc measures %d, past the %d foreseen", round, got, want)
+		}
+	}
+}

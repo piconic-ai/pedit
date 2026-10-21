@@ -19,9 +19,12 @@ import (
 // of a map, all but the last, and what the maps among them hold. So an item
 // that could be deleted that way, being in a list of more than one item, or
 // in a map that could be, takes deadBytes a clock at least, deleted or not,
-// and a doc measures no less for being applied. An item an update deletes
-// part of also takes splitBytes for each clock deleted: the rest of it is
-// split into items of its own.
+// and a doc measures no less for being applied. Such an item of more than
+// one clock, a run of values, may also be split into items of its own, by
+// a deletion of part of it or an item that follows one of its values: each
+// piece takes what Yjs writes for it, up to splitBytes more than its part
+// of the run, or deadBytes a clock. So the run takes its bytes, splitBytes
+// for each clock but one, and deadBytes a clock, which no pieces pass.
 const (
 	deadBytes   = 96
 	clientBytes = 12
@@ -39,7 +42,7 @@ const (
 // deleted ranges of all of sets, by client.
 func (l *lists) size(sets ...map[uint64][][2]uint64) int {
 	dead := merged(sets...)
-	deleted, fate := l.fates(dead)
+	fate := l.fates(dead)
 	n := 2
 	clients := map[uint64]bool{}
 	for i, r := range l.recs {
@@ -50,8 +53,8 @@ func (l *lists) size(sets ...map[uint64][][2]uint64) int {
 			n += all
 		case fate[i] == stays:
 			n += r.bytes
-		case deleted[i] > 0:
-			n += r.bytes + splitBytes*int(deleted[i]) + all
+		case r.length > 1:
+			n += r.bytes + splitBytes*int(r.length-1) + all
 		default:
 			n += max(r.bytes, all)
 		}
@@ -65,10 +68,9 @@ func (l *lists) size(sets ...map[uint64][][2]uint64) int {
 	return n
 }
 
-// fates tells how many clocks of each record dead deletes, and what may
-// become of it.
-func (l *lists) fates(dead map[uint64][][2]uint64) (deleted []uint64, fate []byte) {
-	deleted = make([]uint64, len(l.recs))
+// fates tells what may become of each record, with dead deleted.
+func (l *lists) fates(dead map[uint64][][2]uint64) []byte {
+	deleted := make([]uint64, len(l.recs))
 	// Lists of more than one item, or of one partly deleted, count two.
 	items := map[string]int{}
 	for i, r := range l.recs {
@@ -80,7 +82,7 @@ func (l *lists) fates(dead map[uint64][][2]uint64) (deleted []uint64, fate []byt
 			items[l.list[i]] += 1 + min(1, int(deleted[i]))
 		}
 	}
-	fate = make([]byte, len(l.recs))
+	fate := make([]byte, len(l.recs))
 	for _, i := range l.order {
 		r, p := l.recs[i], l.parent[i]
 		switch {
@@ -90,7 +92,7 @@ func (l *lists) fates(dead map[uint64][][2]uint64) (deleted []uint64, fate []byt
 			fate[i] = mayGo
 		}
 	}
-	return deleted, fate
+	return fate
 }
 
 // DocSize is the measure CheckUpdate limits, of doc, a metadata doc.
