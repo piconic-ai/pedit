@@ -187,6 +187,13 @@ func (t *Tracker) place(key string) (int, int, int) {
 // takes; past that, the update's other positions are tried again by the
 // next Learn, and lost if their characters are deleted first. How often a
 // peer can make the host Learn is bounded by protocol.AddCheckedFile.
+//
+// A position naming content not received yet is placed by a later Learn,
+// not when the content comes: the content's updates are not bounded so.
+// Until then, Read keeps the anchor's last place, or finds its quote. Each
+// peer sends a file's content before its comments, and the relay keeps
+// that order, so an anchor names content the host lacks only when another
+// peer's content reached the commenter first, and the host not at all.
 func (t *Tracker) Learn(doc *crdt.Doc) {
 	deadline := t.now().Add(maxLearn)
 	keys := map[string]bool{}
