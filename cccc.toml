@@ -9,4 +9,4 @@ exclude = [
   "**/test/**",
   "packages/web/src/components/xyflow/**",
 ]
-max-cognitive = 67
+max-cognitive = 20
