@@ -42,7 +42,6 @@ describe('CommentsPanel', () => {
     box.value = 'Which world?'
     click($('.comments-new button'))
     expect(box.value).toBe('')
-    view.refresh()
     const [thread] = $$('.comment-thread')
     expect(thread?.querySelector('q')?.textContent).toBe('world')
     expect(thread?.querySelector('.comment-body')?.textContent).toBe('Which world?')
@@ -56,16 +55,13 @@ describe('CommentsPanel', () => {
     selection.set({ from: 0, to: 5 })
     $<HTMLTextAreaElement>('.comments-new textarea').value = 'first'
     click($('.comments-new button'))
-    view.refresh()
     const reply = $<HTMLTextAreaElement>('.comment-reply textarea')
     reply.value = 'second'
     click($('.comment-reply button'))
-    view.refresh()
     expect($$('.comment-body').map((b) => b.textContent)).toEqual(['first', 'second'])
     click($('.comment-quote'))
     expect(shown.map((t) => t.quote)).toEqual(['hello'])
     click($('.comment-resolve'))
-    view.refresh()
     expect($<HTMLElement>('.comment-thread').dataset.resolved).toBe('true')
     expect($('.comment-resolve').textContent).toBe('Reopen')
   })

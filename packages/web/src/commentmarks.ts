@@ -45,9 +45,8 @@ function marks(
   length: number,
 ): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>()
-  const open = threads
-    .filter((t) => !t.resolved && t.from >= 0 && t.from < t.to && t.to <= length)
-    .sort((a, b) => a.from - b.from || a.to - b.to)
+  // Open threads come first, in the order of their places.
+  const open = threads.filter((t) => !t.resolved && t.from >= 0 && t.from < t.to && t.to <= length)
   for (const t of open) {
     builder.add(
       t.from,

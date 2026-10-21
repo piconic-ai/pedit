@@ -101,8 +101,6 @@ describe('CommentsView', () => {
 
   it('shows what others wrote as text, without what could reorder it', () => {
     const { meta, shown } = setup('abc')
-    const content = new Y.Doc()
-    void content
     meta.transact(() => {
       const t = new Y.Map<unknown>()
       meta.getMap('comments').set('t1', t)

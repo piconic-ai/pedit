@@ -1,3 +1,4 @@
+import { META_LIMITS, metaDocSize, randomBase64Url } from '@pedit/protocol'
 import * as Y from 'yjs'
 import { Store } from './store.ts'
 
@@ -43,18 +44,15 @@ export const COMMENT_LIMITS = {
   body: 4000,
   author: 200,
   quote: 1000,
-  /** Past this, the editor offers no new comment (the hard cap is 512 KiB). */
-  docBytes: 256 * 1024,
+  /** Past this, by metaDocSize, the editor offers no new comment: well under META_LIMITS.maxDocBytes. */
+  docBytes: Math.floor(META_LIMITS.maxDocBytes / 4),
 } as const
 
 const ID = /^[A-Za-z0-9_-]{1,32}$/
 const TIME = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{1,9})?Z$/
-const ID_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-'
-
-/** A random thread or comment id. */
+/** A random thread or comment id: 16 characters of base64url. */
 export function newId(): string {
-  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16))
-  return [...bytes].map((b) => ID_CHARS[b % ID_CHARS.length]).join('')
+  return randomBase64Url(12)
 }
 
 /**
@@ -91,20 +89,30 @@ export class CommentsView {
   readonly #opts: CommentsOptions
   readonly #mine = new Set<string>()
   #timer: ReturnType<typeof setTimeout> | null = null
-  readonly #changed = () => this.#schedule()
+  #shown = '[]'
+  /** Whether the comments changed since roomForMore was worked out. */
+  #measure = true
+  readonly #metaChanged = () => {
+    this.#measure = true
+    this.#schedule()
+  }
+  // The text moves the threads only when there are any.
+  readonly #textChanged = () => {
+    if (this.#comments.size > 0) this.#schedule()
+  }
 
   constructor(meta: Y.Doc, content: Y.Doc, opts: CommentsOptions) {
     this.#meta = meta
     this.#text = content.getText('content')
     this.#opts = opts
-    meta.on('update', this.#changed)
-    content.on('update', this.#changed)
+    meta.on('update', this.#metaChanged)
+    content.on('update', this.#textChanged)
     this.refresh()
   }
 
   destroy(): void {
-    this.#meta.off('update', this.#changed)
-    this.#text.doc?.off('update', this.#changed)
+    this.#meta.off('update', this.#metaChanged)
+    this.#text.doc?.off('update', this.#textChanged)
     if (this.#timer !== null) clearTimeout(this.#timer)
   }
 
@@ -210,6 +218,10 @@ export class CommentsView {
 
   /** Works the threads out again now. */
   refresh(): void {
+    if (this.#timer !== null) {
+      clearTimeout(this.#timer)
+      this.#timer = null
+    }
     const text = this.#text.toString()
     const shown: ShownThread[] = []
     let count = 0
@@ -221,8 +233,15 @@ export class CommentsView {
       if (s) shown.push(s)
     }
     shown.sort(order)
-    if (!sameThreads(shown, this.threads.get())) this.threads.set(shown)
-    this.roomForMore.set(Y.encodeStateAsUpdate(this.#meta).length < COMMENT_LIMITS.docBytes)
+    const key = JSON.stringify(shown)
+    if (key !== this.#shown) {
+      this.#shown = key
+      this.threads.set(shown)
+    }
+    if (this.#measure) {
+      this.#measure = false
+      this.roomForMore.set(metaDocSize(this.#meta) < COMMENT_LIMITS.docBytes)
+    }
   }
 
   #show(id: string, thread: Y.Map<unknown>, text: string): ShownThread | null {
@@ -326,8 +345,4 @@ function order(a: ShownThread, b: ShownThread): number {
   const ta = a.messages[0]?.time ?? ''
   const tb = b.messages[0]?.time ?? ''
   return ta < tb ? -1 : ta > tb ? 1 : a.id < b.id ? -1 : 1
-}
-
-function sameThreads(a: readonly ShownThread[], b: readonly ShownThread[]): boolean {
-  return JSON.stringify(a) === JSON.stringify(b)
 }

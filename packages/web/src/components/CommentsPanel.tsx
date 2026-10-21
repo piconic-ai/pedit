@@ -1,6 +1,6 @@
 'use client'
 
-import type { CommentsView, ShownThread } from '../comments.ts'
+import { COMMENT_LIMITS, type CommentsView, type ShownThread } from '../comments.ts'
 import type { Readable, Store } from '../store.ts'
 
 export interface CommentsPanelProps {
@@ -57,7 +57,7 @@ export function CommentsPanel(props: CommentsPanelProps) {
             draft = el
           }}
           rows={3}
-          maxlength={4000}
+          maxlength={COMMENT_LIMITS.body}
           placeholder={selected() ? 'Comment on the selection' : 'Select text to comment on it'}
           disabled={!selected()}
         />
@@ -143,7 +143,7 @@ function Reply(props: { hidden: boolean; onReply: (body: string) => boolean }) {
           box = el
         }}
         rows={1}
-        maxlength={4000}
+        maxlength={COMMENT_LIMITS.body}
         placeholder="Reply"
       />
       <button
