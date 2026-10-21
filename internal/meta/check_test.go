@@ -116,11 +116,12 @@ func TestCheckLimitsMatchPackagesProtocol(t *testing.T) {
 	var limits struct {
 		MaxDocBytes    int `json:"maxDocBytes"`
 		MaxClientClock int `json:"maxClientClock"`
+		MaxListWork    int `json:"maxListWork"`
 	}
 	if err := json.Unmarshal(data, &limits); err != nil {
 		t.Fatal(err)
 	}
-	if limits.MaxDocBytes != meta.MaxDocBytes || limits.MaxClientClock != meta.MaxClientClock {
+	if limits.MaxDocBytes != meta.MaxDocBytes || limits.MaxClientClock != meta.MaxClientClock || limits.MaxListWork != meta.MaxListWork {
 		t.Fatalf("meta-limits.json says %+v", limits)
 	}
 }
@@ -169,7 +170,7 @@ func TestCheckUpdateRefusesAListMadeLongAlongAChain(t *testing.T) {
 	// From review: client 1 sets a key n times, then each of n clients
 	// inserts one item after one of those: no two items follow the same
 	// one, but the list is 2n long, and took 43s to apply for n = 20,000.
-	n := 1024 // a list of 2,048: more work than MaxListWork
+	n := 768 // a list of 1,536: more work than MaxListWork
 	var blocks []block
 	chain := block{client: 1}
 	for i := range n {

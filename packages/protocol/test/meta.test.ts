@@ -21,7 +21,7 @@ function updatesOf(doc: Y.Doc): Uint8Array[] {
 
 describe('checkMetaUpdate', () => {
   it('has the limits the Go side has', () => {
-    expect(META_LIMITS).toEqual(limits)
+    expect({ ...META_LIMITS, maxListWork: MAX_LIST_WORK }).toEqual(limits)
   })
 
   it('takes an honest update', () => {
@@ -136,7 +136,7 @@ describe('checkMetaUpdate', () => {
 
   it('refuses a list made long along a chain of origins', () => {
     // From review: no two items follow the same one, but the list is long.
-    const n = 1024 // a list of 2,048: more work than MAX_LIST_WORK
+    const n = 768 // a list of 1,536: more work than MAX_LIST_WORK
     const chain: Block = { client: 1, items: [] }
     for (let i = 0; i < n; i++) chain.items.push(i > 0 ? [1, i - 1] : null)
     const blocks = [chain]

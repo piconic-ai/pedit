@@ -24,7 +24,7 @@ export const META_LIMITS = {
  * holds the items set under one key of a map, and Yjs takes time up to the
  * square of its length to apply items to it.
  */
-export const MAX_LIST_WORK = 1 << 21
+export const MAX_LIST_WORK = 1 << 20
 
 /**
  * Tells why an update received for `doc`, a metadata doc, must not be

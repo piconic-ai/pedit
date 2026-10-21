@@ -150,7 +150,7 @@ else: a guest, or a teammate through Git. Every peer checks it the same way.
   or ahead of itself (Yjs keeps those as pending, and sends them on with the
   doc, past every check); that takes one of its clients past 65,536
   operations; after which applying the doc's lists could take more than the
-  sum of the squares of their lengths allows (2,097,152: honest comments stay
+  sum of the squares of their lengths allows (1,048,576: honest comments stay
   far under it, and Yjs applies a doc at it in well under a second); or after
   which the doc could no longer fit the 1 MiB frame its state is sent in. So a
   hostile client cannot make a peer hold, and send, what other peers refuse,

@@ -27,7 +27,7 @@ const (
 // of a map, and Yjs and ygo take time up to the square of its length to
 // apply items to it. Honest comments make short lists, a few items each, and
 // stay far under it; at it, Yjs applies the doc in well under a second.
-const MaxListWork = 1 << 21
+const MaxListWork = 1 << 20
 
 // ErrRefused marks an update a peer drops by these rules.
 var ErrRefused = errors.New("refused")
