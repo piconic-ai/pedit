@@ -46,10 +46,13 @@ export const COMMENT_LIMITS = {
   quote: 1000,
   /** Past this, by metaDocSize, the editor offers no new comment: well under META_LIMITS.maxDocBytes. */
   docBytes: Math.floor(META_LIMITS.maxDocBytes / 4),
+  /** What one change can add, at most, kept free under the hard limit. */
+  margin: 16 * 1024,
 } as const
 
 const ID = /^[A-Za-z0-9_-]{1,32}$/
 const TIME = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{1,9})?Z$/
+const ANCHORS = new Set(['text', 'cells', 'node'])
 /** A random thread or comment id: 16 characters of base64url. */
 export function newId(): string {
   return randomBase64Url(12)
@@ -71,6 +74,8 @@ export interface CommentsOptions {
   now?: () => Date
   /** How long changes settle before the threads are worked out again. */
   delayMs?: number
+  /** Whether the room takes no changes now: it has ended, or waits for the host. */
+  locked?: () => boolean
 }
 
 /**
@@ -90,7 +95,8 @@ export class CommentsView {
   readonly #mine = new Set<string>()
   #timer: ReturnType<typeof setTimeout> | null = null
   #shown = '[]'
-  /** Whether the comments changed since roomForMore was worked out. */
+  /** The comments' measure, and whether they changed since it was worked out. */
+  #size = 0
   #measure = true
   readonly #metaChanged = () => {
     this.#measure = true
@@ -174,7 +180,7 @@ export class CommentsView {
   /** Deletes a comment written in this browser; the thread with it, if it was the last. */
   remove(threadId: string, messageId: string): void {
     const messages = this.#messages(threadId)
-    if (!messages || !this.#mine.has(messageId)) return
+    if (!messages || !this.#mine.has(messageId) || !this.#writable()) return
     this.#meta.transact(() => {
       messages.delete(messageId)
       if (messages.size === 0) this.#comments.delete(threadId)
@@ -185,7 +191,7 @@ export class CommentsView {
   /** Resolves a thread, or opens it again. Anyone may. */
   resolve(threadId: string, resolved: boolean): void {
     const thread = this.#comments.get(threadId)
-    if (!(thread instanceof Y.Map)) return
+    if (!(thread instanceof Y.Map) || !this.#writable()) return
     thread.set('resolved', resolved)
     this.refresh()
   }
@@ -205,7 +211,30 @@ export class CommentsView {
   }
 
   #fits(body: string): boolean {
-    return body.length > 0 && body.length <= COMMENT_LIMITS.body && this.roomForMore.get()
+    return (
+      body.length > 0 &&
+      body.length <= COMMENT_LIMITS.body &&
+      this.roomForMore.get() &&
+      this.#writable()
+    )
+  }
+
+  /**
+   * Whether a change may be made: not while the room takes none, nor near
+   * the limit every peer holds the comments to, where they would refuse it
+   * and this browser would drift from them. A deletion or change counts
+   * there too.
+   */
+  #writable(): boolean {
+    if (this.#opts.locked?.()) return false
+    if (this.#measure) this.#measureNow()
+    return this.#size + COMMENT_LIMITS.margin < META_LIMITS.maxDocBytes
+  }
+
+  #measureNow(): void {
+    this.#measure = false
+    this.#size = metaDocSize(this.#meta)
+    this.roomForMore.set(this.#size < COMMENT_LIMITS.docBytes)
   }
 
   #schedule(): void {
@@ -238,15 +267,14 @@ export class CommentsView {
       this.#shown = key
       this.threads.set(shown)
     }
-    if (this.#measure) {
-      this.#measure = false
-      this.roomForMore.set(metaDocSize(this.#meta) < COMMENT_LIMITS.docBytes)
-    }
+    if (this.#measure) this.#measureNow()
   }
 
   #show(id: string, thread: Y.Map<unknown>, text: string): ShownThread | null {
     const quote = thread.get('quote')
     if (typeof quote !== 'string' || quote.length > COMMENT_LIMITS.quote) return null
+    // The host saves no thread without an anchor of a kind it knows.
+    if (!ANCHORS.has(String((thread.get('anchor') as { type?: unknown } | undefined)?.type))) return null
     const place = this.#place(thread.get('anchor'))
     const live = place ? text.slice(place.from, place.to) : ''
     const state: ThreadState =
@@ -308,7 +336,10 @@ function isMessage(v: unknown): v is Message {
     typeof m.author === 'string' &&
     typeof m.body === 'string' &&
     typeof m.time === 'string' &&
-    TIME.test(m.time)
+    TIME.test(m.time) &&
+    // A real time, as the host parses it: no 13th month.
+    !Number.isNaN(Date.parse(m.time)) &&
+    new Date(m.time).toISOString().slice(0, 19) === m.time.slice(0, 19)
   )
 }
 

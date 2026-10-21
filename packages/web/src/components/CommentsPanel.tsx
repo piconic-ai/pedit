@@ -1,5 +1,6 @@
 'use client'
 
+import { createSignal } from '@barefootjs/client'
 import { COMMENT_LIMITS, type CommentsView, type ShownThread } from '../comments.ts'
 import type { Readable, Store } from '../store.ts'
 
@@ -32,6 +33,8 @@ export function CommentsPanel(props: CommentsPanelProps) {
     return s.to > s.from
   }
   const canWrite = () => !props.locked.get() && (view()?.roomForMore.get() ?? false)
+  // On a narrow screen the panel covers the text: it opens on demand.
+  const [unfolded, setUnfolded] = createSignal(false)
   let draft: HTMLTextAreaElement | undefined
 
   const start = () => {
@@ -46,9 +49,21 @@ export function CommentsPanel(props: CommentsPanelProps) {
   }
 
   return (
-    <aside className="comments" aria-label="Comments" hidden={view() === null}>
+    <aside
+      className="comments"
+      aria-label="Comments"
+      hidden={view() === null}
+      data-open={unfolded() ? 'true' : undefined}
+    >
       <h2 className="comments-title">
-        Comments <span className="comments-count">{open() > 0 ? String(open()) : ''}</span>
+        <button
+          type="button"
+          className="comments-toggle"
+          aria-expanded={unfolded() ? 'true' : 'false'}
+          onClick={() => setUnfolded(!unfolded())}
+        >
+          Comments <span className="comments-count">{open() > 0 ? String(open()) : ''}</span>
+        </button>
       </h2>
       <p className="comments-note">Saved on the host's computer, in .pedit/meta/.</p>
       <div className="comments-new" hidden={!canWrite()}>
@@ -100,7 +115,7 @@ export function CommentsPanel(props: CommentsPanelProps) {
                 <li key={m.id} className="comment-message">
                   <bdi className="comment-author">{m.author}</bdi>{' '}
                   <time className="comment-time" datetime={m.time}>
-                    {m.time.slice(0, 16).replace('T', ' ')}
+                    {localTime(m.time)}
                   </time>
                   <p className="comment-body">{m.body}</p>
                   <button
@@ -156,4 +171,9 @@ function Reply(props: { hidden: boolean; onReply: (body: string) => boolean }) {
       </button>
     </div>
   )
+}
+
+/** A comment's time, in the reader's own time zone, to the minute. */
+function localTime(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 }

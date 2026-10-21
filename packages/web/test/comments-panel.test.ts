@@ -72,6 +72,7 @@ describe('CommentsPanel', () => {
       const t = new Y.Map<unknown>()
       meta.getMap('comments').set('t1', t)
       t.set('quote', '<b>q</b>')
+      t.set('anchor', { type: 'node', id: 'n1' })
       const messages = new Y.Map<unknown>()
       t.set('messages', messages)
       messages.set('m1', {

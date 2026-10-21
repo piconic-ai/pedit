@@ -149,4 +149,39 @@ describe('clean', () => {
     expect(clean('a\u0000b‮c\nd')).toBe('abcd')
     expect(clean('a\u0000b⁦c\nd\te', true)).toBe('abc\nd\te')
   })
+
+  it('takes no change while locked, nor near the limit every peer holds', () => {
+    let locked = true
+    const { meta, content } = setup('hello world')
+    const view = new CommentsView(meta, content, { name: () => 'Ada', locked: () => locked })
+    expect(view.start(0, 5, 'no')).toBeNull()
+    locked = false
+    const id = view.start(0, 5, 'yes')
+    expect(id).not.toBeNull()
+    locked = true
+    view.resolve(id as string, true)
+    expect(view.threads.get()[0]?.resolved).toBe(false)
+  })
+
+  it('shows no thread the host would not save', () => {
+    const { meta, view } = setup('abc')
+    meta.transact(() => {
+      for (const [id, anchor, time] of [
+        ['t1', { type: 'nowhere' }, '2026-10-21T00:00:00Z'],
+        ['t2', { type: 'node', id: 'n' }, '2026-13-41T00:00:00Z'],
+      ] as const) {
+        const t = new Y.Map<unknown>()
+        meta.getMap('comments').set(id, t)
+        t.set('quote', 'q')
+        t.set('anchor', anchor)
+        const messages = new Y.Map<unknown>()
+        t.set('messages', messages)
+        messages.set('m1', { author: 'A', time, body: 'b' })
+      }
+    })
+    view.refresh()
+    const shown = view.threads.get()
+    expect(shown.map((t) => t.id)).toEqual(['t2'])
+    expect(shown[0]?.messages).toEqual([])
+  })
 })

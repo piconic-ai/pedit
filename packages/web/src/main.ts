@@ -259,6 +259,9 @@ async function joinRoom(
   // The comments of the files the host keeps them for (#121): which file of
   // the room holds each file's, those on screen, and what they act on.
   const metaOf = new Map<number, number>()
+  // The files of the room the host lists as text: only those get comments
+  // here, as a canvas's anchors are its nodes.
+  const textFiles = new Set<number>()
   const comments = new Store<CommentsView | null>(null)
   const threadsShown = new Store<readonly ShownThread[]>([])
   const commentFocus = new Store<string | null>(null)
@@ -578,14 +581,14 @@ async function joinRoom(
   // whose every update is checked: anyone in the room can send one.
   const followComments = (f: OpenFile) => {
     const metaId = metaOf.get(f.id)
-    if (f.comments || f.canvas || metaId === undefined || !client) return
+    if (f.comments || !textFiles.has(f.id) || metaId === undefined || !client) return
     const metaDoc = new Y.Doc()
     client.addFile(metaId, metaDoc, checkMetaUpdate)
     const name = () => {
       const user = awareness.getLocalState()?.user as { name?: unknown } | undefined
       return typeof user?.name === 'string' ? user.name : me.name
     }
-    f.comments = new CommentsView(metaDoc, f.doc, { name })
+    f.comments = new CommentsView(metaDoc, f.doc, { name, locked: editLocked })
     if (f === shown) showComments()
   }
   let stopThreads = () => {}
@@ -615,6 +618,8 @@ async function joinRoom(
         extensions: editorExtensions(shown.id, shown.text, shown.undo, editor.state),
       }),
     )
+    // setState runs no update listener: the selection is the new file's.
+    selection.set({ from: 0, to: 0 })
     preview.setText(shown.text)
     table.replaceChildren(shown.table.element)
     canvas.replaceChildren(shown.board.element)
@@ -625,7 +630,9 @@ async function joinRoom(
 
   const takeManifest = (list: FileEntry[]) => {
     metaOf.clear()
+    textFiles.clear()
     for (const [file, meta] of metaFiles(list)) metaOf.set(file, meta)
+    for (const f of list) if (f.format === 'text') textFiles.add(f.id)
     for (const f of opened.values()) followComments(f)
     // A file of a format this version does not know is left out, and so is
     // the metadata of a file, shown with it.

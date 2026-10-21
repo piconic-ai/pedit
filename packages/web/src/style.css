@@ -1826,6 +1826,17 @@ main.editor[data-view="canvas"] .comments {
   font-size: 13px;
   margin: 0 0 4px;
 }
+.comments-toggle {
+  border: 0;
+  background: none;
+  color: inherit;
+  padding: 0;
+  font-weight: inherit;
+  cursor: default;
+}
+.comments [hidden] {
+  display: none;
+}
 .comments-count:not(:empty) {
   margin-left: 4px;
   padding: 0 6px;
@@ -1935,5 +1946,15 @@ main.editor[data-view="canvas"] .comments {
     border-left: 0;
     border-top: 1px solid var(--line);
     z-index: 5;
+  }
+  /* Folded, only the title shows, to open it. */
+  .comments:not([data-open]) > :not(.comments-title) {
+    display: none;
+  }
+  .comments:not([data-open]) .comments-title {
+    margin: 0;
+  }
+  .comments-toggle {
+    cursor: pointer;
   }
 }
