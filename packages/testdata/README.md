@@ -14,7 +14,8 @@ only the command line writes shared files to disk. Unlike `blob-vectors.json`,
 this file is written by hand; characters that do not show are escaped.
 
 `files-vectors.json` pins how a room that shares several files encodes its
-manifest and the messages about one file. `internal/protocol/files_test.go`
+manifest and the messages about one file, and which `meta` entry of the
+manifest holds the metadata of which file (#121). `internal/protocol/files_test.go`
 writes it (`PEDIT_UPDATE_VECTORS=1 go test ./internal/protocol/`), and
 `packages/protocol/test/files.test.ts` checks the TypeScript side reads and
 writes the same bytes.

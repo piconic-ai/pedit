@@ -1,12 +1,14 @@
 package protocol_test
 
 import (
+	"cmp"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/piconic-ai/pedit/internal/protocol"
@@ -17,6 +19,7 @@ var manifest = []protocol.FileEntry{
 	{ID: 1, Path: "notes.md", Format: protocol.FormatText},
 	{ID: 2, Path: "議事録/board.canvas", Format: protocol.FormatCanvas},
 	{ID: 300, Path: "data.csv", Format: protocol.FormatText},
+	{ID: 301, Path: ".pedit/meta/notes.md.json", Format: protocol.FormatMeta},
 }
 
 func TestManifestRoundTrips(t *testing.T) {
@@ -153,12 +156,28 @@ type filesVectors struct {
 		Files   []fileVector `json:"files"`
 		Payload string       `json:"payload"` // hex
 	} `json:"manifest"`
+	// Meta pairs files with their metadata, as MetaFiles does.
+	Meta []metaPair `json:"meta"`
 	Docs []struct {
 		File    uint64 `json:"file"`
 		Type    byte   `json:"type"`
 		Inner   string `json:"inner"`   // hex
 		Payload string `json:"payload"` // hex
 	} `json:"docs"`
+}
+
+type metaPair struct {
+	File uint64 `json:"file"`
+	Meta uint64 `json:"meta"`
+}
+
+func metaPairs(files []protocol.FileEntry) []metaPair {
+	pairs := []metaPair{}
+	for file, meta := range protocol.MetaFiles(files) {
+		pairs = append(pairs, metaPair{file, meta})
+	}
+	slices.SortFunc(pairs, func(a, b metaPair) int { return cmp.Compare(a.File, b.File) })
+	return pairs
 }
 
 type fileVector struct {
@@ -187,6 +206,9 @@ func TestFilesVectors(t *testing.T) {
 	if err != nil || hex.EncodeToString(got) != v.Manifest.Payload {
 		t.Fatalf("manifest = %x, %v; vectors say %s", got, err, v.Manifest.Payload)
 	}
+	if got := metaPairs(files); len(v.Meta) == 0 || !reflect.DeepEqual(got, v.Meta) {
+		t.Fatalf("meta pairs = %v; vectors say %v", got, v.Meta)
+	}
 	if len(v.Docs) == 0 {
 		t.Fatal("no doc vectors")
 	}
@@ -209,6 +231,7 @@ func writeFilesVectors(t *testing.T) {
 		t.Fatal(err)
 	}
 	v.Manifest.Payload = hex.EncodeToString(payload)
+	v.Meta = metaPairs(manifest)
 	for _, d := range []struct {
 		file  uint64
 		typ   protocol.MessageType
@@ -246,5 +269,34 @@ func TestDecodeMessageKnowsTheFilesType(t *testing.T) {
 	// CONTRIBUTING.md lists it as type 4, as packages/protocol does.
 	if protocol.MessageFiles != 4 {
 		t.Fatalf("MessageFiles = %d", protocol.MessageFiles)
+	}
+}
+
+func TestMetaFilesPairsAFileWithItsMetadata(t *testing.T) {
+	if got := protocol.MetaPath("docs/spec.md"); got != ".pedit/meta/docs/spec.md.json" {
+		t.Fatalf("MetaPath = %q", got)
+	}
+	meta := func(id uint64, path string) protocol.FileEntry {
+		return protocol.FileEntry{ID: id, Path: path, Format: protocol.FormatMeta}
+	}
+	files := []protocol.FileEntry{
+		{ID: 0, Path: "a.md", Format: protocol.FormatText},
+		{ID: 1, Path: "b.canvas", Format: protocol.FormatCanvas},
+		{ID: 2, Path: "c.md", Format: protocol.FormatText},
+		meta(3, protocol.MetaPath("a.md")),
+		meta(4, protocol.MetaPath("b.canvas")),
+		// Names no listed file.
+		meta(5, protocol.MetaPath("gone.md")),
+		// Names another meta entry.
+		meta(6, protocol.MetaPath(protocol.MetaPath("a.md"))),
+		// Not under .pedit/meta/, or not ending in .json.
+		meta(7, "c.md.json"),
+		meta(8, ".pedit/meta/c.md"),
+		// The right path, but not of format meta.
+		{ID: 9, Path: protocol.MetaPath("c.md"), Format: protocol.FormatText},
+	}
+	got := protocol.MetaFiles(files)
+	if want := map[uint64]uint64{0: 3, 1: 4}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("MetaFiles = %v, want %v", got, want)
 	}
 }
