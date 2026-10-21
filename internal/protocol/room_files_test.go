@@ -1,6 +1,7 @@
 package protocol_test
 
 import (
+	"errors"
 	"reflect"
 	"slices"
 	"strings"
@@ -341,5 +342,52 @@ func TestFlushesAnEditQueuedBehindAPacedTransferOnLeaving(t *testing.T) {
 	prototest.WaitFor(t, wait, func() bool { return observer.String() == "last edit" }, "the edit queued last")
 	if n := relay.Limited(); n != 0 {
 		t.Fatalf("%d connections went over the allowance", n)
+	}
+}
+
+func TestACheckedFileAppliesOnlyWhatItsCheckPasses(t *testing.T) {
+	relay := prototest.NewRelay(true)
+	key := protocol.GenerateKey()
+	var mu sync.Mutex
+	var errs []error
+	host := join(t, relay, key, joinOpts{header: hostHeader(), onError: func(err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		errs = append(errs, err)
+	}})
+	checked := newFileText("")
+	refuse := errors.New("refused for the test")
+	check := func(doc *crdt.Doc, update []byte) error {
+		if strings.Contains(string(update), "refuse me") {
+			return refuse
+		}
+		if strings.Contains(string(update), "panic") {
+			panic("a hostile update")
+		}
+		return nil
+	}
+	if err := host.AddCheckedFile(1, checked.doc, check); err != nil {
+		t.Fatal(err)
+	}
+	prototest.WaitFor(t, wait, func() bool { return host.Status() == protocol.StatusConnected }, "host connected")
+	guest := join(t, relay, key, joinOpts{})
+	g := newFileText("")
+	addFile(t, guest, 1, g)
+	g.insert(0, "kept ")
+	prototest.WaitFor(t, wait, func() bool { return checked.String() == "kept " }, "an update the check passes")
+	g.insert(5, "refuse me ")
+	g.insert(0, "panic ")
+	prototest.WaitFor(t, wait, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(errs) >= 2
+	}, "both dropped and reported")
+	if checked.String() != "kept " {
+		t.Fatalf("applied %q", checked.String())
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !errors.Is(errs[0], refuse) || !strings.Contains(errs[1].Error(), "panic") {
+		t.Fatalf("errors %v", errs)
 	}
 }

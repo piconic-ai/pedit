@@ -138,9 +138,13 @@ else: a guest, or a teammate through Git. Every peer checks it the same way.
   let a file show reviewers one comment and pedit another.
 - Names, bodies and quotes are shown as text, never as HTML, with control and
   bidi characters removed.
-- Updates to the doc are bounded per update and per client, and an update with
-  a gap in its clocks is dropped, so a hostile client cannot make a peer send
-  frames the relay refuses.
+- Every peer tries each update to the doc on a copy first
+  (`internal/meta/check.go`, `packages/protocol/src/meta.ts`) and drops it
+  when part of it would wait for updates not received yet, when it takes one
+  client past 65,536 operations, or when the doc would pass 512 KiB, so a
+  hostile client cannot make a peer hold, and send, frames the relay refuses.
+  An honest update dropped for a gap comes back with the next sync. The host
+  also turns a panic in ygo on such an update into an error.
 - A metadata file that breaks these rules is left untouched, and its shared
   file offers no comments.
 

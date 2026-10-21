@@ -321,3 +321,31 @@ describe('Pacer', () => {
     expect(many.take(1)).toBeCloseTo((1 / 7) * 1000)
   })
 })
+
+describe('RoomClient with a checked file', () => {
+  it('applies only the updates its check passes, and reports the rest', async () => {
+    const relay = new Relay()
+    const key = await importKey(generateKey())
+    const errors: unknown[] = []
+    const host = join(relay, key, { onError: (e) => errors.push(e) })
+    const checked = new Y.Doc()
+    host.addFile(1, checked, (_, update) =>
+      Y.decodeUpdate(update).structs.length > 1 ? 'too many' : null,
+    )
+    await vi.waitFor(() => expect(host.status).toBe('connected'))
+
+    const guest = join(relay, key)
+    const gDoc = new Y.Doc()
+    guest.addFile(1, gDoc)
+    gDoc.getMap('m').set('one', 1)
+    await vi.waitFor(() => expect(checked.getMap('m').get('one')).toBe(1))
+    gDoc.transact(() => {
+      gDoc.getMap('other').set('a', 1)
+      gDoc.getText('t').insert(0, 'b')
+    })
+    await vi.waitFor(() =>
+      expect(String(errors.at(-1))).toMatch(/file 1: dropped an update: too many/),
+    )
+    expect(checked.getMap('other').get('a')).toBeUndefined()
+  })
+})

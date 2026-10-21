@@ -19,3 +19,7 @@ manifest holds the metadata of which file (#121). `internal/protocol/files_test.
 writes it (`PEDIT_UPDATE_VECTORS=1 go test ./internal/protocol/`), and
 `packages/protocol/test/files.test.ts` checks the TypeScript side reads and
 writes the same bytes.
+
+`meta-limits.json` holds the limits every peer applies to an update of a
+file's comments (#121) before applying it. `internal/meta/check_test.go` and
+`packages/protocol/test/meta.test.ts` both check their constants against it.

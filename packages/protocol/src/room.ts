@@ -147,9 +147,16 @@ export interface RoomClientOptions {
 /** A file's Y.Doc that a RoomClient keeps in sync. */
 interface FileDoc {
   doc: Y.Doc
+  check?: UpdateCheck
   onUpdate: (update: Uint8Array, origin: unknown) => void
   synced: boolean
 }
+
+/**
+ * Tells why an update received for `doc` must not be applied, or returns
+ * null. See addFile.
+ */
+export type UpdateCheck = (doc: Y.Doc, update: Uint8Array) => string | null
 
 const OPEN = 1
 
@@ -317,9 +324,10 @@ export class RoomClient {
    * (file 0 is the client's own `doc`): sends its
    * state now if connected, and on every connection after. Messages about a
    * file that was not added are dropped, so a peer follows only the files it
-   * added.
+   * added. With `check`, an update anyone sends for the file is applied only
+   * if it passes: one that does not is dropped and reported to onError.
    */
-  addFile(id: number, doc: Y.Doc): void {
+  addFile(id: number, doc: Y.Doc, check?: UpdateCheck): void {
     if (!Number.isInteger(id) || id < 1 || id > MAX_FILE_ID)
       throw new Error(`invalid file id ${id}`)
     if (this.destroyed) throw new Error('client destroyed')
@@ -329,7 +337,7 @@ export class RoomClient {
       this.sendFileSync(id, (encoder) => syncProtocol.writeUpdate(encoder, update))
     }
     doc.on('update', onUpdate)
-    this.files.set(id, { doc, onUpdate, synced: false })
+    this.files.set(id, { doc, check, onUpdate, synced: false })
     const open = this.status === 'connected' || this.status === 'waiting'
     if (this.socket?.readyState === OPEN && open) this.syncFile(id, doc)
   }
@@ -417,6 +425,11 @@ export class RoomClient {
   private receiveFileSync(id: number, payload: Uint8Array): void {
     const f = this.files.get(id)
     if (!f) return
+    const refused = f.check && checkSync(payload, f.doc, f.check)
+    if (refused) {
+      this.opts.onError?.(new Error(`file ${id}: dropped an update: ${refused}`))
+      return
+    }
     const { kind, reply } = readSync(payload, f.doc, this)
     if (reply) this.sendFile(id, MessageType.Sync, reply)
     if (kind === syncProtocol.messageYjsSyncStep2 && !f.synced) {
@@ -586,6 +599,20 @@ function decodeKnown<T>(
   } catch (error) {
     if (unknown.some((type) => error instanceof type)) return null
     throw error
+  }
+}
+
+/** Tells why check refuses the update a sync message carries, or null. */
+function checkSync(payload: Uint8Array, doc: Y.Doc, check: UpdateCheck): string | null {
+  try {
+    const decoder = decoding.createDecoder(payload)
+    const kind = decoding.readVarUint(decoder)
+    if (kind !== syncProtocol.messageYjsSyncStep2 && kind !== syncProtocol.messageYjsUpdate) {
+      return null
+    }
+    return check(doc, decoding.readVarUint8Array(decoder))
+  } catch {
+    return 'not a sync message'
   }
 }
 

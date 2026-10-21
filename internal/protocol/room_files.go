@@ -17,9 +17,14 @@ import (
 // fileDoc is a file's Y.Doc that the Client keeps in sync.
 type fileDoc struct {
 	doc    *crdt.Doc
+	check  UpdateCheck
 	unsub  func()
 	synced bool
 }
+
+// UpdateCheck tells whether an update received for doc may be applied. It is
+// called under the lock updates are applied under.
+type UpdateCheck func(doc *crdt.Doc, update []byte) error
 
 // AddFile keeps doc in sync with the room as the file with this ID, from 1
 // up (file 0 is the Client's Doc): it sends
@@ -27,12 +32,19 @@ type fileDoc struct {
 // about a file that was not added are dropped, so a peer only follows the
 // files it added.
 func (c *Client) AddFile(id uint64, doc *crdt.Doc) error {
+	return c.AddCheckedFile(id, doc, nil)
+}
+
+// AddCheckedFile is AddFile for a doc whose updates, anyone in the room's,
+// must pass check before they are applied; one that does not is dropped,
+// and reported to OnError.
+func (c *Client) AddCheckedFile(id uint64, doc *crdt.Doc, check UpdateCheck) error {
 	if id == 0 || id > MaxFileID {
 		return fmt.Errorf("invalid file id %d", id)
 	}
 	// Subscribed outside c.mu: an update in another goroutine holds the
 	// doc's lock while it sends, which takes c.mu.
-	f := &fileDoc{doc: doc}
+	f := &fileDoc{doc: doc, check: check}
 	f.unsub = doc.OnUpdate(func(update []byte, origin any) {
 		if origin == c {
 			return
@@ -215,10 +227,10 @@ func (c *Client) receiveFileSync(id uint64, payload []byte) error {
 		return nil
 	}
 	c.applying.Lock()
-	reply, err := ysync.ApplySyncMessage(f.doc, payload, c)
+	reply, err := f.apply(payload, c)
 	c.applying.Unlock()
 	if err != nil {
-		return err
+		return fmt.Errorf("file %d: %w", id, err)
 	}
 	if len(reply) > 0 {
 		_ = c.sendFile(id, MessageSync, reply)
@@ -233,6 +245,30 @@ func (c *Client) receiveFileSync(id uint64, payload []byte) error {
 		}
 	}
 	return nil
+}
+
+// apply applies a sync message, after its check, if it has one. A panic in
+// ygo on a checked doc's message is an error: such a doc takes updates from
+// anyone in the room, and the host's process is the session.
+func (f *fileDoc) apply(payload []byte, origin any) (reply []byte, err error) {
+	if f.check == nil {
+		return ysync.ApplySyncMessage(f.doc, payload, origin)
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			reply, err = nil, fmt.Errorf("sync message makes ygo panic: %v", r)
+		}
+	}()
+	kind, update, err := ysync.ReadSyncMessage(payload)
+	if err != nil {
+		return nil, err
+	}
+	if kind == ysync.MsgSyncStep2 || kind == ysync.MsgUpdate {
+		if err := f.check(f.doc, update); err != nil {
+			return nil, err
+		}
+	}
+	return ysync.ApplySyncMessage(f.doc, payload, origin)
 }
 
 // unsubscribeFiles stops following every file's doc, on Destroy.
