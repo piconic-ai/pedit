@@ -66,6 +66,9 @@ export const COMMENT_LIMITS = {
 const ID = /^[A-Za-z0-9_-]{1,32}$/
 const TIME = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{1,9})?Z$/
 const ANCHORS = new Set(['text', 'cells', 'node'])
+/** internal/meta/meta.go's MaxNodeID, in bytes of UTF-8. */
+const MAX_NODE_ID = 1024
+const utf8 = new TextEncoder()
 /** A random thread or comment id: 16 characters of base64url. */
 export function newId(): string {
   return randomBase64Url(12)
@@ -178,7 +181,7 @@ export class CommentsView {
     const to = table?.rows[Math.max(a.row, b.row)]?.cells[Math.max(a.col, b.col)]
     if (!table || !from || !to) return null
     // A range's raw text quotes it, cut to the limit, so a long column takes one too.
-    return this.#begin(table.text.slice(from.from, to.to).slice(0, COMMENT_LIMITS.quote), body, {
+    return this.#begin(cutQuote(table.text.slice(from.from, to.to)), body, {
       type: 'cells',
       from: this.#cell(from),
       to: this.#cell(to),
@@ -192,8 +195,9 @@ export class CommentsView {
    */
   startNode(id: string, body: string): string | null {
     const shown = this.#nodes().get(id)
-    if (shown === undefined) return null
-    return this.#begin(shown.slice(0, COMMENT_LIMITS.quote), body, { type: 'node', id })
+    // The host keeps no thread on an id longer, in UTF-8, than this.
+    if (shown === undefined || utf8.encode(id).length > MAX_NODE_ID) return null
+    return this.#begin(cutQuote(shown), body, { type: 'node', id })
   }
 
   /** Starts a thread on a target, as start, startCells or startNode. */
@@ -395,7 +399,7 @@ export class CommentsView {
     const place = placeOf(anchor, here)
     // Cells and nodes quote their text cut to the limit, as they are started.
     const text = place?.node ? place.node.shows : place ? here.text.slice(place.from, place.to) : ''
-    const live = place?.cells || place?.node ? text.slice(0, COMMENT_LIMITS.quote) : text
+    const live = place?.cells || place?.node ? cutQuote(text) : text
     // Only a cell or a node may be empty.
     const gone = !place || (!place.cells && !place.node && place.from >= place.to)
     const state: ThreadState = gone ? 'detached' : live === quote ? 'attached' : 'changed'
@@ -530,6 +534,17 @@ function placeOf(anchor: unknown, here: Here): Place | null {
 /** What a node shows, as a thread on it quotes it: its text, label, file or link. */
 function nodeText(n: CanvasNode): string {
   return n.text ?? n.label ?? n.file ?? n.url ?? ''
+}
+
+/**
+ * Text cut to a quote's limit, not inside a surrogate pair: half of one
+ * reaches the others as U+FFFD, and the quote would never match again.
+ */
+export function cutQuote(text: string): string {
+  const max = COMMENT_LIMITS.quote
+  if (text.length <= max) return text
+  const high = text.charCodeAt(max - 1)
+  return text.slice(0, high >= 0xd800 && high <= 0xdbff ? max - 1 : max)
 }
 
 /** Whether a character ends a cell: a delimiter, or a line break. */

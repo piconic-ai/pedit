@@ -6,6 +6,7 @@ import {
   COMMENT_LIMITS,
   CommentsView,
   clean,
+  cutQuote,
   type ShownThread,
   TextIndex,
 } from '../src/comments.ts'
@@ -428,6 +429,13 @@ describe('comments on a canvas', () => {
     expect(view.startNode('nope', 'Lost')).toBeNull()
   })
 
+  it('takes no node whose id the host would not keep', () => {
+    const { content, view } = canvas()
+    const long = 'é'.repeat(513) // 1,026 bytes of UTF-8
+    addNode(content, { id: long, type: 'text', x: 0, y: 0, width: 10, height: 10, text: 'x' }, null)
+    expect(view.startNode(long, 'Too long')).toBeNull()
+  })
+
   it('places no node in a file that is no canvas', () => {
     const { view, shown, meta } = setup('hello')
     expect(view.startNode('n1', 'Why?')).toBeNull()
@@ -482,5 +490,15 @@ describe('comments from peers, at the limits', () => {
     view.resolve(id, false)
     view.reply(id, 'and?')
     for (const u of sent) expect(checkMetaUpdate(peer, u)).toBeNull()
+  })
+})
+
+describe('cutQuote', () => {
+  it('cuts to the limit, not inside a surrogate pair', () => {
+    const max = COMMENT_LIMITS.quote
+    expect(cutQuote('a'.repeat(max + 5))).toHaveLength(max)
+    const pair = `${'a'.repeat(max - 1)}😀`
+    expect(cutQuote(pair)).toBe('a'.repeat(max - 1))
+    expect(cutQuote('short')).toBe('short')
   })
 })
