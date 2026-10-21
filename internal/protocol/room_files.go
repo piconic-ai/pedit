@@ -269,7 +269,7 @@ func (c *Client) receiveFileSync(id uint64, payload []byte) error {
 	}
 	c.applying.Lock()
 	kind, reply, err := f.apply(payload, c, &c.checks)
-	resync := errors.Is(err, ErrRetryLater) && c.askAgain(id, f, c.checks.clock())
+	resync := errors.Is(err, ErrRetryLater) && c.askAgain(id, f)
 	c.applying.Unlock()
 	if resync {
 		_ = c.sendFile(id, MessageSync, ysync.EncodeSyncStep1(f.doc))
@@ -301,16 +301,14 @@ func (f *fileDoc) apply(payload []byte, origin any, share *timeShare) (kind int,
 	if err != nil {
 		return 0, nil, err
 	}
-	if f.check == nil {
-		reply, err = ysync.ApplySyncMessage(f.doc, payload, origin)
-		return kind, reply, err
+	if f.check != nil {
+		defer func() {
+			if r := recover(); r != nil {
+				reply, err = nil, fmt.Errorf("sync message makes ygo panic: %v", r)
+			}
+		}()
 	}
-	defer func() {
-		if r := recover(); r != nil {
-			reply, err = nil, fmt.Errorf("sync message makes ygo panic: %v", r)
-		}
-	}()
-	if kind != ysync.MsgSyncStep2 && kind != ysync.MsgUpdate {
+	if f.check == nil || kind != ysync.MsgSyncStep2 && kind != ysync.MsgUpdate {
 		reply, err = ysync.ApplySyncMessage(f.doc, payload, origin)
 		return kind, reply, err
 	}
@@ -350,21 +348,22 @@ func (s *timeShare) take(apply func() ([]byte, error)) ([]byte, error) {
 // at once, telling the caller to, or once resyncEvery has passed since it
 // last asked, so that an update refused while it waited is not left out.
 // The caller holds Client.applying.
-func (c *Client) askAgain(id uint64, f *fileDoc, now time.Time) bool {
-	if !now.Before(f.resyncAt) {
-		f.resyncAt = now.Add(resyncEvery)
+func (c *Client) askAgain(id uint64, f *fileDoc) bool {
+	wait := f.resyncAt.Sub(c.checks.clock())
+	if wait <= 0 {
+		f.resyncAt = c.checks.clock().Add(resyncEvery)
 		return true
 	}
 	if f.resyncTimer == nil {
-		f.resyncTimer = time.AfterFunc(f.resyncAt.Sub(now), func() {
+		f.resyncTimer = time.AfterFunc(wait, func() {
 			c.applying.Lock()
 			f.resyncTimer = nil
-			f.resyncAt = c.checks.clock().Add(resyncEvery)
+			ask := c.askAgain(id, f)
 			c.applying.Unlock()
 			c.mu.Lock()
 			destroyed := c.destroyed
 			c.mu.Unlock()
-			if !destroyed {
+			if ask && !destroyed {
 				_ = c.sendFile(id, MessageSync, ysync.EncodeSyncStep1(f.doc))
 			}
 		})

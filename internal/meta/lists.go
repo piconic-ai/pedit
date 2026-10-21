@@ -15,8 +15,8 @@ import (
 // as Yjs would, and tells which items it cannot place: those would wait
 // for structs not received yet.
 type lists struct {
-	recs  []record
-	fresh []bool // not in the doc yet
+	recs []record
+	doc  int // the first records are the doc's; the rest, the update's
 	// Each client's records, by clock.
 	byClient map[uint64][]int
 	state    []byte // unseen, seen or done, as list works through them
@@ -30,22 +30,11 @@ const (
 	done
 )
 
-// newLists takes the records of the doc and of an update for it, at known,
-// leaving out those of the update the doc has.
-func newLists(doc, update []record, known map[uint64]uint64) *lists {
-	l := &lists{byClient: map[uint64][]int{}}
-	add := func(r record, fresh bool) {
-		l.byClient[r.at.client] = append(l.byClient[r.at.client], len(l.recs))
-		l.recs = append(l.recs, r)
-		l.fresh = append(l.fresh, fresh)
-	}
-	for _, r := range doc {
-		add(r, false)
-	}
-	for _, r := range update {
-		if r.at.clock+r.length > known[r.at.client] {
-			add(r, true)
-		}
+// newLists takes the records of the doc and the new ones of an update.
+func newLists(doc, fresh []record) *lists {
+	l := &lists{recs: append(append([]record{}, doc...), fresh...), doc: len(doc), byClient: map[uint64][]int{}}
+	for i, r := range l.recs {
+		l.byClient[r.at.client] = append(l.byClient[r.at.client], i)
 	}
 	for _, is := range l.byClient {
 		sort.Slice(is, func(a, b int) bool { return l.recs[is[a]].at.clock < l.recs[is[b]].at.clock })
@@ -138,11 +127,11 @@ func (l *lists) finish(k int, list string, ok bool) {
 func (l *lists) check() (missing, long bool) {
 	l.resolve()
 	lengths := map[string]int{}
-	for i, r := range l.recs {
-		if l.fresh[i] && !l.placed[i] {
+	for i := range l.recs {
+		if i >= l.doc && !l.placed[i] {
 			missing = true
 		}
-		if r.item && l.list[i] != "" {
+		if l.placed[i] && l.list[i] != "" {
 			lengths[l.list[i]]++
 		}
 	}

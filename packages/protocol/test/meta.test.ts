@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
 // The Go side checks its own against the same file (internal/meta/check_test.go).
 import limits from '../../testdata/meta-limits.json'
-import { checkMetaUpdate, MAX_LIST_WORK, META_LIMITS } from '../src/index.ts'
+import { checkMetaUpdate, META_LIMITS } from '../src/index.ts'
 
 function thread(doc: Y.Doc, id: string, quote: string) {
   doc.transact(() => {
@@ -21,7 +21,7 @@ function updatesOf(doc: Y.Doc): Uint8Array[] {
 
 describe('checkMetaUpdate', () => {
   it('has the limits the Go side has', () => {
-    expect({ ...META_LIMITS, maxListWork: MAX_LIST_WORK }).toEqual(limits)
+    expect(META_LIMITS).toEqual(limits)
   })
 
   it('takes an honest update', () => {
@@ -95,7 +95,7 @@ describe('checkMetaUpdate', () => {
       }
       return Y.encodeStateAsUpdate(all)
     }
-    const most = Math.floor(Math.sqrt(MAX_LIST_WORK))
+    const most = Math.floor(Math.sqrt(META_LIMITS.maxListWork))
     expect(checkMetaUpdate(new Y.Doc(), sets(most))).toBeNull()
     expect(checkMetaUpdate(new Y.Doc(), sets(most + 1))?.reason).toMatch(/lists/)
     const host = new Y.Doc()
@@ -136,7 +136,7 @@ describe('checkMetaUpdate', () => {
 
   it('refuses a list made long along a chain of origins', () => {
     // From review: no two items follow the same one, but the list is long.
-    const n = 768 // a list of 1,536: more work than MAX_LIST_WORK
+    const n = 768 // a list of 1,536: more work than maxListWork
     const chain: Block = { client: 1, items: [] }
     for (let i = 0; i < n; i++) chain.items.push(i > 0 ? [1, i - 1] : null)
     const blocks = [chain]

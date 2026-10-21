@@ -16,15 +16,14 @@ export const META_LIMITS = {
    */
   maxDocBytes: MAX_FRAME_BYTES - 4096,
   maxClientClock: 1 << 16,
+  /**
+   * Bounds the time applying the doc's lists can take, as the sum of the
+   * squares of their lengths, as internal/meta/check.go's MaxListWork: a list
+   * holds the items set under one key of a map, and Yjs takes time up to the
+   * square of its length to apply items to it.
+   */
+  maxListWork: 1 << 20,
 } as const
-
-/**
- * Bounds the time applying the doc's lists can take, as the sum of the
- * squares of their lengths, as internal/meta/check.go's MaxListWork: a list
- * holds the items set under one key of a map, and Yjs takes time up to the
- * square of its length to apply items to it.
- */
-export const MAX_LIST_WORK = 1 << 20
 
 /**
  * Tells why an update received for `doc`, a metadata doc, must not be
@@ -36,7 +35,7 @@ export const MAX_LIST_WORK = 1 << 20
  *   every check). This refusal is for now: the client asks the room again,
  *   and an honest peer's updates come back whole;
  * - it takes one of its clients past maxClientClock operations;
- * - applying the doc's lists, with it, could take more than MAX_LIST_WORK;
+ * - applying the doc's lists, with it, could take more than maxListWork;
  * - the doc could pass maxDocBytes.
  */
 export function checkMetaUpdate(doc: Y.Doc, update: Uint8Array): Refusal | null {
@@ -110,8 +109,8 @@ function scan(update: Uint8Array): Scanned {
       if (last) done.add(last.id.client)
     }
     if (s instanceof Y.Item) holdsComments(s)
-    u.recs.push(s as Rec)
-    last = s as Rec
+    u.recs.push(s)
+    last = s
   }
   for (const [client, ranges] of ds.clients) {
     for (const r of ranges) {
@@ -171,7 +170,7 @@ function checkLists(doc: Rec[], fresh: Rec[]): { missing: boolean; long: boolean
     if (!(r instanceof Y.Item)) return { dep: -1, list: '' }
     const parent = r.parent as unknown
     const dep = r.origin ?? (parent instanceof Y.ID ? parent : null)
-    if (dep === null) return { dep: -1, list: `r ${String(parent)}\0${r.parentSub}` }
+    if (dep === null) return { dep: -1, list: `r ${parent}\0${r.parentSub}` }
     if (dep.client === r.id.client && dep.clock >= r.id.clock) return { dep: -1, list: null }
     const j = find(dep)
     if (j < 0) return { dep: -1, list: null }
@@ -205,5 +204,5 @@ function checkLists(doc: Rec[], fresh: Rec[]): { missing: boolean; long: boolean
   for (const l of list) if (l) lengths.set(l, (lengths.get(l) ?? 0) + 1)
   let work = 0
   for (const n of lengths.values()) work += n * n
-  return { missing: list.slice(doc.length).includes(null), long: work > MAX_LIST_WORK }
+  return { missing: list.slice(doc.length).includes(null), long: work > META_LIMITS.maxListWork }
 }

@@ -92,7 +92,13 @@ func CheckUpdate(doc *crdt.Doc, update []byte) (err error) {
 	if err != nil {
 		return fmt.Errorf("%w: the doc: %v", ErrRefused, err)
 	}
-	missing, long := newLists(have.recs, u.recs, known).check()
+	var fresh []record
+	for _, r := range u.recs {
+		if r.at.clock+r.length > known[r.at.client] {
+			fresh = append(fresh, r)
+		}
+	}
+	missing, long := newLists(have.recs, fresh).check()
 	if missing {
 		return fmt.Errorf("%w: %w: it needs updates not received yet", ErrRefused, protocol.ErrRetryLater)
 	}
