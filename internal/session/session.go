@@ -10,6 +10,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -31,6 +32,9 @@ type Options struct {
 	// to, such as where pedit runs. A file outside it is shown by its name.
 	// Empty: the first file's directory.
 	Root string
+	// Project is the directory whose .pedit/meta/ keeps the comments of the
+	// files inside it (#121). Empty: no file offers comments.
+	Project string
 	// Server is the base URL of the pedit server, e.g. https://edit.piconic.ai
 	Server string
 	Name   string
@@ -79,10 +83,14 @@ type Session struct {
 	temp string
 
 	// What adding a file needs, set by Start (files.go).
-	opts     Options
-	server   string
-	roomID   string
-	blobKeys *protocol.BlobKeys
+	opts Options
+	// project is Options.Project, opened, or nil, and noProject why it
+	// could not be opened.
+	project   *os.Root
+	noProject string
+	server    string
+	roomID    string
+	blobKeys  *protocol.BlobKeys
 
 	// filesMu guards the files added after the first, the watched files and
 	// stopped.
@@ -134,6 +142,15 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 		return nil, err
 	}
 	opts.Root = root
+	project, noProject := openProject(opts.Project)
+	defer func() {
+		if project != nil {
+			_ = project.Close()
+		}
+	}()
+	if keepsComments(project, opts.File) {
+		return nil, errKeepsComments
+	}
 	bound, initial, err := openShared(opts.File)
 	if err != nil {
 		return nil, err
@@ -210,6 +227,8 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 		},
 		awareness: aw,
 		opts:      opts,
+		project:   project,
+		noProject: noProject,
 		server:    server,
 		roomID:    room.ID,
 		blobKeys:  blobKeys,
@@ -280,8 +299,9 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 	})
 	aw.OnChange(func(awareness.ChangeEvent) { s.reportPeople(opts.OnPeople) })
 	s.stopAlive = keepAlive(aw)
-	s.Client.Connect()
 	s.notices.start()
+	s.startMeta()
+	s.Client.Connect()
 
 	if opts.Watch {
 		if err := s.watch(); err != nil {
@@ -289,7 +309,8 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 			return nil, err
 		}
 	}
-	bound = nil // Session owns the directory handle from here.
+	// Session owns the directory handles from here.
+	bound, project = nil, nil
 	return s, nil
 }
 
@@ -535,6 +556,11 @@ func (s *Session) Stop() error {
 			f.syncFromDisk()
 			f.Writer.Schedule(f.render())
 			_ = f.Writer.Flush()
+			if f.meta != nil {
+				// Before leaving, as the file is.
+				f.meta.stop()
+				_ = f.meta.saveNow(true)
+			}
 		}
 
 		if s.beforeDestroy != nil {
@@ -551,13 +577,17 @@ func (s *Session) Stop() error {
 		// Save again: edits may have arrived while leaving, and none can arrive now.
 		for _, f := range files {
 			s.stopErr = errors.Join(s.stopErr, s.finalSave(f))
+			if f.meta != nil {
+				s.stopErr = errors.Join(s.stopErr, f.meta.finish())
+			}
+		}
+		if s.project != nil {
+			_ = s.project.Close()
 		}
 		s.stopAlive()
 		s.awareness.Destroy()
 		for _, f := range files {
-			if f.bound != nil {
-				s.stopErr = errors.Join(s.stopErr, f.bound.Close())
-			}
+			s.stopErr = errors.Join(s.stopErr, f.close())
 		}
 		s.mirrorMu.Lock()
 		if s.mirror != nil && s.mirror.root != nil {

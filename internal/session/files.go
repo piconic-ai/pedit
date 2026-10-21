@@ -172,11 +172,12 @@ func (s *Session) AddFile(file string) (protocol.FileEntry, error) {
 	if err := s.Client.AddFile(id, doc); err != nil {
 		s.onError(err)
 	}
+	f.notices.start()
+	s.addMeta(f)
 	if err := s.Client.SetManifest(s.manifest()); err != nil {
 		s.onError(err)
 	}
-	f.notices.start()
-	return protocol.FileEntry{ID: id, Path: path, Format: f.format()}, nil
+	return f.entry(), nil
 }
 
 // canShare checks that file can be shared, and returns the path the room is
@@ -193,6 +194,9 @@ func (s *Session) canShare(file string) (string, error) {
 		return "", fmt.Errorf("a room shares up to %d files", MaxFiles)
 	}
 	path := sharedPath(s.opts.Root, file)
+	if keepsComments(s.project, file) {
+		return "", errKeepsComments
+	}
 	if err := protocol.CheckPath(path); err != nil {
 		return "", fmt.Errorf("%s cannot be shared under that name: %w", path, err)
 	}
@@ -211,7 +215,7 @@ func (s *Session) canShare(file string) (string, error) {
 	if isCanvas(file) {
 		format = protocol.FormatCanvas
 	}
-	if _, err := protocol.EncodeManifest(append(s.manifest(), protocol.FileEntry{ID: s.nextID, Path: path, Format: format})); err != nil {
+	if err := s.fitsManifest(protocol.FileEntry{ID: s.nextID, Path: path, Format: format}); err != nil {
 		return "", fmt.Errorf("no other file can be shared with %s, whose name macOS or Windows would read differently: %w", s.path, err)
 	}
 	return path, nil
@@ -237,16 +241,32 @@ func alreadyShared(files []*sharedFile, file, path string, info os.FileInfo) err
 func (s *Session) Files() []protocol.FileEntry {
 	s.filesMu.Lock()
 	defer s.filesMu.Unlock()
-	return s.manifest()
-}
-
-// manifest lists the room's files. The caller holds s.filesMu.
-func (s *Session) manifest() []protocol.FileEntry {
 	var out []protocol.FileEntry
 	for _, f := range s.files() {
-		out = append(out, protocol.FileEntry{ID: f.id, Path: f.path, Format: f.format()})
+		out = append(out, f.entry())
 	}
 	return out
+}
+
+// manifest lists the room's files, then the metadata of those that offer
+// comments. The caller holds s.filesMu.
+func (s *Session) manifest() []protocol.FileEntry {
+	var out, metas []protocol.FileEntry
+	for _, f := range s.files() {
+		out = append(out, f.entry())
+		if f.meta != nil {
+			metas = append(metas, protocol.FileEntry{ID: f.meta.id, Path: f.meta.path, Format: protocol.FormatMeta})
+		}
+	}
+	return append(out, metas...)
+}
+
+// fitsManifest tells whether the manifest can list entry too: one path it
+// refuses would keep the room from getting any list. The caller holds
+// s.filesMu.
+func (s *Session) fitsManifest(entry protocol.FileEntry) error {
+	_, err := protocol.EncodeManifest(append(s.manifest(), entry))
+	return err
 }
 
 // addedFile returns the file added with this id, if any.

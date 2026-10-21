@@ -188,11 +188,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 	var ended atomic.Value // the final protocol.Status, once the server turned us away
 	shown := func(path string) string { return shownPath(path, file, arg, cwd) }
 	s, err := start(ctx, signIn, session.Options{
-		File:   file,
-		Root:   cwd,
-		Server: server,
-		Name:   username(),
-		Watch:  true,
+		File: file,
+		Root: cwd,
+		// Where .pedit/config.yaml is, or cwd: comments live beside it.
+		Project: cfg.root,
+		Server:  server,
+		Name:    username(),
+		Watch:   true,
 		OnStatus: func(st protocol.Status) {
 			out.setStatus(st)
 			if st.Final() && (st != protocol.StatusMaintenance || !resumable) {

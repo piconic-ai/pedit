@@ -10,8 +10,8 @@ refer to the changes made with this page.
 ## In short
 
 pedit touches the files you name, and those you add while sharing, an
-`assets/` directory beside each, its own `.pedit/` configuration and a small
-cache; when you join a room, only the copies it keeps. If what you name is a directory or does not exist, it also looks
+`assets/` directory beside each, its own `.pedit/` configuration, the comments
+it keeps in `.pedit/meta/`, and a small cache; when you join a room, only the copies it keeps. If what you name is a directory or does not exist, it also looks
 through that directory to suggest a file, and shares none of what it reads
 there. It runs a clipboard tool and, only
 for servers behind Cloudflare Access, `cloudflared`. It never runs anything
@@ -53,6 +53,13 @@ By using it you accept that:
   `02-git-config.txt`. Their content is the room's, as in a browser: a CSV
   opened in a spreadsheet can hold formulas, and Markdown or JSON opened in an
   editor can point to pictures or schemas on the web.
+- **Comments are saved in your project.** What people write as comments on a
+  file, with the names they gave and the text they commented on, is saved in
+  `.pedit/meta/<path>.json`, even if that text is deleted later. Anyone in
+  the room can add, change or delete any comment. Committing `.pedit/meta/`
+  publishes all of it to whoever can read the repository. A file that was
+  moved or renamed loses its comments until you move its metadata file along
+  with it.
 - **Images your file refers to when you start are yours.** A guest can ask
   for them, including references a guest added in an earlier session that
   were saved to the file.
@@ -70,9 +77,11 @@ By using it you accept that:
 | Reads | When `<file>` is a directory: the names in it, and the first 8 KiB of each regular file whose name does not start with `.`, following symlinks, until six look like text | Only to print up to five names to pick from. No room is made and nothing is sent. |
 | Reads | When `<file>` does not exist: the names in its directory | Names only, to suggest close ones. |
 | Reads | `.pedit/templates/<name>`, only when pedit creates the file | Only inside the project: a template that is a symlink out of it is refused. |
+| Reads | `.pedit/meta/<path>.json`, for each shared file inside the project (the directory of `.pedit/config.yaml`, or the current one) | Read through a handle on the project directory, never through a symlink, and only a regular file of up to 1 MiB, checked as input from anyone: a file pedit cannot read, or written by a newer pedit, is left as it is, and that shared file offers no comments. |
 | Reads | `assets/<hash>.png` (or `.jpg`, `.gif`, `.webp`), when a guest asks for an image | Only images your file referred to at start, that you added while sharing, or that were saved this session. A regular file of up to 10 MiB whose content matches the hash in its name. |
 | Writes | The shared file | Through a new `.pedit-<random>.tmp` beside it. Where the file system can swap two files (most Linux and macOS disks) it is swapped with the file in one step, and the old file, now under the temporary name, is removed only once pedit has read it twice, 5 ms apart, and found what pedit expected; a save that landed meanwhile is swapped back. Elsewhere (Windows; NFS, SMB and FUSE; exFAT, and FAT on macOS) the file is checked once more just before the new one is renamed over it: a save renamed over the file after that check is lost, and one written into the old file after it is lost and reported, without a report where a file cannot be replaced while open (FAT, exFAT and some SMB shares on Windows). A missing file is created only if no file appeared at its name meanwhile (on FAT and exFAT, only after a check). Not while the file has changes pedit has not taken in yet, nor once the file has become a symlink or is no longer UTF-8. Permissions are kept; if the file is deleted while sharing, the next save creates it again, `0600` before your umask. A save that fails is tried again every few seconds. |
 | Writes | `assets/` and the images guests paste | PNG, JPEG, GIF or WebP, judged by their bytes (SVG is never saved); up to 10 MiB each, 100 MiB and 500 images a session. Named by content hash, never over a different file, never outside the shared file's directory, even if `assets` is swapped for a symlink. Images are created `0600`, `assets/` `0755`, before your umask. |
+| Writes | `.pedit/meta/<path>.json`, and the directories above it | Only once someone comments on the file, or if it existed. Written as the shared file is, through a new `.pedit-<random>.tmp` beside it, within the project directory. Never over a file that appeared at its name, nor over one changed outside pedit since it was read or written: pedit then stops saving comments to it and says so. Never removed. Created `0600`, directories `0755`, before your umask. |
 | Writes | `.pedit/config.yaml` and `.pedit/templates/default.{md,csv,canvas}` | Only on the first run at a Git repository root, and only files that do not exist yet. |
 | Writes | A new file, with `pedit`, `pedit -t <template>` or `--<type>` | In `output` from the configuration, or `-d`. Created `0644` before your umask, only if no file has that name; the directory is created if needed. |
 | Writes | The update check cache, `pedit/update.json` in your [user cache directory](https://pkg.go.dev/os#UserCacheDir) | Only for release builds writing to a terminal, at most once a day. |
@@ -103,7 +112,8 @@ shows only with `PEDIT_DEBUG=1`.
 | Writes | A copy of each text file the room shares, in a new private directory such as `$TMPDIR/pedit-<room>-<random>/` | Named by pedit, as above, never as the room names it, and never in a directory of its own. The directory is `0700` and each copy `0600`, both before your umask; every copy is made through a handle on the directory held since joining, so the directory moved and replaced by a link cannot lead elsewhere. Never over a file that is there. Canvases are not copied. At most 20 files. All are removed when you leave or the host closes the room, with anything else you put in that directory; when the room closes because a file grew too large, they stay, and pedit says where. |
 | Reads | The copies, when you edit them | The same guards as the host's file: never through a symlink, only UTF-8. |
 
-A joined session saves no images and reads no configuration. Besides the
+A joined session saves no images, keeps no comments and reads no
+configuration. Besides the
 copy, it writes only the update check cache. A save of the copy that fails is
 retried and reported the same way.
 
