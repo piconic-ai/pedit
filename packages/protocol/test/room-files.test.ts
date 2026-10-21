@@ -370,32 +370,39 @@ describe('RoomClient with a checked file', () => {
     await vi.waitFor(() => expect(checked.getMap('m').get('one')).toBe(1))
   })
 
-  it('stops checking once its checks took their share of the time', async () => {
-    const relay = new Relay()
-    const key = await importKey(generateKey())
-    const errors: unknown[] = []
-    const host = join(relay, key, { onError: (e) => errors.push(e) })
-    const checked = new Y.Doc()
-    let checks = 0
+  it('stops checking any file once its checks took their share of the time', async () => {
     let now = 1_000_000
     const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
     try {
-      host.addFile(1, checked, () => {
+      const relay = new Relay()
+      const key = await importKey(generateKey())
+      const errors: unknown[] = []
+      const host = join(relay, key, { onError: (e) => errors.push(e) })
+      const one = new Y.Doc()
+      const two = new Y.Doc()
+      let checks = 0
+      const slow = () => {
         checks++
         now += 2000 // longer than all in hand
         return null
-      })
+      }
+      host.addFile(1, one, slow)
+      host.addFile(2, two, slow)
       await vi.waitFor(() => expect(host.status).toBe('connected'))
       const guest = join(relay, key)
-      const gDoc = new Y.Doc()
-      guest.addFile(1, gDoc)
+      const gOne = new Y.Doc()
+      const gTwo = new Y.Doc()
+      guest.addFile(1, gOne)
       // Before the guest connects: in its first state, one check.
-      gDoc.getMap('m').set('one', 1)
-      await vi.waitFor(() => expect(checked.getMap('m').get('one')).toBe(1))
+      gOne.getMap('m').set('one', 1)
+      await vi.waitFor(() => expect(one.getMap('m').get('one')).toBe(1))
       const before = checks
-      gDoc.getMap('m').set('two', 2)
-      await vi.waitFor(() => expect(String(errors.at(-1))).toMatch(/took too long/))
+      // The other file's updates wait as well.
+      guest.addFile(2, gTwo)
+      gTwo.getMap('m').set('two', 2)
+      await vi.waitFor(() => expect(String(errors.at(-1))).toMatch(/file 2: .*took too long/))
       expect(checks).toBe(before)
+      expect(two.getMap('m').get('two')).toBeUndefined()
     } finally {
       clock.mockRestore()
     }

@@ -4,6 +4,9 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/reearth/ygo/crdt"
+	ysync "github.com/reearth/ygo/sync"
 )
 
 // fakeClock stands in for checkClock until the test ends.
@@ -17,9 +20,9 @@ func fakeClock(t *testing.T) *time.Time {
 func TestChecksTakeTheirShareOfTheTimeOnly(t *testing.T) {
 	now := fakeClock(t)
 	checks := 0
-	f := &fileDoc{credit: checkBurst, counted: *now}
+	var share timeShare
 	check := func() error {
-		_, err := f.timed(func() ([]byte, error) {
+		_, err := share.take(func() ([]byte, error) {
 			checks++
 			*now = now.Add(2 * checkBurst)
 			return nil, nil
@@ -52,5 +55,24 @@ func TestResyncsAreSpacedOut(t *testing.T) {
 	*now = now.Add(resyncEvery)
 	if !f.mayResync() {
 		t.Fatal("no resync later")
+	}
+}
+
+func TestCheckedFilesShareTheirTime(t *testing.T) {
+	now := fakeClock(t)
+	slow := func(*crdt.Doc, []byte) error {
+		*now = now.Add(2 * checkBurst)
+		return nil
+	}
+	update := ysync.EncodeUpdate(crdt.EncodeStateAsUpdateV1(crdt.New(), nil))
+	var share timeShare
+	one := &fileDoc{doc: crdt.New(), check: slow}
+	two := &fileDoc{doc: crdt.New(), check: slow}
+	if _, err := one.apply(update, nil, &share); err != nil {
+		t.Fatal(err)
+	}
+	// The other file's turn is spent too.
+	if _, err := two.apply(update, nil, &share); !errors.Is(err, ErrRetryLater) {
+		t.Fatalf("apply = %v", err)
 	}
 }

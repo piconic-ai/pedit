@@ -22,12 +22,16 @@ type fileDoc struct {
 	unsub  func()
 	synced bool
 
-	// Under Client.applying: the time check may still take, as of when it
-	// was last counted, and when the Client may next ask the room for what
-	// it refused.
-	credit   time.Duration
-	counted  time.Time
+	// When the Client may next ask the room for what the check refused;
+	// under Client.applying.
 	resyncAt time.Time
+}
+
+// timeShare is the time checking and applying updates may still take, as of
+// when it was last counted. Its zero value has a second in hand.
+type timeShare struct {
+	credit  time.Duration
+	counted time.Time
 }
 
 // UpdateCheck tells whether an update received for doc may be applied. It is
@@ -43,9 +47,9 @@ type UpdateCheck func(doc *crdt.Doc, update []byte) error
 // everything the refused one needed.
 var ErrRetryLater = errors.New("refused for now")
 
-// Checking and applying the updates of one file may take a quarter of the
-// time, with up to a second in hand, so a peer flooding the room cannot keep
-// the Client busy.
+// Checking and applying the updates of checked files, all together, may take
+// a quarter of the time, with up to a second in hand, so a peer flooding the
+// room cannot keep the Client busy.
 const (
 	checkShare  = 4
 	checkBurst  = time.Second
@@ -73,7 +77,7 @@ func (c *Client) AddCheckedFile(id uint64, doc *crdt.Doc, check UpdateCheck) err
 	}
 	// Subscribed outside c.mu: an update in another goroutine holds the
 	// doc's lock while it sends, which takes c.mu.
-	f := &fileDoc{doc: doc, check: check, credit: checkBurst}
+	f := &fileDoc{doc: doc, check: check}
 	f.unsub = doc.OnUpdate(func(update []byte, origin any) {
 		if origin == c {
 			return
@@ -256,7 +260,7 @@ func (c *Client) receiveFileSync(id uint64, payload []byte) error {
 		return nil
 	}
 	c.applying.Lock()
-	reply, err := f.apply(payload, c)
+	reply, err := f.apply(payload, c, &c.checks)
 	resync := errors.Is(err, ErrRetryLater) && f.mayResync()
 	c.applying.Unlock()
 	if resync {
@@ -283,7 +287,7 @@ func (c *Client) receiveFileSync(id uint64, payload []byte) error {
 // apply applies a sync message, after its check, if it has one. A panic in
 // ygo on a checked doc's message is an error: such a doc takes updates from
 // anyone in the room, and the host's process is the session.
-func (f *fileDoc) apply(payload []byte, origin any) (reply []byte, err error) {
+func (f *fileDoc) apply(payload []byte, origin any, share *timeShare) (reply []byte, err error) {
 	if f.check == nil {
 		return ysync.ApplySyncMessage(f.doc, payload, origin)
 	}
@@ -299,7 +303,7 @@ func (f *fileDoc) apply(payload []byte, origin any) (reply []byte, err error) {
 	if kind != ysync.MsgSyncStep2 && kind != ysync.MsgUpdate {
 		return ysync.ApplySyncMessage(f.doc, payload, origin)
 	}
-	return f.timed(func() ([]byte, error) {
+	return share.take(func() ([]byte, error) {
 		if err := f.check(f.doc, update); err != nil {
 			return nil, err
 		}
@@ -307,21 +311,25 @@ func (f *fileDoc) apply(payload []byte, origin any) (reply []byte, err error) {
 	})
 }
 
-// timed checks and applies an update, in apply, unless that took its share
+// take checks and applies an update, in apply, unless that took its share
 // of the time already. The time counted takes in what the doc's observers
 // do with the update, such as placing the anchors of comments. The caller
 // holds Client.applying.
-func (f *fileDoc) timed(apply func() ([]byte, error)) ([]byte, error) {
+func (s *timeShare) take(apply func() ([]byte, error)) ([]byte, error) {
 	now := checkClock()
-	f.credit = min(checkBurst, f.credit+now.Sub(f.counted)/checkShare)
-	f.counted = now
-	if f.credit <= 0 {
+	if s.counted.IsZero() {
+		s.credit = checkBurst
+	} else {
+		s.credit = min(checkBurst, s.credit+now.Sub(s.counted)/checkShare)
+	}
+	s.counted = now
+	if s.credit <= 0 {
 		return nil, fmt.Errorf("%w: checking updates took too long", ErrRetryLater)
 	}
 	defer func() {
 		end := checkClock()
-		f.credit -= end.Sub(now)
-		f.counted = end
+		s.credit -= end.Sub(now)
+		s.counted = end
 	}()
 	return apply()
 }

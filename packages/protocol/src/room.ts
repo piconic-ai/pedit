@@ -150,11 +150,14 @@ interface FileDoc {
   check?: UpdateCheck
   onUpdate: (update: Uint8Array, origin: unknown) => void
   synced: boolean
-  /** The ms the checks may still take, as of `counted`. */
-  credit: number
-  counted: number
   /** When the client may next ask the room for what a check refused. */
   resyncAt: number
+}
+
+/** The ms checking updates may still take, as of `counted`. */
+interface TimeShare {
+  credit: number
+  counted: number
 }
 
 /**
@@ -175,9 +178,10 @@ export interface Refusal {
 }
 
 /**
- * The checks of one file may take a quarter of the time, with up to a second
- * in hand, so a peer flooding the room cannot keep the client checking; an
- * update past that is refused for now. As internal/protocol does.
+ * The checks of all checked files together may take a quarter of the time,
+ * with up to a second in hand, so a peer flooding the room cannot keep the
+ * client checking; an update past that is refused for now. As
+ * internal/protocol does.
  */
 const CHECK_SHARE = 4
 const CHECK_BURST_MS = 1000
@@ -212,6 +216,8 @@ export class RoomClient {
   private sent = 0
   private readonly guard = new ReplayGuard(this.sender)
   private readonly files = new Map<number, FileDoc>()
+  /** The time checked files' updates may take, as CHECK_SHARE says. */
+  private readonly checks: TimeShare = { credit: CHECK_BURST_MS, counted: Date.now() }
   // Paces the frames sent on the current socket; see Pacer.
   private pacer = new Pacer()
   // Ends the pacing wait of the frame next in line, when its socket closes.
@@ -363,16 +369,7 @@ export class RoomClient {
       this.sendFileSync(id, (encoder) => syncProtocol.writeUpdate(encoder, update))
     }
     doc.on('update', onUpdate)
-    const now = Date.now()
-    this.files.set(id, {
-      doc,
-      check,
-      onUpdate,
-      synced: false,
-      credit: CHECK_BURST_MS,
-      counted: now,
-      resyncAt: now,
-    })
+    this.files.set(id, { doc, check, onUpdate, synced: false, resyncAt: 0 })
     const open = this.status === 'connected' || this.status === 'waiting'
     if (this.socket?.readyState === OPEN && open) this.syncFile(id, doc)
   }
@@ -460,7 +457,7 @@ export class RoomClient {
   private receiveFileSync(id: number, payload: Uint8Array): void {
     const f = this.files.get(id)
     if (!f) return
-    const refused = f.check && checkSync(payload, f, f.check)
+    const refused = f.check && checkSync(payload, f.doc, f.check, this.checks)
     if (refused) {
       this.opts.onError?.(new Error(`file ${id}: dropped an update: ${refused.reason}`))
       if (refused.retryLater && Date.now() >= f.resyncAt) {
@@ -645,7 +642,12 @@ function decodeKnown<T>(
  * Tells why check refuses the update a sync message carries, or null,
  * unless the file's checks took their share of the time.
  */
-function checkSync(payload: Uint8Array, f: FileDoc, check: UpdateCheck): Refusal | null {
+function checkSync(
+  payload: Uint8Array,
+  doc: Y.Doc,
+  check: UpdateCheck,
+  share: TimeShare,
+): Refusal | null {
   let update: Uint8Array
   try {
     const decoder = decoding.createDecoder(payload)
@@ -658,17 +660,17 @@ function checkSync(payload: Uint8Array, f: FileDoc, check: UpdateCheck): Refusal
     return { reason: 'not a sync message' }
   }
   const now = Date.now()
-  f.credit = Math.min(CHECK_BURST_MS, f.credit + (now - f.counted) / CHECK_SHARE)
-  f.counted = now
-  if (f.credit <= 0) return { reason: 'checking updates took too long', retryLater: true }
+  share.credit = Math.min(CHECK_BURST_MS, share.credit + (now - share.counted) / CHECK_SHARE)
+  share.counted = now
+  if (share.credit <= 0) return { reason: 'checking updates took too long', retryLater: true }
   try {
-    return check(f.doc, update)
+    return check(doc, update)
   } catch {
     return { reason: 'the check failed' }
   } finally {
     const end = Date.now()
-    f.credit -= end - now
-    f.counted = end
+    share.credit -= end - now
+    share.counted = end
   }
 }
 
