@@ -2,6 +2,7 @@ import { META_LIMITS, metaUse, randomBase64Url } from '@pedit/protocol'
 import * as Y from 'yjs'
 import { nodeText, read as readCanvas } from './canvas.ts'
 import type { Cell, Table } from './csv.ts'
+import { colorFor } from './room.ts'
 import { type Readable, Store } from './store.ts'
 import type { Position } from './table.ts'
 
@@ -693,4 +694,25 @@ function order(a: ShownThread, b: ShownThread): number {
   const ta = a.messages[0]?.time ?? ''
   const tb = b.messages[0]?.time ?? ''
   return ta < tb ? -1 : ta > tb ? 1 : a.id < b.id ? -1 : 1
+}
+
+/** The same colour for a name every time, from the colours people get in the room. */
+export function colorOf(name: string): string {
+  // FNV-1a: short names that differ by a letter still spread over the colours.
+  let h = 0x811c9dc5
+  for (const c of name) h = Math.imul(h ^ (c.codePointAt(0) ?? 0), 0x01000193)
+  return colorFor(h >>> 0)
+}
+
+/** A comment's time, short: the time of day today, the date before. */
+export function shortTime(iso: string, now = new Date()): string {
+  const d = new Date(iso)
+  const today = d.toDateString() === now.toDateString()
+  return today
+    ? d.toLocaleTimeString(undefined, { timeStyle: 'short' })
+    : d.toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        ...(d.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' }),
+      })
 }

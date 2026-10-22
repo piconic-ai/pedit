@@ -1816,59 +1816,79 @@ main.editor .cm-vim-panel {
   font-weight: 600;
 }
 
-/* Comments (#121): beside the text, below it on a narrow screen. */
+/* Comments (#121): cards in the margin beside the text, below it on a narrow screen. */
 .comments {
   flex: 0 0 300px;
   overflow-y: auto;
   border-left: 1px solid var(--line);
-  background: var(--panel);
+  background: var(--bg);
   color: var(--ink);
   font: 13px / 1.45 var(--sans);
   padding: 12px;
 }
+.comments [hidden] {
+  display: none;
+}
+.comments button {
+  font: inherit;
+  color: inherit;
+}
 .comments-title {
   font-size: 13px;
-  margin: 0 0 4px;
+  margin: 0 0 8px;
 }
 .comments-toggle {
   border: 0;
   background: none;
-  color: inherit;
   padding: 0;
   font-weight: inherit;
   cursor: default;
-}
-.comments [hidden] {
-  display: none;
 }
 .comments-count:not(:empty) {
   margin-left: 4px;
   padding: 0 6px;
   border-radius: 8px;
   background: var(--accent);
-  color: var(--bg);
+  color: var(--panel);
 }
-.comments-note,
-.comments-full {
-  margin: 0 0 10px;
+.comments-tabs {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.comments-tabs button {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  background: none;
+  padding: 2px 0 6px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.comments-tabs button[aria-selected="true"] {
+  border-bottom-color: var(--accent);
+  color: var(--ink);
+}
+.comments-full,
+.comments-empty {
+  margin: 0 0 12px;
   color: var(--muted);
 }
 .comments textarea {
+  display: block;
   width: 100%;
-  box-sizing: border-box;
   resize: vertical;
   font: inherit;
   color: inherit;
-  background: var(--bg);
+  background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 4px 6px;
+  border-radius: 6px;
+  padding: 6px 8px;
 }
-.comments button {
-  font: inherit;
-}
-.comments-new {
-  margin-bottom: 12px;
+.comments textarea:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 .comments-threads,
 .comment-messages {
@@ -1876,69 +1896,217 @@ main.editor .cm-vim-panel {
   margin: 0;
   padding: 0;
 }
+/* A card: the new comment, and each thread. */
+.comments-new,
 .comment-thread {
+  background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 8px;
+  border-radius: 8px;
+  padding: 10px 12px;
   margin-bottom: 8px;
 }
-.comment-thread[aria-current="true"] {
-  border-color: var(--accent);
+.comment-thread {
+  cursor: default;
 }
-.comment-thread[data-resolved="true"] {
-  opacity: 0.6;
+.comment-thread[aria-current="true"],
+.comments-new[data-composing] {
+  border-color: transparent;
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.12),
+    0 2px 8px rgb(0 0 0 / 0.12);
+}
+.comments-new:not([data-composing]) .comment-buttons {
+  display: none;
+}
+.comment-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: 8px;
+}
+.comment-primary,
+.comment-danger,
+.comment-text-button {
+  border: 0;
+  border-radius: 16px;
+  padding: 4px 14px;
+  cursor: pointer;
+  font-weight: 500;
+}
+.comments .comment-primary {
+  background: var(--accent);
+  color: var(--panel);
+}
+.comments .comment-danger {
+  background: #cf222e;
+  color: #fff;
+}
+.comments .comment-text-button {
+  background: none;
+  color: var(--accent);
+}
+.comment-text-button:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 .comment-quote {
   display: block;
   width: 100%;
   text-align: left;
   border: 0;
+  border-left: 3px solid color-mix(in srgb, var(--comment-mark, #e8a317) 70%, transparent);
   background: none;
-  color: var(--muted);
-  padding: 0 0 6px;
+  padding: 0 0 0 8px;
+  margin-bottom: 8px;
   cursor: pointer;
+}
+.comments .comment-quote {
+  color: var(--muted);
+}
+/* The quote takes two lines at most until its card is in focus. */
+.comment-quote q {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.comment-thread[aria-current="true"] .comment-quote q {
+  -webkit-line-clamp: unset;
+}
 .comment-state:not(:empty) {
   display: inline-block;
-  margin-right: 6px;
+  margin-bottom: 2px;
   padding: 0 4px;
   border-radius: 3px;
   background: var(--warn-bg);
   color: var(--warn-ink);
+  font-size: 12px;
 }
 .comment-live {
   display: block;
 }
-.comment-message {
-  padding: 4px 0;
-  border-top: 1px solid var(--line);
+.comment-message + .comment-message {
+  margin-top: 10px;
+}
+.comment-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.comment-avatar {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--c);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+}
+.comment-who {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
 }
 .comment-author {
   font-weight: 600;
   unicode-bidi: isolate;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .comment-time {
   color: var(--muted);
   font-size: 12px;
 }
+.comment-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  cursor: pointer;
+}
+.comments .comment-icon {
+  color: var(--muted);
+}
+.comment-icon svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.comment-more svg {
+  stroke-width: 3;
+}
+.comment-icon:hover,
+.comment-icon:focus-visible,
+.comment-icon[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+}
+.comments .comment-resolve:hover {
+  color: var(--accent);
+}
+.comment-menu {
+  position: absolute;
+  top: 30px;
+  right: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  min-width: 120px;
+  padding: 4px 0;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.15);
+}
+.comment-menu button {
+  border: 0;
+  background: none;
+  padding: 6px 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.comment-menu button:hover,
+.comment-menu button:focus-visible {
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+}
 .comment-body {
-  margin: 2px 0;
+  margin: 6px 0 0 32px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.comment-editing,
+.comment-confirm {
+  margin: 6px 0 0 32px;
+}
+.comment-confirm p {
+  margin: 8px 0 0;
+}
 .comment-reply {
-  display: flex;
-  gap: 4px;
-  margin-top: 6px;
+  margin-top: 10px;
+}
+/* The reply's button shows once there is something to send. */
+.comment-reply textarea:placeholder-shown + .comment-buttons {
+  display: none;
 }
 .cm-comment {
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-  border-bottom: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  background: color-mix(in srgb, var(--comment-mark, #e8a317) 22%, transparent);
+  border-bottom: 2px solid color-mix(in srgb, var(--comment-mark, #e8a317) 70%, transparent);
 }
 .cm-comment-focus {
-  background: color-mix(in srgb, var(--accent) 35%, transparent);
+  background: color-mix(in srgb, var(--comment-mark, #e8a317) 45%, transparent);
 }
 @media (max-width: 720px) {
   .comments {

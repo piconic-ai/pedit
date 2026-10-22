@@ -721,6 +721,7 @@ async function joinRoom(
     target: commentTarget,
     locked,
     focus: commentFocus,
+    people,
     onShow: (t: ShownThread) => {
       if (t.cells && shown.table.active) {
         shown.table.select(t.cells.from)

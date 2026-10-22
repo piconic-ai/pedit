@@ -97,7 +97,9 @@ for the browser.
 In the browser, select some text, a cell of a table (or a whole row or
 column), or a node of a canvas, and write a comment in the panel beside it.
 Everyone in the room sees it at once, marked where it points, and can reply
-or resolve it. A comment never goes into the file: the host keeps the
+or resolve it; resolved threads stay under Resolved, to read again or reopen.
+You can edit or delete your own comments from their ⋮ menu (deleting asks
+first). A comment never goes into the file: the host keeps the
 comments of each file in `.pedit/meta/<path>.json`, and the next session
 shows them again, found by the text, cells or node they pointed at. A
 comment follows its place as people edit, and says so when that text changed

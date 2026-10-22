@@ -210,7 +210,9 @@ else: a guest, or a teammate through Git. Every peer checks it the same way.
   the web editor's comments panel (`packages/web/src/comments.ts`,
   `components/CommentsPanel.tsx`) on the selection, the table's cells or the
   board's node; marks in the text (`commentmarks.ts`), the table and the
-  board. Tests: `packages/web/test/comments.test.ts` and
+  board. The panel shows threads as cards, the open ones or the resolved
+  ones; one's own comments are edited or deleted from a menu, deleting only
+  once confirmed. Tests: `packages/web/test/comments.test.ts` and
   `comments-panel.test.ts`, for the threads and the panel.
 - **Never in the file, only ciphertext on the relay:** the comments are a
   doc of their own, a `meta` file of the room (`internal/protocol/files.go`,
