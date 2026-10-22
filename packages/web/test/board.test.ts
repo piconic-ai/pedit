@@ -504,3 +504,22 @@ describe('BoardView', () => {
     expect(Y.encodeStateAsUpdate(doc)).toEqual(before)
   })
 })
+
+describe('selecting a node for its comment', () => {
+  it('brings a node off the screen into view, at the zoom the board has', async () => {
+    // From review: the node was selected, but left where nobody could see it.
+    const view = setup(docOf([node('near'), node('far', { x: 10000, y: 10000 })]))
+    await tick()
+    const pane = storeOf(view).domNode() as HTMLElement
+    pane.getBoundingClientRect = () => new DOMRect(0, 0, 800, 600)
+    // The board fits the canvas first, once it is laid out.
+    await tick()
+    view.selectNode('far')
+    await tick()
+    expect(view.selected.get()).toEqual(['far'])
+    const [x, y, zoom] = storeOf(view).getTransform()
+    // The node's middle, at (10050, 10025), is the pane's.
+    expect(x + 10050 * zoom).toBeCloseTo(400)
+    expect(y + 10025 * zoom).toBeCloseTo(300)
+  })
+})
