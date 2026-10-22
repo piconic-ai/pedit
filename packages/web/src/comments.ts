@@ -704,6 +704,24 @@ export function colorOf(name: string): string {
   return colorFor(h >>> 0)
 }
 
+/**
+ * Each name in the room with its colour in the header. A name two people
+ * share with different colours is left out: it says nothing of who wrote.
+ */
+export function colorsByName(
+  people: readonly { name: string; color: string }[],
+): ReadonlyMap<string, string> {
+  const out = new Map<string, string>()
+  const shared = new Set<string>()
+  for (const p of people) {
+    const had = out.get(p.name)
+    if (had !== undefined && had !== p.color) shared.add(p.name)
+    out.set(p.name, p.color)
+  }
+  for (const name of shared) out.delete(name)
+  return out
+}
+
 /** A comment's time, short: the time of day today, the date before. */
 export function shortTime(iso: string, now = new Date()): string {
   const d = new Date(iso)

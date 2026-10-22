@@ -1,6 +1,6 @@
 'use client'
 
-import { createSignal } from '@barefootjs/client'
+import { createSignal, onCleanup, onMount } from '@barefootjs/client'
 import {
   COMMENT_LIMITS,
   type CommentsView,
@@ -11,7 +11,6 @@ import {
   shortTime,
 } from '../comments.ts'
 import { initials } from '../identity.ts'
-import type { Participant } from '../room.ts'
 import type { Readable, Store } from '../store.ts'
 
 export interface CommentsPanelProps {
@@ -25,8 +24,8 @@ export interface CommentsPanelProps {
   focus: Store<string | null>
   /** Shows a thread's place in the editor. */
   onShow: (thread: ShownThread) => void
-  /** Who is in the room, so an author here has the colour they have in the header. */
-  people: Readable<readonly Participant[]>
+  /** The colour each name in the room has in the header, for the authors here now. */
+  colors: Readable<ReadonlyMap<string, string>>
 }
 
 const STATE_LABEL = { attached: '', changed: 'Changed', detached: 'Text gone' } as const
@@ -36,8 +35,8 @@ const CHECK = 'M5 12.5l4.5 4.5L19 7.5'
 const REOPEN = 'M4 12a8 8 0 1 0 2.3-5.7M4 4v4.5h4.5'
 const MORE = 'M12 5.5v.01M12 12v.01M12 18.5v.01'
 
-/** What one of this browser's comments is showing instead of its text: a menu, an edit box or a question. */
-type Action = { message: string; kind: 'menu' | 'edit' | 'delete' }
+/** One of this browser's comments shown as an edit box, or asking whether to delete it. */
+type Action = { message: string; kind: 'edit' | 'delete' }
 
 /**
  * The comments of the file on screen, as cards in the margin: the open ones,
@@ -61,8 +60,7 @@ export function CommentsPanel(props: CommentsPanelProps) {
   const resolved = () => threads().length - open()
   const canWrite = () => !props.locked.get() && (view()?.roomForMore.get() ?? false)
   const canChange = () => !props.locked.get()
-  const colorOfAuthor = (name: string) =>
-    props.people.get().find((p) => p.name === name)?.color ?? colorOf(name)
+  const colorOfAuthor = (name: string) => props.colors.get().get(name) ?? colorOf(name)
   const prompt = () => {
     const t = props.target.get()
     if (!t) return ''
@@ -75,16 +73,31 @@ export function CommentsPanel(props: CommentsPanelProps) {
   const [unfolded, setUnfolded] = createSignal(false)
   // The new comment's box grows once the reader starts on it.
   const [composing, setComposing] = createSignal(false)
+  // The comment whose menu is open, apart from the one being edited, so a look at a menu keeps an edit.
+  const [menu, setMenu] = createSignal<string | null>(null)
   const [action, setAction] = createSignal<Action | null>(null)
   const acting = (m: ShownMessage, kind: Action['kind']) => {
     const a = action()
     return a !== null && a.message === m.id && a.kind === kind
   }
+  const act = (m: ShownMessage, kind: Action['kind']) => {
+    setMenu(null)
+    setAction({ message: m.id, kind })
+  }
+  // A click anywhere but on a comment's menu closes it.
+  onMount(() => {
+    const close = (e: Event) => {
+      if (menu() !== null && !(e.target as Element | null)?.closest?.('.comment-head'))
+        setMenu(null)
+    }
+    document.addEventListener('pointerdown', close)
+    onCleanup(() => document.removeEventListener('pointerdown', close))
+  })
   let draft: HTMLTextAreaElement | undefined
 
   const pick = (list: 'open' | 'resolved') => {
     setPicked(list)
-    setAction(null)
+    setMenu(null)
     props.focus.set(null)
   }
   const start = () => {
@@ -103,9 +116,10 @@ export function CommentsPanel(props: CommentsPanelProps) {
     setComposing(false)
   }
   const resolve = (t: ShownThread) => {
-    view()?.resolve(t.id, !t.resolved)
-    // The card leaves this list: nothing stays in focus.
+    // The card leaves this list, which stays on screen with nothing in focus.
+    setPicked(tab())
     props.focus.set(null)
+    view()?.resolve(t.id, !t.resolved)
   }
   const save = (t: ShownThread, m: ShownMessage, box: HTMLTextAreaElement) => {
     if (view()?.edit(t.id, m.id, box.value)) setAction(null)
@@ -210,7 +224,10 @@ export function CommentsPanel(props: CommentsPanelProps) {
               title={
                 t.state === 'detached' ? 'Its text is no longer in the file' : 'Show in the text'
               }
-              onClick={() => props.onShow(t)}
+              onClick={() => {
+                props.focus.set(t.id)
+                props.onShow(t)
+              }}
             >
               <span className="comment-state">{STATE_LABEL[t.state]}</span>
               <q>{t.quote}</q>
@@ -219,7 +236,12 @@ export function CommentsPanel(props: CommentsPanelProps) {
             <ol className="comment-messages">
               {t.messages.map((m, i) => (
                 <li key={m.id} className="comment-message">
-                  <div className="comment-head">
+                  <div
+                    className="comment-head"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') setMenu(null)
+                    }}
+                  >
                     <span className="comment-avatar" style={`--c: ${colorOfAuthor(m.author)}`}>
                       {initials(m.author)}
                     </span>
@@ -249,29 +271,22 @@ export function CommentsPanel(props: CommentsPanelProps) {
                       title="More"
                       aria-label="More"
                       aria-haspopup="menu"
-                      aria-expanded={acting(m, 'menu') ? 'true' : 'false'}
+                      aria-expanded={menu() === m.id ? 'true' : 'false'}
                       hidden={!m.mine || !canChange()}
-                      onClick={() =>
-                        setAction(acting(m, 'menu') ? null : { message: m.id, kind: 'menu' })
-                      }
+                      onClick={() => setMenu(menu() === m.id ? null : m.id)}
                     >
                       <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
                         <path d={MORE} />
                       </svg>
                     </button>
-                    <div
-                      className="comment-menu"
-                      role="menu"
-                      hidden={!acting(m, 'menu')}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Escape') setAction(null)
-                      }}
-                    >
+                    <div className="comment-menu" role="menu" hidden={menu() !== m.id}>
                       <button
                         type="button"
                         role="menuitem"
                         className="comment-edit"
-                        onClick={() => setAction({ message: m.id, kind: 'edit' })}
+                        // An edit takes room, like a new comment.
+                        hidden={!canWrite()}
+                        onClick={() => act(m, 'edit')}
                       >
                         Edit
                       </button>
@@ -279,7 +294,7 @@ export function CommentsPanel(props: CommentsPanelProps) {
                         type="button"
                         role="menuitem"
                         className="comment-delete"
-                        onClick={() => setAction({ message: m.id, kind: 'delete' })}
+                        onClick={() => act(m, 'delete')}
                       >
                         Delete
                       </button>
@@ -290,7 +305,8 @@ export function CommentsPanel(props: CommentsPanelProps) {
                       <textarea
                         ref={(el) => {
                           el.value = m.body
-                          el.focus()
+                          // Once it is in the page, so it can take the focus.
+                          queueMicrotask(() => el.focus())
                         }}
                         rows={3}
                         maxlength={COMMENT_LIMITS.body}

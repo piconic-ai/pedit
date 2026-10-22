@@ -31,7 +31,7 @@ import { Attachments, hostAttachments, whyNoImages } from './attachments.ts'
 import { BoardView } from './board.ts'
 import { read as readCanvas, toJSON } from './canvas.ts'
 import { commentMarks } from './commentmarks.ts'
-import { CommentsView, type CommentTarget, type ShownThread } from './comments.ts'
+import { CommentsView, type CommentTarget, colorsByName, type ShownThread } from './comments.ts'
 import { delimiterFor } from './csv.ts'
 import { avatarFor, fetchIdentity } from './identity.ts'
 import { JsonPane } from './jsonpane.ts'
@@ -250,6 +250,8 @@ async function joinRoom(
   const roomStatus = new Store<RoomStatus>('connecting')
   const fileName = new Store<string | null>(null)
   const people = new Store<readonly Participant[]>([])
+  // Each name's colour in the header, for the comments of people in the room.
+  const authorColors = new Store<ReadonlyMap<string, string>>(new Map())
   // The relay's time limit in seconds, once it has closed an expired room.
   const timeLimit = new Store<number | undefined>(undefined)
   // The room's files, once the host shares more than one (#113). File 0 is
@@ -684,6 +686,8 @@ async function joinRoom(
 
   const renderPeople = () => {
     people.set(participants(awareness.getStates(), doc.clientID))
+    const colors = colorsByName(people.get())
+    if (!sameColors(colors, authorColors.get())) authorColors.set(colors)
     attachments.host = hostAttachments(awareness.getStates())
     const host = [...awareness.getStates().values()].find((s) => s.role === 'host')
     if (host?.format === 'canvas') first.canvas = true
@@ -721,7 +725,7 @@ async function joinRoom(
     target: commentTarget,
     locked,
     focus: commentFocus,
-    people,
+    colors: authorColors,
     onShow: (t: ShownThread) => {
       if (t.cells && shown.table.active) {
         shown.table.select(t.cells.from)
@@ -795,6 +799,13 @@ function commentedCells(threads: readonly ShownThread[]): ReadonlySet<string> {
 function sameSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
   if (a.size !== b.size) return false
   for (const k of a) if (!b.has(k)) return false
+  return true
+}
+
+/** Whether two maps of names to colours hold the same. */
+function sameColors(a: ReadonlyMap<string, string>, b: ReadonlyMap<string, string>): boolean {
+  if (a.size !== b.size) return false
+  for (const [k, v] of a) if (b.get(k) !== v) return false
   return true
 }
 

@@ -6,11 +6,11 @@ import {
   CommentsView,
   type CommentTarget,
   colorOf,
+  colorsByName,
   type ShownThread,
   shortTime,
 } from '../src/comments.ts'
 import '../src/components/CommentsPanel.tsx'
-import type { Participant } from '../src/room.ts'
 import { Store } from '../src/store.ts'
 import { parsedAs } from './parsed.ts'
 
@@ -28,7 +28,7 @@ function mount(text = 'hello world!\n', delimiter: string | null = null) {
   const selection = new Store<CommentTarget | null>(null)
   const locked = new Store(false)
   const focus = new Store<string | null>(null)
-  const people = new Store<readonly Participant[]>([])
+  const colors = new Store<ReadonlyMap<string, string>>(new Map())
   const shown: ShownThread[] = []
   const container = document.createElement('div')
   document.body.append(container)
@@ -38,11 +38,11 @@ function mount(text = 'hello world!\n', delimiter: string | null = null) {
     locked,
     focus,
     onShow: (t: ShownThread) => shown.push(t),
-    people,
+    colors,
   })
   const $ = <T extends Element>(sel: string) => container.querySelector(sel) as T
   const $$ = (sel: string) => [...container.querySelectorAll(sel)] as HTMLElement[]
-  return { meta, view, comments, selection, locked, focus, people, shown, container, $, $$ }
+  return { meta, view, comments, selection, locked, focus, colors, shown, container, $, $$ }
 }
 
 const click = (el: Element) => (el as HTMLElement).click()
@@ -188,6 +188,53 @@ describe('CommentsPanel', () => {
     expect(view.threads.get()).toHaveLength(0)
   })
 
+  it('puts a thread in focus from its quote, and keeps the list on screen once it is resolved', () => {
+    const { $, $$, selection, focus, view } = mount()
+    selection.set({ kind: 'text', from: 0, to: 5 })
+    comment($, 'one')
+    selection.set({ kind: 'text', from: 6, to: 11 })
+    comment($, 'two')
+    focus.set(null)
+    click($$('.comment-quote')[1] as Element)
+    expect(focus.get()).toBe(view.threads.get()[1]?.id)
+    click($$('.comment-resolve')[1] as Element)
+    expect($$('.comments-tabs button')[0]?.getAttribute('aria-selected')).toBe('true')
+    expect($$('.comment-thread')).toHaveLength(1)
+  })
+
+  it('closes a menu on Escape or a click elsewhere, and keeps an edit open', () => {
+    const { $, $$, selection } = mount()
+    selection.set({ kind: 'text', from: 0, to: 5 })
+    comment($, 'first')
+    $<HTMLTextAreaElement>('.comment-reply textarea').value = 'second'
+    click($('.comment-reply .comment-primary'))
+    const menus = () => $$('.comment-menu').map((m) => m.hidden)
+    click($$('.comment-more')[0] as Element)
+    expect(menus()).toEqual([false, true])
+    $$('.comment-more')[0]?.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+    )
+    expect(menus()).toEqual([true, true])
+    click($$('.comment-more')[0] as Element)
+    document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    expect(menus()).toEqual([true, true])
+    click($$('.comment-more')[0] as Element)
+    click($$('.comment-edit')[0] as Element)
+    click($$('.comment-more')[1] as Element)
+    expect(menus()).toEqual([true, false])
+    expect($$('.comment-editing')).toHaveLength(1)
+  })
+
+  it('offers no edit once the file is full', () => {
+    const { $, selection, view } = mount()
+    selection.set({ kind: 'text', from: 0, to: 5 })
+    comment($, 'first')
+    view.roomForMore.set(false)
+    click($('.comment-more'))
+    expect($<HTMLElement>('.comment-edit').hidden).toBe(true)
+    expect($<HTMLElement>('.comment-delete').hidden).toBe(false)
+  })
+
   it('edits a comment of ones own', () => {
     const { $, $$, selection, view } = mount()
     selection.set({ kind: 'text', from: 0, to: 5 })
@@ -292,12 +339,28 @@ describe('shortTime', () => {
 
 describe('CommentsPanel colours', () => {
   it('gives an author in the room the colour they have in the header', () => {
-    const { $, selection, people } = mount()
+    const { $, selection, colors } = mount()
     selection.set({ kind: 'text', from: 0, to: 5 })
     $<HTMLTextAreaElement>('.comments-new textarea').value = 'hi'
     click($('.comments-new .comment-primary'))
-    people.set([{ clientId: 1, name: 'Ada', color: '#123456', isHost: false, isSelf: true }])
+    colors.set(new Map([['Ada', '#123456']]))
     expect($<HTMLElement>('.comment-avatar').style.getPropertyValue('--c')).toBe('#123456')
+  })
+})
+
+describe('colorsByName', () => {
+  it('leaves out a name people share with different colours', () => {
+    const map = colorsByName([
+      { name: 'Ada', color: '#111111' },
+      { name: 'anonymous', color: '#222222' },
+      { name: 'anonymous', color: '#333333' },
+      { name: 'Bo', color: '#444444' },
+      { name: 'Bo', color: '#444444' },
+    ])
+    expect([...map]).toEqual([
+      ['Ada', '#111111'],
+      ['Bo', '#444444'],
+    ])
   })
 })
 

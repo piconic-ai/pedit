@@ -11,6 +11,8 @@
   --code-bg: light-dark(#afb8c133, #6e768166);
   --warn-bg: light-dark(#f9ecdf, #2c221a);
   --warn-ink: light-dark(#8a4308, #f5c08a);
+  /* Where a comment is: its marks in the text, corners on cells and nodes. */
+  --comment-mark: #e8a317;
   --sans: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
   --mono:
     ui-monospace, SFMono-Regular, "Cascadia Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
@@ -1235,11 +1237,11 @@ main.editor[data-resizing] iframe {
 }
 /* A node with an open comment: the same corner. */
 .canvas-card[data-comment] {
-  background-image: linear-gradient(225deg, var(--comment-mark, #e8a317) 8px, transparent 8px);
+  background-image: linear-gradient(225deg, var(--comment-mark) 8px, transparent 8px);
 }
 /* A cell with an open comment: a corner, as spreadsheets draw it. */
 .grid td[data-comment] {
-  background-image: linear-gradient(225deg, var(--comment-mark, #e8a317) 6px, transparent 6px);
+  background-image: linear-gradient(225deg, var(--comment-mark) 6px, transparent 6px);
 }
 .grid td[data-mark="span"] {
   background: color-mix(in srgb, var(--accent) 10%, transparent);
@@ -1953,7 +1955,7 @@ main.editor .cm-vim-panel {
   width: 100%;
   text-align: left;
   border: 0;
-  border-left: 3px solid color-mix(in srgb, var(--comment-mark, #e8a317) 70%, transparent);
+  border-left: 3px solid color-mix(in srgb, var(--comment-mark) 70%, transparent);
   background: none;
   padding: 0 0 0 8px;
   margin-bottom: 8px;
@@ -2102,11 +2104,11 @@ main.editor .cm-vim-panel {
   display: none;
 }
 .cm-comment {
-  background: color-mix(in srgb, var(--comment-mark, #e8a317) 22%, transparent);
-  border-bottom: 2px solid color-mix(in srgb, var(--comment-mark, #e8a317) 70%, transparent);
+  background: color-mix(in srgb, var(--comment-mark) 22%, transparent);
+  border-bottom: 2px solid color-mix(in srgb, var(--comment-mark) 70%, transparent);
 }
 .cm-comment-focus {
-  background: color-mix(in srgb, var(--comment-mark, #e8a317) 45%, transparent);
+  background: color-mix(in srgb, var(--comment-mark) 45%, transparent);
 }
 @media (max-width: 720px) {
   .comments {
