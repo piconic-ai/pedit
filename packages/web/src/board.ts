@@ -324,13 +324,26 @@ export class BoardView {
     })
   }
 
-  /** Selects one node, as a click would: to show a comment's place. */
+  /**
+   * Selects one node, as a click would, and brings it into view at the zoom
+   * the board has: to show a comment's place.
+   */
   selectNode(id: string): void {
     const store = this.#store
     if (!store) return
     store.domNode()?.focus()
     store.unselectNodesAndEdges()
     store.setNodes((prev) => prev.map((n) => (n.id === id ? { ...n, selected: true } : n)))
+    const node = this.#canvas.nodes.find((n) => n.id === id)
+    const rect = store.domNode()?.getBoundingClientRect()
+    const panZoom = store.panZoom()
+    if (!node || !panZoom || !rect || rect.width === 0 || rect.height === 0) return
+    const zoom = store.getTransform()[2]
+    void panZoom.setViewport({
+      x: rect.width / 2 - (node.x + node.width / 2) * zoom,
+      y: rect.height / 2 - (node.y + node.height / 2) * zoom,
+      zoom,
+    })
   }
 
   #selectEdge(id: string): void {
