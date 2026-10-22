@@ -258,6 +258,8 @@ describe('the measure of comments', () => {
     // client's k=true, with no deletions, passed and took the doc past it.
     const padded = (n: number) => {
       const doc = new Y.Doc()
+      // One client id for both docs: the size of a random one varies by a byte or two.
+      doc.clientID = 1
       doc.transact(() => {
         doc.getMap('comments').set('k', false)
         doc.getMap('comments').set('pad', 'x'.repeat(n))
