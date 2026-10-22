@@ -1,16 +1,19 @@
 'use client'
 
-import { createSignal, onCleanup, onMount } from '@barefootjs/client'
+import { createMemo, createSignal } from '@barefootjs/client'
 import {
   COMMENT_LIMITS,
   type CommentsView,
   type CommentTarget,
-  colorOf,
+  fullTime,
   type ShownMessage,
   type ShownThread,
   shortTime,
+  type ThreadList,
 } from '../comments.ts'
 import { initials } from '../identity.ts'
+import type { ContextMenu } from '../menu.ts'
+import { colorOf } from '../room.ts'
 import type { Readable, Store } from '../store.ts'
 
 export interface CommentsPanelProps {
@@ -22,10 +25,14 @@ export interface CommentsPanelProps {
   locked: Readable<boolean>
   /** The thread in focus, marked in the text too. */
   focus: Store<string | null>
+  /** The list on screen; followFocus keeps it on the thread in focus. */
+  list: Store<ThreadList>
   /** Shows a thread's place in the editor. */
   onShow: (thread: ShownThread) => void
   /** The colour each name in the room has in the header, for the authors here now. */
   colors: Readable<ReadonlyMap<string, string>>
+  /** The menu of one's own comments: edit or delete. */
+  menu: ContextMenu
 }
 
 const STATE_LABEL = { attached: '', changed: 'Changed', detached: 'Text gone' } as const
@@ -48,16 +55,12 @@ type Action = { message: string; kind: 'edit' | 'delete' }
 export function CommentsPanel(props: CommentsPanelProps) {
   const view = () => props.comments.get()
   const threads = () => view()?.threads.get() ?? []
-  const focused = () => threads().find((t) => t.id === props.focus.get()) ?? null
-  // The list the reader picked; a thread in focus shows the list it is in.
-  const [picked, setPicked] = createSignal<'open' | 'resolved'>('open')
-  const tab = () => {
-    const t = focused()
-    return t ? (t.resolved ? 'resolved' : 'open') : picked()
-  }
-  const listed = () => threads().filter((t) => t.resolved === (tab() === 'resolved'))
-  const open = () => threads().filter((t) => !t.resolved).length
-  const resolved = () => threads().length - open()
+  const tab = () => props.list.get()
+  const listed = createMemo(() => threads().filter((t) => t.resolved === (tab() === 'resolved')))
+  const counts = createMemo(() => {
+    const open = threads().filter((t) => !t.resolved).length
+    return { open, resolved: threads().length - open }
+  })
   const canWrite = () => !props.locked.get() && (view()?.roomForMore.get() ?? false)
   const canChange = () => !props.locked.get()
   const colorOfAuthor = (name: string) => props.colors.get().get(name) ?? colorOf(name)
@@ -73,31 +76,15 @@ export function CommentsPanel(props: CommentsPanelProps) {
   const [unfolded, setUnfolded] = createSignal(false)
   // The new comment's box grows once the reader starts on it.
   const [composing, setComposing] = createSignal(false)
-  // The comment whose menu is open, apart from the one being edited, so a look at a menu keeps an edit.
-  const [menu, setMenu] = createSignal<string | null>(null)
   const [action, setAction] = createSignal<Action | null>(null)
   const acting = (m: ShownMessage, kind: Action['kind']) => {
     const a = action()
     return a !== null && a.message === m.id && a.kind === kind
   }
-  const act = (m: ShownMessage, kind: Action['kind']) => {
-    setMenu(null)
-    setAction({ message: m.id, kind })
-  }
-  // A click anywhere but on a comment's menu closes it.
-  onMount(() => {
-    const close = (e: Event) => {
-      if (menu() !== null && !(e.target as Element | null)?.closest?.('.comment-head'))
-        setMenu(null)
-    }
-    document.addEventListener('pointerdown', close)
-    onCleanup(() => document.removeEventListener('pointerdown', close))
-  })
   let draft: HTMLTextAreaElement | undefined
 
-  const pick = (list: 'open' | 'resolved') => {
-    setPicked(list)
-    setMenu(null)
+  const pick = (list: ThreadList) => {
+    props.list.set(list)
     props.focus.set(null)
   }
   const start = () => {
@@ -115,18 +102,21 @@ export function CommentsPanel(props: CommentsPanelProps) {
     if (draft) draft.value = ''
     setComposing(false)
   }
-  const resolve = (t: ShownThread) => {
-    // The card leaves this list, which stays on screen with nothing in focus.
-    setPicked(tab())
-    props.focus.set(null)
-    view()?.resolve(t.id, !t.resolved)
-  }
-  const save = (t: ShownThread, m: ShownMessage, box: HTMLTextAreaElement) => {
-    if (view()?.edit(t.id, m.id, box.value)) setAction(null)
-  }
-  const remove = (t: ShownThread, m: ShownMessage) => {
-    view()?.remove(t.id, m.id)
-    setAction(null)
+  const openMenu = (e: MouseEvent, m: ShownMessage) => {
+    const at = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    props.menu.show(
+      [
+        // An edit takes room, like a new comment.
+        {
+          label: 'Edit',
+          disabled: !canWrite(),
+          action: () => setAction({ message: m.id, kind: 'edit' }),
+        },
+        { label: 'Delete', action: () => setAction({ message: m.id, kind: 'delete' }) },
+      ],
+      at.right,
+      at.bottom,
+    )
   }
 
   return (
@@ -136,6 +126,7 @@ export function CommentsPanel(props: CommentsPanelProps) {
       hidden={view() === null}
       data-open={unfolded() ? 'true' : undefined}
     >
+      <span className="menu-host" ref={(el) => el.replaceChildren(props.menu.element)} />
       <h2 className="comments-title">
         <button
           type="button"
@@ -143,7 +134,8 @@ export function CommentsPanel(props: CommentsPanelProps) {
           aria-expanded={unfolded() ? 'true' : 'false'}
           onClick={() => setUnfolded(!unfolded())}
         >
-          Comments <span className="comments-count">{open() > 0 ? String(open()) : ''}</span>
+          Comments{' '}
+          <span className="comments-count">{counts().open > 0 ? String(counts().open) : ''}</span>
         </button>
       </h2>
       <div className="comments-tabs" role="tablist" aria-label="Show">
@@ -161,7 +153,7 @@ export function CommentsPanel(props: CommentsPanelProps) {
           aria-selected={tab() === 'resolved' ? 'true' : 'false'}
           onClick={() => pick('resolved')}
         >
-          Resolved{resolved() > 0 ? ` ${resolved()}` : ''}
+          Resolved{counts().resolved > 0 ? ` ${counts().resolved}` : ''}
         </button>
       </div>
       <div
@@ -191,10 +183,7 @@ export function CommentsPanel(props: CommentsPanelProps) {
           </button>
         </div>
       </div>
-      <p
-        className="comments-full"
-        hidden={props.locked.get() || (view()?.roomForMore.get() ?? true)}
-      >
+      <p className="comments-full" hidden={!canChange() || (view()?.roomForMore.get() ?? true)}>
         This file has as many comments as it can hold.
       </p>
       <p className="comments-empty" hidden={listed().length > 0}>
@@ -210,11 +199,8 @@ export function CommentsPanel(props: CommentsPanelProps) {
             key={t.id}
             className="comment-thread"
             data-state={t.state}
-            data-resolved={t.resolved ? 'true' : undefined}
             aria-current={props.focus.get() === t.id ? 'true' : undefined}
-            onClick={(e) => {
-              // Its buttons do their own thing: resolving takes the card out of focus.
-              if ((e.target as Element).closest('button')) return
+            onClick={() => {
               if (props.focus.get() !== t.id) props.focus.set(t.id)
             }}
           >
@@ -236,13 +222,11 @@ export function CommentsPanel(props: CommentsPanelProps) {
             <ol className="comment-messages">
               {t.messages.map((m, i) => (
                 <li key={m.id} className="comment-message">
-                  <div
-                    className="comment-head"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Escape') setMenu(null)
-                    }}
-                  >
-                    <span className="comment-avatar" style={`--c: ${colorOfAuthor(m.author)}`}>
+                  <div className="comment-head">
+                    <span
+                      className="avatar comment-avatar"
+                      style={`--c: ${colorOfAuthor(m.author)}`}
+                    >
                       {initials(m.author)}
                     </span>
                     <span className="comment-who">
@@ -258,7 +242,12 @@ export function CommentsPanel(props: CommentsPanelProps) {
                         title={t.resolved ? 'Reopen' : 'Resolve'}
                         aria-label={t.resolved ? 'Reopen' : 'Resolve'}
                         hidden={!canChange()}
-                        onClick={() => resolve(t)}
+                        onClick={(e) => {
+                          // Not a click on the card: the card leaves this list.
+                          e.stopPropagation()
+                          props.focus.set(null)
+                          view()?.resolve(t.id, !t.resolved)
+                        }}
                       >
                         <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
                           <path d={t.resolved ? REOPEN : CHECK} />
@@ -271,53 +260,37 @@ export function CommentsPanel(props: CommentsPanelProps) {
                       title="More"
                       aria-label="More"
                       aria-haspopup="menu"
-                      aria-expanded={menu() === m.id ? 'true' : 'false'}
                       hidden={!m.mine || !canChange()}
-                      onClick={() => setMenu(menu() === m.id ? null : m.id)}
+                      onClick={(e) => openMenu(e, m)}
                     >
                       <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
                         <path d={MORE} />
                       </svg>
                     </button>
-                    <div className="comment-menu" role="menu" hidden={menu() !== m.id}>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        className="comment-edit"
-                        // An edit takes room, like a new comment.
-                        hidden={!canWrite()}
-                        onClick={() => act(m, 'edit')}
-                      >
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        className="comment-delete"
-                        onClick={() => act(m, 'delete')}
-                      >
-                        Delete
-                      </button>
-                    </div>
                   </div>
                   {acting(m, 'edit') ? (
-                    <div className="comment-editing">
-                      <textarea
-                        ref={(el) => {
-                          el.value = m.body
-                          // Once it is in the page, so it can take the focus.
-                          queueMicrotask(() => el.focus())
-                        }}
-                        rows={3}
-                        maxlength={COMMENT_LIMITS.body}
-                        onKeyDown={(e) =>
-                          keys(
-                            e,
-                            () => save(t, m, e.currentTarget as HTMLTextAreaElement),
-                            () => setAction(null),
-                          )
-                        }
-                      />
+                    <CommentBox
+                      className="comment-editing"
+                      text={m.body}
+                      label="Save"
+                      focus={true}
+                      onSend={(body: string) => {
+                        const saved = view()?.edit(t.id, m.id, body) ?? false
+                        if (saved) setAction(null)
+                        return saved
+                      }}
+                      onCancel={() => setAction(null)}
+                    />
+                  ) : (
+                    <p className="comment-body">{m.body}</p>
+                  )}
+                  {acting(m, 'delete') ? (
+                    <div className="comment-confirm" role="alertdialog">
+                      <p>
+                        {t.messages.length === 1
+                          ? 'Delete this comment and its thread?'
+                          : 'Delete this comment?'}
+                      </p>
                       <div className="comment-buttons">
                         <button
                           type="button"
@@ -328,50 +301,26 @@ export function CommentsPanel(props: CommentsPanelProps) {
                         </button>
                         <button
                           type="button"
-                          className="comment-primary comment-save"
-                          onClick={(e) => {
-                            const box = (e.currentTarget as HTMLElement)
-                              .closest('.comment-editing')
-                              ?.querySelector('textarea')
-                            if (box) save(t, m, box)
+                          className="comment-danger"
+                          onClick={() => {
+                            view()?.remove(t.id, m.id)
+                            setAction(null)
                           }}
                         >
-                          Save
+                          Delete
                         </button>
                       </div>
                     </div>
-                  ) : (
-                    <p className="comment-body">{m.body}</p>
-                  )}
-                  <div className="comment-confirm" role="alertdialog" hidden={!acting(m, 'delete')}>
-                    <p>
-                      {t.messages.length === 1
-                        ? 'Delete this comment and its thread?'
-                        : 'Delete this comment?'}
-                    </p>
-                    <div className="comment-buttons">
-                      <button
-                        type="button"
-                        className="comment-text-button"
-                        onClick={() => setAction(null)}
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="button"
-                        className="comment-danger comment-delete-confirm"
-                        onClick={() => remove(t, m)}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </div>
+                  ) : null}
                 </li>
               ))}
             </ol>
-            <Reply
+            <CommentBox
+              className="comment-reply"
               hidden={!canWrite() || props.focus.get() !== t.id}
-              onReply={(body: string) => view()?.reply(t.id, body) ?? false}
+              placeholder="Reply"
+              label="Reply"
+              onSend={(body: string) => view()?.reply(t.id, body) ?? false}
             />
           </li>
         ))}
@@ -380,30 +329,54 @@ export function CommentsPanel(props: CommentsPanelProps) {
   )
 }
 
-/** A box to answer a thread. */
-function Reply(props: { hidden: boolean; onReply: (body: string) => boolean }) {
+interface CommentBoxProps {
+  className: string
+  hidden?: boolean
+  /** What it holds at first. */
+  text?: string
+  placeholder?: string
+  /** The send button's label. */
+  label: string
+  /** Takes the focus once in the page. */
+  focus?: boolean
+  /** Sends the text; true once it is sent, and the box empties. */
+  onSend: (body: string) => boolean
+  /** Shows a Cancel button that calls it; without it, Escape just empties the box. */
+  onCancel?: () => void
+}
+
+/** A box to write a reply or an edit in. Ctrl or ⌘ with Enter sends it. */
+function CommentBox(props: CommentBoxProps) {
   let box: HTMLTextAreaElement | undefined
   const send = () => {
-    if (box && props.onReply(box.value)) box.value = ''
+    if (box && props.onSend(box.value)) box.value = ''
+  }
+  const cancel = () => {
+    if (props.onCancel) props.onCancel()
+    else if (box) box.value = ''
   }
   return (
-    <div className="comment-reply" hidden={props.hidden}>
+    <div className={props.className} hidden={props.hidden ?? false}>
       <textarea
         ref={(el) => {
           box = el
+          el.value = props.text ?? ''
+          // Once it is in the page, so it can take the focus.
+          if (props.focus) queueMicrotask(() => el.focus())
         }}
-        rows={1}
+        rows={props.text ? 3 : 1}
         maxlength={COMMENT_LIMITS.body}
-        placeholder="Reply"
-        onKeyDown={(e) =>
-          keys(e, send, () => {
-            if (box) box.value = ''
-          })
-        }
+        placeholder={props.placeholder ?? ''}
+        onKeyDown={(e) => keys(e, send, cancel)}
       />
       <div className="comment-buttons">
+        {props.onCancel ? (
+          <button type="button" className="comment-text-button" onClick={cancel}>
+            Cancel
+          </button>
+        ) : null}
         <button type="button" className="comment-primary" onClick={send}>
-          Reply
+          {props.label}
         </button>
       </div>
     </div>
@@ -418,9 +391,4 @@ function keys(e: KeyboardEvent, send: () => void, cancel: () => void): void {
   } else if (e.key === 'Escape') {
     cancel()
   }
-}
-
-/** A comment's time, in the reader's own time zone, to the minute. */
-function fullTime(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 }

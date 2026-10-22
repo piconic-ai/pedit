@@ -2,7 +2,6 @@ import { META_LIMITS, metaUse, randomBase64Url } from '@pedit/protocol'
 import * as Y from 'yjs'
 import { nodeText, read as readCanvas } from './canvas.ts'
 import type { Cell, Table } from './csv.ts'
-import { colorFor } from './room.ts'
 import { type Readable, Store } from './store.ts'
 import type { Position } from './table.ts'
 
@@ -696,41 +695,38 @@ function order(a: ShownThread, b: ShownThread): number {
   return ta < tb ? -1 : ta > tb ? 1 : a.id < b.id ? -1 : 1
 }
 
-/** The same colour for a name every time, from the colours people get in the room. */
-export function colorOf(name: string): string {
-  // FNV-1a: short names that differ by a letter still spread over the colours.
-  let h = 0x811c9dc5
-  for (const c of name) h = Math.imul(h ^ (c.codePointAt(0) ?? 0), 0x01000193)
-  return colorFor(h >>> 0)
-}
+/** Which threads the comments panel lists: the open ones or the resolved ones. */
+export type ThreadList = 'open' | 'resolved'
 
 /**
- * Each name in the room with its colour in the header. A name two people
- * share with different colours is left out: it says nothing of who wrote.
+ * Keeps `list` on the list of the thread in focus, as a mark in the text, a
+ * cell or a node puts one in focus. Returns a function that stops.
  */
-export function colorsByName(
-  people: readonly { name: string; color: string }[],
-): ReadonlyMap<string, string> {
-  const out = new Map<string, string>()
-  const shared = new Set<string>()
-  for (const p of people) {
-    const had = out.get(p.name)
-    if (had !== undefined && had !== p.color) shared.add(p.name)
-    out.set(p.name, p.color)
-  }
-  for (const name of shared) out.delete(name)
-  return out
+export function followFocus(
+  threads: Readable<readonly ShownThread[]>,
+  focus: Readable<string | null>,
+  list: Store<ThreadList>,
+): () => void {
+  return focus.subscribe((id) => {
+    const t = threads.get().find((x) => x.id === id)
+    if (t) list.set(t.resolved ? 'resolved' : 'open')
+  })
 }
+
+// Made once: a formatter is costly to make, and the panel formats every comment's time.
+const timeOfDay = new Intl.DateTimeFormat(undefined, { timeStyle: 'short' })
+const dayThisYear = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' })
+const day = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+const full = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 
 /** A comment's time, short: the time of day today, the date before. */
 export function shortTime(iso: string, now = new Date()): string {
   const d = new Date(iso)
-  const today = d.toDateString() === now.toDateString()
-  return today
-    ? d.toLocaleTimeString(undefined, { timeStyle: 'short' })
-    : d.toLocaleDateString(undefined, {
-        month: 'short',
-        day: 'numeric',
-        ...(d.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' }),
-      })
+  if (d.toDateString() === now.toDateString()) return timeOfDay.format(d)
+  return (d.getFullYear() === now.getFullYear() ? dayThisYear : day).format(d)
+}
+
+/** A comment's time, in the reader's own time zone, to the minute. */
+export function fullTime(iso: string): string {
+  return full.format(new Date(iso))
 }

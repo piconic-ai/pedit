@@ -5,12 +5,14 @@ import * as Y from 'yjs'
 import {
   CommentsView,
   type CommentTarget,
-  colorOf,
-  colorsByName,
+  followFocus,
   type ShownThread,
   shortTime,
+  type ThreadList,
 } from '../src/comments.ts'
 import '../src/components/CommentsPanel.tsx'
+import { ContextMenu } from '../src/menu.ts'
+import { colorOf, colorsByName } from '../src/room.ts'
 import { Store } from '../src/store.ts'
 import { parsedAs } from './parsed.ts'
 
@@ -29,6 +31,10 @@ function mount(text = 'hello world!\n', delimiter: string | null = null) {
   const locked = new Store(false)
   const focus = new Store<string | null>(null)
   const colors = new Store<ReadonlyMap<string, string>>(new Map())
+  const list = new Store<ThreadList>('open')
+  // As main.ts does: the list follows the thread in focus.
+  followFocus(view.threads, focus, list)
+  const menu = new ContextMenu(false)
   const shown: ShownThread[] = []
   const container = document.createElement('div')
   document.body.append(container)
@@ -39,10 +45,24 @@ function mount(text = 'hello world!\n', delimiter: string | null = null) {
     focus,
     onShow: (t: ShownThread) => shown.push(t),
     colors,
+    list,
+    menu,
   })
   const $ = <T extends Element>(sel: string) => container.querySelector(sel) as T
   const $$ = (sel: string) => [...container.querySelectorAll(sel)] as HTMLElement[]
-  return { meta, view, comments, selection, locked, focus, colors, shown, container, $, $$ }
+  return { meta, view, comments, selection, locked, focus, colors, menu, shown, container, $, $$ }
+}
+
+/** The items of the comment menu open now, by label. */
+function menuItems(): Record<string, HTMLButtonElement> {
+  const items = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
+  return Object.fromEntries(items.map((b) => [b.textContent ?? '', b]))
+}
+
+/** Opens the menu of a comment, and picks an item of it. */
+function choose(more: Element, label: string) {
+  ;(more as HTMLElement).click()
+  menuItems()[label]?.click()
 }
 
 const click = (el: Element) => (el as HTMLElement).click()
@@ -135,8 +155,7 @@ describe('CommentsPanel', () => {
     click(resolvedTab as Element)
     expect(resolvedTab?.getAttribute('aria-selected')).toBe('true')
     expect($<HTMLElement>('.comments-new').hidden).toBe(true)
-    const [thread] = $$('.comment-thread')
-    expect(thread?.dataset.resolved).toBe('true')
+    expect($$('.comment-thread')).toHaveLength(1)
     expect($('.comment-resolve').getAttribute('aria-label')).toBe('Reopen')
     click($('.comment-resolve'))
     expect($$('.comment-thread')).toHaveLength(0)
@@ -159,32 +178,30 @@ describe('CommentsPanel', () => {
   })
 
   it('deletes a comment of ones own only once asked again', () => {
-    const { $, $$, selection, view } = mount()
+    const { $, $$, selection, view, menu } = mount()
     selection.set({ kind: 'text', from: 0, to: 5 })
     comment($, 'first')
     $<HTMLTextAreaElement>('.comment-reply textarea').value = 'second'
     click($('.comment-reply .comment-primary'))
     const more = $$('.comment-more')
     expect(more.map((b) => b.hidden)).toEqual([false, false])
-    const menu = () => $$('.comment-menu')
-    expect(menu().every((m) => m.hidden)).toBe(true)
+    expect(menu.open).toBe(false)
     click(more[1] as Element)
-    expect(menu().map((m) => m.hidden)).toEqual([true, false])
-    click($$('.comment-delete')[1] as Element)
-    const confirm = $$('.comment-confirm')
-    expect(confirm.map((c) => c.hidden)).toEqual([true, false])
-    expect(confirm[1]?.textContent).toContain('Delete this comment?')
-    click(confirm[1]?.querySelector('.comment-text-button') as Element)
-    expect($$('.comment-confirm').every((c) => c.hidden)).toBe(true)
+    expect(menu.open).toBe(true)
+    expect(Object.keys(menuItems())).toEqual(['Edit', 'Delete'])
+    menuItems().Delete?.click()
+    expect(menu.open).toBe(false)
+    expect($$('.comment-confirm')).toHaveLength(1)
+    expect($('.comment-confirm').textContent).toContain('Delete this comment?')
+    click($('.comment-confirm .comment-text-button'))
+    expect($$('.comment-confirm')).toHaveLength(0)
     expect(view.threads.get()[0]?.messages).toHaveLength(2)
-    click($$('.comment-more')[1] as Element)
-    click($$('.comment-delete')[1] as Element)
-    click($$('.comment-delete-confirm')[1] as Element)
+    choose($$('.comment-more')[1] as Element, 'Delete')
+    click($('.comment-confirm .comment-danger'))
     expect($$('.comment-body').map((b) => b.textContent)).toEqual(['first'])
-    click($('.comment-more'))
-    click($('.comment-delete'))
+    choose($('.comment-more'), 'Delete')
     expect($('.comment-confirm').textContent).toContain('Delete this comment and its thread?')
-    click($('.comment-delete-confirm'))
+    click($('.comment-confirm .comment-danger'))
     expect(view.threads.get()).toHaveLength(0)
   })
 
@@ -198,30 +215,21 @@ describe('CommentsPanel', () => {
     click($$('.comment-quote')[1] as Element)
     expect(focus.get()).toBe(view.threads.get()[1]?.id)
     click($$('.comment-resolve')[1] as Element)
+    expect(focus.get()).toBeNull()
     expect($$('.comments-tabs button')[0]?.getAttribute('aria-selected')).toBe('true')
     expect($$('.comment-thread')).toHaveLength(1)
   })
 
-  it('closes a menu on Escape or a click elsewhere, and keeps an edit open', () => {
-    const { $, $$, selection } = mount()
+  it('keeps an edit open while another menu is looked at', () => {
+    const { $, $$, selection, menu } = mount()
     selection.set({ kind: 'text', from: 0, to: 5 })
     comment($, 'first')
     $<HTMLTextAreaElement>('.comment-reply textarea').value = 'second'
     click($('.comment-reply .comment-primary'))
-    const menus = () => $$('.comment-menu').map((m) => m.hidden)
-    click($$('.comment-more')[0] as Element)
-    expect(menus()).toEqual([false, true])
-    $$('.comment-more')[0]?.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
-    )
-    expect(menus()).toEqual([true, true])
-    click($$('.comment-more')[0] as Element)
-    document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }))
-    expect(menus()).toEqual([true, true])
-    click($$('.comment-more')[0] as Element)
-    click($$('.comment-edit')[0] as Element)
+    choose($$('.comment-more')[0] as Element, 'Edit')
     click($$('.comment-more')[1] as Element)
-    expect(menus()).toEqual([true, false])
+    expect(menu.open).toBe(true)
+    menu.close()
     expect($$('.comment-editing')).toHaveLength(1)
   })
 
@@ -231,23 +239,34 @@ describe('CommentsPanel', () => {
     comment($, 'first')
     view.roomForMore.set(false)
     click($('.comment-more'))
-    expect($<HTMLElement>('.comment-edit').hidden).toBe(true)
-    expect($<HTMLElement>('.comment-delete').hidden).toBe(false)
+    expect(menuItems().Edit?.disabled).toBe(true)
+    expect(menuItems().Delete?.disabled).toBe(false)
   })
 
   it('edits a comment of ones own', () => {
     const { $, $$, selection, view } = mount()
     selection.set({ kind: 'text', from: 0, to: 5 })
     comment($, 'frist')
-    click($('.comment-more'))
-    click($('.comment-edit'))
+    choose($('.comment-more'), 'Edit')
     expect($('.comment-body')).toBeNull()
     const box = $<HTMLTextAreaElement>('.comment-editing textarea')
     expect(box.value).toBe('frist')
     box.value = 'first'
-    click($('.comment-save'))
+    click($('.comment-editing .comment-primary'))
     expect($$('.comment-body').map((b) => b.textContent)).toEqual(['first'])
     expect(view.threads.get()[0]?.messages[0]?.body).toBe('first')
+  })
+
+  it('lets an edit go on Escape', () => {
+    const { $, selection } = mount()
+    selection.set({ kind: 'text', from: 0, to: 5 })
+    comment($, 'kept')
+    choose($('.comment-more'), 'Edit')
+    $('.comment-editing textarea').dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+    )
+    expect($('.comment-editing')).toBeNull()
+    expect($('.comment-body').textContent).toBe('kept')
   })
 
   it("offers no menu on other people's comments, and nothing once locked", () => {

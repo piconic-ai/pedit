@@ -1831,7 +1831,7 @@ main.editor .cm-vim-panel {
 .comments [hidden] {
   display: none;
 }
-.comments button {
+:where(.comments) button {
   font: inherit;
   color: inherit;
 }
@@ -1907,9 +1907,6 @@ main.editor .cm-vim-panel {
   padding: 10px 12px;
   margin-bottom: 8px;
 }
-.comment-thread {
-  cursor: default;
-}
 .comment-thread[aria-current="true"],
 .comments-new[data-composing] {
   border-color: transparent;
@@ -1935,15 +1932,15 @@ main.editor .cm-vim-panel {
   cursor: pointer;
   font-weight: 500;
 }
-.comments .comment-primary {
+.comment-primary {
   background: var(--accent);
   color: var(--panel);
 }
-.comments .comment-danger {
+.comment-danger {
   background: #cf222e;
   color: #fff;
 }
-.comments .comment-text-button {
+.comment-text-button {
   background: none;
   color: var(--accent);
 }
@@ -1959,10 +1956,8 @@ main.editor .cm-vim-panel {
   background: none;
   padding: 0 0 0 8px;
   margin-bottom: 8px;
-  cursor: pointer;
-}
-.comments .comment-quote {
   color: var(--muted);
+  cursor: pointer;
 }
 /* The quote takes two lines at most until its card is in focus. */
 .comment-quote q {
@@ -1992,22 +1987,18 @@ main.editor .cm-vim-panel {
   margin-top: 10px;
 }
 .comment-head {
-  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
 }
+/* A participant's .avatar, larger, in the colour the author has in the room. */
 .comment-avatar {
   flex: none;
-  display: grid;
-  place-items: center;
   width: 24px;
   height: 24px;
-  border-radius: 50%;
   background: var(--c);
   color: #fff;
   font-size: 11px;
-  font-weight: 600;
 }
 .comment-who {
   flex: 1;
@@ -2036,10 +2027,8 @@ main.editor .cm-vim-panel {
   border: 0;
   border-radius: 50%;
   background: none;
-  cursor: pointer;
-}
-.comments .comment-icon {
   color: var(--muted);
+  cursor: pointer;
 }
 .comment-icon svg {
   fill: none;
@@ -2052,46 +2041,21 @@ main.editor .cm-vim-panel {
   stroke-width: 3;
 }
 .comment-icon:hover,
-.comment-icon:focus-visible,
-.comment-icon[aria-expanded="true"] {
+.comment-icon:focus-visible {
   background: color-mix(in srgb, var(--ink) 8%, transparent);
 }
-.comments .comment-resolve:hover {
+.comment-resolve:hover {
   color: var(--accent);
 }
-.comment-menu {
-  position: absolute;
-  top: 30px;
-  right: 0;
-  z-index: 2;
-  display: flex;
-  flex-direction: column;
-  min-width: 120px;
-  padding: 4px 0;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  box-shadow: 0 4px 12px rgb(0 0 0 / 0.15);
-}
-.comment-menu button {
-  border: 0;
-  background: none;
-  padding: 6px 12px;
-  text-align: left;
-  cursor: pointer;
-}
-.comment-menu button:hover,
-.comment-menu button:focus-visible {
-  background: color-mix(in srgb, var(--ink) 8%, transparent);
-}
-.comment-body {
-  margin: 6px 0 0 32px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
+/* Under the name, past the avatar. */
+.comment-body,
 .comment-editing,
 .comment-confirm {
   margin: 6px 0 0 32px;
+}
+.comment-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .comment-confirm p {
   margin: 8px 0 0;

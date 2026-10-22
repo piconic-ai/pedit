@@ -31,17 +31,25 @@ import { Attachments, hostAttachments, whyNoImages } from './attachments.ts'
 import { BoardView } from './board.ts'
 import { read as readCanvas, toJSON } from './canvas.ts'
 import { commentMarks } from './commentmarks.ts'
-import { CommentsView, type CommentTarget, colorsByName, type ShownThread } from './comments.ts'
+import {
+  CommentsView,
+  type CommentTarget,
+  followFocus,
+  type ShownThread,
+  type ThreadList,
+} from './comments.ts'
 import { delimiterFor } from './csv.ts'
 import { avatarFor, fetchIdentity } from './identity.ts'
 import { JsonPane } from './jsonpane.ts'
 import { resolveLanguage } from './language.ts'
+import { ContextMenu } from './menu.ts'
 import { NoticeBoard } from './notice.ts'
 import { applyPalette } from './palette.ts'
 import { PreviewPane } from './pane.ts'
 import { imagePaste, textAnchor } from './paste.ts'
 import {
   colorFor,
+  colorsByName,
   type Participant,
   parseRoomLocation,
   participants,
@@ -267,6 +275,9 @@ async function joinRoom(
   const comments = new Store<CommentsView | null>(null)
   const threadsShown = new Store<readonly ShownThread[]>([])
   const commentFocus = new Store<string | null>(null)
+  // The list of threads on screen, open or resolved: that of the thread in focus.
+  const commentList = new Store<ThreadList>('open')
+  followFocus(threadsShown, commentFocus, commentList)
   const selection = new Store({ from: 0, to: 0 })
   // What a new comment goes on: the table's cells in the table view, else
   // the editor's selection.
@@ -725,7 +736,9 @@ async function joinRoom(
     target: commentTarget,
     locked,
     focus: commentFocus,
+    list: commentList,
     colors: authorColors,
+    menu: new ContextMenu(),
     onShow: (t: ShownThread) => {
       if (t.cells && shown.table.active) {
         shown.table.select(t.cells.from)
