@@ -8,6 +8,7 @@ import {
   type FileEntry,
   importKey,
   isFinalStatus,
+  MAX_FILES,
   metaFiles,
   RoomClient,
   type RoomStatus,
@@ -286,10 +287,12 @@ async function joinRoom(
   // lists them: the tabs count the open threads of files not opened yet.
   const metaDocs = new Map<number, Y.Doc>()
   // The comments doc of an id, joined the first time, every update checked:
-  // anyone in the room can send one.
-  const metaDocFor = (metaId: number): Y.Doc => {
+  // anyone in the room can send one. Anyone can send a list of files too, so
+  // no more are joined than a room has files, and never a file's own id.
+  const metaDocFor = (metaId: number): Y.Doc | null => {
     let metaDoc = metaDocs.get(metaId)
     if (!metaDoc) {
+      if (metaDocs.size >= MAX_FILES || opened.has(metaId)) return null
       metaDoc = new Y.Doc()
       metaDocs.set(metaId, metaDoc)
       client?.addFile(metaId, metaDoc, checkMetaUpdate)
@@ -651,8 +654,8 @@ async function joinRoom(
     const metaId = metaOf.get(f.id)
     const format = formats.get(f.id)
     if (f.comments || !getsComments(format)) return
-    if (metaId === undefined || !client) return
-    const metaDoc = metaDocFor(metaId)
+    const metaDoc = metaId === undefined || !client ? null : metaDocFor(metaId)
+    if (!metaDoc) return
     const name = () => {
       const user = awareness.getLocalState()?.user as { name?: unknown } | undefined
       return typeof user?.name === 'string' ? user.name : me.name

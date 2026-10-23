@@ -499,12 +499,12 @@ export function followOpenThreads(meta: Y.Doc, onCount: (open: number) => void):
  */
 export class OpenCounts {
   readonly counts = new Store<ReadonlyMap<number, number>>(new Map())
-  readonly #docOf: (metaId: number) => Y.Doc
+  readonly #docOf: (metaId: number) => Y.Doc | null
   /** What each comments doc followed counts, by its id. */
   readonly #followed = new Map<number, { file: number; stop: () => void }>()
 
-  /** `docOf` gives the comments doc of an id, joining it the first time. */
-  constructor(docOf: (metaId: number) => Y.Doc) {
+  /** `docOf` gives the comments doc of an id, joining it the first time, or null for none. */
+  constructor(docOf: (metaId: number) => Y.Doc | null) {
     this.#docOf = docOf
   }
 
@@ -518,8 +518,9 @@ export class OpenCounts {
       this.#set(f.file, 0)
     }
     for (const [meta, file] of fileOf) {
-      if (this.#followed.has(meta)) continue
-      const stop = followOpenThreads(this.#docOf(meta), (open) => this.#set(file, open))
+      const doc = this.#followed.has(meta) ? null : this.#docOf(meta)
+      if (!doc) continue
+      const stop = followOpenThreads(doc, (open) => this.#set(file, open))
       this.#followed.set(meta, { file, stop })
     }
   }

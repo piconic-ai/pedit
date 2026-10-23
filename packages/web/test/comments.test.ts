@@ -654,6 +654,12 @@ describe('OpenCounts', () => {
     expect([...counts.counts.get()]).toEqual([[1, 2]])
   })
 
+  it('counts nothing for a doc it may not join', () => {
+    const counts = new OpenCounts(() => null)
+    counts.follow(new Map([[1, 10]]))
+    expect(counts.counts.get().size).toBe(0)
+  })
+
   it('does not count again for a reply', () => {
     const meta = new Y.Doc()
     thread(meta, 'a')
