@@ -156,7 +156,8 @@ describe('remote cursors and selections', () => {
       caret.className = 'cm-ySelectionCaret'
       const shadow = getComputedStyle(caret).boxShadow
       if (scheme === 'dark') expect(shadow).toContain('#ffffff')
-      else expect(shadow).toBe('')
+      // Browsers and jsdom >= 30.1.3 report no shadow as 'none'; older jsdom gives ''.
+      else expect(['', 'none']).toContain(shadow)
     },
   )
 })
