@@ -8,7 +8,9 @@ import {
   clean,
   cutQuote,
   followOpenThreads,
+  isCommentKey,
   loadCommentsOpen,
+  OpenCounts,
   openThreads,
   type ShownThread,
   saveCommentsOpen,
@@ -590,6 +592,118 @@ describe('openThreads', () => {
     stop()
     put(meta, 'c', { quote: 'c', anchor })
     expect(seen).toEqual([0, 1, 2, 1, 0])
+  })
+})
+
+describe('OpenCounts', () => {
+  const anchor = { type: 'node', id: 'n1' }
+  const thread = (meta: Y.Doc, id: string) =>
+    meta.transact(() => {
+      const t = new Y.Map<unknown>()
+      meta.getMap('comments').set(id, t)
+      t.set('quote', id)
+      t.set('anchor', anchor)
+    })
+
+  it('counts each file listed, joining its comments doc once, and drops files no longer listed', () => {
+    const docs = new Map<number, Y.Doc>()
+    const joined: number[] = []
+    const counts = new OpenCounts((meta) => {
+      joined.push(meta)
+      const d = docs.get(meta) ?? new Y.Doc()
+      docs.set(meta, d)
+      return d
+    })
+    counts.follow(
+      new Map([
+        [1, 10],
+        [2, 20],
+      ]),
+    )
+    expect(joined).toEqual([10, 20])
+    thread(docs.get(10) as Y.Doc, 'a')
+    thread(docs.get(10) as Y.Doc, 'b')
+    thread(docs.get(20) as Y.Doc, 'c')
+    expect([...counts.counts.get()]).toEqual([
+      [1, 2],
+      [2, 1],
+    ])
+    // The same list again joins nothing more.
+    counts.follow(
+      new Map([
+        [1, 10],
+        [2, 20],
+      ]),
+    )
+    expect(joined).toEqual([10, 20])
+    // File 2 leaves; its comments doc now belongs to file 3.
+    counts.follow(
+      new Map([
+        [1, 10],
+        [3, 20],
+      ]),
+    )
+    expect([...counts.counts.get()]).toEqual([
+      [1, 2],
+      [3, 1],
+    ])
+    counts.follow(new Map([[1, 10]]))
+    expect([...counts.counts.get()]).toEqual([[1, 2]])
+    // A file no longer followed counts no more.
+    thread(docs.get(20) as Y.Doc, 'd')
+    expect([...counts.counts.get()]).toEqual([[1, 2]])
+  })
+
+  it('does not count again for a reply', () => {
+    const meta = new Y.Doc()
+    thread(meta, 'a')
+    const messages = new Y.Map<unknown>()
+    ;(meta.getMap('comments').get('a') as Y.Map<unknown>).set('messages', messages)
+    let counted = 0
+    const original = meta.getMap('comments').keys.bind(meta.getMap('comments'))
+    meta.getMap('comments').keys = () => {
+      counted++
+      return original()
+    }
+    const stop = followOpenThreads(meta, () => {})
+    counted = 0
+    messages.set('m1', { author: 'Bo', time: '2026-10-21T00:00:00Z', body: 'hi' })
+    expect(counted).toBe(0)
+    stop()
+  })
+})
+
+describe('isCommentKey', () => {
+  // The fields the check reads, as a browser's KeyboardEvent has them.
+  const key = (init: KeyboardEventInit, altGraph = false) =>
+    ({
+      code: '',
+      key: '',
+      ctrlKey: false,
+      metaKey: false,
+      altKey: false,
+      ...init,
+      getModifierState: (k: string) => altGraph && k === 'AltGraph',
+    }) as unknown as KeyboardEvent
+  it('takes Ctrl, or ⌘ on a Mac, with Alt and M', () => {
+    expect(isCommentKey(key({ code: 'KeyM', key: 'm', ctrlKey: true, altKey: true }), false)).toBe(
+      true,
+    )
+    expect(isCommentKey(key({ code: 'KeyM', key: 'µ', metaKey: true, altKey: true }), true)).toBe(
+      true,
+    )
+    expect(isCommentKey(key({ code: 'KeyM', key: 'm', metaKey: true, altKey: true }), false)).toBe(
+      false,
+    )
+    expect(isCommentKey(key({ code: 'KeyM', key: 'm', ctrlKey: true }), false)).toBe(false)
+    // AZERTY: the key labelled M sits elsewhere.
+    expect(
+      isCommentKey(key({ code: 'Semicolon', key: 'm', ctrlKey: true, altKey: true }), false),
+    ).toBe(true)
+  })
+  it('leaves AltGr to type', () => {
+    const e = key({ code: 'KeyM', key: 'µ', ctrlKey: true, altKey: true }, true)
+    expect(isCommentKey(e, false)).toBe(false)
   })
 })
 

@@ -35,8 +35,9 @@ import {
   CommentsView,
   type CommentTarget,
   followFocus,
-  followOpenThreads,
+  isCommentKey,
   loadCommentsOpen,
+  OpenCounts,
   type ShownThread,
   saveCommentsOpen,
   type ThreadList,
@@ -45,7 +46,7 @@ import { delimiterFor } from './csv.ts'
 import { avatarFor, fetchIdentity } from './identity.ts'
 import { JsonPane } from './jsonpane.ts'
 import { resolveLanguage } from './language.ts'
-import { ContextMenu } from './menu.ts'
+import { ContextMenu, isMac } from './menu.ts'
 import { NoticeBoard } from './notice.ts'
 import { applyPalette } from './palette.ts'
 import { PreviewPane } from './pane.ts'
@@ -284,13 +285,31 @@ async function joinRoom(
   // The comments of every file, each in its doc, kept as soon as the host
   // lists them: the tabs count the open threads of files not opened yet.
   const metaDocs = new Map<number, Y.Doc>()
-  const openCounts = new Store<ReadonlyMap<number, number>>(new Map())
+  // The comments doc of an id, joined the first time, every update checked:
+  // anyone in the room can send one.
+  const metaDocFor = (metaId: number): Y.Doc => {
+    let metaDoc = metaDocs.get(metaId)
+    if (!metaDoc) {
+      metaDoc = new Y.Doc()
+      metaDocs.set(metaId, metaDoc)
+      client?.addFile(metaId, metaDoc, checkMetaUpdate)
+    }
+    return metaDoc
+  }
+  const openCounts = new OpenCounts(metaDocFor)
   // What the header counts: the file on screen's, while no tabs do.
   const headerCount = new Store(0)
   // Whether the file on screen has comments, and whether the panel shows them.
   const commentable = new Store(false)
-  const commentsOpen = new Store(loadCommentsOpen() ?? !matchMedia(NARROW_QUERY).matches)
-  commentsOpen.subscribe((open) => saveCommentsOpen(open))
+  // A narrow screen starts with the panel folded, over the text; a wide one
+  // as the reader left it.
+  const commentsOpen = new Store(!matchMedia(NARROW_QUERY).matches && (loadCommentsOpen() ?? true))
+  // Shows or hides the panel as the reader asks, kept for the next visit.
+  const toggleComments = () => {
+    const open = !commentsOpen.get()
+    commentsOpen.set(open)
+    if (!isNarrow.get()) saveCommentsOpen(open)
+  }
   // A thread put in focus, by its mark in the text, shows in the panel.
   commentFocus.subscribe((id) => {
     if (id !== null) commentsOpen.set(true)
@@ -532,6 +551,7 @@ async function joinRoom(
     openComments: headerCount,
     commentable,
     commentsOpen,
+    onToggleComments: toggleComments,
   })
 
   // Nobody edits while the host is away: nobody would save it. Once the room
@@ -630,9 +650,9 @@ async function joinRoom(
   const followComments = (f: OpenFile) => {
     const metaId = metaOf.get(f.id)
     const format = formats.get(f.id)
-    if (f.comments || (format !== 'text' && format !== 'canvas')) return
-    const metaDoc = metaId === undefined ? undefined : metaDocs.get(metaId)
-    if (!metaDoc) return
+    if (f.comments || !getsComments(format)) return
+    if (metaId === undefined || !client) return
+    const metaDoc = metaDocFor(metaId)
     const name = () => {
       const user = awareness.getLocalState()?.user as { name?: unknown } | undefined
       return typeof user?.name === 'string' ? user.name : me.name
@@ -702,25 +722,9 @@ async function joinRoom(
     showView(view.mode)
   }
 
-  // Joins the comments doc of a file, checking each update (anyone in the
-  // room can send one), and counts its open threads for the tabs.
-  const countComments = (file: number, metaId: number) => {
-    const format = formats.get(file)
-    if (metaDocs.has(metaId) || !client || (format !== 'text' && format !== 'canvas')) return
-    const metaDoc = new Y.Doc()
-    metaDocs.set(metaId, metaDoc)
-    client.addFile(metaId, metaDoc, checkMetaUpdate)
-    followOpenThreads(metaDoc, (open) => {
-      const next = new Map(openCounts.get())
-      if (open > 0) next.set(file, open)
-      else next.delete(file)
-      openCounts.set(next)
-      countHeader()
-    })
-  }
   // Declared so showComments, which can run first, can call it.
   function countHeader() {
-    const n = files.get().length < 2 ? (openCounts.get().get(shown.id) ?? 0) : 0
+    const n = files.get().length < 2 ? (openCounts.counts.get().get(shown.id) ?? 0) : 0
     headerCount.set(n)
   }
 
@@ -729,7 +733,8 @@ async function joinRoom(
     formats.clear()
     for (const [file, meta] of metaFiles(list)) metaOf.set(file, meta)
     for (const f of list) formats.set(f.id, f.format)
-    for (const [file, meta] of metaOf) countComments(file, meta)
+    // Every file with comments is counted, opened or not.
+    openCounts.follow(new Map([...metaOf].filter(([file]) => getsComments(formats.get(file)))))
     for (const f of opened.values()) followComments(f)
     // A file of a format this version does not know is left out, and so is
     // the metadata of a file, shown with it.
@@ -775,7 +780,7 @@ async function joinRoom(
     onFileAttachment: (_, a) => attachments.handle(a),
     onFileCanvas: (fileId, m) => opened.get(fileId)?.json.handle(m),
   })
-  render(parts.files, 'FileTabs', { files, current, onOpen: switchTo, counts: openCounts })
+  render(parts.files, 'FileTabs', { files, current, onOpen: switchTo, counts: openCounts.counts })
   render(parts.comments, 'CommentsPanel', {
     comments,
     target: commentTarget,
@@ -785,6 +790,10 @@ async function joinRoom(
     colors: authorColors,
     menu: new ContextMenu(),
     open: commentsOpen,
+    // The title folds the panel on a narrow screen; on a wide one, the header's button does.
+    onToggle: () => {
+      if (isNarrow.get()) toggleComments()
+    },
     onShow: (t: ShownThread) => {
       if (t.cells && shown.table.active) {
         shown.table.select(t.cells.from)
@@ -801,8 +810,9 @@ async function joinRoom(
   })
   // Ctrl or ⌘ with Alt and M comments on the selection, as document editors do.
   document.addEventListener('keydown', (e) => {
-    if (e.code !== 'KeyM' || !e.altKey || !(e.ctrlKey || e.metaKey) || !commentable.get()) return
+    if (!isCommentKey(e, isMac()) || !commentable.get()) return
     e.preventDefault()
+    commentList.set('open')
     commentsOpen.set(true)
     parts?.comments.querySelector<HTMLTextAreaElement>('.comments-new textarea')?.focus()
   })
@@ -866,6 +876,11 @@ function sameSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
   if (a.size !== b.size) return false
   for (const k of a) if (!b.has(k)) return false
   return true
+}
+
+/** Whether files of a format get comments: text files and canvases. */
+function getsComments(format: string | undefined): boolean {
+  return format === 'text' || format === 'canvas'
 }
 
 /** Whether two maps of names to colours hold the same. */

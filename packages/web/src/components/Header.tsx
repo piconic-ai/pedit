@@ -5,7 +5,7 @@ import type { RoomStatus } from '@pedit/protocol'
 import { initials } from '../identity.ts'
 import type { Participant } from '../room.ts'
 import type { SettingsModel } from '../settings.ts'
-import type { Readable, Store } from '../store.ts'
+import type { Readable } from '../store.ts'
 import type { ViewSwitch } from '../view.ts'
 import { CommentCount } from './FileTabs.tsx'
 import { Settings } from './Settings.tsx'
@@ -42,7 +42,8 @@ export interface HeaderProps {
   /** Whether the file on screen has comments, so the panel can be shown. */
   commentable: Readable<boolean>
   /** Whether the comments panel is open. */
-  commentsOpen: Store<boolean>
+  commentsOpen: Readable<boolean>
+  onToggleComments: () => void
 }
 
 /** A speech bubble, on a 24 by 24 grid. */
@@ -142,7 +143,7 @@ export function Header(props: HeaderProps) {
         aria-label="Comments"
         aria-pressed={props.commentsOpen.get() ? 'true' : 'false'}
         hidden={!props.commentable.get()}
-        onClick={() => props.commentsOpen.set(!props.commentsOpen.get())}
+        onClick={() => props.onToggleComments()}
       >
         <svg
           viewBox="0 0 24 24"

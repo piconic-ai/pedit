@@ -49,6 +49,7 @@ function mount(text = 'hello world!\n', delimiter: string | null = null) {
     list,
     menu,
     open,
+    onToggle: () => open.set(!open.get()),
   })
   const $ = <T extends Element>(sel: string) => container.querySelector(sel) as T
   const $$ = (sel: string) => [...container.querySelectorAll(sel)] as HTMLElement[]

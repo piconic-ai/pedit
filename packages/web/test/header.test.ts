@@ -54,6 +54,7 @@ function mount() {
     openComments,
     commentable,
     commentsOpen,
+    onToggleComments: () => commentsOpen.set(!commentsOpen.get()),
   })
   const q = <T extends Element = HTMLElement>(sel: string) => container.querySelector<T>(sel)
   const list = () => q('.people') as HTMLElement

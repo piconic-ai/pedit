@@ -33,8 +33,10 @@ export interface CommentsPanelProps {
   colors: Readable<ReadonlyMap<string, string>>
   /** The menu of one's own comments: edit or delete. */
   menu: ContextMenu
-  /** Whether the panel is open; the header's button and the title toggle it. */
-  open: Store<boolean>
+  /** Whether the panel is open: unfolded on a narrow screen, shown on a wide one. */
+  open: Readable<boolean>
+  /** The title was pressed: on a narrow screen, it folds or unfolds the panel. */
+  onToggle: () => void
 }
 
 const STATE_LABEL = { attached: '', changed: 'Changed', detached: 'Text gone' } as const
@@ -132,7 +134,7 @@ export function CommentsPanel(props: CommentsPanelProps) {
           type="button"
           className="comments-toggle"
           aria-expanded={props.open.get() ? 'true' : 'false'}
-          onClick={() => props.open.set(!props.open.get())}
+          onClick={() => props.onToggle()}
         >
           Comments{' '}
           <span className="comments-count">{counts().open > 0 ? String(counts().open) : ''}</span>

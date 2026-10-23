@@ -483,9 +483,66 @@ export function followOpenThreads(meta: Y.Doc, onCount: (open: number) => void):
     last = open
     onCount(open)
   }
-  comments.observeDeep(count)
+  // Only threads coming or going, or a thread's own fields, change the count:
+  // not a reply, nor an edit of one.
+  const changed = (events: Y.YEvent<Y.AbstractType<unknown>>[]) => {
+    if (events.some((e) => e.target === comments || e.target.parent === comments)) count()
+  }
+  comments.observeDeep(changed)
   count()
-  return () => comments.unobserveDeep(count)
+  return () => comments.unobserveDeep(changed)
+}
+
+/**
+ * The open threads of each file of the room, by file id, kept live from the
+ * comments docs of the files the room lists, opened or not.
+ */
+export class OpenCounts {
+  readonly counts = new Store<ReadonlyMap<number, number>>(new Map())
+  readonly #docOf: (metaId: number) => Y.Doc
+  /** What each comments doc followed counts, by its id. */
+  readonly #followed = new Map<number, { file: number; stop: () => void }>()
+
+  /** `docOf` gives the comments doc of an id, joining it the first time. */
+  constructor(docOf: (metaId: number) => Y.Doc) {
+    this.#docOf = docOf
+  }
+
+  /** Counts the files listed now, each by the id of its comments doc, and no others. */
+  follow(metaOf: ReadonlyMap<number, number>): void {
+    const fileOf = new Map([...metaOf].map(([file, meta]) => [meta, file]))
+    for (const [meta, f] of this.#followed) {
+      if (fileOf.get(meta) === f.file) continue
+      f.stop()
+      this.#followed.delete(meta)
+      this.#set(f.file, 0)
+    }
+    for (const [meta, file] of fileOf) {
+      if (this.#followed.has(meta)) continue
+      const stop = followOpenThreads(this.#docOf(meta), (open) => this.#set(file, open))
+      this.#followed.set(meta, { file, stop })
+    }
+  }
+
+  #set(file: number, open: number): void {
+    const now = this.counts.get()
+    if ((now.get(file) ?? 0) === open) return
+    const next = new Map(now)
+    if (open > 0) next.set(file, open)
+    else next.delete(file)
+    this.counts.set(next)
+  }
+}
+
+/**
+ * Whether a key press is the shortcut to comment: Ctrl (⌘ on a Mac) with Alt
+ * and M, as document editors have it. AltGr, which some keyboards send as
+ * Ctrl with Alt, types a character instead.
+ */
+export function isCommentKey(e: KeyboardEvent, mac: boolean): boolean {
+  const m = e.code === 'KeyM' || e.key.toLowerCase() === 'm'
+  const mod = mac ? e.metaKey : e.ctrlKey
+  return m && mod && e.altKey && !e.getModifierState('AltGraph')
 }
 
 function isMessage(v: unknown): v is Message {
