@@ -35,6 +35,7 @@ function mount(text = 'hello world!\n', delimiter: string | null = null) {
   // As main.ts does: the list follows the thread in focus.
   followFocus(view.threads, focus, list)
   const menu = new ContextMenu(false)
+  const open = new Store(true)
   const shown: ShownThread[] = []
   const container = document.createElement('div')
   document.body.append(container)
@@ -47,10 +48,25 @@ function mount(text = 'hello world!\n', delimiter: string | null = null) {
     colors,
     list,
     menu,
+    open,
   })
   const $ = <T extends Element>(sel: string) => container.querySelector(sel) as T
   const $$ = (sel: string) => [...container.querySelectorAll(sel)] as HTMLElement[]
-  return { meta, view, comments, selection, locked, focus, colors, menu, shown, container, $, $$ }
+  return {
+    meta,
+    view,
+    comments,
+    selection,
+    locked,
+    focus,
+    colors,
+    menu,
+    open,
+    shown,
+    container,
+    $,
+    $$,
+  }
 }
 
 /** The items of the comment menu open now, by label. */
@@ -286,6 +302,18 @@ describe('CommentsPanel', () => {
     locked.set(true)
     expect($<HTMLElement>('.comment-resolve').hidden).toBe(true)
     expect($$('.comment-reply').every((r) => r.hidden)).toBe(true)
+  })
+
+  it('opens and closes from its title, as the header button does', () => {
+    const { $, open } = mount()
+    const panel = $<HTMLElement>('.comments')
+    expect(panel.dataset.open).toBe('true')
+    click($('.comments-toggle'))
+    expect(open.get()).toBe(false)
+    expect(panel.dataset.open).toBeUndefined()
+    expect($('.comments-toggle').getAttribute('aria-expanded')).toBe('false')
+    open.set(true)
+    expect(panel.dataset.open).toBe('true')
   })
 
   it('says nothing of where the comments are kept', () => {

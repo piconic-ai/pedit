@@ -33,6 +33,8 @@ export interface CommentsPanelProps {
   colors: Readable<ReadonlyMap<string, string>>
   /** The menu of one's own comments: edit or delete. */
   menu: ContextMenu
+  /** Whether the panel is open; the header's button and the title toggle it. */
+  open: Store<boolean>
 }
 
 const STATE_LABEL = { attached: '', changed: 'Changed', detached: 'Text gone' } as const
@@ -72,8 +74,6 @@ export function CommentsPanel(props: CommentsPanelProps) {
     const one = t.from.row === t.to.row && t.from.col === t.to.col
     return one ? 'Comment on the cell' : 'Comment on the cells'
   }
-  // On a narrow screen the panel covers the text: it opens on demand.
-  const [unfolded, setUnfolded] = createSignal(false)
   // The new comment's box grows once the reader starts on it.
   const [composing, setComposing] = createSignal(false)
   const [action, setAction] = createSignal<Action | null>(null)
@@ -124,15 +124,15 @@ export function CommentsPanel(props: CommentsPanelProps) {
       className="comments"
       aria-label="Comments"
       hidden={view() === null}
-      data-open={unfolded() ? 'true' : undefined}
+      data-open={props.open.get() ? 'true' : undefined}
     >
       <span className="menu-host" ref={(el) => el.replaceChildren(props.menu.element)} />
       <h2 className="comments-title">
         <button
           type="button"
           className="comments-toggle"
-          aria-expanded={unfolded() ? 'true' : 'false'}
-          onClick={() => setUnfolded(!unfolded())}
+          aria-expanded={props.open.get() ? 'true' : 'false'}
+          onClick={() => props.open.set(!props.open.get())}
         >
           Comments{' '}
           <span className="comments-count">{counts().open > 0 ? String(counts().open) : ''}</span>

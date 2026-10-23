@@ -35,27 +35,80 @@ function mount() {
   const status = new Counted<RoomStatus>('connecting')
   const people = new Counted<readonly Participant[]>([])
   const narrow = new Counted(false)
+  const openComments = new Counted(0)
+  const commentable = new Counted(false)
+  const commentsOpen = new Counted(true)
   const modes: string[] = []
   const view = new ViewSwitch({ narrow: false, onApply: (m) => modes.push(m), store: null })
   const { model: settings } = fakeSettings()
   const container = document.createElement('div')
   document.body.append(container)
   mounted.push(container)
-  render(container, 'Header', { file, status, people, narrow, view, settings })
+  render(container, 'Header', {
+    file,
+    status,
+    people,
+    narrow,
+    view,
+    settings,
+    openComments,
+    commentable,
+    commentsOpen,
+  })
   const q = <T extends Element = HTMLElement>(sel: string) => container.querySelector<T>(sel)
   const list = () => q('.people') as HTMLElement
   const names = () => [...list().querySelectorAll('li')].map((li) => li.title)
   const button = (mode: string) =>
     q<HTMLButtonElement>(`[data-mode="${mode}"]`) as HTMLButtonElement
-  return { file, status, people, narrow, view, modes, q, list, names, button }
+  return {
+    file,
+    status,
+    people,
+    narrow,
+    view,
+    modes,
+    q,
+    list,
+    names,
+    button,
+    openComments,
+    commentable,
+    commentsOpen,
+  }
 }
 
 describe('Header', () => {
   it('reads the stores without subscribing to them, so nothing can leak', () => {
-    const { file, status, people, narrow, q } = mount()
-    expect([file, status, people, narrow].map((s) => s.active)).toEqual([0, 0, 0, 0])
+    const { file, status, people, narrow, openComments, commentable, commentsOpen, q } = mount()
+    const stores = [file, status, people, narrow, openComments, commentable, commentsOpen]
+    expect(stores.map((s) => s.active)).toEqual([0, 0, 0, 0, 0, 0, 0])
     file.set('notes.md')
     expect(q('.file')?.textContent).toBe('notes.md')
+  })
+
+  it('counts the open comments beside the file name', () => {
+    const { file, openComments, q } = mount()
+    file.set('notes.md')
+    const count = q('.file .comment-count') as HTMLElement
+    expect(count.hidden).toBe(true)
+    openComments.set(3)
+    expect(count.hidden).toBe(false)
+    expect(count.textContent).toBe('3')
+    expect(count.title).toBe('3 open comments')
+  })
+
+  it('opens and closes the comments panel, for a file with comments', () => {
+    const { commentable, commentsOpen, q } = mount()
+    const toggle = q<HTMLButtonElement>('.comments-button') as HTMLButtonElement
+    expect(toggle.hidden).toBe(true)
+    commentable.set(true)
+    expect(toggle.hidden).toBe(false)
+    expect(toggle.getAttribute('aria-pressed')).toBe('true')
+    toggle.click()
+    expect(commentsOpen.get()).toBe(false)
+    expect(toggle.getAttribute('aria-pressed')).toBe('false')
+    toggle.click()
+    expect(commentsOpen.get()).toBe(true)
   })
 
   it('shows pedit as a link to the landing page', () => {

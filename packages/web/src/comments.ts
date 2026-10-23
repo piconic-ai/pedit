@@ -2,6 +2,7 @@ import { META_LIMITS, metaUse, randomBase64Url } from '@pedit/protocol'
 import * as Y from 'yjs'
 import { nodeText, read as readCanvas } from './canvas.ts'
 import type { Cell, Table } from './csv.ts'
+import { defaultStore, type Store as Prefs } from './storage.ts'
 import { type Readable, Store } from './store.ts'
 import type { Position } from './table.ts'
 
@@ -377,11 +378,7 @@ export class CommentsView {
       },
     }
     const shown: ShownThread[] = []
-    let count = 0
-    for (const id of [...this.#comments.keys()].sort()) {
-      const thread = this.#comments.get(id)
-      if (!ID.test(id) || !(thread instanceof Y.Map)) continue
-      if (++count > COMMENT_LIMITS.threads) break
+    for (const [id, thread] of threadsOf(this.#comments)) {
       const s = this.#show(id, thread, here)
       if (s) shown.push(s)
     }
@@ -396,10 +393,8 @@ export class CommentsView {
 
   #show(id: string, thread: Y.Map<unknown>, here: Here): ShownThread | null {
     const quote = thread.get('quote')
-    if (typeof quote !== 'string' || quote.length > COMMENT_LIMITS.quote) return null
-    // The host saves no thread without an anchor of a kind it knows.
+    if (!isThread(thread) || typeof quote !== 'string') return null
     const anchor = thread.get('anchor')
-    if (!ANCHORS.has(kindOf(anchor))) return null
     const place = placeOf(anchor, here)
     const { live, gone } = liveOf(place, here)
     const state: ThreadState = gone ? 'detached' : live === quote ? 'attached' : 'changed'
@@ -442,6 +437,55 @@ interface Message {
   author: string
   time: string
   body: string
+}
+
+/** The threads of a metadata doc, by id, as far as the limit on them goes. */
+function* threadsOf(comments: Y.Map<unknown>): Generator<[string, Y.Map<unknown>]> {
+  let count = 0
+  for (const id of [...comments.keys()].sort()) {
+    const thread = comments.get(id)
+    if (!ID.test(id) || !(thread instanceof Y.Map)) continue
+    if (++count > COMMENT_LIMITS.threads) return
+    yield [id, thread]
+  }
+}
+
+/** Whether a thread is one to show: a quote within the limit, and an anchor of a kind the host saves. */
+function isThread(thread: Y.Map<unknown>): boolean {
+  const quote = thread.get('quote')
+  return (
+    typeof quote === 'string' &&
+    quote.length <= COMMENT_LIMITS.quote &&
+    ANCHORS.has(kindOf(thread.get('anchor')))
+  )
+}
+
+/** How many threads of a metadata doc are open, as the panel would list them. */
+export function openThreads(meta: Y.Doc): number {
+  let open = 0
+  for (const [, thread] of threadsOf(meta.getMap('comments'))) {
+    if (isThread(thread) && thread.get('resolved') !== true) open++
+  }
+  return open
+}
+
+/**
+ * Calls `onCount` with the number of open threads of a metadata doc now,
+ * and again each time it changes. Needs only the comments, not the file, so
+ * it can follow files nobody has opened. Returns a function that stops.
+ */
+export function followOpenThreads(meta: Y.Doc, onCount: (open: number) => void): () => void {
+  const comments = meta.getMap('comments')
+  let last = -1
+  const count = () => {
+    const open = openThreads(meta)
+    if (open === last) return
+    last = open
+    onCount(open)
+  }
+  comments.observeDeep(count)
+  count()
+  return () => comments.unobserveDeep(count)
 }
 
 function isMessage(v: unknown): v is Message {
@@ -693,6 +737,26 @@ function order(a: ShownThread, b: ShownThread): number {
   const ta = a.messages[0]?.time ?? ''
   const tb = b.messages[0]?.time ?? ''
   return ta < tb ? -1 : ta > tb ? 1 : a.id < b.id ? -1 : 1
+}
+
+export const COMMENTS_OPEN_KEY = 'pedit:comments'
+
+/** Whether this browser left the comments panel open, or null if it never chose. */
+export function loadCommentsOpen(store: Prefs | null = defaultStore()): boolean | null {
+  try {
+    const v = store?.getItem(COMMENTS_OPEN_KEY)
+    return v === 'open' ? true : v === 'closed' ? false : null
+  } catch {
+    return null
+  }
+}
+
+export function saveCommentsOpen(open: boolean, store: Prefs | null = defaultStore()): void {
+  try {
+    store?.setItem(COMMENTS_OPEN_KEY, open ? 'open' : 'closed')
+  } catch {
+    // Private mode or storage disabled: the choice lasts for this page only.
+  }
 }
 
 /** Which threads the comments panel lists: the open ones or the resolved ones. */

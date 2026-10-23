@@ -9,6 +9,21 @@ export interface FileTabsProps {
   /** The id of the file on screen. */
   current: Readable<number>
   onOpen: (id: number) => void
+  /** How many open comment threads each file has, by id; a file without any is left out. */
+  counts: Readable<ReadonlyMap<number, number>>
+}
+
+/** The open comments of a file, beside its name; nothing when it has none. */
+export function CommentCount(props: { count: number }) {
+  return (
+    <span
+      className="comment-count"
+      hidden={props.count === 0}
+      title={props.count === 1 ? '1 open comment' : `${props.count} open comments`}
+    >
+      {props.count > 0 ? String(props.count) : ''}
+    </span>
+  )
 }
 
 /**
@@ -30,6 +45,7 @@ export function FileTabs(props: FileTabsProps) {
           onClick={() => props.onOpen(f.id)}
         >
           {f.path}
+          <CommentCount count={props.counts.get().get(f.id) ?? 0} />
         </button>
       ))}
     </nav>

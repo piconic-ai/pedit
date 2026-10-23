@@ -212,7 +212,10 @@ else: a guest, or a teammate through Git. Every peer checks it the same way.
   board's node; marks in the text (`commentmarks.ts`), the table and the
   board. The panel shows threads as cards, the open ones or the resolved
   ones; one's own comments are edited or deleted from a menu, deleting only
-  once confirmed. Tests: `packages/web/test/comments.test.ts` and
+  once confirmed. Each file's tab counts its open threads: the editor joins
+the comments doc of every file the host lists, not the file itself, as soon
+as the list comes, and counts them as the panel lists them (`openThreads`).
+Tests: `packages/web/test/comments.test.ts` and
   `comments-panel.test.ts`, for the threads and the panel.
 - **Never in the file, only ciphertext on the relay:** the comments are a
   doc of their own, a `meta` file of the room (`internal/protocol/files.go`,

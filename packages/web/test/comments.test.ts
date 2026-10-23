@@ -7,7 +7,11 @@ import {
   CommentsView,
   clean,
   cutQuote,
+  followOpenThreads,
+  loadCommentsOpen,
+  openThreads,
   type ShownThread,
+  saveCommentsOpen,
   TextIndex,
 } from '../src/comments.ts'
 import {
@@ -534,5 +538,82 @@ describe('cutQuote', () => {
     const pair = `${'a'.repeat(max - 1)}😀`
     expect(cutQuote(pair)).toBe('a'.repeat(max - 1))
     expect(cutQuote('short')).toBe('short')
+  })
+})
+
+describe('openThreads', () => {
+  /** Puts a thread in a metadata doc, as a peer could. */
+  function put(meta: Y.Doc, id: string, fields: Record<string, unknown>) {
+    meta.transact(() => {
+      const t = new Y.Map<unknown>()
+      meta.getMap('comments').set(id, t)
+      for (const [k, v] of Object.entries(fields)) t.set(k, v)
+    })
+  }
+  const anchor = { type: 'node', id: 'n1' }
+
+  it('counts the open threads the panel would list, and nothing else', () => {
+    const meta = new Y.Doc()
+    put(meta, 'open1', { quote: 'a', anchor })
+    put(meta, 'open2', { quote: 'b', anchor, resolved: false })
+    put(meta, 'done', { quote: 'c', anchor, resolved: true })
+    put(meta, 'noquote', { anchor })
+    put(meta, 'oddanchor', { quote: 'd', anchor: { type: 'map' } })
+    put(meta, 'bad id!', { quote: 'e', anchor })
+    meta.getMap('comments').set('notamap', 'x')
+    expect(openThreads(meta)).toBe(2)
+  })
+
+  it('agrees with the panel', () => {
+    const meta = new Y.Doc()
+    const content = new Y.Doc()
+    content.getText('content').insert(0, 'hello world')
+    const view = new CommentsView(meta, content, { name: () => 'Ada', delayMs: 0 })
+    view.start(0, 5, 'one')
+    const two = view.start(6, 11, 'two') as string
+    view.resolve(two, true)
+    put(meta, 'odd', { quote: 'x', anchor: { type: 'map' } })
+    view.refresh()
+    expect(openThreads(meta)).toBe(view.threads.get().filter((t) => !t.resolved).length)
+  })
+
+  it('follows the count as threads come, resolve and go', () => {
+    const meta = new Y.Doc()
+    const seen: number[] = []
+    const stop = followOpenThreads(meta, (n) => seen.push(n))
+    put(meta, 'a', { quote: 'a', anchor })
+    put(meta, 'b', { quote: 'b', anchor })
+    ;(meta.getMap('comments').get('a') as Y.Map<unknown>).set('resolved', true)
+    // A change that leaves the count as it was says nothing.
+    ;(meta.getMap('comments').get('b') as Y.Map<unknown>).set('quote', 'bb')
+    meta.getMap('comments').delete('b')
+    stop()
+    put(meta, 'c', { quote: 'c', anchor })
+    expect(seen).toEqual([0, 1, 2, 1, 0])
+  })
+})
+
+describe('loadCommentsOpen', () => {
+  it('remembers whether the panel was left open', () => {
+    const data = new Map<string, string>()
+    const store = {
+      getItem: (k: string) => data.get(k) ?? null,
+      setItem: (k: string, v: string) => void data.set(k, v),
+    }
+    expect(loadCommentsOpen(store)).toBeNull()
+    saveCommentsOpen(false, store)
+    expect(loadCommentsOpen(store)).toBe(false)
+    saveCommentsOpen(true, store)
+    expect(loadCommentsOpen(store)).toBe(true)
+    const broken = {
+      getItem: () => {
+        throw new Error('denied')
+      },
+      setItem: () => {
+        throw new Error('denied')
+      },
+    }
+    expect(loadCommentsOpen(broken)).toBeNull()
+    saveCommentsOpen(true, broken)
   })
 })

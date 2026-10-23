@@ -2074,6 +2074,12 @@ main.editor .cm-vim-panel {
 .cm-comment-focus {
   background: color-mix(in srgb, var(--comment-mark) 45%, transparent);
 }
+/* Closed, the panel leaves the text the whole width; the header's button opens it. */
+@media (min-width: 721px) {
+  .comments:not([data-open]) {
+    display: none;
+  }
+}
 @media (max-width: 720px) {
   .comments {
     position: fixed;
@@ -2095,4 +2101,23 @@ main.editor .cm-vim-panel {
   .comments-toggle {
     cursor: pointer;
   }
+}
+/* How many open comments a file has, beside its name in the tabs or the header. */
+.comment-count {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--comment-mark);
+  color: #000;
+  font: 600 11px / 16px var(--sans);
+  vertical-align: 1px;
+}
+.comment-count[hidden] {
+  display: none;
+}
+.comments-button[aria-pressed="true"] {
+  color: var(--accent);
+}
+.comments-button[hidden] {
+  display: none;
 }
