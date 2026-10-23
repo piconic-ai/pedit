@@ -1,5 +1,22 @@
 # Changelog
 
+## [v0.1.15](https://github.com/piconic-ai/pedit/compare/v0.1.14...v0.1.15) - 2026-10-23
+
+- Add the metadata file format for comments, and its pairing in the manifest by @kfly8 in https://github.com/piconic-ai/pedit/pull/194
+- Load comments into a shared doc, and read them back to save by @kfly8 in https://github.com/piconic-ai/pedit/pull/195
+- Keep the comments of shared files under .pedit/meta (#121) by @kfly8 in https://github.com/piconic-ai/pedit/pull/196
+- Check every update to the comments before applying it (#121) by @kfly8 in https://github.com/piconic-ai/pedit/pull/197
+- Comment on text in the web editor (#121, part 5) by @kfly8 in https://github.com/piconic-ai/pedit/pull/198
+- Comment on the cells of a table (#121, part 6) by @kfly8 in https://github.com/piconic-ai/pedit/pull/199
+- Comment on the nodes of a canvas (#121, part 7) by @kfly8 in https://github.com/piconic-ai/pedit/pull/200
+- Document comments, and how #121's goals are met (#121, part 8) by @kfly8 in https://github.com/piconic-ai/pedit/pull/204
+- Comments panel: cards, resolved list, guarded delete, open counts, show/hide (#121) by @kfly8 in https://github.com/piconic-ai/pedit/pull/205
+- Comments: harden after the final security review (#121) by @kfly8 in https://github.com/piconic-ai/pedit/pull/207
+- Bump the actions group with 4 updates by @dependabot[bot] in https://github.com/piconic-ai/pedit/pull/203
+- Accept 'none' as no caret halo in the themes test by @kfly8 in https://github.com/piconic-ai/pedit/pull/209
+- Bump github.com/reearth/ygo from 1.51.8 to 1.51.11 in the go-minor-and-patch group by @dependabot[bot] in https://github.com/piconic-ai/pedit/pull/201
+- Bump the npm-minor-and-patch group across 1 directory with 10 updates by @dependabot[bot] in https://github.com/piconic-ai/pedit/pull/210
+
 ## [v0.1.14](https://github.com/piconic-ai/pedit/compare/v0.1.13...v0.1.14) - 2026-10-21
 
 - Check cognitive complexity in CI with cccc by @kfly8 in https://github.com/piconic-ai/pedit/pull/185
