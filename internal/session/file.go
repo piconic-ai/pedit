@@ -26,7 +26,9 @@ type sharedFile struct {
 	path string
 	doc  *crdt.Doc
 
-	content     content
+	content content
+	// meta keeps the file's comments, or is nil when it offers none.
+	meta        *metaFile
 	attachments *attach.Attachments
 	notices     *notices
 	client      *protocol.Client
@@ -42,6 +44,11 @@ type sharedFile struct {
 	// invalidOnDisk is the invalid content last reported, so it is reported
 	// once. Guarded by syncing.
 	invalidOnDisk string
+}
+
+// entry is the file in the room's manifest.
+func (f *sharedFile) entry() protocol.FileEntry {
+	return protocol.FileEntry{ID: f.id, Path: f.path, Format: f.format()}
 }
 
 // format is the file's format in the room's manifest.
@@ -71,6 +78,17 @@ func (f *sharedFile) scheduleSyncFromDisk() {
 			f.syncFromDisk()
 		}
 	})
+}
+
+// close lets go of the file and its metadata, once the session is over.
+func (f *sharedFile) close() error {
+	if f.meta != nil {
+		f.meta.close()
+	}
+	if f.bound != nil {
+		return f.bound.Close()
+	}
+	return nil
 }
 
 // stop stops reading the file on changes; Stop then saves it once more.

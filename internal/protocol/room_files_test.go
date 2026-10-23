@@ -1,6 +1,8 @@
 package protocol_test
 
 import (
+	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -342,4 +344,111 @@ func TestFlushesAnEditQueuedBehindAPacedTransferOnLeaving(t *testing.T) {
 	if n := relay.Limited(); n != 0 {
 		t.Fatalf("%d connections went over the allowance", n)
 	}
+}
+
+func TestACheckedFileAppliesOnlyWhatItsCheckPasses(t *testing.T) {
+	relay := prototest.NewRelay(true)
+	key := protocol.GenerateKey()
+	var mu sync.Mutex
+	var errs []error
+	host := join(t, relay, key, joinOpts{header: hostHeader(), onError: func(err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		errs = append(errs, err)
+	}})
+	checked := newFileText("")
+	refuse := errors.New("refused for the test")
+	check := func(doc *crdt.Doc, update []byte) error {
+		if strings.Contains(string(update), "refuse me") {
+			return refuse
+		}
+		if strings.Contains(string(update), "panic") {
+			panic("a hostile update")
+		}
+		return nil
+	}
+	if err := host.AddCheckedFile(1, checked.doc, check); err != nil {
+		t.Fatal(err)
+	}
+	prototest.WaitFor(t, wait, func() bool { return host.Status() == protocol.StatusConnected }, "host connected")
+	guest := join(t, relay, key, joinOpts{})
+	g := newFileText("")
+	addFile(t, guest, 1, g)
+	g.insert(0, "kept ")
+	prototest.WaitFor(t, wait, func() bool { return checked.String() == "kept " }, "an update the check passes")
+	g.insert(5, "refuse me ")
+	g.insert(0, "panic ")
+	prototest.WaitFor(t, wait, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(errs) >= 2
+	}, "both dropped and reported")
+	if checked.String() != "kept " {
+		t.Fatalf("applied %q", checked.String())
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !errors.Is(errs[0], refuse) || !strings.Contains(errs[1].Error(), "panic") {
+		t.Fatalf("errors %v", errs)
+	}
+}
+
+func TestACheckedFileAsksAgainForWhatItRefusedForNow(t *testing.T) {
+	relay := prototest.NewRelay(true)
+	key := protocol.GenerateKey()
+	host := join(t, relay, key, joinOpts{header: hostHeader(), onError: func(error) {}})
+	checked := newFileText("")
+	var mu sync.Mutex
+	refused := false
+	check := func(doc *crdt.Doc, update []byte) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if strings.Contains(string(update), "later") && !refused {
+			refused = true
+			return fmt.Errorf("%w: for the test", protocol.ErrRetryLater)
+		}
+		return nil
+	}
+	if err := host.AddCheckedFile(1, checked.doc, check); err != nil {
+		t.Fatal(err)
+	}
+	prototest.WaitFor(t, wait, func() bool { return host.Status() == protocol.StatusConnected }, "host connected")
+	guest := join(t, relay, key, joinOpts{})
+	g := newFileText("")
+	addFile(t, guest, 1, g)
+	prototest.WaitFor(t, wait, func() bool { return guest.Status() == protocol.StatusConnected }, "guest connected")
+	g.insert(0, "later")
+	// Refused once, then asked for again, and applied with the answer.
+	prototest.WaitFor(t, wait, func() bool { return checked.String() == "later" }, "the refused update, asked for again")
+}
+
+func TestACheckedFileAsksAgainForWhatItRefusedWhileItWaited(t *testing.T) {
+	// From review: the answer to the Client's asking again was refused too,
+	// and nothing came after it to have the Client ask once more.
+	protocol.ShortenResyncForTest(t, 50*time.Millisecond)
+	relay := prototest.NewRelay(true)
+	key := protocol.GenerateKey()
+	host := join(t, relay, key, joinOpts{header: hostHeader(), onError: func(error) {}})
+	checked := newFileText("")
+	var mu sync.Mutex
+	refusals := 0
+	check := func(doc *crdt.Doc, update []byte) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if strings.Contains(string(update), "later") && refusals < 2 {
+			refusals++
+			return fmt.Errorf("%w: for the test", protocol.ErrRetryLater)
+		}
+		return nil
+	}
+	if err := host.AddCheckedFile(1, checked.doc, check); err != nil {
+		t.Fatal(err)
+	}
+	prototest.WaitFor(t, wait, func() bool { return host.Status() == protocol.StatusConnected }, "host connected")
+	guest := join(t, relay, key, joinOpts{})
+	g := newFileText("")
+	addFile(t, guest, 1, g)
+	prototest.WaitFor(t, wait, func() bool { return guest.Status() == protocol.StatusConnected }, "guest connected")
+	g.insert(0, "later")
+	prototest.WaitFor(t, wait, func() bool { return checked.String() == "later" }, "the update, asked for a second time")
 }

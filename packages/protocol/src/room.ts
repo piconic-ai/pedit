@@ -147,9 +147,46 @@ export interface RoomClientOptions {
 /** A file's Y.Doc that a RoomClient keeps in sync. */
 interface FileDoc {
   doc: Y.Doc
+  check?: UpdateCheck
   onUpdate: (update: Uint8Array, origin: unknown) => void
   synced: boolean
+  /** When the client may next ask the room for what a check refused, and the timer that will. */
+  resyncAt: number
+  resyncTimer: ReturnType<typeof setTimeout> | null
 }
+
+/** The ms checking and applying updates may still take, as of `counted`. */
+interface TimeShare {
+  credit: number
+  counted: number
+}
+
+/**
+ * Tells why an update received for `doc` must not be applied, or returns
+ * null. See addFile.
+ */
+export type UpdateCheck = (doc: Y.Doc, update: Uint8Array) => Refusal | null
+
+/**
+ * Why a check refused an update. With `retryLater`, it is refused for now
+ * only, such as one that needs updates not received yet: the client sends
+ * the room a sync step 1 for the file then, at most every RESYNC_EVERY_MS,
+ * so an honest peer's updates come back whole.
+ */
+export interface Refusal {
+  reason: string
+  retryLater?: boolean
+}
+
+/**
+ * Checking and applying the updates of all checked files together may take
+ * a quarter of the time, with up to a second in hand, so a peer flooding the
+ * room cannot keep the client checking; an update past that is refused for
+ * now. As internal/protocol does.
+ */
+const CHECK_SHARE = 4
+const CHECK_BURST_MS = 1000
+const RESYNC_EVERY_MS = 5000
 
 const OPEN = 1
 
@@ -180,6 +217,8 @@ export class RoomClient {
   private sent = 0
   private readonly guard = new ReplayGuard(this.sender)
   private readonly files = new Map<number, FileDoc>()
+  /** The time checked files' updates may take, as CHECK_SHARE says. */
+  private readonly checks: TimeShare = { credit: CHECK_BURST_MS, counted: performance.now() }
   // Paces the frames sent on the current socket; see Pacer.
   private pacer = new Pacer()
   // Ends the pacing wait of the frame next in line, when its socket closes.
@@ -282,7 +321,10 @@ export class RoomClient {
     this.doc.off('update', this.handleDocUpdate)
     this.awareness.off('update', this.handleAwarenessUpdate)
     this.awareness.off('change', this.handleAwarenessChange)
-    for (const f of this.files.values()) f.doc.off('update', f.onUpdate)
+    for (const f of this.files.values()) {
+      f.doc.off('update', f.onUpdate)
+      if (f.resyncTimer) clearTimeout(f.resyncTimer)
+    }
     const socket = this.socket
     this.socket = null
     socket?.close()
@@ -317,9 +359,11 @@ export class RoomClient {
    * (file 0 is the client's own `doc`): sends its
    * state now if connected, and on every connection after. Messages about a
    * file that was not added are dropped, so a peer follows only the files it
-   * added.
+   * added. With `check`, an update anyone sends for the file is applied only
+   * if it passes: one that does not is dropped and reported to onError (see
+   * Refusal for one refused for now).
    */
-  addFile(id: number, doc: Y.Doc): void {
+  addFile(id: number, doc: Y.Doc, check?: UpdateCheck): void {
     if (!Number.isInteger(id) || id < 1 || id > MAX_FILE_ID)
       throw new Error(`invalid file id ${id}`)
     if (this.destroyed) throw new Error('client destroyed')
@@ -329,9 +373,22 @@ export class RoomClient {
       this.sendFileSync(id, (encoder) => syncProtocol.writeUpdate(encoder, update))
     }
     doc.on('update', onUpdate)
-    this.files.set(id, { doc, onUpdate, synced: false })
+    this.files.set(id, { doc, check, onUpdate, synced: false, resyncAt: 0, resyncTimer: null })
     const open = this.status === 'connected' || this.status === 'waiting'
     if (this.socket?.readyState === OPEN && open) this.syncFile(id, doc)
+  }
+
+  /**
+   * Stops following a file added with addFile: its doc keeps what it has,
+   * nothing more is sent or applied for it, and its id can be added again,
+   * for another doc. Does nothing for a file not added.
+   */
+  removeFile(id: number): void {
+    const f = this.files.get(id)
+    if (!f) return
+    f.doc.off('update', f.onUpdate)
+    if (f.resyncTimer) clearTimeout(f.resyncTimer)
+    this.files.delete(id)
   }
 
   /** Tells the room which files it shares, now and to everyone who connects later. */
@@ -417,12 +474,36 @@ export class RoomClient {
   private receiveFileSync(id: number, payload: Uint8Array): void {
     const f = this.files.get(id)
     if (!f) return
-    const { kind, reply } = readSync(payload, f.doc, this)
+    const read = f.check
+      ? checkedSync(payload, f.doc, f.check, this.checks, this)
+      : readSync(payload, f.doc, this)
+    if ('reason' in read) {
+      this.opts.onError?.(new Error(`file ${id}: dropped an update: ${read.reason}`))
+      if (read.retryLater) this.askAgain(id, f)
+      return
+    }
+    const { kind, reply } = read
     if (reply) this.sendFile(id, MessageType.Sync, reply)
     if (kind === syncProtocol.messageYjsSyncStep2 && !f.synced) {
       f.synced = true
       this.opts.onFileSynced?.(id)
     }
+  }
+
+  /**
+   * Asks the room for what a check refused for now: at once, or once
+   * RESYNC_EVERY_MS has passed since it last asked, so that an update refused
+   * while it waited is not left out. As internal/protocol does.
+   */
+  private askAgain(id: number, f: FileDoc): void {
+    const ask = () => {
+      f.resyncTimer = null
+      f.resyncAt = performance.now() + RESYNC_EVERY_MS
+      this.sendFileSync(id, (encoder) => syncProtocol.writeSyncStep1(encoder, f.doc))
+    }
+    const wait = f.resyncAt - performance.now()
+    if (wait <= 0) ask()
+    else f.resyncTimer ??= setTimeout(ask, wait)
   }
 
   /** Sends a file's state to the room, as onopen does for `doc`. */
@@ -586,6 +667,49 @@ function decodeKnown<T>(
   } catch (error) {
     if (unknown.some((type) => error instanceof type)) return null
     throw error
+  }
+}
+
+/**
+ * Applies a sync message to a checked file's `doc`, as readSync does, if
+ * `check` passes the update it carries; or tells why not. Checking and
+ * applying count against `share`, the time of all checked files: past it,
+ * an update is refused for now.
+ */
+function checkedSync(
+  payload: Uint8Array,
+  doc: Y.Doc,
+  check: UpdateCheck,
+  share: TimeShare,
+  origin: unknown,
+): Refusal | { kind: number; reply: Uint8Array | null } {
+  let update: Uint8Array
+  try {
+    const decoder = decoding.createDecoder(payload)
+    const kind = decoding.readVarUint(decoder)
+    if (kind !== syncProtocol.messageYjsSyncStep2 && kind !== syncProtocol.messageYjsUpdate) {
+      return readSync(payload, doc, origin)
+    }
+    update = decoding.readVarUint8Array(decoder)
+  } catch {
+    return { reason: 'not a sync message' }
+  }
+  const now = performance.now()
+  share.credit = Math.min(CHECK_BURST_MS, share.credit + (now - share.counted) / CHECK_SHARE)
+  share.counted = now
+  if (share.credit <= 0) return { reason: 'checking updates took too long', retryLater: true }
+  try {
+    let refused: Refusal | null
+    try {
+      refused = check(doc, update)
+    } catch {
+      refused = { reason: 'the check failed' }
+    }
+    return refused ?? readSync(payload, doc, origin)
+  } finally {
+    const end = performance.now()
+    share.credit -= end - now
+    share.counted = end
   }
 }
 

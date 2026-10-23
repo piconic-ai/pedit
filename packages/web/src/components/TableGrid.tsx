@@ -15,6 +15,8 @@ export function TableGrid(props: { view: TableView }) {
   const editing = () => v.editing.get()
   const mirror = () => v.mirror.get()
   const peers = () => v.peers.get()
+  const commented = (row: number, col: number) =>
+    v.commented.get().has(`${row}:${col}`) ? 'true' : undefined
 
   const columns = createMemo(() => {
     const t = table()
@@ -113,6 +115,7 @@ export function TableGrid(props: { view: TableView }) {
                     aria-selected={isCursor(row, col) ? 'true' : undefined}
                     data-mark={cellMark(row, col)}
                     data-peers={peerAt(row, col)?.names}
+                    data-comment={commented(row, col)}
                     style={peerAt(row, col) ? `--peer: ${peerAt(row, col)?.color}` : undefined}
                   >
                     {isEditing(row, col) ? (

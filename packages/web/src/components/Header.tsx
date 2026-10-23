@@ -1,12 +1,13 @@
 'use client'
 
 import { createEffect, createMemo, createSignal } from '@barefootjs/client'
-import type { RoomStatus } from '@pedit/protocol'
+import type { FileEntry, RoomStatus } from '@pedit/protocol'
 import { initials } from '../identity.ts'
 import type { Participant } from '../room.ts'
 import type { SettingsModel } from '../settings.ts'
 import type { Readable } from '../store.ts'
 import type { ViewSwitch } from '../view.ts'
+import { CommentCount } from './FileTabs.tsx'
 import { Settings } from './Settings.tsx'
 
 /** How many faces the collapsed row of participants shows before "+N". */
@@ -36,7 +37,20 @@ export interface HeaderProps {
   narrow: Readable<boolean>
   view: ViewSwitch
   settings: SettingsModel
+  /** How many open comment threads each file has, by id. */
+  commentCounts: Readable<ReadonlyMap<number, number>>
+  /** The room's files, and the one on screen: the header counts its comments while no tabs show. */
+  files: Readable<readonly FileEntry[]>
+  current: Readable<number>
+  /** Whether the file on screen has comments, so the panel can be shown. */
+  commentable: Readable<boolean>
+  /** Whether the comments panel is open. */
+  commentsOpen: Readable<boolean>
+  onToggleComments: () => void
 }
+
+/** A speech bubble, on a 24 by 24 grid. */
+const BUBBLE = 'M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-7l-4 3.5V16H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z'
 
 function label(p: Participant): string {
   return `${p.name}${p.isHost ? ' (host)' : ''}${p.isSelf ? ' (you)' : ''}`
@@ -71,7 +85,16 @@ export function Header(props: HeaderProps) {
       <a className="brand" href="/">
         pedit
       </a>
-      <span className="file">{file() ?? ''}</span>
+      <span className="file">
+        {file() ?? ''}
+        <CommentCount
+          count={
+            props.files.get().length < 2
+              ? (props.commentCounts.get().get(props.current.get()) ?? 0)
+              : 0
+          }
+        />
+      </span>
       <span className="status" data-status={status()}>
         <span className="dot" />
         <span>{STATUS_LABELS[status()]}</span>
@@ -122,6 +145,28 @@ export function Header(props: HeaderProps) {
           </button>
         ))}
       </div>
+      <button
+        type="button"
+        className="icon comments-button"
+        title="Comments"
+        aria-label="Comments"
+        aria-pressed={props.commentsOpen.get() ? 'true' : 'false'}
+        hidden={!props.commentable.get()}
+        onClick={() => props.onToggleComments()}
+      >
+        <svg
+          viewBox="0 0 24 24"
+          width="18"
+          height="18"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d={BUBBLE} />
+        </svg>
+      </button>
       <Settings model={props.settings} />
     </header>
   )

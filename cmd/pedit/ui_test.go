@@ -315,6 +315,8 @@ func TestUINotices(t *testing.T) {
 	})
 	u.notice("notes.md", true, session.Notice{Kind: session.ImageNotSaved, Reason: "it links out of the shared file's folder"})
 	u.notice("docs/notes.md", true, session.Notice{Kind: session.ImageNotSaved, Reason: "not a directory."})
+	u.notice("../x.md", true, session.Notice{Kind: session.CommentsOff, Reason: "it is outside the project"})
+	u.notice(".pedit/meta/notes.md.json", true, session.Notice{Kind: session.CommentsHeld})
 	u.stopLive()
 
 	want := `
@@ -341,6 +343,9 @@ func TestUINotices(t *testing.T) {
   Fix it before you press Ctrl+C, or the latest edits are not saved.
   Could not save an image someone pasted into assets: it links out of the shared file's folder.
   Could not save an image someone pasted into ` + filepath.Join("docs", "assets") + `: not a directory.
+  Comments are off for ../x.md: it is outside the project.
+  .pedit/meta/notes.md.json changed outside pedit, so pedit no longer saves comments to it.
+  Comments made from now on last only while you share.
 `
 	if out.String() != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", out.String(), want)

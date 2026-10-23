@@ -79,6 +79,13 @@ type setupOpts struct {
 	name     string
 	onNotice func(Notice)
 	onError  func(error)
+	// project makes the directory name is in the project, whose
+	// .pedit/meta/ keeps comments; meta, if set, is its metadata file before
+	// Start.
+	project bool
+	meta    string
+	// projectDir, if set, is the project instead.
+	projectDir string
 }
 
 func setup(t *testing.T, content string, o setupOpts) *fixture {
@@ -87,9 +94,29 @@ func setup(t *testing.T, content string, o setupOpts) *fixture {
 	if o.name == "" {
 		o.name = "notes.md"
 	}
-	f.file = filepath.Join(t.TempDir(), o.name)
+	base := t.TempDir()
+	f.file = filepath.Join(base, filepath.FromSlash(o.name))
+	if err := os.MkdirAll(filepath.Dir(f.file), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(f.file, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+	var project string
+	if o.project {
+		project = base
+	}
+	if o.projectDir != "" {
+		project = o.projectDir
+	}
+	if o.meta != "" {
+		path := filepath.Join(project, ".pedit", "meta", o.name+".json")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(o.meta), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	var mu sync.Mutex
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -112,6 +139,7 @@ func setup(t *testing.T, content string, o setupOpts) *fixture {
 	}
 	s, err := Start(context.Background(), Options{
 		File:       f.file,
+		Project:    project,
 		Server:     f.server.URL + "/",
 		WriteDelay: o.writeDelay,
 		Watch:      o.watch,

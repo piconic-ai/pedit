@@ -25,9 +25,47 @@ export type FilesMessage =
 export interface FileEntry {
   id: number
   path: string
-  /** `text`, `canvas`, or a format a newer host shares, which a peer leaves out. */
+  /** `text`, `canvas`, `meta`, or a format a newer host shares, which a peer leaves out. */
   format: string
 }
+
+/**
+ * The format of a file's metadata, such as its comments (#121): a doc the
+ * host keeps under .pedit/meta/. Its path is `metaPath` of its file's path.
+ */
+export const META_FORMAT = 'meta'
+
+const META_PREFIX = '.pedit/meta/'
+const META_SUFFIX = '.json'
+
+/**
+ * The path of the metadata of the file at `path`, in a manifest. It pairs the
+ * two: it is not where the host keeps the metadata on disk.
+ */
+export const metaPath = (path: string): string => META_PREFIX + path + META_SUFFIX
+
+/**
+ * Pairs the files of a manifest with their metadata: maps the id of a file to
+ * the id of the `meta` entry whose path is `metaPath` of the file's. A `meta`
+ * entry that names no file, or names another `meta` entry, pairs with nothing.
+ */
+export function metaFiles(files: FileEntry[]): Map<number, number> {
+  const byPath = new Map(files.map((f) => [f.path, f]))
+  const pairs = new Map<number, number>()
+  for (const m of files) {
+    const target = metaTarget(m.path)
+    if (m.format !== META_FORMAT || target === undefined) continue
+    const file = byPath.get(target)
+    if (file && file.format !== META_FORMAT) pairs.set(file.id, m.id)
+  }
+  return pairs
+}
+
+/** The path whose `metaPath` is `path`, if it is one. */
+const metaTarget = (path: string): string | undefined =>
+  path.startsWith(META_PREFIX) && path.endsWith(META_SUFFIX)
+    ? path.slice(META_PREFIX.length, -META_SUFFIX.length)
+    : undefined
 
 export type FileMessageType =
   | typeof MessageType.Sync

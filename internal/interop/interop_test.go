@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/piconic-ai/pedit/internal/meta"
 	"github.com/piconic-ai/pedit/internal/protocol"
 	"github.com/piconic-ai/pedit/internal/protocol/prototest"
 	"github.com/piconic-ai/pedit/internal/session"
@@ -516,4 +517,66 @@ func TestGoHostSharesSeveralFilesWithJavaScriptGuest(t *testing.T) {
 		t.Fatalf("guest said %q\n%s", line, guest.stderr.String())
 	}
 	guest.wait()
+}
+
+func TestGoHostKeepsCommentsFromJavaScriptGuest(t *testing.T) {
+	dir := protocolDir(t)
+	server := newServer(t)
+	project := t.TempDir()
+	file := filepath.Join(project, "notes.md")
+	if err := os.WriteFile(file, []byte("A new line 🌏.\nhello world!\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	metaFile := filepath.Join(project, ".pedit", "meta", "notes.md.json")
+	if err := os.MkdirAll(filepath.Dir(metaFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	saved := `{"version":1,"path":"notes.md","comments":{"c1":{"anchor":{"type":"text","exact":"world","prefix":"hello ","suffix":"!","offset":6},"quote":"world","resolved":false,"messages":{}}}}`
+	if err := os.WriteFile(metaFile, []byte(saved), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := session.Start(context.Background(), session.Options{
+		File:       file,
+		Project:    project,
+		Server:     server.URL,
+		WriteDelay: 20 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Stop() })
+	prototest.WaitFor(t, 5*time.Second, func() bool { return s.Client.Status() == protocol.StatusConnected }, "host connected")
+
+	share, _ := url.Parse(s.URL)
+	guest := startGuest(t, "testdata/comments.mjs", dir, wsURL(server), share.Fragment)
+	// Positions the host made, resolved by Yjs.
+	if line := guest.next("the loaded thread"); line != `{"quote":"world","anchored":"world"}` {
+		t.Fatalf("guest said %q\n%s", line, guest.stderr.String())
+	}
+	// Positions Yjs made, resolved by the host.
+	read := func() *meta.File {
+		data, _ := os.ReadFile(metaFile)
+		f, _ := meta.Parse(data)
+		return f
+	}
+	prototest.WaitFor(t, 10*time.Second, func() bool {
+		f := read()
+		return f != nil && f.Comments["g1"].Anchor.Text != nil
+	}, "the guest's thread on disk")
+	if err := s.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if line := guest.next("the host to leave"); line != "host left" {
+		t.Fatalf("guest said %q\n%s", line, guest.stderr.String())
+	}
+	guest.wait()
+	f := read()
+	// "🌏" is two UTF-16 code units, as Yjs counts.
+	want := meta.Selector{Exact: "hello", Prefix: "A new line 🌏.\n", Suffix: " world!\n", Offset: 15}
+	if g := f.Comments["g1"]; *g.Anchor.Text != want || g.Messages["m1"].Body != "Hi from JS" {
+		t.Fatalf("saved %+v %+v", *g.Anchor.Text, g.Messages)
+	}
+	if c := f.Comments["c1"].Anchor.Text; c.Offset != 21 {
+		t.Fatalf("re-anchored %+v", c)
+	}
 }

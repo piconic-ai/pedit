@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/reearth/ygo/encoding"
 )
@@ -33,7 +34,55 @@ const (
 const (
 	FormatText   = "text"
 	FormatCanvas = "canvas"
+	// FormatMeta is a file's metadata, such as its comments (#121): a doc the
+	// host keeps under .pedit/meta/. Its path is MetaPath of its file's path.
+	FormatMeta = "meta"
 )
+
+const (
+	metaPrefix = ".pedit/meta/"
+	metaSuffix = ".json"
+)
+
+// MetaPath is the path of the metadata of the file at path, in a manifest.
+// It pairs the two: it is not where the host keeps the metadata on disk. It is
+// 17 bytes longer than path, so it can break a limit of CheckPath that path
+// keeps: check it before listing it, since one bad path refuses the manifest.
+func MetaPath(path string) string { return metaPrefix + path + metaSuffix }
+
+// MetaFiles pairs the files of a manifest with their metadata: it maps the ID
+// of a file to the ID of the FormatMeta entry whose path is MetaPath of the
+// file's. A FormatMeta entry that names no file, or names another FormatMeta
+// entry, pairs with nothing.
+func MetaFiles(files []FileEntry) map[uint64]uint64 {
+	byPath := make(map[string]FileEntry, len(files))
+	for _, f := range files {
+		byPath[f.Path] = f
+	}
+	pairs := map[uint64]uint64{}
+	for _, m := range files {
+		if m.Format != FormatMeta {
+			continue
+		}
+		path, ok := metaTarget(m.Path)
+		if !ok {
+			continue
+		}
+		if f, listed := byPath[path]; listed && f.Format != FormatMeta {
+			pairs[f.ID] = m.ID
+		}
+	}
+	return pairs
+}
+
+// metaTarget returns the path whose MetaPath is path, if it is one.
+func metaTarget(path string) (string, bool) {
+	rest, ok := strings.CutPrefix(path, metaPrefix)
+	if !ok {
+		return "", false
+	}
+	return strings.CutSuffix(rest, metaSuffix)
+}
 
 // Limits on a manifest. The host shares fewer files than MaxFiles; this only
 // bounds what a peer accepts.

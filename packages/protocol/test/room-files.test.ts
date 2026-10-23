@@ -93,6 +93,29 @@ describe('RoomClient with several files', () => {
     expect(text(notes)).toBe('# notes\n- decided\n')
   })
 
+  it('lets a file go, and takes its id again for another doc', async () => {
+    const relay = new Relay()
+    const key = await importKey(generateKey())
+    const host = join(relay, key)
+    const notes = file('n')
+    host.addFile(1, notes)
+    const guest = join(relay, key)
+    const first = file()
+    guest.addFile(1, first)
+    await vi.waitFor(() => expect(text(first)).toBe('n'))
+    guest.removeFile(1)
+    // The doc let go neither sends nor takes anything more.
+    first.getText('content').insert(0, 'x')
+    notes.getText('content').insert(1, 'otes')
+    await new Promise((r) => setTimeout(r, 50))
+    expect(text(notes)).toBe('notes')
+    expect(text(first)).toBe('xn')
+    const second = file()
+    guest.addFile(1, second)
+    await vi.waitFor(() => expect(text(second)).toBe('notes'))
+    guest.removeFile(7)
+  })
+
   it('follows only the files it added, and reports each synced once', async () => {
     const relay = new Relay()
     const key = await importKey(generateKey())
@@ -319,5 +342,122 @@ describe('Pacer', () => {
     const many = new Pacer({ burst: 8, perSecond: 8 }, undefined, () => now)
     for (let i = 0; i < 7; i++) expect(many.take(1)).toBe(0)
     expect(many.take(1)).toBeCloseTo((1 / 7) * 1000)
+  })
+})
+
+describe('RoomClient with a checked file', () => {
+  it('applies only the updates its check passes, and reports the rest', async () => {
+    const relay = new Relay()
+    const key = await importKey(generateKey())
+    const errors: unknown[] = []
+    const host = join(relay, key, { onError: (e) => errors.push(e) })
+    const checked = new Y.Doc()
+    host.addFile(1, checked, (_, update) =>
+      Y.decodeUpdate(update).structs.length > 1 ? { reason: 'too many' } : null,
+    )
+    await vi.waitFor(() => expect(host.status).toBe('connected'))
+
+    const guest = join(relay, key)
+    const gDoc = new Y.Doc()
+    guest.addFile(1, gDoc)
+    gDoc.getMap('m').set('one', 1)
+    await vi.waitFor(() => expect(checked.getMap('m').get('one')).toBe(1))
+    gDoc.transact(() => {
+      gDoc.getMap('other').set('a', 1)
+      gDoc.getText('t').insert(0, 'b')
+    })
+    await vi.waitFor(() =>
+      expect(String(errors.at(-1))).toMatch(/file 1: dropped an update: too many/),
+    )
+    expect(checked.getMap('other').get('a')).toBeUndefined()
+  })
+
+  it('asks the room again for what its check refused for now', async () => {
+    const relay = new Relay()
+    const key = await importKey(generateKey())
+    const host = join(relay, key, { onError: () => {} })
+    const checked = new Y.Doc()
+    let refused = false
+    host.addFile(1, checked, (_, update) => {
+      if (refused || Y.decodeUpdate(update).structs.length === 0) return null
+      refused = true
+      return { reason: 'for the test', retryLater: true }
+    })
+    await vi.waitFor(() => expect(host.status).toBe('connected'))
+    const guest = join(relay, key)
+    const gDoc = new Y.Doc()
+    guest.addFile(1, gDoc)
+    await vi.waitFor(() => expect(guest.status).toBe('connected'))
+    gDoc.getMap('m').set('one', 1)
+    // Refused once, then asked for again, and applied with the answer.
+    await vi.waitFor(() => expect(checked.getMap('m').get('one')).toBe(1))
+  })
+
+  it('stops checking any file once its checks took their share of the time', async () => {
+    let now = 1_000_000
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => now)
+    try {
+      const relay = new Relay()
+      const key = await importKey(generateKey())
+      const errors: unknown[] = []
+      const host = join(relay, key, { onError: (e) => errors.push(e) })
+      const one = new Y.Doc()
+      const two = new Y.Doc()
+      let checks = 0
+      const slow = () => {
+        checks++
+        now += 2000 // longer than all in hand
+        return null
+      }
+      host.addFile(1, one, slow)
+      host.addFile(2, two, slow)
+      await vi.waitFor(() => expect(host.status).toBe('connected'))
+      const guest = join(relay, key)
+      const gOne = new Y.Doc()
+      const gTwo = new Y.Doc()
+      guest.addFile(1, gOne)
+      // Before the guest connects: in its first state, one check.
+      gOne.getMap('m').set('one', 1)
+      await vi.waitFor(() => expect(one.getMap('m').get('one')).toBe(1))
+      const before = checks
+      // The other file's updates wait as well.
+      guest.addFile(2, gTwo)
+      gTwo.getMap('m').set('two', 2)
+      await vi.waitFor(() => expect(String(errors.at(-1))).toMatch(/file 2: .*took too long/))
+      expect(checks).toBe(before)
+      expect(two.getMap('m').get('two')).toBeUndefined()
+    } finally {
+      clock.mockRestore()
+    }
+  })
+
+  it('asks the room again for what it refused while it waited', async () => {
+    // From review: the answer to asking again was refused too, and nothing
+    // came after it to have the client ask once more.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
+    try {
+      const relay = new Relay()
+      const key = await importKey(generateKey())
+      const host = join(relay, key, { onError: () => {} })
+      const checked = new Y.Doc()
+      let refusals = 0
+      host.addFile(1, checked, (_, update) => {
+        if (refusals >= 2 || Y.decodeUpdate(update).structs.length === 0) return null
+        refusals++
+        return { reason: 'for the test', retryLater: true }
+      })
+      await vi.waitFor(() => expect(host.status).toBe('connected'))
+      const guest = join(relay, key)
+      const gDoc = new Y.Doc()
+      guest.addFile(1, gDoc)
+      await vi.waitFor(() => expect(guest.status).toBe('connected'))
+      gDoc.getMap('m').set('one', 1)
+      await vi.waitFor(() => expect(refusals).toBe(2))
+      expect(checked.getMap('m').get('one')).toBeUndefined()
+      await vi.advanceTimersByTimeAsync(6000)
+      await vi.waitFor(() => expect(checked.getMap('m').get('one')).toBe(1))
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

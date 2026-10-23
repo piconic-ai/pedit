@@ -98,6 +98,32 @@ export function colorFor(seed: number): string {
   return COLORS[Math.abs(seed) % COLORS.length] ?? '#4254b5'
 }
 
+/** The same colour for a name every time, from the colours people get in the room. */
+export function colorOf(name: string): string {
+  // FNV-1a: short names that differ by a letter still spread over the colours.
+  let h = 0x811c9dc5
+  for (const c of name) h = Math.imul(h ^ (c.codePointAt(0) ?? 0), 0x01000193)
+  return colorFor(h >>> 0)
+}
+
+/**
+ * Each name in the room with its colour in the header. A name two people
+ * share with different colours is left out: it says nothing of who wrote.
+ */
+export function colorsByName(
+  people: readonly { name: string; color: string }[],
+): ReadonlyMap<string, string> {
+  const out = new Map<string, string>()
+  const shared = new Set<string>()
+  for (const p of people) {
+    const had = out.get(p.name)
+    if (had !== undefined && had !== p.color) shared.add(p.name)
+    out.set(p.name, p.color)
+  }
+  for (const name of shared) out.delete(name)
+  return out
+}
+
 /**
  * The alpha others see behind text this browser selects. Readers pick their
  * own theme, so it has to work on all of them; the theme test pins the range.

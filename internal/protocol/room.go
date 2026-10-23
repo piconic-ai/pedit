@@ -138,6 +138,8 @@ type Client struct {
 
 	// applying serializes applying remote updates with Do.
 	applying sync.Mutex
+	// checks is the time checked files' updates may take; under applying.
+	checks timeShare
 
 	// sendMu numbers frames in the order they are queued: receivers drop
 	// one numbered below one they already have.

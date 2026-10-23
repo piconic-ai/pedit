@@ -11,6 +11,8 @@
   --code-bg: light-dark(#afb8c133, #6e768166);
   --warn-bg: light-dark(#f9ecdf, #2c221a);
   --warn-ink: light-dark(#8a4308, #f5c08a);
+  /* Where a comment is: its marks in the text, corners on cells and nodes. */
+  --comment-mark: #e8a317;
   --sans: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
   --mono:
     ui-monospace, SFMono-Regular, "Cascadia Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
@@ -70,6 +72,7 @@ body {
 .table-slot,
 .canvas-host,
 .canvas-slot,
+.comments-host,
 .menu-slot,
 .menu-host {
   display: contents;
@@ -1232,6 +1235,14 @@ main.editor[data-resizing] iframe {
   color: var(--panel);
   font-weight: 600;
 }
+/* A node with an open comment: the same corner. */
+.canvas-card[data-comment] {
+  background-image: linear-gradient(225deg, var(--comment-mark) 8px, transparent 8px);
+}
+/* A cell with an open comment: a corner, as spreadsheets draw it. */
+.grid td[data-comment] {
+  background-image: linear-gradient(225deg, var(--comment-mark) 6px, transparent 6px);
+}
 .grid td[data-mark="span"] {
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
@@ -1805,4 +1816,308 @@ main.editor .cm-vim-panel {
   fill: var(--peer-color);
   font-size: 12px;
   font-weight: 600;
+}
+
+/* Comments (#121): cards in the margin beside the text, below it on a narrow screen. */
+.comments {
+  flex: 0 0 300px;
+  overflow-y: auto;
+  border-left: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--ink);
+  font: 13px / 1.45 var(--sans);
+  padding: 12px;
+}
+.comments [hidden] {
+  display: none;
+}
+:where(.comments) button {
+  font: inherit;
+  color: inherit;
+}
+.comments-title {
+  font-size: 13px;
+  margin: 0 0 8px;
+}
+.comments-toggle {
+  border: 0;
+  background: none;
+  padding: 0;
+  font-weight: inherit;
+  cursor: default;
+}
+.comments-count:not(:empty) {
+  margin-left: 4px;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--panel);
+}
+.comments-tabs {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.comments-tabs button {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  background: none;
+  padding: 2px 0 6px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.comments-tabs button[aria-selected="true"] {
+  border-bottom-color: var(--accent);
+  color: var(--ink);
+}
+.comments-full,
+.comments-empty {
+  margin: 0 0 12px;
+  color: var(--muted);
+}
+.comments textarea {
+  display: block;
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+  color: inherit;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+.comments textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.comments-threads,
+.comment-messages {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+/* A card: the new comment, and each thread. */
+.comments-new,
+.comment-thread {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.comment-thread[aria-current="true"],
+.comments-new[data-composing] {
+  border-color: transparent;
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.12),
+    0 2px 8px rgb(0 0 0 / 0.12);
+}
+.comments-new:not([data-composing]) .comment-buttons {
+  display: none;
+}
+.comment-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: 8px;
+}
+.comment-primary,
+.comment-danger,
+.comment-text-button {
+  border: 0;
+  border-radius: 16px;
+  padding: 4px 14px;
+  cursor: pointer;
+  font-weight: 500;
+}
+.comment-primary {
+  background: var(--accent);
+  color: var(--panel);
+}
+.comment-danger {
+  background: #cf222e;
+  color: #fff;
+}
+.comment-text-button {
+  background: none;
+  color: var(--accent);
+}
+.comment-text-button:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.comment-quote {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  border-left: 3px solid color-mix(in srgb, var(--comment-mark) 70%, transparent);
+  background: none;
+  padding: 0 0 0 8px;
+  margin-bottom: 8px;
+  color: var(--muted);
+  cursor: pointer;
+}
+/* The quote takes two lines at most until its card is in focus. */
+.comment-quote q {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.comment-thread[aria-current="true"] .comment-quote q {
+  -webkit-line-clamp: unset;
+}
+.comment-state:not(:empty) {
+  display: inline-block;
+  margin-bottom: 2px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--warn-bg);
+  color: var(--warn-ink);
+  font-size: 12px;
+}
+.comment-live {
+  display: block;
+}
+.comment-message + .comment-message {
+  margin-top: 10px;
+}
+.comment-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* A participant's .avatar, larger, in the colour the author has in the room. */
+.comment-avatar {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  background: var(--c);
+  color: #fff;
+  font-size: 11px;
+}
+.comment-who {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+.comment-author {
+  font-weight: 600;
+  unicode-bidi: isolate;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.comment-time {
+  color: var(--muted);
+  font-size: 12px;
+}
+.comment-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.comment-icon svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.comment-more svg {
+  stroke-width: 3;
+}
+.comment-icon:hover,
+.comment-icon:focus-visible {
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+}
+.comment-resolve:hover {
+  color: var(--accent);
+}
+/* Under the name, past the avatar. */
+.comment-body,
+.comment-editing,
+.comment-confirm {
+  margin: 6px 0 0 32px;
+}
+.comment-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.comment-confirm p {
+  margin: 8px 0 0;
+}
+.comment-reply {
+  margin-top: 10px;
+}
+/* The reply's button shows once there is something to send. */
+.comment-reply textarea:placeholder-shown + .comment-buttons {
+  display: none;
+}
+.cm-comment {
+  background: color-mix(in srgb, var(--comment-mark) 22%, transparent);
+  border-bottom: 2px solid color-mix(in srgb, var(--comment-mark) 70%, transparent);
+}
+.cm-comment-focus {
+  background: color-mix(in srgb, var(--comment-mark) 45%, transparent);
+}
+/* Closed, the panel leaves the text the whole width; the header's button opens it. */
+@media (min-width: 721px) {
+  .comments:not([data-open]) {
+    display: none;
+  }
+}
+@media (max-width: 720px) {
+  .comments {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    max-height: 40vh;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    z-index: 5;
+  }
+  /* Folded, only the title shows, to open it. */
+  .comments:not([data-open]) > :not(.comments-title) {
+    display: none;
+  }
+  .comments:not([data-open]) .comments-title {
+    margin: 0;
+  }
+  .comments-toggle {
+    cursor: pointer;
+  }
+}
+/* How many open comments a file has, beside its name in the tabs or the header. */
+.comment-count {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--comment-mark);
+  color: #000;
+  font: 600 11px / 16px var(--sans);
+  vertical-align: 1px;
+}
+.comment-count[hidden] {
+  display: none;
+}
+.comments-button[aria-pressed="true"] {
+  color: var(--accent);
+}
+.comments-button[hidden] {
+  display: none;
 }

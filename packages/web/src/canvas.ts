@@ -141,6 +141,26 @@ export function read(doc: Y.Doc): Canvas {
 }
 
 /** A new id in the form Obsidian uses: 16 hex digits. */
+/**
+ * What a node shows: a text node's text, a file's path, a link's address, a
+ * group's label, else its type. A comment on the node quotes it.
+ */
+export function nodeText(n: CanvasNode): string {
+  const text = (v: unknown) => (typeof v === 'string' ? v : '')
+  switch (n.type) {
+    case 'text':
+      return text(n.text)
+    case 'file':
+      return text(n.file) + text(n.subpath)
+    case 'link':
+      return text(n.url)
+    case 'group':
+      return text(n.label)
+    default:
+      return text(n.type)
+  }
+}
+
 export function newId(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(8))
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')

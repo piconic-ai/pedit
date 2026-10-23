@@ -92,6 +92,27 @@ same temporary directory, including files the host adds later, named after
 the host's path: `docs/spec.md` is copied to `01-docs-spec.md`. Canvases are
 for the browser.
 
+### Comments
+
+In the browser, select some text, a cell of a table (or a whole row or
+column), or a node of a canvas, and write a comment in the panel beside it.
+Everyone in the room sees it at once, marked where it points, and can reply
+or resolve it; resolved threads stay under Resolved, to read again or reopen.
+You can edit or delete your own comments from their ⋮ menu (deleting asks
+first). Each file's tab (or its name, in a room of one file) shows how
+many of its comments are still open, and the speech bubble in the header,
+or Ctrl/⌘+Alt+M, shows or hides the comments. A comment never goes into the file: the host keeps the
+comments of each file in `.pedit/meta/<path>.json`, and the next session
+shows them again, found by the text, cells or node they pointed at. A
+comment follows its place as people edit, and says so when that text changed
+or is gone. A comment goes on up to 1,000 characters of text, or of a cell.
+
+Comments are kept for files inside the project: the directory of
+`.pedit/config.yaml`, or the one you run pedit in when there is none. Commit
+`.pedit/meta/` to keep them with the files. A guest on the command line, or
+an older pedit, does not see them. See
+[the design](docs/design/comments.md) for how they are anchored and checked.
+
 ## Why pedit?
 
 Local files work naturally with coding agents and your own editor. Keeping
@@ -210,6 +231,11 @@ Edits in the opposite direction follow the same process.
 - **Private local copies.** On Unix, new CLI join copies and saved attachments
   use owner-only permissions, further restricted by your umask. Updates retain
   an existing document's permissions; existing files are not retroactively made private.
+- **Comments are encrypted too.** They travel as updates of a document of
+  their own, end to end like edits, and only the host saves them, in
+  `.pedit/meta/`; commit that only if you want them in the repository. The
+  editor lets you change or delete only your own comments, but anyone with
+  the link could change or delete any comment.
 - **The link grants editing access.** Anyone with the full link can read and
   edit during the session. Share it only with people you trust. Closing a
   session does not erase copies participants have made.

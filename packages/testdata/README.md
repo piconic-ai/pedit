@@ -14,7 +14,17 @@ only the command line writes shared files to disk. Unlike `blob-vectors.json`,
 this file is written by hand; characters that do not show are escaped.
 
 `files-vectors.json` pins how a room that shares several files encodes its
-manifest and the messages about one file. `internal/protocol/files_test.go`
+manifest and the messages about one file, and which `meta` entry of the
+manifest holds the metadata of which file (#121). `internal/protocol/files_test.go`
 writes it (`PEDIT_UPDATE_VECTORS=1 go test ./internal/protocol/`), and
 `packages/protocol/test/files.test.ts` checks the TypeScript side reads and
 writes the same bytes.
+
+`meta-limits.json` holds the limits every peer applies to an update of a
+file's comments (#121) before applying it. `internal/meta/check_test.go` and
+`packages/protocol/test/meta.test.ts` both check their constants against it.
+
+`meta-measure.json` is the state of a comments doc Yjs made (with an
+UndoManager's run of values and a deleted thread) and its measure, which
+`internal/meta`'s `DocSize` and `packages/protocol`'s `metaDocSize` must both
+work out.

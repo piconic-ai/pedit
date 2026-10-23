@@ -378,6 +378,10 @@ func (u *ui) notice(file string, host bool, n session.Notice) {
 		u.above(u.yellow("Could not save an image someone pasted into " + dir + ": " + reason + "."))
 	case session.SaveLost:
 		u.above(u.yellow("A save of "+file+" made outside pedit was lost: pedit wrote the file at the same moment."), "Save it again.")
+	case session.CommentsOff:
+		u.above(u.dim("Comments are off for " + file + ": " + reason + "."))
+	case session.CommentsHeld:
+		u.above(u.yellow(file+" changed outside pedit, so pedit no longer saves comments to it."), "Comments made from now on last only while you share.")
 	case session.SaveKept:
 		kept := filepath.Join(filepath.Dir(file), printable(n.Kept))
 		u.above(u.yellow(file+" changed while pedit saved it, and pedit could not put that change back. It is kept in "+kept+"."), "Compare it with "+file+" and copy over what you need.")

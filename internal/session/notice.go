@@ -37,6 +37,12 @@ const (
 	// SaveKept means pedit moved aside what was in the file while it wrote it,
 	// and could not put it back: a save made outside pedit may be in Kept.
 	SaveKept NoticeKind = "save-kept"
+	// CommentsOff means the file offers no comments in the room, for Reason,
+	// such as being outside the project or its metadata not being readable.
+	CommentsOff NoticeKind = "comments-off"
+	// CommentsHeld means the file that keeps the comments of a shared file
+	// (File) changed outside pedit, so pedit no longer saves comments to it.
+	CommentsHeld NoticeKind = "comments-held"
 )
 
 // Notice tells the user about a condition of the local file they can act on.
