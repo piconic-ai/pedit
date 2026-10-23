@@ -6,7 +6,8 @@ import * as Y from 'yjs'
  * each update checked: anyone in the room can send one. Anyone can send a
  * list of files too, so an id it named for comments may turn out to be a
  * file's: no more are joined than a room has files, none under the id of a
- * file, and one is let go when its id is taken for a file.
+ * file, one is let go when its id is taken for a file, and those the latest
+ * list no longer names are let go too.
  */
 export class CommentDocs {
   readonly #client: Pick<RoomClient, 'addFile' | 'removeFile'>
@@ -27,6 +28,15 @@ export class CommentDocs {
     this.#client.addFile(metaId, doc, checkMetaUpdate)
     this.#docs.set(metaId, doc)
     return doc
+  }
+
+  /** Lets go of every comments doc but those of these ids, which the latest list names. */
+  keepOnly(metaIds: ReadonlySet<number>): void {
+    for (const id of [...this.#docs.keys()]) {
+      if (metaIds.has(id)) continue
+      this.#docs.delete(id)
+      this.#client.removeFile(id)
+    }
   }
 
   /**

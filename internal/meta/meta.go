@@ -217,7 +217,7 @@ func Parse(data []byte) (*File, error) {
 	if len(data) > MaxFileBytes {
 		return nil, fmt.Errorf("larger than %d bytes", MaxFileBytes)
 	}
-	if err := checkDepth(data); err != nil {
+	if err := checkShape(data); err != nil {
 		return nil, err
 	}
 	var top map[string]json.RawMessage
@@ -258,11 +258,13 @@ func Parse(data []byte) (*File, error) {
 // and a newer pedit's are kept as they are.
 const maxDepth = 32
 
-// checkDepth refuses JSON that nests deeper than maxDepth, which would cost
-// far more to decode and write back than its size suggests.
-func checkDepth(data []byte) error {
+// checkShape refuses JSON that nests deeper than maxDepth, which would cost
+// far more to decode and write back than its size suggests, or that names a
+// key twice in one object: encoding/json takes the last, so a reviewer
+// reading the first in Git would not see what pedit shows.
+func checkShape(data []byte) error {
 	dec := json.NewDecoder(bytes.NewReader(data))
-	depth := 0
+	var s shape
 	for {
 		t, err := dec.Token()
 		if err == io.EOF {
@@ -271,14 +273,61 @@ func checkDepth(data []byte) error {
 		if err != nil {
 			return err
 		}
-		switch t {
-		case json.Delim('{'), json.Delim('['):
-			if depth++; depth > maxDepth {
-				return fmt.Errorf("nested more than %d deep", maxDepth)
-			}
-		case json.Delim('}'), json.Delim(']'):
-			depth--
+		if err := s.take(t); err != nil {
+			return err
 		}
+	}
+}
+
+// shape follows the objects and arrays a JSON value has open, innermost
+// last; for an object, the keys it has named and whether a key comes next.
+type shape []*container
+
+type container struct {
+	keys    map[string]bool // nil for an array
+	wantKey bool
+}
+
+func (s *shape) take(t json.Token) error {
+	top := s.top()
+	switch t {
+	case json.Delim('{'), json.Delim('['):
+		if len(*s) >= maxDepth {
+			return fmt.Errorf("nested more than %d deep", maxDepth)
+		}
+		c := &container{}
+		if t == json.Delim('{') {
+			c.keys, c.wantKey = map[string]bool{}, true
+		}
+		*s = append(*s, c)
+		return nil
+	case json.Delim('}'), json.Delim(']'):
+		*s = (*s)[:len(*s)-1]
+		s.valueEnded()
+		return nil
+	}
+	if k, ok := t.(string); ok && top != nil && top.wantKey {
+		if top.keys[k] {
+			return fmt.Errorf("key %q twice", k)
+		}
+		top.keys[k], top.wantKey = true, false
+		return nil
+	}
+	s.valueEnded()
+	return nil
+}
+
+func (s shape) top() *container {
+	if len(s) == 0 {
+		return nil
+	}
+	return s[len(s)-1]
+}
+
+// valueEnded notes that a value ended: in an object, a key comes next.
+func (s shape) valueEnded() {
+	if c := s.top(); c != nil && c.keys != nil {
+		c.wantKey = true
 	}
 }
 

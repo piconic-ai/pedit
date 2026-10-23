@@ -151,8 +151,9 @@ else: a guest, or a teammate through Git. Every peer checks it the same way.
   body (as JavaScript counts a string's length), 200 in a name, 1,000 in a
   quote, 1 MiB for the file, nested at most 32 deep. pedit never writes a file
   it would refuse to read.
-- Keys must match exactly: JSON decoders that match names in any case would
-  let a file show reviewers one comment and pedit another.
+- Keys must match exactly, and an object names each once: JSON decoders that
+  match names in any case, or take the last of a key named twice, would let
+  a file show reviewers one comment and pedit another.
 - Names, bodies and quotes are shown as text, never as HTML, with control and
   bidi characters removed.
 - Every peer reads each update to the doc before applying it

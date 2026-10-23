@@ -125,6 +125,11 @@ func TestParseRefusesAFileThatBreaksARule(t *testing.T) {
 	if _, err := meta.Parse([]byte(message("m1", okMessage))); err != nil {
 		t.Fatalf("a valid file: %v", err)
 	}
+	// The same key in objects of their own, and as a value, is fine.
+	twoMessages := thread(`{"anchor":{"type":"node","id":"n"},"quote":"body","resolved":false,"messages":{"m1":` + okMessage + `,"m2":` + okMessage + `}}`)
+	if _, err := meta.Parse([]byte(twoMessages)); err != nil {
+		t.Fatalf("the same keys in two messages: %v", err)
+	}
 	many := func(n int, item func(i int) string) string {
 		parts := make([]string, n)
 		for i := range parts {
@@ -171,6 +176,11 @@ func TestParseRefusesAFileThatBreaksARule(t *testing.T) {
 		"a thread key in another case":   thread(`{"anchor":{"type":"node","id":"n"},"quote":"","Quote":"x","resolved":false,"messages":{}}`),
 		"a selector key in another case": anchor(`{"type":"cells","from":{"exact":"a","prefix":"","suffix":"","offset":0,"Exact":"b"},"to":{"exact":"a","prefix":"","suffix":"","offset":0}}`),
 		"nested too deep":                `{"version":1,"path":"a.md","x":` + strings.Repeat("[", 33) + strings.Repeat("]", 33) + `}`,
+		// A reviewer would read the first; encoding/json takes the last.
+		"a body twice":          message("m1", `{"author":"a","time":"2026-10-21T00:00:00Z","body":"approve","body":"other"}`),
+		"a thread twice":        `{"version":1,"path":"a.md","comments":{"c1":{"anchor":{"type":"node","id":"n"},"quote":"","resolved":false,"messages":{}},"c1":{"anchor":{"type":"node","id":"m"},"quote":"","resolved":false,"messages":{}}}}`,
+		"a top-level key twice": `{"version":1,"path":"a.md","path":"b.md"}`,
+		"a newer key twice":     `{"version":1,"path":"a.md","x":{"k":1,"k":2}}`,
 		"too many messages": thread(`{"anchor":{"type":"node","id":"n"},"quote":"","resolved":false,"messages":{` +
 			many(meta.MaxMessages+1, func(i int) string { return `"m` + strconv.Itoa(i) + `":` + okMessage }) + `}}`),
 		"too many threads": `{"version":1,"path":"a.md","comments":{` +

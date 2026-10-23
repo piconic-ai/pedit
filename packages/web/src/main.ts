@@ -717,6 +717,9 @@ async function joinRoom(
     formats.clear()
     for (const [file, meta] of metaFiles(list)) metaOf.set(file, meta)
     for (const f of list) formats.set(f.id, f.format)
+    // Those of a list sent before, forged or not, go: they would take the
+    // places of this list's.
+    commentDocs?.keepOnly(new Set(metaOf.values()))
     // Every file with comments is counted, opened or not.
     openCounts.follow(new Map([...metaOf].filter(([file]) => getsComments(formats.get(file)))))
     // A file whose comments the list now puts in another doc, or in none,

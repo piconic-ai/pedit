@@ -74,4 +74,17 @@ describe('CommentDocs', () => {
     for (let id = 2; id <= MAX_FILES; id++) expect(docs.docFor(id)).not.toBeNull()
     expect(docs.docFor(MAX_FILES + 1)).toBeNull()
   })
+
+  it('lets go of the comments docs a later list no longer names, making room for its own', async () => {
+    const relay = new Relay()
+    const key = await importKey(generateKey())
+    const docs = new CommentDocs(join(relay, key))
+    // A forged list fills every place.
+    for (let id = 1; id <= MAX_FILES; id++) docs.docFor(id)
+    expect(docs.docFor(MAX_FILES + 1)).toBeNull()
+    // The host's list names its own: the others go, and its own join.
+    docs.keepOnly(new Set([MAX_FILES + 1]))
+    expect(docs.docFor(MAX_FILES + 1)).not.toBeNull()
+    expect(docs.docFor(1)).not.toBeNull()
+  })
 })

@@ -192,7 +192,9 @@ func openMetaFile(project *os.Root, name string, create bool) (*filewriter.Bound
 func openRealDir(dir *os.Root, name string, create bool) (*os.Root, error) {
 	info, err := dir.Lstat(name)
 	if errors.Is(err, fs.ErrNotExist) && create {
-		if err := dir.Mkdir(name, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
+		// Only the host reads its comments: others on the computer do not
+		// even learn which files have some.
+		if err := dir.Mkdir(name, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
 			return nil, err
 		}
 		info, err = dir.Lstat(name)

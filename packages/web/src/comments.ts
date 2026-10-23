@@ -123,6 +123,14 @@ export class CommentsView {
    */
   #use = { bytes: 0, listWork: 0 }
   #measure = true
+  /**
+   * When the comments may next be measured to show whether there is room,
+   * and the timer that will: measuring takes time in the size of the doc,
+   * and anyone can change the doc, so it takes no more than a quarter of the
+   * time. A change made here is always measured first (#writable).
+   */
+  #measureAt = 0
+  #measureTimer: ReturnType<typeof setTimeout> | null = null
   readonly #stopTable: () => void
   readonly #metaChanged = () => {
     this.#measure = true
@@ -150,6 +158,7 @@ export class CommentsView {
     this.#text.doc?.off('update', this.#textChanged)
     this.#stopTable()
     if (this.#timer !== null) clearTimeout(this.#timer)
+    if (this.#measureTimer !== null) clearTimeout(this.#measureTimer)
   }
 
   get #comments(): Y.Map<unknown> {
@@ -338,7 +347,10 @@ export class CommentsView {
 
   #measureNow(): void {
     this.#measure = false
+    const start = performance.now()
     this.#use = metaUse(this.#meta)
+    const end = performance.now()
+    this.#measureAt = end + 3 * (end - start)
     this.roomForMore.set(this.#use.bytes < COMMENT_LIMITS.docBytes)
   }
 
@@ -388,7 +400,21 @@ export class CommentsView {
       this.#shown = key
       this.threads.set(shown)
     }
-    if (this.#measure) this.#measureNow()
+    this.#measureSoon()
+  }
+
+  /** Measures the comments now if that keeps to its share of the time, else once it does. */
+  #measureSoon(): void {
+    if (!this.#measure || this.#measureTimer !== null) return
+    const wait = this.#measureAt - performance.now()
+    if (wait <= 0) {
+      this.#measureNow()
+      return
+    }
+    this.#measureTimer = setTimeout(() => {
+      this.#measureTimer = null
+      if (this.#measure) this.#measureNow()
+    }, wait)
   }
 
   #show(id: string, thread: Y.Map<unknown>, here: Here): ShownThread | null {

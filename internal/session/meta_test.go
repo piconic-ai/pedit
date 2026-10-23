@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -79,6 +80,9 @@ func TestACommentIsSavedUnderThePedit(t *testing.T) {
 	prototest.WaitFor(t, wait, func() bool { return g.String() == "hello world!\n" }, "the text")
 	comment(t, metaDoc, g.doc, "c1", 6, 11, "Which world?")
 	prototest.WaitFor(t, wait, func() bool { _, err := os.Stat(path); return err == nil }, "the metadata file")
+	if info, err := os.Stat(filepath.Dir(path)); err != nil || runtime.GOOS != "windows" && info.Mode().Perm() != 0o700 {
+		t.Fatalf("the directory made for it: %v, %v", info.Mode(), err)
+	}
 	file := readMetaFile(t, path)
 	th := file.Comments["c1"]
 	if file.Path != "notes.md" || th.Anchor.Text == nil || th.Anchor.Text.Exact != "world" || th.Messages["m1"].Body != "Which world?" {
