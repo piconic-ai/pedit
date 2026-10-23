@@ -1,7 +1,7 @@
 'use client'
 
 import { createEffect, createMemo, createSignal } from '@barefootjs/client'
-import type { RoomStatus } from '@pedit/protocol'
+import type { FileEntry, RoomStatus } from '@pedit/protocol'
 import { initials } from '../identity.ts'
 import type { Participant } from '../room.ts'
 import type { SettingsModel } from '../settings.ts'
@@ -37,8 +37,11 @@ export interface HeaderProps {
   narrow: Readable<boolean>
   view: ViewSwitch
   settings: SettingsModel
-  /** The open comments of the file named, while the room shares no other (the tabs count them then). */
-  openComments: Readable<number>
+  /** How many open comment threads each file has, by id. */
+  commentCounts: Readable<ReadonlyMap<number, number>>
+  /** The room's files, and the one on screen: the header counts its comments while no tabs show. */
+  files: Readable<readonly FileEntry[]>
+  current: Readable<number>
   /** Whether the file on screen has comments, so the panel can be shown. */
   commentable: Readable<boolean>
   /** Whether the comments panel is open. */
@@ -84,7 +87,13 @@ export function Header(props: HeaderProps) {
       </a>
       <span className="file">
         {file() ?? ''}
-        <CommentCount count={props.openComments.get()} />
+        <CommentCount
+          count={
+            props.files.get().length < 2
+              ? (props.commentCounts.get().get(props.current.get()) ?? 0)
+              : 0
+          }
+        />
       </span>
       <span className="status" data-status={status()}>
         <span className="dot" />

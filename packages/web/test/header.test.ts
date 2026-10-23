@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { render } from '@barefootjs/client/runtime'
-import type { RoomStatus } from '@pedit/protocol'
+import type { FileEntry, RoomStatus } from '@pedit/protocol'
 import { afterEach, describe, expect, it } from 'vitest'
 import '../src/components/Header.tsx'
 import type { Participant } from '../src/room.ts'
@@ -35,7 +35,9 @@ function mount() {
   const status = new Counted<RoomStatus>('connecting')
   const people = new Counted<readonly Participant[]>([])
   const narrow = new Counted(false)
-  const openComments = new Counted(0)
+  const commentCounts = new Counted<ReadonlyMap<number, number>>(new Map())
+  const files = new Counted<readonly FileEntry[]>([])
+  const current = new Counted(0)
   const commentable = new Counted(false)
   const commentsOpen = new Counted(true)
   const modes: string[] = []
@@ -51,7 +53,9 @@ function mount() {
     narrow,
     view,
     settings,
-    openComments,
+    commentCounts,
+    files,
+    current,
     commentable,
     commentsOpen,
     onToggleComments: () => commentsOpen.set(!commentsOpen.get()),
@@ -72,7 +76,9 @@ function mount() {
     list,
     names,
     button,
-    openComments,
+    commentCounts,
+    files,
+    current,
     commentable,
     commentsOpen,
   }
@@ -80,22 +86,41 @@ function mount() {
 
 describe('Header', () => {
   it('reads the stores without subscribing to them, so nothing can leak', () => {
-    const { file, status, people, narrow, openComments, commentable, commentsOpen, q } = mount()
-    const stores = [file, status, people, narrow, openComments, commentable, commentsOpen]
-    expect(stores.map((s) => s.active)).toEqual([0, 0, 0, 0, 0, 0, 0])
+    const m = mount()
+    const { file, status, people, narrow, commentCounts, files, current } = m
+    const stores = [file, status, people, narrow, commentCounts, files, current]
+    stores.push(m.commentable, m.commentsOpen)
+    expect(stores.map((s) => s.active)).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0])
+    const q = m.q
     file.set('notes.md')
     expect(q('.file')?.textContent).toBe('notes.md')
   })
 
-  it('counts the open comments beside the file name', () => {
-    const { file, openComments, q } = mount()
+  it('counts the open comments of the file on screen beside its name, live, while no tabs do', () => {
+    const { file, files, current, commentCounts, q } = mount()
     file.set('notes.md')
+    files.set([{ id: 0, path: 'notes.md', format: 'text' }])
     const count = q('.file .comment-count') as HTMLElement
     expect(count.hidden).toBe(true)
-    openComments.set(3)
+    // As the comments sync, and as threads come and are resolved.
+    commentCounts.set(new Map([[0, 3]]))
     expect(count.hidden).toBe(false)
     expect(count.textContent).toBe('3')
     expect(count.title).toBe('3 open comments')
+    commentCounts.set(new Map([[0, 2]]))
+    expect(count.textContent).toBe('2')
+    // Another file's count is not this one's.
+    commentCounts.set(new Map([[1, 4]]))
+    expect(count.hidden).toBe(true)
+    // With tabs, they count instead.
+    commentCounts.set(new Map([[0, 3]]))
+    files.set([
+      { id: 0, path: 'notes.md', format: 'text' },
+      { id: 1, path: 'plan.csv', format: 'text' },
+    ])
+    expect(count.hidden).toBe(true)
+    current.set(1)
+    expect(count.hidden).toBe(true)
   })
 
   it('opens and closes the comments panel, for a file with comments', () => {

@@ -300,8 +300,6 @@ async function joinRoom(
     return metaDoc
   }
   const openCounts = new OpenCounts(metaDocFor)
-  // What the header counts: the file on screen's, while no tabs do.
-  const headerCount = new Store(0)
   // Whether the file on screen has comments, and whether the panel shows them.
   const commentable = new Store(false)
   // A narrow screen starts with the panel folded, over the text; a wide one
@@ -551,7 +549,9 @@ async function joinRoom(
     narrow: isNarrow,
     view,
     settings,
-    openComments: headerCount,
+    commentCounts: openCounts.counts,
+    files,
+    current,
     commentable,
     commentsOpen,
     onToggleComments: toggleComments,
@@ -676,7 +676,6 @@ async function joinRoom(
     comments.set(c)
     commentable.set(c !== null)
     commentFocus.set(null)
-    countHeader()
     const show = (t: readonly ShownThread[]) => {
       threadsShown.set(t)
       const cells = commentedCells(t)
@@ -725,12 +724,6 @@ async function joinRoom(
     showView(view.mode)
   }
 
-  // Declared so showComments, which can run first, can call it.
-  function countHeader() {
-    const n = files.get().length < 2 ? (openCounts.counts.get().get(shown.id) ?? 0) : 0
-    headerCount.set(n)
-  }
-
   const takeManifest = (list: FileEntry[]) => {
     metaOf.clear()
     formats.clear()
@@ -743,7 +736,6 @@ async function joinRoom(
     // the metadata of a file, shown with it.
     const known = list.filter((f) => f.format === 'text' || f.format === 'canvas')
     files.set(known)
-    countHeader()
     const named = known.find((f) => f.id === shown.id)
     if (named) showName(named.path)
   }
