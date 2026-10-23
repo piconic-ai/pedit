@@ -298,7 +298,8 @@ func TestAConcurrentSetAtTheLimitIsRefused(t *testing.T) {
 	// From review: k=false and padding to just under the limit, then another
 	// client's k=true, with no deletions, passed and took the doc past it.
 	padded := func(n int) *crdt.Doc {
-		doc := crdt.New()
+		// One client id for both docs: the size of a random one varies by a byte or two.
+		doc := crdt.New(crdt.WithClientID(1))
 		comments := doc.GetMap(CommentsKey) // not inside Transact: ygo would deadlock
 		doc.Transact(func(txn *crdt.Transaction) {
 			comments.Set(txn, "k", false)
