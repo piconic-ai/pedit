@@ -817,6 +817,35 @@ export function saveCommentsOpen(open: boolean, store: Prefs | null = defaultSto
   }
 }
 
+/**
+ * Whether the comments panel shows: the reader opens and closes it, and a
+ * thread put in focus (by its mark in the text, a cell or a node) opens it.
+ * Closing it lets go of the thread in focus, so its mark opens it again.
+ */
+export class CommentsPanelState {
+  readonly open: Store<boolean>
+  readonly #focus: Store<string | null>
+  readonly #keep: (open: boolean) => void
+
+  /** `keep` is told each choice the reader makes, to remember it. */
+  constructor(focus: Store<string | null>, open: boolean, keep: (open: boolean) => void) {
+    this.open = new Store(open)
+    this.#focus = focus
+    this.#keep = keep
+    focus.subscribe((id) => {
+      if (id !== null) this.open.set(true)
+    })
+  }
+
+  /** Opens or closes the panel, as the reader asks. */
+  toggle(): void {
+    const open = !this.open.get()
+    this.open.set(open)
+    if (!open) this.#focus.set(null)
+    this.#keep(open)
+  }
+}
+
 /** Which threads the comments panel lists: the open ones or the resolved ones. */
 export type ThreadList = 'open' | 'resolved'
 

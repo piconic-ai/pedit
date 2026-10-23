@@ -3,12 +3,10 @@ import { markdown } from '@codemirror/lang-markdown'
 import { Compartment, EditorState, type Extension, Prec } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import {
-  checkMetaUpdate,
   deriveBlobKeys,
   type FileEntry,
   importKey,
   isFinalStatus,
-  MAX_FILES,
   metaFiles,
   RoomClient,
   type RoomStatus,
@@ -31,8 +29,10 @@ import {
 import { Attachments, hostAttachments, whyNoImages } from './attachments.ts'
 import { BoardView } from './board.ts'
 import { read as readCanvas, toJSON } from './canvas.ts'
+import { CommentDocs } from './commentdocs.ts'
 import { commentMarks } from './commentmarks.ts'
 import {
+  CommentsPanelState,
   CommentsView,
   type CommentTarget,
   followFocus,
@@ -236,8 +236,9 @@ interface OpenFile {
   table: TableView
   board: BoardView
   json: JsonPane
-  /** Its comments, once the host shares them (#121). */
+  /** Its comments, once the host shares them (#121), and the id of their doc. */
   comments: CommentsView | null
+  commentsMeta?: number
 }
 
 async function joinRoom(
@@ -283,38 +284,22 @@ async function joinRoom(
   // The list of threads on screen, open or resolved: that of the thread in focus.
   const commentList = new Store<ThreadList>('open')
   followFocus(threadsShown, commentFocus, commentList)
-  // The comments of every file, each in its doc, kept as soon as the host
+  // The comments of every file, each in its doc, joined as soon as the host
   // lists them: the tabs count the open threads of files not opened yet.
-  const metaDocs = new Map<number, Y.Doc>()
-  // The comments doc of an id, joined the first time, every update checked:
-  // anyone in the room can send one. Anyone can send a list of files too, so
-  // no more are joined than a room has files, and never a file's own id.
-  const metaDocFor = (metaId: number): Y.Doc | null => {
-    let metaDoc = metaDocs.get(metaId)
-    if (!metaDoc) {
-      if (metaDocs.size >= MAX_FILES || opened.has(metaId)) return null
-      metaDoc = new Y.Doc()
-      metaDocs.set(metaId, metaDoc)
-      client?.addFile(metaId, metaDoc, checkMetaUpdate)
-    }
-    return metaDoc
-  }
-  const openCounts = new OpenCounts(metaDocFor)
+  // Made with the client, before anything can list a file.
+  let commentDocs: CommentDocs | undefined
+  const openCounts = new OpenCounts((metaId) => commentDocs?.docFor(metaId) ?? null)
   // Whether the file on screen has comments, and whether the panel shows them.
   const commentable = new Store(false)
   // A narrow screen starts with the panel folded, over the text; a wide one
-  // as the reader left it.
-  const commentsOpen = new Store(!matchMedia(NARROW_QUERY).matches && (loadCommentsOpen() ?? true))
-  // Shows or hides the panel as the reader asks, kept for the next visit.
-  const toggleComments = () => {
-    const open = !commentsOpen.get()
-    commentsOpen.set(open)
-    if (!isNarrow.get()) saveCommentsOpen(open)
-  }
-  // A thread put in focus, by its mark in the text, shows in the panel.
-  commentFocus.subscribe((id) => {
-    if (id !== null) commentsOpen.set(true)
-  })
+  // as the reader left it, and keeps what the reader chooses.
+  const panel = new CommentsPanelState(
+    commentFocus,
+    !matchMedia(NARROW_QUERY).matches && (loadCommentsOpen() ?? true),
+    (open) => {
+      if (!isNarrow.get()) saveCommentsOpen(open)
+    },
+  )
   const selection = new Store({ from: 0, to: 0 })
   // What a new comment goes on: the table's cells in the table view, else
   // the editor's selection.
@@ -553,8 +538,8 @@ async function joinRoom(
     files,
     current,
     commentable,
-    commentsOpen,
-    onToggleComments: toggleComments,
+    commentsOpen: panel.open,
+    onToggleComments: () => panel.toggle(),
   })
 
   // Nobody edits while the host is away: nobody would save it. Once the room
@@ -643,6 +628,8 @@ async function joinRoom(
       f.table.readOnly = true
     }
     opened.set(entry.id, f)
+    // A comments doc a forged list of files put under this id goes.
+    commentDocs?.takeForFile(entry.id)
     client?.addFile(entry.id, fileDoc)
     followComments(f)
     return f
@@ -654,8 +641,9 @@ async function joinRoom(
     const metaId = metaOf.get(f.id)
     const format = formats.get(f.id)
     if (f.comments || !getsComments(format)) return
-    const metaDoc = metaId === undefined || !client ? null : metaDocFor(metaId)
+    const metaDoc = metaId === undefined ? null : (commentDocs?.docFor(metaId) ?? null)
     if (!metaDoc) return
+    f.commentsMeta = metaId
     const name = () => {
       const user = awareness.getLocalState()?.user as { name?: unknown } | undefined
       return typeof user?.name === 'string' ? user.name : me.name
@@ -731,6 +719,14 @@ async function joinRoom(
     for (const f of list) formats.set(f.id, f.format)
     // Every file with comments is counted, opened or not.
     openCounts.follow(new Map([...metaOf].filter(([file]) => getsComments(formats.get(file)))))
+    // A file whose comments the list now puts in another doc, or in none,
+    // lets go of those it follows.
+    for (const f of opened.values()) {
+      if (!f.comments || metaOf.get(f.id) === f.commentsMeta) continue
+      f.comments.destroy()
+      f.comments = null
+      if (f === shown) showComments()
+    }
     for (const f of opened.values()) followComments(f)
     // A file of a format this version does not know is left out, and so is
     // the metadata of a file, shown with it.
@@ -775,6 +771,7 @@ async function joinRoom(
     onFileAttachment: (_, a) => attachments.handle(a),
     onFileCanvas: (fileId, m) => opened.get(fileId)?.json.handle(m),
   })
+  commentDocs = new CommentDocs(client)
   render(parts.files, 'FileTabs', { files, current, onOpen: switchTo, counts: openCounts.counts })
   render(parts.comments, 'CommentsPanel', {
     comments,
@@ -784,10 +781,10 @@ async function joinRoom(
     list: commentList,
     colors: authorColors,
     menu: new ContextMenu(),
-    open: commentsOpen,
+    open: panel.open,
     // The title folds the panel on a narrow screen; on a wide one, the header's button does.
     onToggle: () => {
-      if (isNarrow.get()) toggleComments()
+      if (isNarrow.get()) panel.toggle()
     },
     onShow: (t: ShownThread) => {
       if (t.cells && shown.table.active) {
@@ -808,7 +805,7 @@ async function joinRoom(
     if (!isCommentKey(e, isMac()) || !commentable.get()) return
     e.preventDefault()
     commentList.set('open')
-    commentsOpen.set(true)
+    panel.open.set(true)
     parts?.comments.querySelector<HTMLTextAreaElement>('.comments-new textarea')?.focus()
   })
   awareness.on('change', renderPeople)

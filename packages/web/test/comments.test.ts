@@ -4,6 +4,7 @@ import * as Y from 'yjs'
 import { addNode, deleteNodes, textOf } from '../src/canvas.ts'
 import {
   COMMENT_LIMITS,
+  CommentsPanelState,
   CommentsView,
   clean,
   cutQuote,
@@ -25,6 +26,7 @@ import {
   parse,
   setCell,
 } from '../src/csv.ts'
+import { Store } from '../src/store.ts'
 import { parsedAs } from './parsed.ts'
 
 function setup(text: string, delimiter: string | null = null) {
@@ -710,6 +712,28 @@ describe('isCommentKey', () => {
   it('leaves AltGr to type', () => {
     const e = key({ code: 'KeyM', key: 'µ', ctrlKey: true, altKey: true }, true)
     expect(isCommentKey(e, false)).toBe(false)
+  })
+})
+
+describe('CommentsPanelState', () => {
+  it('opens for a thread put in focus, again after the reader closed it on that thread', () => {
+    const focus = new Store<string | null>(null)
+    const kept: boolean[] = []
+    const panel = new CommentsPanelState(focus, false, (open) => kept.push(open))
+    // Its mark is clicked: the panel opens on it.
+    focus.set('t1')
+    expect(panel.open.get()).toBe(true)
+    // The reader closes the panel: the thread leaves focus.
+    panel.toggle()
+    expect(panel.open.get()).toBe(false)
+    expect(focus.get()).toBeNull()
+    // The same mark opens it again.
+    focus.set('t1')
+    expect(panel.open.get()).toBe(true)
+    panel.toggle()
+    panel.toggle()
+    // Only the reader's own choices are kept.
+    expect(kept).toEqual([false, false, true])
   })
 })
 

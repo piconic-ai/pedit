@@ -93,6 +93,29 @@ describe('RoomClient with several files', () => {
     expect(text(notes)).toBe('# notes\n- decided\n')
   })
 
+  it('lets a file go, and takes its id again for another doc', async () => {
+    const relay = new Relay()
+    const key = await importKey(generateKey())
+    const host = join(relay, key)
+    const notes = file('n')
+    host.addFile(1, notes)
+    const guest = join(relay, key)
+    const first = file()
+    guest.addFile(1, first)
+    await vi.waitFor(() => expect(text(first)).toBe('n'))
+    guest.removeFile(1)
+    // The doc let go neither sends nor takes anything more.
+    first.getText('content').insert(0, 'x')
+    notes.getText('content').insert(1, 'otes')
+    await new Promise((r) => setTimeout(r, 50))
+    expect(text(notes)).toBe('notes')
+    expect(text(first)).toBe('xn')
+    const second = file()
+    guest.addFile(1, second)
+    await vi.waitFor(() => expect(text(second)).toBe('notes'))
+    guest.removeFile(7)
+  })
+
   it('follows only the files it added, and reports each synced once', async () => {
     const relay = new Relay()
     const key = await importKey(generateKey())

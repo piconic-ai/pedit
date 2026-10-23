@@ -378,6 +378,19 @@ export class RoomClient {
     if (this.socket?.readyState === OPEN && open) this.syncFile(id, doc)
   }
 
+  /**
+   * Stops following a file added with addFile: its doc keeps what it has,
+   * nothing more is sent or applied for it, and its id can be added again,
+   * for another doc. Does nothing for a file not added.
+   */
+  removeFile(id: number): void {
+    const f = this.files.get(id)
+    if (!f) return
+    f.doc.off('update', f.onUpdate)
+    if (f.resyncTimer) clearTimeout(f.resyncTimer)
+    this.files.delete(id)
+  }
+
   /** Tells the room which files it shares, now and to everyone who connects later. */
   setManifest(files: FileEntry[]): void {
     this.manifest = encodeManifest(files)
