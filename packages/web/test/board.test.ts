@@ -581,10 +581,13 @@ describe('a text card', () => {
     expect(view.element.querySelector('.canvas-body a')?.textContent).toBe('x')
   })
 
-  it('shows the text as it is if the renderer cannot load', async () => {
-    const doc = docOf([node('a', { text: '**a**' })])
+  it('shows the text as it is if the renderer cannot load, keeping its lines and indents', async () => {
+    const doc = docOf([node('a', { text: '**a**\n  - b' })])
     const view = setup(doc, () => Promise.reject(new Error('offline')))
     await tick()
-    expect(texts(view)).toEqual(['**a**'])
+    expect(texts(view)).toEqual(['**a**\n  - b'])
+    // In an element CSS keeps whitespace in, not loose in the Markdown's.
+    const plain = view.element.querySelector('.canvas-markdown > .canvas-plain')
+    expect(plain?.textContent).toBe('**a**\n  - b')
   })
 })

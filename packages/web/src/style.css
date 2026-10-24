@@ -1727,7 +1727,8 @@ main.editor .cm-vim-panel {
   font-family: var(--mono);
   font-size: 0.9em;
 }
-.canvas-markdown pre {
+.canvas-markdown pre,
+.canvas-plain {
   white-space: pre-wrap;
 }
 .canvas-markdown a[href] {

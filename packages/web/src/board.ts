@@ -54,9 +54,13 @@ const nodeEditorTheme = EditorView.theme({
 /** Turns a text card's Markdown into sanitised nodes (cardmarkdown.ts). */
 export type CardRenderer = (text: string) => DocumentFragment
 
+/** The text as it is, its line breaks and indents kept by CSS (.canvas-plain). */
 function plainText(text: string): DocumentFragment {
   const fragment = document.createDocumentFragment()
-  fragment.append(text)
+  const plain = document.createElement('div')
+  plain.className = 'canvas-plain'
+  plain.textContent = text
+  fragment.append(plain)
   return fragment
 }
 
