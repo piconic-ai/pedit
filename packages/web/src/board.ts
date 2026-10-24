@@ -51,6 +51,15 @@ const nodeEditorTheme = EditorView.theme({
     { background: 'color-mix(in srgb, var(--accent) 35%, transparent)' },
 })
 
+/** Turns a text card's Markdown into sanitised nodes (cardmarkdown.ts). */
+export type CardRenderer = (text: string) => DocumentFragment
+
+function plainText(text: string): DocumentFragment {
+  const fragment = document.createDocumentFragment()
+  fragment.append(text)
+  return fragment
+}
+
 /** Marks the board's own edits, so the undo manager tracks them. */
 const BOARD_ORIGIN = Symbol('board')
 
@@ -130,6 +139,11 @@ export class BoardView {
   readonly selected = new Store<readonly string[]>([])
   /** The nodes open comments are on. */
   readonly commented = new Store<ReadonlySet<string>>(new Set())
+  /**
+   * Draws a text card's Markdown, once its module has loaded. Until then the
+   * cards show no text rather than the Markdown's raw marks.
+   */
+  readonly markdown = new Store<CardRenderer | null>(null)
   /** What this browser shares of where it is on the canvas. */
   #presence: Presence = { selected: [] }
   #layer: EdgeLayer | null = null
@@ -163,6 +177,8 @@ export class BoardView {
       json?: JsonPane
       /** Whose presence is on this canvas, in a room that shares several files. */
       here?: (state: Record<string, unknown>) => boolean
+      /** Loads the text cards' Markdown renderer; cardmarkdown.ts by default. */
+      loadMarkdown?: () => Promise<CardRenderer>
     } = {},
   ) {
     this.#doc = doc
@@ -176,6 +192,15 @@ export class BoardView {
     this.element = document.createElement('div')
     this.element.className = 'canvas-slot'
     render(this.element, 'CanvasBoard', { view: this })
+    // Started at once, so the cards rarely wait; kept apart from the page's
+    // first load, as the preview's Markdown is.
+    const loadMarkdown =
+      options.loadMarkdown ?? (async () => (await import('./cardmarkdown.ts')).renderCard)
+    loadMarkdown().then(
+      (renderer) => this.markdown.set(renderer),
+      // Offline after a deploy, say: the text as it is beats no text.
+      () => this.markdown.set(plainText),
+    )
     for (const list of scope) list.observeDeep(() => this.#schedule())
     awareness.on('change', () => this.#paintPeers())
   }

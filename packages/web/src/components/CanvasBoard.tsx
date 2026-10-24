@@ -1,6 +1,6 @@
 'use client'
 
-import { useContext } from '@barefootjs/client'
+import { createEffect, useContext } from '@barefootjs/client'
 import { type EdgeBase, type NodeBase, Position } from '@barefootjs/xyflow'
 import { BoardContext, type BoardView, MAX_ZOOM, MIN_ZOOM } from '../board.ts'
 import { nodeText } from '../canvas.ts'
@@ -51,10 +51,25 @@ export function CanvasCard(props: NodeBase) {
   const nodeId = props.id
   const node = () => v.nodes.get(nodeId)?.get()
   const editing = () => v.editing.get() === nodeId
-  // What the body shows: a link's body is hidden for the link below it.
+  // What the body shows as text: a link's body is hidden for the link below
+  // it, and a text node's goes in as Markdown instead.
   const bodyText = () => {
     const n = node()
-    return n ? nodeText(n) : ''
+    return n && n.type !== 'text' ? nodeText(n) : ''
+  }
+  // A text node's Markdown, drawn again when its text or the renderer changes.
+  // A move or a resize publishes the node too; the text stays as drawn then.
+  const drawMarkdown = (el: HTMLElement) => {
+    let drawn: { render: unknown; text: string | null } = { render: null, text: null }
+    createEffect(() => {
+      const render = v.markdown.get()
+      const n = node()
+      const text = render && n?.type === 'text' ? nodeText(n) : null
+      if (render === drawn.render && text === drawn.text) return
+      drawn = { render, text }
+      if (render && text !== null) el.replaceChildren(render(text))
+      else el.replaceChildren()
+    })
   }
   // Others on this node; their colour is a hex colour, from participants().
   const peer = () => v.peers.get()[nodeId]
@@ -93,7 +108,10 @@ export function CanvasCard(props: NodeBase) {
       {/* One body for every type, and a link that CSS shows for link nodes
           only: without conditionals, as text inside a conditional branch,
           and a `hidden` binding, do not update when rendered in the browser. */}
-      <div className="canvas-body">{bodyText()}</div>
+      <div className="canvas-body">
+        {bodyText()}
+        <div className="canvas-markdown" ref={drawMarkdown} />
+      </div>
       <a
         className="canvas-link nodrag"
         href={webUrl(node()?.url)}

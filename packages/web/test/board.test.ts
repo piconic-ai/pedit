@@ -3,8 +3,9 @@ import type { InternalFlowStore } from '@barefootjs/xyflow'
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate } from 'y-protocols/awareness'
 import * as Y from 'yjs'
-import { BoardView } from '../src/board.ts'
+import { BoardView, type CardRenderer } from '../src/board.ts'
 import { EDGES, NODES, read, TEXT } from '../src/canvas.ts'
+import { renderCard } from '../src/cardmarkdown.ts'
 import { JsonPane } from '../src/jsonpane.ts'
 
 beforeAll(() => {
@@ -56,9 +57,12 @@ const node = (id: string, extra: object = {}) => ({
 const awarenesses = new WeakMap<BoardView, Awareness>()
 const awarenessOf = (view: BoardView) => awarenesses.get(view) as Awareness
 
-function setup(doc: Y.Doc) {
+// Loaded at once, so a card's text is there by the first tick.
+const loadMarkdown = async () => renderCard
+
+function setup(doc: Y.Doc, load: () => Promise<CardRenderer> = loadMarkdown) {
   const awareness = new Awareness(doc)
-  const view = new BoardView(doc, awareness)
+  const view = new BoardView(doc, awareness, { loadMarkdown: load })
   awarenesses.set(view, awareness)
   document.body.append(view.element)
   views.push(view)
@@ -322,7 +326,7 @@ describe('BoardView', () => {
   it('shows the JSON beside the board on demand', async () => {
     const doc = docOf([node('a')])
     const json = new JsonPane(doc, { send: () => {} })
-    const view = new BoardView(doc, new Awareness(doc), { json })
+    const view = new BoardView(doc, new Awareness(doc), { json, loadMarkdown })
     document.body.append(view.element)
     views.push(view)
     view.active = true
@@ -431,6 +435,7 @@ describe('BoardView', () => {
     const awareness = new Awareness(room)
     awareness.setLocalState({ user: { name: 'Me', color: '#123456' }, file: 2 })
     const view = new BoardView(doc, awareness, {
+      loadMarkdown,
       here: (s) => (typeof s.file === 'number' ? s.file : 0) === 2,
     })
     document.body.append(view.element)
@@ -521,5 +526,65 @@ describe('selecting a node for its comment', () => {
     // The node's middle, at (10050, 10025), is the pane's.
     expect(x + 10050 * zoom).toBeCloseTo(400)
     expect(y + 10025 * zoom).toBeCloseTo(300)
+  })
+})
+
+describe('a text card', () => {
+  it('shows its Markdown, with links that open in a new tab and do not drag the card', async () => {
+    const doc = docOf([
+      node('a', { text: '**See** [the docs](https://example.com/docs)\nnext line' }),
+      node('b', { type: 'file', file: '**b**.md', x: 200 }),
+    ])
+    const view = setup(doc)
+    await tick()
+    const [a, b] = [...view.element.querySelectorAll('.canvas-body')]
+    expect(a?.querySelector('strong')?.textContent).toBe('See')
+    const link = a?.querySelector('a')
+    expect(link?.getAttribute('href')).toBe('https://example.com/docs')
+    expect(link?.getAttribute('target')).toBe('_blank')
+    expect(link?.getAttribute('rel')).toBe('noopener noreferrer')
+    expect(link?.classList.contains('nodrag')).toBe(true)
+    expect(a?.querySelector('br')).not.toBeNull()
+    // Only text nodes are Markdown.
+    expect(b?.textContent).toBe('**b**.md')
+    expect(b?.querySelector('strong')).toBeNull()
+  })
+
+  it('draws its Markdown again as the text changes', async () => {
+    const doc = docOf([node('a', { text: 'plain' })])
+    const view = setup(doc)
+    await tick()
+    remote(doc, () => (mapOf(doc, 'a').get(TEXT) as Y.Text).insert(0, '# '))
+    await tick()
+    expect(view.element.querySelector('.canvas-body h1')?.textContent).toBe('plain')
+  })
+
+  it('keeps its drawn Markdown when only the card moves', async () => {
+    const doc = docOf([node('a', { text: 'a [link](https://example.com)' })])
+    const view = setup(doc)
+    await tick()
+    const before = view.element.querySelector('.canvas-markdown p')
+    remote(doc, () => mapOf(doc, 'a').set('x', 300))
+    await tick()
+    expect(view.nodes.get('a')?.get().x).toBe(300)
+    expect(view.element.querySelector('.canvas-markdown p')).toBe(before)
+  })
+
+  it('shows no raw Markdown while the renderer loads, and the Markdown once it has', async () => {
+    let loaded: (r: CardRenderer) => void = () => {}
+    const doc = docOf([node('a', { text: '[x](https://example.com)' })])
+    const view = setup(doc, () => new Promise((resolve) => (loaded = resolve)))
+    await tick()
+    expect(texts(view)).toEqual([''])
+    loaded(renderCard)
+    await tick()
+    expect(view.element.querySelector('.canvas-body a')?.textContent).toBe('x')
+  })
+
+  it('shows the text as it is if the renderer cannot load', async () => {
+    const doc = docOf([node('a', { text: '**a**' })])
+    const view = setup(doc, () => Promise.reject(new Error('offline')))
+    await tick()
+    expect(texts(view)).toEqual(['**a**'])
   })
 })
