@@ -248,9 +248,7 @@ export class BoardView {
     this.element.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') onEmbed(e)
     })
-    this.#alwaysLoad?.ids.subscribe(() => {
-      for (const el of this.element.querySelectorAll('.canvas-markdown')) this.#loadRemembered(el)
-    })
+    this.#alwaysLoad?.ids.subscribe(() => this.#loadRemembered())
     for (const list of scope) list.observeDeep(() => this.#schedule())
     awareness.on('change', () => this.#paintPeers())
   }
@@ -262,11 +260,17 @@ export class BoardView {
    */
   #drawMarkdown(renderer: Renderer, el: HTMLElement, text: string): void {
     renderer.patch(el, forCard(renderer.render(text, this.#images, undefined, { breaks: true })))
-    this.#loadRemembered(el)
+    this.#loadRemembered()
   }
 
-  #loadRemembered(el: Element): void {
-    if (this.#renderer && this.#alwaysLoad) loadRemembered(el, this.#renderer, this.#alwaysLoad)
+  /**
+   * Loads the players of the providers this browser always loads, across the
+   * whole board: its snippets share one budget, as a file's do in the preview.
+   */
+  #loadRemembered(): void {
+    if (this.#renderer && this.#alwaysLoad) {
+      loadRemembered(this.element, this.#renderer, this.#alwaysLoad)
+    }
   }
 
   /** Draws the cards again, e.g. once an image they link to has arrived. */
@@ -772,7 +776,7 @@ export class BoardView {
         ...this.#editorExtensions(),
         syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
         ...(this.#paste
-          ? [imagePaste({ ...this.#paste, anchor: (pos) => textAnchor(text, pos) })]
+          ? [imagePaste({ ...this.#paste, anchor: (pos) => textAnchor(text, pos, BOARD_ORIGIN) })]
           : []),
         yCollab(text, this.#awareness, { undoManager: this.#undo }),
         EditorView.domEventHandlers({ blur: () => this.finishEditing() }),

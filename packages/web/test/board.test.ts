@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { InternalFlowStore } from '@barefootjs/xyflow'
 import { EditorView } from '@codemirror/view'
-import { afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate } from 'y-protocols/awareness'
 import * as Y from 'yjs'
 import { AlwaysLoad } from '../src/alwaysload.ts'
@@ -9,7 +9,7 @@ import type { ImageResolver } from '../src/attachments.ts'
 import { BoardView } from '../src/board.ts'
 import { EDGES, NODES, read, TEXT } from '../src/canvas.ts'
 import { JsonPane } from '../src/jsonpane.ts'
-import type { Renderer } from '../src/pane.ts'
+import { MAX_REMEMBERED_SNIPPETS, type Renderer } from '../src/pane.ts'
 import * as preview from '../src/preview.ts'
 
 beforeAll(() => {
@@ -672,5 +672,37 @@ describe('a text card', () => {
     expect((mapOf(doc, 'a').get(TEXT) as Y.Text).toString()).toBe(
       'ab![](assets/0123456789abcdef0123456789abcdef.png)',
     )
+    // The pasted link is this browser's edit: the board's undo takes it back.
+    view.finishEditing()
+    view.onKey(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true }))
+    expect((mapOf(doc, 'a').get(TEXT) as Y.Text).toString()).toBe('ab')
+  })
+
+  it('loads only so many remembered snippets on its own across all its cards', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise(() => {})),
+    )
+    try {
+      const links = (card: string) =>
+        Array.from(
+          { length: 15 },
+          (_, i) => `https://github.com/o/r/blob/main/${card}${i}.ts`,
+        ).join('\n\n')
+      const doc = docOf([node('a', { text: links('a') }), node('b', { text: links('b'), x: 200 })])
+      const alwaysLoad = new AlwaysLoad(null)
+      alwaysLoad.remember('github')
+      const view = setup(doc, loadMarkdown, { alwaysLoad })
+      await tick()
+      const loaded = () => view.element.querySelectorAll('.embed--snippet.embed--loaded').length
+      expect(loaded()).toBe(MAX_REMEMBERED_SNIPPETS)
+      // Remembering again, or a card drawing again, loads no more.
+      alwaysLoad.remember('github')
+      remote(doc, () => (mapOf(doc, 'b').get(TEXT) as Y.Text).insert(0, 'more\n\n'))
+      await tick()
+      expect(loaded()).toBe(MAX_REMEMBERED_SNIPPETS)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })
