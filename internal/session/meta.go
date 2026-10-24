@@ -308,7 +308,6 @@ func (m *metaFile) openWriter(initial string) {
 	})
 }
 
-// schedule coalesces metadata changes without delaying a pending save.
 // It reads no doc: it is called from the doc's update handler, under its
 // lock.
 func (m *metaFile) schedule() {

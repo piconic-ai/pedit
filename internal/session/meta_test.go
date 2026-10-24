@@ -89,7 +89,6 @@ func TestACommentIsSavedUnderThePedit(t *testing.T) {
 		t.Fatalf("saved %+v", file)
 	}
 
-	// An edit moves the saved place while the host keeps sharing.
 	g.insert(0, "Oh, ")
 	prototest.WaitFor(t, wait, func() bool { return f.session.Text.ToString() == "Oh, hello world!\n" }, "the edit at the host")
 	prototest.WaitFor(t, wait, func() bool {
