@@ -89,12 +89,17 @@ func TestACommentIsSavedUnderThePedit(t *testing.T) {
 		t.Fatalf("saved %+v", file)
 	}
 
-	// An edit moves the saved place; Stop saves it.
+	// An edit moves the saved place while the host keeps sharing.
 	g.insert(0, "Oh, ")
 	prototest.WaitFor(t, wait, func() bool { return f.session.Text.ToString() == "Oh, hello world!\n" }, "the edit at the host")
-	if err := f.session.Stop(); err != nil {
-		t.Fatal(err)
-	}
+	prototest.WaitFor(t, wait, func() bool {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return false
+		}
+		file, err := meta.Parse(data)
+		return err == nil && file.Comments["c1"].Anchor.Text.Offset == 10
+	}, "the shifted anchor saved before Stop")
 	if s := readMetaFile(t, path).Comments["c1"].Anchor.Text; s.Offset != 10 || s.Prefix != "Oh, hello " {
 		t.Fatalf("after the edit: %+v", s)
 	}
@@ -431,4 +436,28 @@ func TestAFirstSaveThatCannotStartIsTriedAgain(t *testing.T) {
 	}
 	path := metaPathOf(f, "notes.md")
 	prototest.WaitFor(t, wait, func() bool { _, err := os.Stat(path); return err == nil }, "the comments, saved on a later try")
+}
+
+func TestMovingCommentAnchorsSaveDuringContinuousEdits(t *testing.T) {
+	f := setup(t, "hello world!\n", setupOpts{project: true, writeDelay: 40 * time.Millisecond})
+	g := joinFiles(t, f.relay, f.session.URL)
+	prototest.WaitFor(t, wait, func() bool { return len(g.files()) == 2 && g.String() == "hello world!\n" }, "the manifest and text")
+	doc := g.open(t, 1)
+	g.Do(func() { comment(t, doc, g.doc, "c1", 6, 11, "Follow the word") })
+	path := metaPathOf(f, "notes.md")
+	prototest.WaitFor(t, wait, func() bool { _, err := os.Stat(path); return err == nil }, "initial saved anchor")
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		g.Do(func() { g.insert(0, "x") })
+		time.Sleep(5 * time.Millisecond)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		saved, err := meta.Parse(data)
+		if err == nil && saved.Comments["c1"].Anchor.Text.Offset > 6 {
+			return
+		}
+	}
+	t.Fatal("continuous edits kept the moved comment anchor off disk")
 }

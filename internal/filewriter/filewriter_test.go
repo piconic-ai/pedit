@@ -129,18 +129,30 @@ func TestReadFileReplacesInvalidUTF8(t *testing.T) {
 	}
 }
 
-func TestDebouncesToLatestContent(t *testing.T) {
+func TestContinuousEditsSaveBeforeTheyStop(t *testing.T) {
 	path := setup(t, "v0")
-	w := New(path, "v0", Options{Delay: 100 * time.Millisecond})
+	w := New(path, "v0", Options{Delay: 40 * time.Millisecond})
+	defer w.Flush()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		w.Schedule("latest")
+		time.Sleep(5 * time.Millisecond)
+		if got := read(t, path); got == "latest" {
+			return
+		}
+	}
+	t.Fatal("continuous edits never reached disk")
+}
+
+func TestCoalescesToLatestContent(t *testing.T) {
+	path := setup(t, "v0")
+	w := New(path, "v0", Options{Delay: 50 * time.Millisecond})
 	w.Schedule("v1")
-	time.Sleep(50 * time.Millisecond)
 	w.Schedule("v2")
-	time.Sleep(70 * time.Millisecond)
 	if got := read(t, path); got != "v0" {
-		t.Fatalf("wrote too early: %q", got)
+		t.Fatalf("wrote before delay: %q", got)
 	}
 	time.Sleep(100 * time.Millisecond)
-	w.Flush()
 	if got := read(t, path); got != "v2" {
 		t.Fatalf("content = %q", got)
 	}

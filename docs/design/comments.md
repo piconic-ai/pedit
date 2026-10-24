@@ -127,6 +127,11 @@ happens once and on the host, so every peer starts from the same anchors. Text
 that is not found leaves its thread detached, with its last saved place kept
 for the next try.
 
+The host schedules a metadata save when comments or their text change, so
+moved anchors reach disk while the room is still open. New changes replace
+the pending snapshot without postponing the save. Stop flushes pending saves;
+a crash can lose changes that have not reached disk.
+
 When the host saves, it writes each anchor's place as it is then. ygo cannot
 resolve a position whose character was deleted as Yjs does, and what is left
 of a deleted run cannot be told from outside it, so the host does not ask

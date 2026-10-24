@@ -273,7 +273,22 @@ func (u *ui) leftTemporary() {
 func (u *ui) setStatus(s protocol.Status) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	previous := u.status
+	if (previous == protocol.StatusDisconnected || previous == protocol.StatusWaiting) &&
+		(s == protocol.StatusConnecting || s == protocol.StatusBusy) {
+		return
+	}
 	u.status = s
+	if u.live && s != previous {
+		if s == protocol.StatusConnected && (previous == protocol.StatusDisconnected || previous == protocol.StatusWaiting) {
+			u.aboveLocked(u.green("✓") + " Back online. Changes sync again.")
+			return
+		}
+		if u.tty && (s == protocol.StatusDisconnected || s == protocol.StatusWaiting) {
+			u.aboveLocked(u.liveLine())
+			return
+		}
+	}
 	u.render()
 }
 
@@ -289,6 +304,10 @@ func (u *ui) setPeople(names []string) {
 func (u *ui) above(lines ...string) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	u.aboveLocked(lines...)
+}
+
+func (u *ui) aboveLocked(lines ...string) {
 	if u.typing {
 		u.drawTyping(lines)
 		return
