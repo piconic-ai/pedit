@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.1.16](https://github.com/piconic-ai/pedit/compare/v0.1.15...v0.1.16) - 2026-10-24
+
+- Render canvas text cards as Markdown by @kfly8 in https://github.com/piconic-ai/pedit/pull/211
+- docs: migrate project instructions to AGENTS.md by @kfly8 in https://github.com/piconic-ai/pedit/pull/216
+- Make canvas cards Markdown as a Markdown file is by @kfly8 in https://github.com/piconic-ai/pedit/pull/217
+
 ## [v0.1.15](https://github.com/piconic-ai/pedit/compare/v0.1.14...v0.1.15) - 2026-10-23
 
 - Add the metadata file format for comments, and its pairing in the manifest by @kfly8 in https://github.com/piconic-ai/pedit/pull/194
