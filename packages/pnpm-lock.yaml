@@ -968,9 +968,6 @@ packages:
   '@jridgewell/trace-mapping@0.3.9':
     resolution: {integrity: sha512-3Belt6tdc8bPgAtbcmdtNJlirVoTmEb5e2gC94PnkwEW9jI6CAHUeoG85tjWP5WquqfavoMtMwiG4P926ZKKuQ==}
 
-  '@lezer/common@1.5.2':
-    resolution: {integrity: sha512-sxQE460fPZyU3sdc8lafxiPwJHBzZRy/udNFynGQky1SePYBdhkBl1kOagA9uT3pxR8K09bOrmTUqA9wb/PjSQ==}
-
   '@lezer/common@1.5.3':
     resolution: {integrity: sha512-H0iErY4e43LpXbYDyBci5W4v/RwTgGV3YzYOlJPiGZ8RY8w51kVE+xLn1tg3Z6UmSfyETvtsUK3r7YsgDQEI7Q==}
 
@@ -997,9 +994,6 @@ packages:
 
   '@lezer/json@1.0.3':
     resolution: {integrity: sha512-BP9KzdF9Y35PDpv04r0VeSTKDeox5vVr3efE7eBbx3r4s3oNLfunchejZhjArmeieBH+nVOpgIiBJpEAv8ilqQ==}
-
-  '@lezer/lr@1.4.10':
-    resolution: {integrity: sha512-rnCpTIBafOx4mRp43xOxDJbFipJm/c0cia/V5TiGlhmMa+wsSdoGmUN3w5Bqrks/09Q/D4tNAmWaT8p6NRi77A==}
 
   '@lezer/lr@1.4.11':
     resolution: {integrity: sha512-UwgZcl1R66H2hDzBrA7kWyYmX6s8p5TQ+e/t7CuvgCtBEPxbEPaHYHu+pJBvTvDotEJpuQkJjbXuHiw5Cixxgw==}
@@ -2003,14 +1997,14 @@ snapshots:
       '@codemirror/language': 6.13.1
       '@codemirror/state': 6.7.6
       '@codemirror/view': 6.43.15
-      '@lezer/common': 1.5.2
+      '@lezer/common': 1.5.3
 
   '@codemirror/commands@6.11.1':
     dependencies:
       '@codemirror/language': 6.13.1
       '@codemirror/state': 6.7.6
       '@codemirror/view': 6.43.15
-      '@lezer/common': 1.5.2
+      '@lezer/common': 1.5.3
 
   '@codemirror/lang-angular@0.1.4':
     dependencies:
@@ -2050,7 +2044,7 @@ snapshots:
       '@codemirror/language': 6.13.1
       '@codemirror/state': 6.7.6
       '@codemirror/view': 6.43.15
-      '@lezer/common': 1.5.2
+      '@lezer/common': 1.5.3
       '@lezer/css': 1.3.8
       '@lezer/html': 1.3.13
 
@@ -2111,7 +2105,7 @@ snapshots:
       '@codemirror/language': 6.13.1
       '@codemirror/state': 6.7.6
       '@codemirror/view': 6.43.15
-      '@lezer/common': 1.5.2
+      '@lezer/common': 1.5.3
       '@lezer/markdown': 1.7.2
 
   '@codemirror/lang-php@6.0.2':
@@ -2565,8 +2559,6 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.6.0
 
-  '@lezer/common@1.5.2': {}
-
   '@lezer/common@1.5.3': {}
 
   '@lezer/cpp@1.1.6':
@@ -2613,11 +2605,7 @@ snapshots:
     dependencies:
       '@lezer/common': 1.5.3
       '@lezer/highlight': 1.2.5
-      '@lezer/lr': 1.4.10
-
-  '@lezer/lr@1.4.10':
-    dependencies:
-      '@lezer/common': 1.5.3
+      '@lezer/lr': 1.4.11
 
   '@lezer/lr@1.4.11':
     dependencies:
@@ -2625,7 +2613,7 @@ snapshots:
 
   '@lezer/markdown@1.7.2':
     dependencies:
-      '@lezer/common': 1.5.2
+      '@lezer/common': 1.5.3
       '@lezer/highlight': 1.2.5
 
   '@lezer/php@1.0.6':
