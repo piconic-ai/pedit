@@ -19,6 +19,7 @@ import {
   type SnippetSource,
   snippetFor,
 } from './embed.ts'
+import { fixLink } from './links.ts'
 import { failureMessage, fetchSnippet } from './snippet.ts'
 
 // Raw HTML in the document is shown as text, never parsed.
@@ -253,19 +254,9 @@ purify.addHook('afterSanitizeAttributes', (node) => {
     if (checkBoxStyle(el.getAttribute('style')) === null) el.removeAttribute('style')
   }
   switch (node.nodeName) {
-    case 'A': {
-      const href = el.getAttribute('href') ?? ''
-      if (httpUrl(href) || href.startsWith('mailto:')) {
-        // Leaving this page would lose the key in the URL fragment.
-        el.setAttribute('target', '_blank')
-        el.setAttribute('rel', 'noopener noreferrer')
-      } else {
-        // Relative and #fragment links cannot resolve here; keep the text.
-        el.removeAttribute('href')
-        el.removeAttribute('target')
-      }
+    case 'A':
+      fixLink(el)
       break
-    }
     case 'IMG':
     case 'VIDEO':
       el.removeAttribute('srcset')

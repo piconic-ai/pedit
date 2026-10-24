@@ -1690,6 +1690,54 @@ main.editor .cm-vim-panel {
 .canvas-body {
   white-space: pre-wrap;
 }
+/* A text card's Markdown: its line breaks are <br>s, and blocks sit close. */
+.canvas-markdown {
+  white-space: normal;
+}
+.canvas-markdown > :first-child {
+  margin-top: 0;
+}
+.canvas-markdown > :last-child {
+  margin-bottom: 0;
+}
+.canvas-markdown :is(p, ul, ol, blockquote, pre, table, h1, h2, h3, h4, h5, h6) {
+  margin: 0 0 0.5em;
+}
+.canvas-markdown :is(h1, h2, h3, h4, h5, h6) {
+  line-height: 1.3;
+}
+.canvas-markdown h1 {
+  font-size: 1.4em;
+}
+.canvas-markdown h2 {
+  font-size: 1.2em;
+}
+.canvas-markdown :is(h3, h4, h5, h6) {
+  font-size: 1em;
+}
+.canvas-markdown :is(ul, ol) {
+  padding-left: 1.4em;
+}
+.canvas-markdown blockquote {
+  padding-left: 0.8em;
+  border-left: 3px solid var(--muted);
+  color: var(--muted);
+}
+.canvas-markdown code {
+  font-family: var(--mono);
+  font-size: 0.9em;
+}
+.canvas-markdown pre,
+.canvas-plain {
+  white-space: pre-wrap;
+}
+.canvas-markdown a[href] {
+  color: var(--accent);
+  text-decoration: none;
+}
+.canvas-markdown a[href]:hover {
+  text-decoration: underline;
+}
 .canvas-card--link .canvas-body,
 .canvas-card:not(.canvas-card--link) .canvas-link {
   display: none;
