@@ -102,6 +102,9 @@ func (s *Session) openMeta(f *sharedFile) (*metaFile, string) {
 		m.close()
 		return nil, "its comments are too large to share"
 	}
+	if m.tracker != nil {
+		f.doc.OnUpdate(func(_ []byte, _ any) { m.schedule() })
+	}
 	m.doc.OnUpdate(func(_ []byte, origin any) {
 		if origin == s.Client {
 			// Under the client's lock: where a guest's anchor is, before
@@ -305,7 +308,6 @@ func (m *metaFile) openWriter(initial string) {
 	})
 }
 
-// schedule saves the metadata after a while, unless newer changes come first.
 // It reads no doc: it is called from the doc's update handler, under its
 // lock.
 func (m *metaFile) schedule() {
@@ -315,10 +317,13 @@ func (m *metaFile) schedule() {
 		return
 	}
 	if m.timer == nil {
-		m.timer = time.AfterFunc(m.delay, func() { _ = m.saveNow(false) })
-		return
+		m.timer = time.AfterFunc(m.delay, func() {
+			m.mu.Lock()
+			m.timer = nil
+			m.mu.Unlock()
+			_ = m.saveNow(false)
+		})
 	}
-	m.timer.Reset(m.delay)
 }
 
 // saveNow renders the metadata under the client's lock and saves it, waiting
@@ -410,10 +415,15 @@ func (m *metaFile) create() error {
 // retry tries a save that could not start again later, as the writer tries
 // one that failed, unless saving stopped. The caller holds m.mu.
 func (m *metaFile) retry() {
-	if m.held || m.stopped || m.timer == nil {
+	if m.held || m.stopped || m.timer != nil {
 		return
 	}
-	m.timer.Reset(5 * m.delay)
+	m.timer = time.AfterFunc(5*m.delay, func() {
+		m.mu.Lock()
+		m.timer = nil
+		m.mu.Unlock()
+		_ = m.saveNow(false)
+	})
 }
 
 // hold stops saving the metadata file, which changed outside pedit: saving

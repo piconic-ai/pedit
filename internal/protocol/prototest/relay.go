@@ -41,12 +41,14 @@ type Relay struct {
 	// Bytes is what one connection may write; zero for no limit.
 	Bytes protocol.Rate
 
-	mu      sync.Mutex
-	limited int
-	conns   map[*Conn]bool
-	urls    []string
-	headers []http.Header
-	frames  [][]byte
+	mu         sync.Mutex
+	hostPaused bool
+	hostAway   bool
+	limited    int
+	conns      map[*Conn]bool
+	urls       []string
+	headers    []http.Header
+	frames     [][]byte
 }
 
 func NewRelay(hosted bool) *Relay {
@@ -67,6 +69,13 @@ func (r *Relay) Dial(_ context.Context, url string, header http.Header) (protoco
 		return nil, &protocol.CloseError{Code: r.Refuse, Reason: r.RefuseReason}
 	}
 	c := &Conn{relay: r, isHost: header.Get("Authorization") != "", wake: make(chan struct{}, 1)}
+	if c.isHost && r.hostPaused {
+		return nil, errors.New("host network offline")
+	}
+	if c.isHost && r.hostAway {
+		r.signalGuests(protocol.HostBack)
+		r.hostAway = false
+	}
 	if r.Hosted && !c.isHost && !r.hasHost() {
 		return nil, &protocol.CloseError{Code: protocol.RoomClosed}
 	}
@@ -149,6 +158,10 @@ func (r *Relay) SeverAll() {
 func (r *Relay) Signal(sig protocol.Signal) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.signalGuests(sig)
+}
+
+func (r *Relay) signalGuests(sig protocol.Signal) {
 	for c := range r.conns {
 		if c.isHost {
 			continue
@@ -157,6 +170,27 @@ func (r *Relay) Signal(sig protocol.Signal) {
 		c.signals = append(c.signals, sig)
 		c.mu.Unlock()
 		c.signal()
+	}
+}
+
+// PauseHost cuts only the host's network while guests remain in the room's
+// grace period. The returned function lets the same host reconnect.
+func (r *Relay) PauseHost() func() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.hostPaused = true
+	r.hostAway = true
+	for c := range r.conns {
+		if c.isHost {
+			delete(r.conns, c)
+			c.closeWith(1006)
+		}
+	}
+	r.signalGuests(protocol.HostAway)
+	return func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		r.hostPaused = false
 	}
 }
 

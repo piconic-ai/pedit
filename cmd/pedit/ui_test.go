@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -52,8 +53,10 @@ func TestUIWithoutTerminal(t *testing.T) {
   ● Just you so far
   ● Alice is here
   ○ Offline. Reconnecting…
+  ✓ Back online. Changes sync again.
   ● Alice is here
   ○ The host's connection dropped. Waiting for them to come back…
+  ✓ Back online. Changes sync again.
   ● Alice is here
   ● Alice and Bob are here
 
@@ -523,6 +526,50 @@ func TestUIMirroredFiles(t *testing.T) {
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("missing %q in:\n%s", want, out.String())
+		}
+	}
+}
+
+func TestConnectionHistorySurvivesRecovery(t *testing.T) {
+	for _, tty := range []bool{false, true} {
+		for _, typing := range []bool{false, true} {
+			if typing && !tty {
+				continue
+			}
+			t.Run(fmt.Sprintf("tty=%t/typing=%t", tty, typing), func(t *testing.T) {
+				var out strings.Builder
+				u := newUI(&out, tty, true)
+				u.sharing([]string{"notes.md"}, "https://example.com/r/room#key", false, false)
+				u.setStatus(protocol.StatusConnected)
+				if typing {
+					u.startTyping()
+					u.setTyped([]rune("draft.md"))
+				}
+				out.Reset()
+				u.setStatus(protocol.StatusDisconnected)
+				for range 3 {
+					u.setStatus(protocol.StatusConnecting)
+					u.setStatus(protocol.StatusDisconnected)
+				}
+				u.setStatus(protocol.StatusConnected)
+				u.setStatus(protocol.StatusConnected)
+				got := out.String()
+				if strings.Count(got, "Back online. Changes sync again.") != 1 {
+					t.Fatalf("missing recovery history: %q", got)
+				}
+				if strings.Contains(got, "Connecting…") {
+					t.Fatalf("retry spam: %q", got)
+				}
+				if tty && !strings.Contains(got, "Offline. Reconnecting…\n") && !strings.Contains(got, "Offline. Reconnecting…\r\n") {
+					t.Fatalf("offline history was erased: %q", got)
+				}
+				if !tty && strings.Count(got, "Offline. Reconnecting…") != 1 {
+					t.Fatalf("offline spam: %q", got)
+				}
+				if typing && (!strings.HasSuffix(got, "Add a file: draft.md") || string(u.typed) != "draft.md") {
+					t.Fatalf("lost input: %q", got)
+				}
+			})
 		}
 	}
 }

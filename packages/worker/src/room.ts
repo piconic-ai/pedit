@@ -238,6 +238,17 @@ export class Room extends DurableObject<Env> {
 
   private async admit(token: string, isHost: boolean): Promise<Response> {
     const digest = await sha256(token)
+    // Deploys can drop every socket without a close callback. Only a guest
+    // with this session's admission may start its missing host grace period.
+    if (
+      !isHost &&
+      !this.expired() &&
+      this.hosts().length === 0 &&
+      this.awayUntil() === undefined &&
+      this.authorize(digest)
+    ) {
+      await this.waitForHost()
+    }
     // Nothing below awaits before the socket is accepted, so an alarm cannot
     // expire the room between these checks and the accept. An expired room
     // refuses everyone before admission, so it never registers a verifier again.
