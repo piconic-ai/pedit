@@ -58,15 +58,16 @@ const slots = StateField.define<ReadonlyMap<number, number>>({
 /**
  * A place in a shared text: it follows every edit, made here or by others,
  * while the text is shown or not. Text typed right at it stays after it, as
- * the editor's own slots do.
+ * the editor's own slots do. `origin` marks the insert, so an undo manager
+ * that tracks it can undo it.
  */
-export function textAnchor(text: Y.Text, pos: number): Anchor {
+export function textAnchor(text: Y.Text, pos: number, origin?: unknown): Anchor {
   const at = Y.createRelativePositionFromTypeIndex(text, pos, -1)
   return {
     insert(s) {
       const doc = text.doc
       const index = doc && Y.createAbsolutePositionFromRelativePosition(at, doc)?.index
-      if (doc && index != null) doc.transact(() => text.insert(index, s))
+      if (doc && index != null) doc.transact(() => text.insert(index, s), origin)
     },
   }
 }

@@ -286,20 +286,24 @@ export function sanitize(html: string): DocumentFragment {
 /**
  * Renders Markdown to sanitised nodes, ready for {@link patch}. `resolver`
  * finds the images added during the session; `sources` are the relay's
- * MEDIA_SOURCES.
+ * MEDIA_SOURCES. `breaks` makes every line break in the text one in the page,
+ * as a canvas card shows its text; a document keeps Markdown's paragraphs.
  */
 export function render(
   source: string,
   resolver?: ImageResolver,
   sources: readonly string[] = pageMediaSources(),
+  options: { breaks?: boolean } = {},
 ): DocumentFragment {
   images = resolver
   media = sources
+  md.set({ breaks: options.breaks ?? false })
   try {
     return sanitize(md.render(source))
   } finally {
     images = undefined
     media = []
+    md.set({ breaks: false })
   }
 }
 

@@ -3,13 +3,56 @@ import type * as Y from 'yjs'
 import type { AlwaysLoad } from './alwaysload.ts'
 import type { ImageResolver } from './attachments.ts'
 
-type Renderer = Pick<
+export type Renderer = Pick<
   typeof import('./preview.ts'),
   'render' | 'patch' | 'loadEmbed' | 'embedProvider' | 'toggleRemember'
 >
 
 /** The most snippets "Always load" loads on one page; the rest load on a click. */
 export const MAX_REMEMBERED_SNIPPETS = 20
+
+/**
+ * Acts on a click, or Enter or Space, on an embed placeholder's controls in
+ * rendered Markdown inside `container`: loads its player, or ticks "Always
+ * load". The preview and the canvas cards share it.
+ */
+export function onEmbedControl(
+  event: Event,
+  container: Element,
+  renderer: Renderer | null,
+  alwaysLoad?: AlwaysLoad,
+): void {
+  const target = event.target instanceof Element ? event.target : null
+  const control = target?.closest('.embed-load, .embed-remember')
+  const placeholder = control?.closest('[data-embed-src]')
+  if (!control || !placeholder || !container.contains(placeholder) || !renderer) return
+  // Space would otherwise scroll the preview.
+  event.preventDefault()
+  if (control.classList.contains('embed-remember')) {
+    renderer.toggleRemember(control)
+    return
+  }
+  const remember = placeholder.querySelector('.embed-remember')?.getAttribute('aria-checked')
+  const provider = renderer.embedProvider(placeholder)
+  if (!renderer.loadEmbed(placeholder)) return
+  if (remember === 'true' && provider) alwaysLoad?.remember(provider)
+}
+
+/**
+ * Loads the players in `container` of the providers this browser always
+ * loads, leaving focus where it is. Snippets only up to
+ * MAX_REMEMBERED_SNIPPETS: each may hold a large file, and a file of many
+ * links would have them all fetched. The rest wait for a click.
+ */
+export function loadRemembered(container: Element, renderer: Renderer, always: AlwaysLoad): void {
+  let snippets = container.querySelectorAll('.embed--snippet.embed--loaded').length
+  for (const placeholder of container.querySelectorAll('[data-embed-src]:not(.embed--loaded)')) {
+    if (!always.has(renderer.embedProvider(placeholder))) continue
+    const snippet = placeholder.classList.contains('embed--snippet')
+    if (snippet && snippets >= MAX_REMEMBERED_SNIPPETS) continue
+    if (renderer.loadEmbed(placeholder, false) && snippet) snippets++
+  }
+}
 
 /** A source line and where its block starts in the preview's scroll area. */
 export interface Anchor {
@@ -156,40 +199,13 @@ export class PreviewPane {
    * its provider if "Always load" is ticked, or toggles that box.
    */
   #loadEmbed(event: Event): void {
-    const target = event.target instanceof Element ? event.target : null
-    const control = target?.closest('.embed-load, .embed-remember')
-    const placeholder = control?.closest('[data-embed-src]')
-    if (!control || !placeholder || !this.element.contains(placeholder) || !this.#renderer) return
-    // Space would otherwise scroll the preview.
-    event.preventDefault()
-    if (control.classList.contains('embed-remember')) {
-      this.#renderer.toggleRemember(control)
-      return
-    }
-    const remember = placeholder.querySelector('.embed-remember')?.getAttribute('aria-checked')
-    const provider = this.#renderer.embedProvider(placeholder)
-    if (!this.#renderer.loadEmbed(placeholder)) return
-    if (remember === 'true' && provider) this.#alwaysLoad?.remember(provider)
+    onEmbedControl(event, this.element, this.#renderer, this.#alwaysLoad)
   }
 
-  /**
-   * Loads the players of the providers this browser always loads, leaving focus
-   * where it is. Snippets only up to MAX_REMEMBERED_SNIPPETS on the page: each
-   * may hold a large file, and a file of many links would have them all fetched.
-   * The rest wait for a click.
-   */
+  /** Loads the players of the providers this browser always loads. */
   #loadRemembered(): void {
-    const always = this.#alwaysLoad
-    const renderer = this.#renderer
-    if (!always || !renderer) return
-    let snippets = this.element.querySelectorAll('.embed--snippet.embed--loaded').length
-    for (const placeholder of this.element.querySelectorAll(
-      '[data-embed-src]:not(.embed--loaded)',
-    )) {
-      if (!always.has(renderer.embedProvider(placeholder))) continue
-      const snippet = placeholder.classList.contains('embed--snippet')
-      if (snippet && snippets >= MAX_REMEMBERED_SNIPPETS) continue
-      if (renderer.loadEmbed(placeholder, false) && snippet) snippets++
+    if (this.#alwaysLoad && this.#renderer) {
+      loadRemembered(this.element, this.#renderer, this.#alwaysLoad)
     }
   }
 
