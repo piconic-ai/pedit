@@ -169,6 +169,17 @@ describe('sanitize', () => {
 })
 
 describe('render', () => {
+  it('makes every line break one in the page only when asked, as a canvas card is', () => {
+    const html = (options?: { breaks?: boolean }) => {
+      const div = document.createElement('div')
+      div.append(preview.render('one\ntwo', undefined, [], options))
+      return div
+    }
+    expect(html({ breaks: true }).querySelector('p br')).not.toBeNull()
+    // A document keeps Markdown's paragraphs, also right after a card was drawn.
+    expect(html().querySelector('br')).toBeNull()
+  })
+
   it('renders frontmatter fields and tags separately from the body, preserving source lines', () => {
     const out = dom(
       '---\ncreated: 2026-10-03\ntitle: pedit\ndescription: "ローカルのファイルを共同編集"\ntags: [pedit, e2ee, yjs]\n---\n# pedit',

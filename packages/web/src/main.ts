@@ -461,7 +461,26 @@ async function joinRoom(
     fontFollowers.push({ view: json.view, compartment: jsonFont })
     themeFollowers.push({ view: json.view, compartment: jsonTheme })
     themes?.follow(json.view, jsonTheme)
-    const board = new BoardView(fileDoc, awareness, { json, here: inFile(id) })
+    // Its text cards are Markdown as the file's editor and preview have it:
+    // the same rendering, images, players, theme and pasting.
+    const board = new BoardView(fileDoc, awareness, {
+      json,
+      here: inFile(id),
+      images: attachments,
+      alwaysLoad,
+      editorExtensions: () => [themeMode.get(editor.state) ?? theme.extension],
+      imagePaste: {
+        blocked: () =>
+          whyNoImages(
+            roomStatus.get(),
+            people.get().some((p) => p.isHost),
+            attachments.host,
+          ),
+        upload: (file) => attachments.upload(file, id),
+        onError: (message) => notices.show(message),
+      },
+    })
+    attachments.version.subscribe(() => board.refreshMarkdown())
     board.selected.subscribe(() => {
       if (board === shown.board) aim()
     })

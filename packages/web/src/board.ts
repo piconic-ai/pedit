@@ -4,10 +4,14 @@ import type { EdgeBase, FlowStore, NodeBase } from '@barefootjs/xyflow'
 import { initNodeResizer, setupNodeSelection } from '@barefootjs/xyflow'
 import { defaultKeymap } from '@codemirror/commands'
 import { markdown } from '@codemirror/lang-markdown'
+import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
+import type { Extension } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next'
 import type { Awareness } from 'y-protocols/awareness'
 import * as Y from 'yjs'
+import type { AlwaysLoad } from './alwaysload.ts'
+import type { ImageResolver } from './attachments.ts'
 import {
   addEdge,
   addNode,
@@ -27,6 +31,8 @@ import {
 } from './canvas.ts'
 import { type Box, EdgeLayer, shapesOf } from './edges.ts'
 import type { JsonPane } from './jsonpane.ts'
+import { loadRemembered, onEmbedControl, type Renderer } from './pane.ts'
+import { type ImagePasteOptions, imagePaste, textAnchor } from './paste.ts'
 import { type NodePeers, type Presence, peersOf, sameNodePeers, samePresence } from './presence.ts'
 import { Store } from './store.ts'
 import './components/CanvasBoard.tsx'
@@ -51,16 +57,24 @@ const nodeEditorTheme = EditorView.theme({
     { background: 'color-mix(in srgb, var(--accent) 35%, transparent)' },
 })
 
-/** Turns a text card's Markdown into sanitised nodes (cardmarkdown.ts). */
-export type CardRenderer = (text: string) => DocumentFragment
+/** Draws a text card's text into its Markdown element. */
+export type CardDrawer = (el: HTMLElement, text: string) => void
 
 /** The text as it is, its line breaks and indents kept by CSS (.canvas-plain). */
-function plainText(text: string): DocumentFragment {
-  const fragment = document.createDocumentFragment()
+function drawPlain(el: HTMLElement, text: string): void {
   const plain = document.createElement('div')
   plain.className = 'canvas-plain'
   plain.textContent = text
-  fragment.append(plain)
+  el.replaceChildren(plain)
+}
+
+/**
+ * Rendered Markdown made for a card on the board: a link, a player and its
+ * controls are clicked and scrolled, not dragged with the card or zoomed.
+ */
+function forCard(fragment: DocumentFragment): DocumentFragment {
+  for (const el of fragment.querySelectorAll('a, video, .embed'))
+    el.classList.add('nodrag', 'nowheel')
   return fragment
 }
 
@@ -144,10 +158,18 @@ export class BoardView {
   /** The nodes open comments are on. */
   readonly commented = new Store<ReadonlySet<string>>(new Set())
   /**
-   * Draws a text card's Markdown, once its module has loaded. Until then the
+   * Draws a text card's Markdown, once the preview's renderer has loaded:
+   * a card shows its text as a Markdown file's preview does. Until then the
    * cards show no text rather than the Markdown's raw marks.
    */
-  readonly markdown = new Store<CardRenderer | null>(null)
+  readonly markdown = new Store<CardDrawer | null>(null)
+  /** Bumped when the cards should draw again, as an image arrived. */
+  readonly markdownVersion = new Store(0)
+  #renderer: Renderer | null = null
+  #images: ImageResolver | undefined
+  #alwaysLoad: AlwaysLoad | undefined
+  #editorExtensions: () => Extension[]
+  #paste: Omit<ImagePasteOptions, 'anchor'> | undefined
   /** What this browser shares of where it is on the canvas. */
   #presence: Presence = { selected: [] }
   #layer: EdgeLayer | null = null
@@ -181,14 +203,26 @@ export class BoardView {
       json?: JsonPane
       /** Whose presence is on this canvas, in a room that shares several files. */
       here?: (state: Record<string, unknown>) => boolean
-      /** Loads the text cards' Markdown renderer; cardmarkdown.ts by default. */
-      loadMarkdown?: () => Promise<CardRenderer>
+      /** Loads the text cards' Markdown renderer; the preview's by default. */
+      loadMarkdown?: () => Promise<Renderer>
+      /** Finds the images added during the session, as the preview does. */
+      images?: ImageResolver
+      /** The providers whose players load without a click, in this browser. */
+      alwaysLoad?: AlwaysLoad
+      /** More for a card's editor, as the file's editor has: its theme. */
+      editorExtensions?: () => Extension[]
+      /** Adds a pasted or dropped image to the canvas, as the file's editor does. */
+      imagePaste?: Omit<ImagePasteOptions, 'anchor'>
     } = {},
   ) {
     this.#doc = doc
     this.#awareness = awareness
     this.#here = options.here ?? (() => true)
     this.json = options.json ?? null
+    this.#images = options.images
+    this.#alwaysLoad = options.alwaysLoad
+    this.#editorExtensions = options.editorExtensions ?? (() => [])
+    this.#paste = options.imagePaste
     const scope = [doc.getArray(NODES), doc.getArray(EDGES)]
     // Undo only this browser's edits, not everyone's; typing in a text node
     // adds the editor's own origin.
@@ -198,15 +232,46 @@ export class BoardView {
     render(this.element, 'CanvasBoard', { view: this })
     // Started at once, so the cards rarely wait; kept apart from the page's
     // first load, as the preview's Markdown is.
-    const loadMarkdown =
-      options.loadMarkdown ?? (async () => (await import('./cardmarkdown.ts')).renderCard)
+    const loadMarkdown = options.loadMarkdown ?? (() => import('./preview.ts'))
     loadMarkdown().then(
-      (renderer) => this.markdown.set(renderer),
+      (renderer) => {
+        this.#renderer = renderer
+        this.markdown.set((el, text) => this.#drawMarkdown(renderer, el, text))
+      },
       // Offline after a deploy, say: the text as it is beats no text.
-      () => this.markdown.set(plainText),
+      () => this.markdown.set(drawPlain),
     )
+    // Embed placeholders on the cards load as the preview's do: on a click,
+    // or at once for a provider this browser always loads.
+    const onEmbed = (e: Event) => onEmbedControl(e, this.element, this.#renderer, this.#alwaysLoad)
+    this.element.addEventListener('click', onEmbed)
+    this.element.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') onEmbed(e)
+    })
+    this.#alwaysLoad?.ids.subscribe(() => {
+      for (const el of this.element.querySelectorAll('.canvas-markdown')) this.#loadRemembered(el)
+    })
     for (const list of scope) list.observeDeep(() => this.#schedule())
     awareness.on('change', () => this.#paintPeers())
+  }
+
+  /**
+   * Draws a card's Markdown into `el` as the preview draws a file's, its line
+   * breaks kept, leaving the blocks that did not change (and a player loaded
+   * in one) in place.
+   */
+  #drawMarkdown(renderer: Renderer, el: HTMLElement, text: string): void {
+    renderer.patch(el, forCard(renderer.render(text, this.#images, undefined, { breaks: true })))
+    this.#loadRemembered(el)
+  }
+
+  #loadRemembered(el: Element): void {
+    if (this.#renderer && this.#alwaysLoad) loadRemembered(el, this.#renderer, this.#alwaysLoad)
+  }
+
+  /** Draws the cards again, e.g. once an image they link to has arrived. */
+  refreshMarkdown(): void {
+    this.markdownVersion.set(untrack(() => this.markdownVersion.get()) + 1)
   }
 
   /** Shares where this browser is on the canvas, when that changed. */
@@ -595,7 +660,7 @@ export class BoardView {
   onDoubleClick(e: MouseEvent): void {
     const target = e.target as Element
     // A quick second click on the JSON toggle is not a place to add a node.
-    if (target.closest('.canvas-editor, .canvas-json-toggle')) return
+    if (target.closest('.canvas-editor, .canvas-json-toggle, .canvas-markdown .embed')) return
     const id = target.closest<HTMLElement>('.bf-flow__node')?.dataset.id
     if (id) this.edit(id)
     else this.addTextAt(e.clientX, e.clientY)
@@ -700,7 +765,15 @@ export class BoardView {
         ]),
         markdown(),
         EditorView.lineWrapping,
+        // Ahead of the file's theme, so the card keeps its font and colours.
         nodeEditorTheme,
+        // The file's theme as the editor has it now, and the highlighting the
+        // file's editor falls back to (basicSetup's) for the Markdown marks.
+        ...this.#editorExtensions(),
+        syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+        ...(this.#paste
+          ? [imagePaste({ ...this.#paste, anchor: (pos) => textAnchor(text, pos) })]
+          : []),
         yCollab(text, this.#awareness, { undoManager: this.#undo }),
         EditorView.domEventHandlers({ blur: () => this.finishEditing() }),
       ],

@@ -1,12 +1,16 @@
 // @vitest-environment jsdom
 import type { InternalFlowStore } from '@barefootjs/xyflow'
+import { EditorView } from '@codemirror/view'
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate } from 'y-protocols/awareness'
 import * as Y from 'yjs'
-import { BoardView, type CardRenderer } from '../src/board.ts'
+import { AlwaysLoad } from '../src/alwaysload.ts'
+import type { ImageResolver } from '../src/attachments.ts'
+import { BoardView } from '../src/board.ts'
 import { EDGES, NODES, read, TEXT } from '../src/canvas.ts'
-import { renderCard } from '../src/cardmarkdown.ts'
 import { JsonPane } from '../src/jsonpane.ts'
+import type { Renderer } from '../src/pane.ts'
+import * as preview from '../src/preview.ts'
 
 beforeAll(() => {
   // jsdom has neither; xyflow measures with the first and the board waits on the second.
@@ -58,11 +62,15 @@ const awarenesses = new WeakMap<BoardView, Awareness>()
 const awarenessOf = (view: BoardView) => awarenesses.get(view) as Awareness
 
 // Loaded at once, so a card's text is there by the first tick.
-const loadMarkdown = async () => renderCard
+const loadMarkdown = async (): Promise<Renderer> => preview
 
-function setup(doc: Y.Doc, load: () => Promise<CardRenderer> = loadMarkdown) {
+function setup(
+  doc: Y.Doc,
+  load: () => Promise<Renderer> = loadMarkdown,
+  more: Omit<ConstructorParameters<typeof BoardView>[2], 'loadMarkdown'> = {},
+) {
   const awareness = new Awareness(doc)
-  const view = new BoardView(doc, awareness, { loadMarkdown: load })
+  const view = new BoardView(doc, awareness, { loadMarkdown: load, ...more })
   awarenesses.set(view, awareness)
   document.body.append(view.element)
   views.push(view)
@@ -75,8 +83,9 @@ const tick = () => new Promise((r) => setTimeout(r, 20))
 /** The flow's store, with the setters xyflow's own handlers use. */
 const storeOf = (view: BoardView) => view.store as unknown as InternalFlowStore
 
+// Trimmed: rendered Markdown ends its blocks in a line break, as the preview's does.
 const texts = (view: BoardView) =>
-  [...view.element.querySelectorAll('.canvas-body')].map((b) => b.textContent)
+  [...view.element.querySelectorAll('.canvas-body')].map((b) => b.textContent?.trim())
 
 /** A change made by someone else, arriving through the room. */
 function remote(doc: Y.Doc, fn: () => void) {
@@ -100,7 +109,10 @@ describe('BoardView', () => {
       'canvas-card canvas-card--text',
       'canvas-card canvas-card--file',
     ])
-    expect(cards.map((c) => c.querySelector('.canvas-body')?.textContent)).toEqual(['a', 'b.md'])
+    expect(cards.map((c) => c.querySelector('.canvas-body')?.textContent?.trim())).toEqual([
+      'a',
+      'b.md',
+    ])
     expect(view.empty.get()).toBe(false)
   })
 
@@ -571,12 +583,12 @@ describe('a text card', () => {
   })
 
   it('shows no raw Markdown while the renderer loads, and the Markdown once it has', async () => {
-    let loaded: (r: CardRenderer) => void = () => {}
+    let loaded: (r: Renderer) => void = () => {}
     const doc = docOf([node('a', { text: '[x](https://example.com)' })])
     const view = setup(doc, () => new Promise((resolve) => (loaded = resolve)))
     await tick()
     expect(texts(view)).toEqual([''])
-    loaded(renderCard)
+    loaded(preview)
     await tick()
     expect(view.element.querySelector('.canvas-body a')?.textContent).toBe('x')
   })
@@ -589,5 +601,76 @@ describe('a text card', () => {
     // In an element CSS keeps whitespace in, not loose in the Markdown's.
     const plain = view.element.querySelector('.canvas-markdown > .canvas-plain')
     expect(plain?.textContent).toBe('**a**\n  - b')
+  })
+
+  it('draws its Markdown as the preview does: an image added in the session, once it arrives', async () => {
+    let found: 'loading' | { url: string } = 'loading'
+    const images: ImageResolver = {
+      lookup: (src) => (src === 'assets/0123456789abcdef0123456789abcdef.png' ? found : null),
+      owns: (url) => url === 'blob:shot',
+    }
+    const doc = docOf([node('a', { text: '![shot](assets/0123456789abcdef0123456789abcdef.png)' })])
+    const view = setup(doc, loadMarkdown, { images })
+    await tick()
+    expect(view.element.querySelector('.canvas-markdown .loading-image')).not.toBeNull()
+    found = { url: 'blob:shot' }
+    view.refreshMarkdown()
+    await tick()
+    expect(view.element.querySelector('.canvas-markdown img')?.getAttribute('src')).toBe(
+      'blob:shot',
+    )
+  })
+
+  it('shows a player link as the preview does, loading it on a click and not dragging the card', async () => {
+    const doc = docOf([node('a', { text: 'https://vimeo.com/76979871' })])
+    const view = setup(doc)
+    await tick()
+    const placeholder = view.element.querySelector('.canvas-markdown [data-embed-src]')
+    expect(placeholder?.classList.contains('nodrag')).toBe(true)
+    ;(placeholder?.querySelector('.embed-load') as HTMLElement).click()
+    expect(placeholder?.querySelector('iframe')?.getAttribute('src')).toBe(
+      'https://player.vimeo.com/video/76979871',
+    )
+    // A double click on it does not open the card's editor.
+    placeholder?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+    expect(view.editing.get()).toBeNull()
+  })
+
+  it('loads the players of a provider this browser always loads', async () => {
+    const alwaysLoad = new AlwaysLoad(null)
+    alwaysLoad.remember('vimeo')
+    const doc = docOf([node('a', { text: 'https://vimeo.com/76979871' })])
+    const view = setup(doc, loadMarkdown, { alwaysLoad })
+    await tick()
+    expect(view.element.querySelector('.canvas-markdown iframe')).not.toBeNull()
+  })
+
+  it("is typed in with the file's editor theme and its image pasting", async () => {
+    const uploads: ((path: string) => void)[] = []
+    const doc = docOf([node('a', { text: 'ab' })])
+    const view = setup(doc, loadMarkdown, {
+      editorExtensions: () => [EditorView.editorAttributes.of({ 'data-theme': 'file' })],
+      imagePaste: {
+        blocked: () => null,
+        upload: () => new Promise((resolve) => uploads.push(resolve)),
+        onError: () => {},
+      },
+    })
+    await tick()
+    view.edit('a')
+    const editor = view.element.querySelector<HTMLElement>('.canvas-editor .cm-editor')
+    expect(editor?.dataset.theme).toBe('file')
+    const content = editor?.querySelector('.cm-content') as HTMLElement
+    const event = new Event('paste', { bubbles: true, cancelable: true })
+    const file = new File([new Uint8Array([1])], 'shot.png', { type: 'image/png' })
+    Object.defineProperty(event, 'clipboardData', {
+      value: { files: [file], types: ['Files'], getData: () => '' },
+    })
+    content.dispatchEvent(event)
+    uploads[0]?.('assets/0123456789abcdef0123456789abcdef.png')
+    await tick()
+    expect((mapOf(doc, 'a').get(TEXT) as Y.Text).toString()).toBe(
+      'ab![](assets/0123456789abcdef0123456789abcdef.png)',
+    )
   })
 })

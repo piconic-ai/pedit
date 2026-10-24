@@ -59,15 +59,21 @@ export function CanvasCard(props: NodeBase) {
   }
   // A text node's Markdown, drawn again when its text or the renderer changes.
   // A move or a resize publishes the node too; the text stays as drawn then.
+  // It draws again when an image it links to arrives (markdownVersion).
   const drawMarkdown = (el: HTMLElement) => {
-    let drawn: { render: unknown; text: string | null } = { render: null, text: null }
+    let drawn: { draw: unknown; text: string | null; version: number } = {
+      draw: null,
+      text: null,
+      version: -1,
+    }
     createEffect(() => {
-      const render = v.markdown.get()
+      const draw = v.markdown.get()
+      const version = v.markdownVersion.get()
       const n = node()
-      const text = render && n?.type === 'text' ? nodeText(n) : null
-      if (render === drawn.render && text === drawn.text) return
-      drawn = { render, text }
-      if (render && text !== null) el.replaceChildren(render(text))
+      const text = draw && n?.type === 'text' ? nodeText(n) : null
+      if (draw === drawn.draw && text === drawn.text && version === drawn.version) return
+      drawn = { draw, text, version }
+      if (draw && text !== null) draw(el, text)
       else el.replaceChildren()
     })
   }
@@ -110,7 +116,7 @@ export function CanvasCard(props: NodeBase) {
           and a `hidden` binding, do not update when rendered in the browser. */}
       <div className="canvas-body">
         {bodyText()}
-        <div className="canvas-markdown" ref={drawMarkdown} />
+        <div className="canvas-markdown preview" ref={drawMarkdown} />
       </div>
       <a
         className="canvas-link nodrag"
