@@ -71,8 +71,8 @@ const (
 var resyncEvery = 5 * time.Second
 
 // manifestEvery spaces out the manifest a Client sends to whoever asks for
-// file 0 (a SyncStep1): peers below an editor send no awareness, which is
-// what tells the room of other newcomers.
+// file 0 (a SyncStep1), as every newcomer does: awareness does not tell of
+// all of them, as the Client follows only so many that sign nothing.
 const manifestEvery = 2 * time.Second
 
 // AddFile keeps doc in sync with the room as the file with this ID, from 1
@@ -245,16 +245,6 @@ func (c *Client) offerManifest() {
 	manifest := c.manifest
 	c.mu.Unlock()
 	c.send(MessageFiles, manifest)
-}
-
-// sendManifest sends the manifest again, if this Client has one.
-func (c *Client) sendManifest() {
-	c.mu.Lock()
-	manifest := c.manifest
-	c.mu.Unlock()
-	if manifest != nil {
-		c.send(MessageFiles, manifest)
-	}
 }
 
 func (c *Client) sendFile(id uint64, t MessageType, payload []byte) error {

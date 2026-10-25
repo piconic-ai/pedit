@@ -765,11 +765,15 @@ async function joinRoom(
   }
 
   const renderPeople = () => {
-    people.set(participants(awareness.getStates(), doc.clientID))
+    const accessOf = (clientId: number) => client?.accessOf(clientId)
+    people.set(participants(awareness.getStates(), doc.clientID, accessOf))
     const colors = colorsByName(people.get())
     if (!sameColors(colors, authorColors.get())) authorColors.set(colors)
-    attachments.host = hostAttachments(awareness.getStates())
-    const host = [...awareness.getStates().values()].find((s) => s.role === 'host')
+    attachments.host = hostAttachments(awareness.getStates(), accessOf)
+    // Only an editor's state speaks for the host: anyone can say they are.
+    const host = [...awareness.getStates()].find(
+      ([id, s]) => s.role === 'host' && accessOf(id) === 'edit',
+    )?.[1]
     if (host?.format === 'canvas') first.canvas = true
     // Keep showing the file name after the host has gone. Once the host
     // lists the room's files, the list names them.

@@ -139,7 +139,6 @@ describe('room links below edit', () => {
         MessageType.Files,
         encodeManifest([{ id: 1, path: 'evil.md', format: 'text' }]),
       ),
-      encodeMessage(MessageType.Awareness, awarenessMessage({ role: 'host', file: 'evil.md' })),
     ]
     const want = encodeMessage(
       MessageType.Attachment,

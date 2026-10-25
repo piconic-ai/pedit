@@ -79,6 +79,13 @@ is shared by both implementations: change them together.
   for attachments (`want`). Types: `0` sync, `1` awareness, `2` attachment,
   `3` canvas, `4` files. Clients skip types they do not know, so newer peers
   can add more.
+- Awareness frames hold one entry, the sender's own state; nobody forwards
+  another client's state or its removal. Each peer remembers, per client
+  ID, the highest access it heard the ID's state with, drops states for it
+  from below that, and shows participants' access and the host's fields
+  from that, never from the state. Signed states are applied at the next
+  clock after the one held; unsigned ones may not claim a clock past 2^32
+  (`presence.go`, `presence.ts`).
 - A room that shares several files keeps each in a Y.Doc of its own. File `0`
   is the room's own doc, synced with plain sync messages as in a room that
   shares one file; the others are synced in files messages. These carry a

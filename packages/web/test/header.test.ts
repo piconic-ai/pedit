@@ -193,6 +193,16 @@ describe('Header', () => {
     expect(names()).toEqual(['Grace (you)'])
   })
 
+  it('says what each participant may do, when less than editing', () => {
+    const { people, names } = mount()
+    people.set([
+      person(1, 'Ada', { isHost: true, access: 'edit' }),
+      person(2, 'Carol', { access: 'comment' }),
+      person(3, 'Rin', { access: 'read', isSelf: true }),
+    ])
+    expect(names()).toEqual(['Ada (host)', 'Carol (comment only)', 'Rin (read only, you)'])
+  })
+
   it('drops an avatar image that fails to load, keeping the initials', () => {
     const { people, list } = mount()
     people.set([person(1, 'Ada', { avatar: 'https://www.gravatar.com/avatar/x?d=404' })])

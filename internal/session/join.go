@@ -194,7 +194,7 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 		}
 	})
 	aw.OnChange(func(awareness.ChangeEvent) {
-		if _, ok := hostState(aw); ok {
+		if _, ok := hostState(aw, s.Client); ok {
 			select {
 			case room.hostSeen <- struct{}{}:
 			default:
@@ -226,7 +226,7 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 		_ = removeTemp(temp)
 		return nil, err
 	}
-	host, err := room.wait(ctx, aw, opts.Timeout)
+	host, err := room.wait(ctx, aw, s.Client, opts.Timeout)
 	if err != nil {
 		return fail(err)
 	}
@@ -337,14 +337,14 @@ func (r *roomWait) canceled(ctx context.Context) error {
 
 // wait waits for a host to show up in the room, and then for the room's
 // content, both within timeout. It returns the host's awareness state.
-func (r *roomWait) wait(ctx context.Context, aw *awareness.Awareness, timeout time.Duration) (map[string]any, error) {
+func (r *roomWait) wait(ctx context.Context, aw *awareness.Awareness, client *protocol.Client, timeout time.Duration) (map[string]any, error) {
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
 	var host map[string]any
 	for host == nil {
 		select {
 		case <-r.hostSeen:
-			host, _ = hostState(aw)
+			host, _ = hostState(aw, client)
 		case <-r.closed:
 			return nil, r.endedErr()
 		case <-deadline.C:
@@ -438,18 +438,26 @@ func (s *Session) reportPeople(onPeople func([]string)) {
 	}
 	var names []string
 	for id, st := range s.awareness.GetStates() {
-		if id != s.awareness.ClientID() {
-			names = append(names, displayName(st.State))
+		if id == s.awareness.ClientID() {
+			continue
 		}
+		name := displayName(st.State)
+		// What a participant may do follows from the link it joined with.
+		if access, ok := s.Client.AccessOf(id); ok && access != protocol.AccessEdit {
+			name += " (" + access.String() + " only)"
+		}
+		names = append(names, name)
 	}
 	sort.Strings(names)
 	onPeople(names)
 }
 
-// hostState returns the awareness state of the host, if one is in the room.
-func hostState(aw *awareness.Awareness) (map[string]any, bool) {
+// hostState returns the awareness state of the host, if one is in the room:
+// one that came signed by an editor (protocol.Client.AccessOf), since anyone
+// can say they are the host.
+func hostState(aw *awareness.Awareness, client *protocol.Client) (map[string]any, bool) {
 	for id, st := range aw.GetStates() {
-		if id == aw.ClientID() {
+		if access, _ := client.AccessOf(id); id == aw.ClientID() || access != protocol.AccessEdit {
 			continue
 		}
 		if role, _ := st.State["role"].(string); role == "host" {

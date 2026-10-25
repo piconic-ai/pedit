@@ -52,8 +52,19 @@ export interface HeaderProps {
 /** A speech bubble, on a 24 by 24 grid. */
 const BUBBLE = 'M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-7l-4 3.5V16H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z'
 
+/** What a participant's link lets them do, when it is less than editing. */
+const ACCESS_LABELS: Partial<Record<string, string>> = {
+  comment: 'comment only',
+  read: 'read only',
+}
+
 function label(p: Participant): string {
-  return `${p.name}${p.isHost ? ' (host)' : ''}${p.isSelf ? ' (you)' : ''}`
+  const notes = [
+    p.isHost ? 'host' : '',
+    (p.access && ACCESS_LABELS[p.access]) ?? '',
+    p.isSelf ? 'you' : '',
+  ].filter(Boolean)
+  return notes.length > 0 ? `${p.name} (${notes.join(', ')})` : p.name
 }
 
 /**

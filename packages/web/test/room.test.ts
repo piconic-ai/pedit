@@ -50,6 +50,21 @@ describe('participants', () => {
     expect(list[1]?.isSelf).toBe(true)
   })
 
+  it('takes the host and what each may do from their links, not their states', () => {
+    const states = new Map<number, Record<string, unknown>>([
+      [1, { role: 'host', name: 'claims to host' }],
+      [2, { role: 'host', name: 'host' }],
+      [3, { name: 'reader' }],
+    ])
+    const access = { 1: 'comment', 2: 'edit', 3: 'read' } as const
+    const list = participants(states, 0, (id) => access[id as 1 | 2 | 3])
+    expect(list.map((p) => [p.name, p.isHost, p.access])).toEqual([
+      ['host', true, 'edit'],
+      ['claims to host', false, 'comment'],
+      ['reader', false, 'read'],
+    ])
+  })
+
   it('keeps avatars only from known hosts', () => {
     const states = new Map<number, Record<string, unknown>>([
       [1, { user: { name: 'A', avatar: 'https://gravatar.com/avatar/x' } }],

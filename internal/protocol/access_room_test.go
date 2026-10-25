@@ -61,6 +61,12 @@ func (l *errorLog) add(err error) {
 	l.errs = append(l.errs, err)
 }
 
+func (l *errorLog) len() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.errs)
+}
+
 func (l *errorLog) count(target error) int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -171,7 +177,6 @@ func TestFramesFromLowerLinksChangeNothing(t *testing.T) {
 		protocol.EncodeMessage(protocol.MessageAttachment, announce),
 		protocol.EncodeMessage(protocol.MessageAttachment, stored),
 		protocol.EncodeMessage(protocol.MessageFiles, manifest),
-		protocol.EncodeMessage(protocol.MessageAwareness, awarenessUpdate(t, map[string]any{"role": "host", "file": "evil.md"})),
 	}
 	counter := uint64(0)
 	for _, access := range []protocol.Access{protocol.AccessComment, protocol.AccessRead} {

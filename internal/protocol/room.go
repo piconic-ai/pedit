@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -159,6 +160,13 @@ type Client struct {
 	sendMu sync.Mutex
 	sent   uint64
 	guard  replayGuard
+
+	// presence is the access each awareness client ID spoke with (presence.go).
+	presence presence
+	// When the Client last sent its state to newcomers, and the timer that
+	// sends it again; under mu.
+	announced     time.Time
+	announceTimer *time.Timer
 
 	mu        sync.Mutex
 	status    Status
@@ -330,6 +338,9 @@ func (c *Client) Destroy() {
 	if c.manifestTimer != nil {
 		c.manifestTimer.Stop()
 	}
+	if c.announceTimer != nil {
+		c.announceTimer.Stop()
+	}
 	out := c.out
 	c.out = nil
 	started := c.started
@@ -424,8 +435,8 @@ func (c *Client) serve(conn Conn) error {
 		c.send(MessageSync, ysync.EncodeSyncStep1(c.doc))
 		if c.edits() {
 			c.send(MessageSync, step2)
-			c.sendAwareness([]uint64{c.aw.ClientID()})
 		}
+		c.sendAwareness([]uint64{c.aw.ClientID()})
 		c.syncFiles()
 	}
 
@@ -580,15 +591,39 @@ func applySync(doc *crdt.Doc, payload []byte, origin any) (reply []byte, err err
 	return ysync.ApplySyncMessage(doc, payload, origin)
 }
 
-func (c *Client) receiveAwareness(access Access, payload []byte) error {
-	if err := editorsOnly("awareness", access); err != nil {
-		return err
-	}
+// receiveAwareness applies a peer's state by the rules in presence.go.
+func (c *Client) receiveAwareness(access Access, payload []byte) (err error) {
 	update, err := encoding.NewDecoder(payload).ReadVarBytes()
 	if err != nil {
 		return err
 	}
-	return c.aw.ApplyUpdate(update, c)
+	e, err := decodeAwarenessEntry(update)
+	if err != nil {
+		return err
+	}
+	if e.id == c.aw.ClientID() {
+		return notAllowed("a state of this client", access)
+	}
+	if access == AccessRead && e.clock > maxWireClock {
+		return notAllowed("an awareness clock out of range", access)
+	}
+	unsigned := 0
+	if access == AccessRead {
+		unsigned = c.unsignedStates()
+	}
+	if !c.presence.admit(e.id, access, unsigned) {
+		return notAllowed("awareness of a client heard from above", access)
+	}
+	if access != AccessRead {
+		meta, _ := c.aw.Meta(e.id)
+		e.clock = meta.Clock + 1
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("awareness makes ygo panic: %v", r)
+		}
+	}()
+	return c.aw.ApplyUpdate(e.encode(), c)
 }
 
 // markSynced reports the first full state received from a peer, once.
@@ -621,21 +656,52 @@ func (c *Client) handleDocUpdate(update []byte, origin any) {
 	c.send(MessageSync, ysync.EncodeUpdate(update))
 }
 
+// handleAwarenessUpdate sends the Client's own state when it changes. Others'
+// states, and their timing out, are each peer's own to follow.
 func (c *Client) handleAwarenessUpdate(ev awareness.UpdateEvent) {
-	if ev.Origin == c || !c.edits() {
+	if ev.Origin == c {
 		return
 	}
-	ids := append(append(append([]uint64{}, ev.Added...), ev.Updated...), ev.Removed...)
-	c.sendAwareness(ids)
+	self := c.aw.ClientID()
+	if slices.Contains(ev.Added, self) || slices.Contains(ev.Updated, self) || slices.Contains(ev.Removed, self) {
+		c.sendAwareness([]uint64{self})
+	}
 }
 
-// Someone new showed up: tell them about us right away instead of waiting for the
+// Someone new showed up: tell them about us soon instead of waiting for the
 // periodic awareness renewal, and which files the room shares.
 func (c *Client) handleAwarenessChange(ev awareness.ChangeEvent) {
-	if ev.Origin == c && len(ev.Added) > 0 && c.edits() {
-		c.sendAwareness([]uint64{c.aw.ClientID()})
-		c.sendManifest()
+	if ev.Origin == c && len(ev.Added) > 0 {
+		c.announce()
 	}
+}
+
+// announce sends the Client's state, at most every announceEvery: newcomers
+// that show up meanwhile get it once that has passed. The manifest goes with
+// it, as offerManifest allows.
+func (c *Client) announce() {
+	c.mu.Lock()
+	if c.destroyed {
+		c.mu.Unlock()
+		return
+	}
+	wait := time.Until(c.announced.Add(announceEvery))
+	if wait > 0 {
+		if c.announceTimer == nil {
+			c.announceTimer = time.AfterFunc(wait, func() {
+				c.mu.Lock()
+				c.announceTimer = nil
+				c.mu.Unlock()
+				c.announce()
+			})
+		}
+		c.mu.Unlock()
+		return
+	}
+	c.announced = time.Now()
+	c.mu.Unlock()
+	c.sendAwareness([]uint64{c.aw.ClientID()})
+	c.offerManifest()
 }
 
 func (c *Client) dropRemoteAwareness() {

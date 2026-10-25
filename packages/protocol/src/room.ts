@@ -52,6 +52,13 @@ import {
   UnknownMessageTypeError,
 } from './message.ts'
 import { Pacer, type Rate } from './pace.ts'
+import {
+  ANNOUNCE_EVERY_MS,
+  decodeAwarenessEntry,
+  encodeAwarenessEntry,
+  MAX_WIRE_CLOCK,
+  Presence,
+} from './presence.ts'
 import { openMessage, signMessage } from './signed.ts'
 
 /**
@@ -206,8 +213,9 @@ const CHECK_BURST_MS = 1000
 const RESYNC_EVERY_MS = 5000
 /**
  * A client that set a manifest sends it again to someone who asks for file 0
- * (a SyncStep1), at most this often: peers below an editor send no
- * awareness, which is what tells the room of other newcomers.
+ * (a SyncStep1), as every newcomer does, at most this often: awareness does
+ * not tell of all of them, as a client follows only so many that sign
+ * nothing.
  */
 const MANIFEST_EVERY_MS = 2000
 
@@ -257,6 +265,12 @@ export class RoomClient {
   private manifest: Uint8Array | null = null
   private manifestAt = Number.NEGATIVE_INFINITY
   private manifestTimer: ReturnType<typeof setTimeout> | null = null
+  // The access each awareness client ID spoke with (presence.ts).
+  private readonly presence = new Presence()
+  // When this client last sent its state to newcomers, and the timer that
+  // sends it again.
+  private announcedAt = Number.NEGATIVE_INFINITY
+  private announceTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(opts: RoomClientOptions) {
     this.opts = opts
@@ -297,10 +311,8 @@ export class RoomClient {
       }
       this.setStatus('connected')
       this.sendSync((encoder) => syncProtocol.writeSyncStep1(encoder, this.doc))
-      if (edits) {
-        this.send(MessageType.Sync, state)
-        this.sendAwareness([this.doc.clientID])
-      }
+      if (edits) this.send(MessageType.Sync, state)
+      this.sendAwareness([this.doc.clientID])
       if (this.manifest) this.send(MessageType.Files, this.manifest)
       for (const [id, f] of this.files) this.syncFile(id, f.doc)
     }
@@ -354,6 +366,7 @@ export class RoomClient {
     this.destroyed = true
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
     if (this.manifestTimer) clearTimeout(this.manifestTimer)
+    if (this.announceTimer) clearTimeout(this.announceTimer)
     this.doc.off('update', this.handleDocUpdate)
     this.awareness.off('update', this.handleAwarenessUpdate)
     this.awareness.off('change', this.handleAwarenessChange)
@@ -467,12 +480,7 @@ export class RoomClient {
         break
       }
       case MessageType.Awareness:
-        editorsOnly('awareness', access)
-        awarenessProtocol.applyAwarenessUpdate(
-          this.awareness,
-          decoding.readVarUint8Array(decoding.createDecoder(payload)),
-          this,
-        )
+        this.receiveAwareness(access, payload)
         break
       case MessageType.Files:
         this.receiveFiles(access, payload)
@@ -488,6 +496,36 @@ export class RoomClient {
         if (attachment) this.opts.onAttachment?.(attachment)
       }
     }
+  }
+
+  /**
+   * What access the peer with this awareness client ID has, from the frames
+   * its state came in, if this client heard of it. This client's own ID has
+   * its link's.
+   */
+  accessOf(clientId: number): Access | undefined {
+    return clientId === this.doc.clientID ? this.opts.keys.access : this.presence.of(clientId)
+  }
+
+  /** Applies a peer's state by the rules in presence.ts. */
+  private receiveAwareness(access: Access, payload: Uint8Array): void {
+    const entry = decodeAwarenessEntry(decoding.readVarUint8Array(decoding.createDecoder(payload)))
+    if (entry.id === this.doc.clientID) throw new NotAllowedError('a state of this client', access)
+    if (access === 'read' && entry.clock > MAX_WIRE_CLOCK) {
+      throw new NotAllowedError('an awareness clock out of range', access)
+    }
+    if (!this.presence.admit(entry.id, access, () => this.unsignedStates())) {
+      throw new NotAllowedError('awareness of a client heard from above', access)
+    }
+    if (access !== 'read') entry.clock = (this.awareness.meta.get(entry.id)?.clock ?? 0) + 1
+    awarenessProtocol.applyAwarenessUpdate(this.awareness, encodeAwarenessEntry(entry), this)
+  }
+
+  /** The clients that sign nothing whose states this client holds now. */
+  private unsignedStates(): number {
+    let n = 0
+    for (const id of this.awareness.getStates().keys()) if (this.presence.of(id) === 'read') n++
+    return n
   }
 
   /**
@@ -632,21 +670,41 @@ export class RoomClient {
     this.sendSync((encoder) => syncProtocol.writeUpdate(encoder, update))
   }
 
+  // Sends this client's own state when it changes. Others' states, and their
+  // timing out, are each peer's own to follow.
   private handleAwarenessUpdate = (
     { added, updated, removed }: AwarenessChanges,
     origin: unknown,
   ) => {
-    if (origin === this || !this.edits()) return
-    this.sendAwareness([...added, ...updated, ...removed])
+    if (origin === this) return
+    const self = this.doc.clientID
+    if ([...added, ...updated, ...removed].includes(self)) this.sendAwareness([self])
   }
 
-  // Someone new showed up: tell them about us right away instead of waiting for the
+  // Someone new showed up: tell them about us soon instead of waiting for the
   // periodic awareness renewal, and which files the room shares.
   private handleAwarenessChange = ({ added }: AwarenessChanges, origin: unknown) => {
-    if (origin === this && added.length > 0 && this.edits()) {
-      this.sendAwareness([this.doc.clientID])
-      if (this.manifest) this.send(MessageType.Files, this.manifest)
+    if (origin === this && added.length > 0) this.announce()
+  }
+
+  /**
+   * Sends this client's state, at most every ANNOUNCE_EVERY_MS: newcomers
+   * that show up meanwhile get it once that has passed. The manifest goes
+   * with it, as offerManifest allows.
+   */
+  private announce(): void {
+    if (this.destroyed) return
+    const wait = this.announcedAt + ANNOUNCE_EVERY_MS - performance.now()
+    if (wait > 0) {
+      this.announceTimer ??= setTimeout(() => {
+        this.announceTimer = null
+        this.announce()
+      }, wait)
+      return
     }
+    this.announcedAt = performance.now()
+    this.sendAwareness([this.doc.clientID])
+    this.offerManifest()
   }
 
   private dropRemoteAwareness(): void {
