@@ -50,6 +50,18 @@ browsers. Edits are saved back to your file:
 
 No install or account needed for collaborators on the public server.
 
+If the connection drops, keep `pedit` running. It reconnects with the same
+link and merges edits made while disconnected. The terminal keeps an offline
+notice and confirms when syncing resumes. While the host is away, the browser
+pauses editing; edits already made or still in transit merge when the host
+returns. The public relay keeps guests waiting for up to two minutes.
+
+Text, canvas changes, and comments save during the session, including while
+edits continue. Saves normally start about a second after the first pending
+change. A crash can lose changes still in memory, in transit, or waiting for a
+save; failed or slow disk writes can extend that window. Ctrl+C flushes pending
+changes and closes the room. Running `pedit` again creates a new link.
+
 Collaborators who would rather stay in their own editor join from the command
 line instead. Given the link, `pedit` mirrors the shared file to a temporary
 copy and keeps it in sync both ways until they leave or the host closes the

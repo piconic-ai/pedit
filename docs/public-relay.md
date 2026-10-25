@@ -33,10 +33,22 @@ Ctrl+C, gets two minutes to come back: meanwhile the room keeps its guests,
 lets new ones in and keeps its images and per-room data, and nobody edits. If
 the host does not come back, the room ends as if it had left.
 
-A relay update drops every room's connections without the room seeing anyone
-leave. A host whose `pedit` is still running reconnects, and the session goes
-on. A room whose host does not come back deletes its images and per-room data
-within about an hour, when its hourly check finds no host.
+A relay update can drop every room's connections without the room seeing
+anyone leave. Keep the host's `pedit` running. It reconnects with the same link
+and merges the state kept on participant devices. Text, canvas changes, and
+comments save to the host during the session. Pending saves and edits still
+in transit can be lost if a device crashes. A guest that reconnects before the
+host starts the same two-minute wait. If nobody reconnects, the hourly check
+deletes orphaned images and per-room data within about an hour. Starting
+`pedit` again creates a new room and link.
+
+The two-minute grace period preserves guests, images, and per-room data after
+a host disconnect. It does not extend the public relay's 24-hour room limit,
+measured from the host's first connection. After the grace period expires,
+guests are disconnected and their link stops working until the host returns.
+Ctrl+C closes the guests' sessions immediately and their link stops working.
+The 24-hour limit closes the room even if the host returns. Self-hosted relays
+have no room time limit unless configured.
 
 ## Logs
 

@@ -111,12 +111,14 @@ func New(path, initial string, opts Options) *Writer {
 	return w
 }
 
-// Schedule writes content after the delay, unless newer content comes first.
+// Schedule coalesces content for the next save without delaying a pending save.
 func (w *Writer) Schedule(content string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.pending = &content
-	w.arm(w.delay)
+	if w.timer == nil {
+		w.arm(w.delay)
+	}
 }
 
 // arm (re)starts the timer that writes the pending content. Callers hold w.mu.
