@@ -86,11 +86,21 @@ func TestFrameLimit(t *testing.T) {
 	if protocol.MaxFrameBytes != 1<<20 || protocol.MessageTooBig != 1009 {
 		t.Fatalf("MaxFrameBytes = %d, MessageTooBig = %d", protocol.MaxFrameBytes, protocol.MessageTooBig)
 	}
+	raw, _ := protocol.DecodeKey(protocol.GenerateKey())
+	keys, err := protocol.EditKeys(raw, "room")
+	if err != nil {
+		t.Fatal(err)
+	}
 	c := newCipher(t)
 	for _, n := range []int{0, 1, 1000} {
-		frame := c.Encrypt(protocol.EncodeFrame(protocol.Sender{}, 1, protocol.EncodeMessage(protocol.MessageSync, make([]byte, n))))
+		message := protocol.EncodeMessage(protocol.MessageSync, make([]byte, n))
+		frame := protocol.SealFrame(keys, protocol.Sender{}, 1, message)
 		if len(frame) != protocol.FrameBytes(n) {
 			t.Errorf("a payload of %d bytes is a frame of %d, FrameBytes says %d", n, len(frame), protocol.FrameBytes(n))
+		}
+		// A read link's frames carry no signature.
+		if plain := c.Encrypt(protocol.EncodeFrame(protocol.Sender{}, 1, message)); len(plain) >= len(frame) {
+			t.Errorf("an unsigned frame of %d bytes is no smaller than a signed one", len(plain))
 		}
 	}
 }

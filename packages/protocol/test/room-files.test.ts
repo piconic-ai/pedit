@@ -17,16 +17,17 @@ import {
   Pacer,
   RoomClient,
   type RoomClientOptions,
+  type RoomKeys,
   SENDER_BYTES,
 } from '../src/index.ts'
-import { Relay } from '../src/testing.ts'
+import { editKeys, Relay, sealFrame } from '../src/testing.ts'
 
 const clients: RoomClient[] = []
 afterEach(async () => {
   for (const c of clients.splice(0)) await c.destroy()
 })
 
-function join(relay: Relay, key: CryptoKey, opts: Partial<RoomClientOptions> = {}) {
+function join(relay: Relay, key: RoomKeys, opts: Partial<RoomClientOptions> = {}) {
   const doc = new Y.Doc()
   const awareness = new Awareness(doc)
   // As the editor does: a peer with only the initial state (clock 0) goes unseen.
@@ -34,7 +35,7 @@ function join(relay: Relay, key: CryptoKey, opts: Partial<RoomClientOptions> = {
   const client = new RoomClient({
     admissionToken: 'A'.repeat(43),
     url: 'ws://test',
-    key,
+    keys: key,
     doc,
     awareness,
     createSocket: relay.create,
@@ -62,7 +63,7 @@ const manifest: FileEntry[] = [
 describe('RoomClient with several files', () => {
   it('syncs each file in a doc of its own, with file 0 the room doc', async () => {
     const relay = new Relay()
-    const key = await importKey(generateKey())
+    const key = await editKeys()
     const host = join(relay, key)
     host.doc.getText('content').insert(0, '# agenda\n')
     const notes = file('# notes\n')
@@ -95,7 +96,7 @@ describe('RoomClient with several files', () => {
 
   it('lets a file go, and takes its id again for another doc', async () => {
     const relay = new Relay()
-    const key = await importKey(generateKey())
+    const key = await editKeys()
     const host = join(relay, key)
     const notes = file('n')
     host.addFile(1, notes)
@@ -118,7 +119,7 @@ describe('RoomClient with several files', () => {
 
   it('follows only the files it added, and reports each synced once', async () => {
     const relay = new Relay()
-    const key = await importKey(generateKey())
+    const key = await editKeys()
     const errors: unknown[] = []
     const synced: number[] = []
     const host = join(relay, key)
@@ -143,7 +144,7 @@ describe('RoomClient with several files', () => {
 
   it('syncs a file added while connected', async () => {
     const relay = new Relay()
-    const key = await importKey(generateKey())
+    const key = await editKeys()
     const host = join(relay, key)
     const guest = join(relay, key)
     await vi.waitFor(() => {
@@ -162,7 +163,7 @@ describe('RoomClient with several files', () => {
 
   it('sends the manifest to whoever joins later, and a new one to everyone', async () => {
     const relay = new Relay()
-    const key = await importKey(generateKey())
+    const key = await editKeys()
     const host = join(relay, key)
     host.setManifest(manifest)
     await vi.waitFor(() => expect(host.status).toBe('connected'))
@@ -175,7 +176,7 @@ describe('RoomClient with several files', () => {
 
   it('routes attachment and canvas messages by file', async () => {
     const relay = new Relay()
-    const key = await importKey(generateKey())
+    const key = await editKeys()
     const got: string[] = []
     const a = join(relay, key)
     const b = join(relay, key, {
@@ -200,7 +201,7 @@ describe('RoomClient with several files', () => {
 
   it('resyncs files after a reconnect', async () => {
     const relay = new Relay()
-    const key = await importKey(generateKey())
+    const key = await editKeys()
     const host = join(relay, key)
     const guest = join(relay, key)
     const notes = file('n')
@@ -215,7 +216,7 @@ describe('RoomClient with several files', () => {
 
   it('stops for good when a file does not fit a frame', async () => {
     const relay = new Relay()
-    const client = join(relay, await importKey(generateKey()))
+    const client = join(relay, await editKeys())
     await vi.waitFor(() => expect(client.status).toBe('connected'))
     client.addFile(1, file('x'.repeat(MAX_FRAME_BYTES)))
     await vi.waitFor(() => expect(client.status).toBe('too-large'))
@@ -223,7 +224,7 @@ describe('RoomClient with several files', () => {
 
   it('skips files kinds and message types from newer peers', async () => {
     const relay = new Relay()
-    const key = await importKey(generateKey())
+    const key = await editKeys()
     const errors: unknown[] = []
     const heard: unknown[] = []
     const b = join(relay, key, {
@@ -247,7 +248,7 @@ describe('RoomClient with several files', () => {
       ),
     ]
     for (const [i, m] of frames.entries()) {
-      newer.send(await encrypt(key, encodeFrame(sender, i + 1, m)))
+      newer.send(await sealFrame(key, sender, i + 1, m))
     }
     const a = join(relay, key)
     a.addFile(1, file('after'))
@@ -267,7 +268,7 @@ describe('pacing', () => {
 
   it('keeps a room with several large files within the relay allowance', async () => {
     const relay = new Relay({ byteRate })
-    const key = await importKey(generateKey())
+    const key = await editKeys()
     const statuses: string[] = []
     const host = join(relay, key, { byteRate, onStatus: (s) => statuses.push(s) })
     for (const id of [1, 2, 3]) host.addFile(id, big(40))
@@ -286,7 +287,7 @@ describe('pacing', () => {
 
   it('flushes an edit queued behind a paced transfer on leaving, within the allowance', async () => {
     const relay = new Relay({ byteRate })
-    const key = await importKey(generateKey())
+    const key = await editKeys()
     const observer = join(relay, key, { byteRate })
     await vi.waitFor(() => expect(observer.status).toBe('connected'))
     const guest = join(relay, key, { byteRate })
@@ -300,7 +301,7 @@ describe('pacing', () => {
 
   it('lets a new connection sync at once, dropping what the old one had queued', async () => {
     const relay = new Relay({ byteRate })
-    const key = await importKey(generateKey())
+    const key = await editKeys()
     const client = join(relay, key, { byteRate })
     for (const id of [1, 2, 3, 4, 5]) client.addFile(id, big(40))
     await vi.waitFor(() => expect(client.status).toBe('connected'))
@@ -316,7 +317,7 @@ describe('pacing', () => {
 
   it('would be closed by the relay without pacing', async () => {
     const relay = new Relay({ byteRate })
-    const key = await importKey(generateKey())
+    const key = await editKeys()
     const statuses: string[] = []
     const unpaced = { burst: 1e12, perSecond: 1e12 }
     const host = join(relay, key, { byteRate: unpaced, onStatus: (s) => statuses.push(s) })
@@ -348,7 +349,7 @@ describe('Pacer', () => {
 describe('RoomClient with a checked file', () => {
   it('applies only the updates its check passes, and reports the rest', async () => {
     const relay = new Relay()
-    const key = await importKey(generateKey())
+    const key = await editKeys()
     const errors: unknown[] = []
     const host = join(relay, key, { onError: (e) => errors.push(e) })
     const checked = new Y.Doc()
@@ -374,7 +375,7 @@ describe('RoomClient with a checked file', () => {
 
   it('asks the room again for what its check refused for now', async () => {
     const relay = new Relay()
-    const key = await importKey(generateKey())
+    const key = await editKeys()
     const host = join(relay, key, { onError: () => {} })
     const checked = new Y.Doc()
     let refused = false
@@ -398,7 +399,7 @@ describe('RoomClient with a checked file', () => {
     const clock = vi.spyOn(performance, 'now').mockImplementation(() => now)
     try {
       const relay = new Relay()
-      const key = await importKey(generateKey())
+      const key = await editKeys()
       const errors: unknown[] = []
       const host = join(relay, key, { onError: (e) => errors.push(e) })
       const one = new Y.Doc()
@@ -437,7 +438,7 @@ describe('RoomClient with a checked file', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
     try {
       const relay = new Relay()
-      const key = await importKey(generateKey())
+      const key = await editKeys()
       const host = join(relay, key, { onError: () => {} })
       const checked = new Y.Doc()
       let refusals = 0

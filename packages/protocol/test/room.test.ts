@@ -21,10 +21,11 @@ import {
   ReplayedFrameError,
   ROOM_EXPIRED,
   RoomClient,
+  type RoomKeys,
   SENDER_BYTES,
   SERVER_OUTDATED,
 } from '../src/index.ts'
-import { Relay } from '../src/testing.ts'
+import { editKeys, Relay, sealFrame } from '../src/testing.ts'
 
 const clients: RoomClient[] = []
 afterEach(async () => {
@@ -33,7 +34,7 @@ afterEach(async () => {
 
 async function join(
   relay: Relay,
-  key: CryptoKey,
+  key: RoomKeys,
   init?: string,
   state?: Record<string, unknown>,
   headers?: Record<string, string>,
@@ -45,7 +46,7 @@ async function join(
   const client = new RoomClient({
     admissionToken: 'A'.repeat(43),
     url: 'ws://test',
-    key,
+    keys: key,
     doc,
     awareness,
     headers,
@@ -61,7 +62,7 @@ const text = (c: RoomClient) => c.doc.getText('content').toString()
 describe('RoomClient', () => {
   it('gives a late joiner the full document', async () => {
     const relay = new Relay()
-    const key = await importKey(generateKey())
+    const key = await editKeys()
     const host = await join(relay, key, '# notes\n')
     await vi.waitFor(() => expect(host.status).toBe('connected'))
     const guest = await join(relay, key)
@@ -70,7 +71,7 @@ describe('RoomClient', () => {
 
   it('syncs concurrent edits both ways', async () => {
     const relay = new Relay()
-    const key = await importKey(generateKey())
+    const key = await editKeys()
     const a = await join(relay, key, 'hello')
     const b = await join(relay, key)
     await vi.waitFor(() => expect(text(b)).toBe('hello'))
@@ -85,7 +86,7 @@ describe('RoomClient', () => {
 
   it('pushes offline edits of a reconnecting host', async () => {
     const relay = new Relay()
-    const key = await importKey(generateKey())
+    const key = await editKeys()
     const guest = await join(relay, key)
     await join(relay, key, 'written before anyone joined')
     await vi.waitFor(() => expect(text(guest)).toBe('written before anyone joined'))
@@ -93,7 +94,7 @@ describe('RoomClient', () => {
 
   it('shares awareness with newcomers and clears it on leave', async () => {
     const relay = new Relay()
-    const key = await importKey(generateKey())
+    const key = await editKeys()
     const host = await join(relay, key, '', { role: 'host' })
     await vi.waitFor(() => expect(host.status).toBe('connected'))
     const guest = await join(relay, key, '', { name: 'guest' })
@@ -107,7 +108,7 @@ describe('RoomClient', () => {
 
   it('sends only ciphertext over the wire', async () => {
     const relay = new Relay()
-    const key = await importKey(generateKey())
+    const key = await editKeys()
     await join(relay, key, 'top secret plaintext')
     const b = await join(relay, key)
     await vi.waitFor(() => expect(text(b)).toBe('top secret plaintext'))
@@ -118,12 +119,11 @@ describe('RoomClient', () => {
   it('ignores peers using a different key', async () => {
     const relay = new Relay()
     const errors: unknown[] = []
-    const a = await join(relay, await importKey(generateKey()), 'mine')
     const doc = new Y.Doc()
     const b = new RoomClient({
       admissionToken: 'A'.repeat(43),
       url: 'ws://test',
-      key: await importKey(generateKey()),
+      keys: await editKeys(),
       doc,
       awareness: new Awareness(doc),
       createSocket: relay.create,
@@ -131,6 +131,8 @@ describe('RoomClient', () => {
     })
     clients.push(b)
     b.connect()
+    await vi.waitFor(() => expect(b.status).toBe('connected'))
+    const a = await join(relay, await editKeys(), 'mine')
     await vi.waitFor(() => expect(errors.length).toBeGreaterThan(0))
     expect(text(b)).toBe('')
     expect(text(a)).toBe('mine')
@@ -138,14 +140,14 @@ describe('RoomClient', () => {
 
   it('delivers attachment messages', async () => {
     const relay = new Relay()
-    const key = await importKey(generateKey())
+    const key = await editKeys()
     const got: Attachment[] = []
     const a = await join(relay, key)
     const doc = new Y.Doc()
     const b = new RoomClient({
       admissionToken: 'A'.repeat(43),
       url: 'ws://test',
-      key,
+      keys: key,
       doc,
       awareness: new Awareness(doc),
       createSocket: relay.create,
@@ -169,14 +171,14 @@ describe('RoomClient', () => {
 
   it('delivers canvas messages', async () => {
     const relay = new Relay()
-    const key = await importKey(generateKey())
+    const key = await editKeys()
     const got: CanvasMessage[] = []
     const a = await join(relay, key)
     const doc = new Y.Doc()
     const b = new RoomClient({
       admissionToken: 'A'.repeat(43),
       url: 'ws://test',
-      key,
+      keys: key,
       doc,
       awareness: new Awareness(doc),
       createSocket: relay.create,
@@ -196,13 +198,13 @@ describe('RoomClient', () => {
 
   it('skips message types from newer peers', async () => {
     const relay = new Relay()
-    const key = await importKey(generateKey())
+    const key = await editKeys()
     const errors: unknown[] = []
     const doc = new Y.Doc()
     const b = new RoomClient({
       admissionToken: 'A'.repeat(43),
       url: 'ws://test',
-      key,
+      keys: key,
       doc,
       awareness: new Awareness(doc),
       createSocket: relay.create,
@@ -215,16 +217,11 @@ describe('RoomClient', () => {
     await vi.waitFor(() => expect(newer.readyState).toBe(1))
     // A message type, then an attachment and a canvas kind, that b does not know.
     const sender = new Uint8Array(SENDER_BYTES).fill(1)
-    newer.send(await encrypt(key, encodeFrame(sender, 1, new Uint8Array([9, 1, 2, 3]))))
+    newer.send(await sealFrame(key, sender, 1, new Uint8Array([9, 1, 2, 3])))
     newer.send(
-      await encrypt(
-        key,
-        encodeFrame(sender, 2, new Uint8Array([MessageType.Attachment, 9, 1, 2, 3])),
-      ),
+      await sealFrame(key, sender, 2, new Uint8Array([MessageType.Attachment, 9, 1, 2, 3])),
     )
-    newer.send(
-      await encrypt(key, encodeFrame(sender, 3, new Uint8Array([MessageType.Canvas, 9, 1, 2, 3]))),
-    )
+    newer.send(await sealFrame(key, sender, 3, new Uint8Array([MessageType.Canvas, 9, 1, 2, 3])))
     await join(relay, key, 'after')
     await vi.waitFor(() => expect(text(b)).toBe('after'))
     expect(errors).toEqual([])
@@ -233,14 +230,14 @@ describe('RoomClient', () => {
 
   it('takes each frame once, as the relay could send one again', async () => {
     const relay = new Relay()
-    const key = await importKey(generateKey())
+    const key = await editKeys()
     const errors: unknown[] = []
     const got: string[] = []
     const doc = new Y.Doc()
     const b = new RoomClient({
       admissionToken: 'A'.repeat(43),
       url: 'ws://test',
-      key,
+      keys: key,
       doc,
       awareness: new Awareness(doc),
       createSocket: relay.create,
@@ -253,15 +250,13 @@ describe('RoomClient', () => {
     const peer = relay.create('ws://test')
     await vi.waitFor(() => expect(peer.readyState).toBe(1))
     const frame = (sender: number, counter: number, id: string) =>
-      encrypt(
+      sealFrame(
         key,
-        encodeFrame(
-          new Uint8Array(SENDER_BYTES).fill(sender),
-          counter,
-          encodeMessage(
-            MessageType.Canvas,
-            encodeCanvas({ kind: 'edit', id, base: '{}', next: '{}' }),
-          ),
+        new Uint8Array(SENDER_BYTES).fill(sender),
+        counter,
+        encodeMessage(
+          MessageType.Canvas,
+          encodeCanvas({ kind: 'edit', id, base: '{}', next: '{}' }),
         ),
       )
     const first = await frame(1, 1, 'first')
@@ -282,7 +277,7 @@ describe('RoomClient', () => {
 
   it('reconnects after the socket drops', async () => {
     const relay = new Relay()
-    const key = await importKey(generateKey())
+    const key = await editKeys()
     const a = await join(relay, key, 'x')
     await vi.waitFor(() => expect(a.status).toBe('connected'))
     for (const s of relay.sockets) s.close()
@@ -292,15 +287,15 @@ describe('RoomClient', () => {
 
   it('passes handshake headers to the socket', async () => {
     const relay = new Relay()
-    await join(relay, await importKey(generateKey()), '', undefined, { Authorization: 'Bearer t' })
+    await join(relay, await editKeys(), '', undefined, { Authorization: 'Bearer t' })
     expect(relay.headers).toEqual([{ Authorization: 'Bearer t' }])
-    expect(relay.protocols).toEqual([['pedit-v4', `pedit-admission.${'A'.repeat(43)}`]])
+    expect(relay.protocols).toEqual([['pedit-v5', `pedit-admission.${'A'.repeat(43)}`]])
     expect(relay.urls).toEqual(['ws://test'])
   })
 
   it('stops for good when the host leaves', async () => {
     const relay = new Relay({ hosted: true })
-    const key = await importKey(generateKey())
+    const key = await editKeys()
     const host = await join(relay, key, 'x', undefined, { Authorization: 'Bearer t' })
     await vi.waitFor(() => expect(host.status).toBe('connected'))
     const guest = await join(relay, key)
@@ -314,7 +309,7 @@ describe('RoomClient', () => {
 
   it('waits, without being closed, while the relay says the host is away', async () => {
     const relay = new Relay()
-    const key = await importKey(generateKey())
+    const key = await editKeys()
     const guest = await join(relay, key)
     await vi.waitFor(() => expect(guest.status).toBe('connected'))
     relay.signal(HOST_AWAY)
@@ -335,7 +330,7 @@ describe('RoomClient', () => {
     const client = new RoomClient({
       admissionToken: 'A'.repeat(43),
       url: 'ws://test',
-      key: await importKey(generateKey()),
+      keys: await editKeys(),
       doc,
       awareness: new Awareness(doc),
       createSocket: relay.create,
@@ -357,13 +352,13 @@ describe('RoomClient', () => {
 
   it('is turned away from a room without a host', async () => {
     const relay = new Relay({ hosted: true })
-    const guest = await join(relay, await importKey(generateKey()))
+    const guest = await join(relay, await editKeys())
     await vi.waitFor(() => expect(guest.status).toBe('closed'))
   })
 
   it('stops for good when the room is full', async () => {
     const relay = new Relay({ hosted: true, guests: 1 })
-    const key = await importKey(generateKey())
+    const key = await editKeys()
     const host = await join(relay, key, 'x', undefined, { Authorization: 'Bearer t' })
     await vi.waitFor(() => expect(host.status).toBe('connected'))
     const first = await join(relay, key)
@@ -384,7 +379,7 @@ describe('RoomClient', () => {
     'stops for good when the server turns it away for its version or maintenance (%i)',
     async (code, status) => {
       const relay = new Relay({ refuse: code })
-      const client = await join(relay, await importKey(generateKey()))
+      const client = await join(relay, await editKeys())
       await vi.waitFor(() => expect(client.status).toBe(status))
       await new Promise((r) => setTimeout(r, 1500))
       expect(client.status).toBe(status)
@@ -394,21 +389,21 @@ describe('RoomClient', () => {
 
   it('knows the time limit a relay names when it turns an expired room away', async () => {
     const relay = new Relay({ refuse: ROOM_EXPIRED, refuseReason: expiredReason(86400) })
-    const client = await join(relay, await importKey(generateKey()))
+    const client = await join(relay, await editKeys())
     await vi.waitFor(() => expect(client.status).toBe('expired'))
     expect(client.timeLimitSeconds).toBe(86400)
   })
 
   it('does not know the time limit when the relay names none', async () => {
     const relay = new Relay({ refuse: ROOM_EXPIRED })
-    const client = await join(relay, await importKey(generateKey()))
+    const client = await join(relay, await editKeys())
     await vi.waitFor(() => expect(client.status).toBe('expired'))
     expect(client.timeLimitSeconds).toBeUndefined()
   })
 
   it('stops for good when the room expires under host and guest', async () => {
     const relay = new Relay({ hosted: true })
-    const key = await importKey(generateKey())
+    const key = await editKeys()
     const host = await join(relay, key, 'x', undefined, { Authorization: 'Bearer t' })
     await vi.waitFor(() => expect(host.status).toBe('connected'))
     const guest = await join(relay, key)
@@ -434,7 +429,7 @@ describe('RoomClient', () => {
     const client = new RoomClient({
       admissionToken: 'A'.repeat(43),
       url: 'ws://test',
-      key: await importKey(generateKey()),
+      keys: await editKeys(),
       doc,
       awareness: new Awareness(doc),
       createSocket: relay.create,
@@ -452,7 +447,7 @@ describe('RoomClient', () => {
 
   it('stops for good when an edit does not fit, after the edit', async () => {
     const relay = new Relay({ hosted: true })
-    const key = await importKey(generateKey())
+    const key = await editKeys()
     const host = await join(relay, key, 'x', { role: 'host' }, { Authorization: 'Bearer t' })
     await vi.waitFor(() => expect(host.status).toBe('connected'))
     const guest = await join(relay, key)
@@ -475,7 +470,7 @@ describe('RoomClient', () => {
 
   it('stops for good when the relay says a frame is too big', async () => {
     const relay = new Relay({ maxFrame: 100 })
-    const client = await join(relay, await importKey(generateKey()), 'x'.repeat(200))
+    const client = await join(relay, await editKeys(), 'x'.repeat(200))
     await vi.waitFor(() => expect(client.status).toBe('too-large'))
     await new Promise((r) => setTimeout(r, 100))
     expect(client.status).toBe('too-large')

@@ -1,3 +1,4 @@
+import { deriveAdmissionToken } from './admission.ts'
 import { fromBase64Url, generateKey, toBase64Url } from './key.ts'
 
 /**
@@ -36,7 +37,6 @@ const LABEL = {
   commentSign: 'pedit v5 comment sign',
   read: 'pedit v5 read',
   frame: 'pedit v5 frame',
-  readAdmission: 'pedit v5 read admission',
 } as const
 
 /** The secrets one link holds, decoded. */
@@ -206,7 +206,7 @@ export async function deriveRoomKeys(link: LinkSecrets, roomId: string): Promise
     editKey: edit,
     commentKey: commentVerify,
     signer,
-    readAdmission: toBase64Url(await hkdf(frame, LABEL.readAdmission)),
+    readAdmission: await deriveAdmissionToken(frame),
     editAdmission,
     fragments,
     frameSecret: frame,

@@ -92,8 +92,10 @@ const MessageTooBig = 1009
 const MaxFrameBytes = 1 << 20
 
 // FrameOverhead is what a frame adds to its payload: the sender and counter
-// (EncodeFrame), the message type byte, and AES-GCM's IV and tag.
-const FrameOverhead = frameHeaderBytes + 1 + ivBytes + tagBytes // 53
+// (EncodeFrame), the signature and what goes with it (signed.go), the
+// message type byte, and AES-GCM's IV and tag. Frames of a read link carry
+// no signature, so they are smaller.
+const FrameOverhead = frameHeaderBytes + signedOverhead + 1 + ivBytes + tagBytes // 119
 
 // FrameBytes is the size on the wire of a frame carrying payload bytes.
 func FrameBytes(payload int) int { return payload + FrameOverhead }
@@ -171,27 +173,42 @@ func DecodeFrame(data []byte) (Sender, uint64, []byte, error) {
 	return from, binary.BigEndian.Uint64(data[SenderBytes:]), data[frameHeaderBytes:], nil
 }
 
-// replayGuard remembers the last counter from each sender. Only peers with
-// the key can add senders, so it grows with the people who joined the room.
+// replayGuard remembers the last counter from each sender of signed frames,
+// by the access that signed them (signed.go): what anyone below a tier sends
+// cannot move that tier's counters, so a peer that names another's sender
+// cannot have that peer's frames dropped. Plain frames, a read link's, are
+// only requests that change nothing when sent again, and are not counted.
+// Only peers with a signing key can add senders, so it grows with the people
+// who joined the room.
 type replayGuard struct {
 	self Sender
 	mu   sync.Mutex
-	last map[Sender]uint64
+	last map[guardKey]uint64
 }
 
-// accept tells whether a frame is new, and if it is, remembers it.
-func (g *replayGuard) accept(from Sender, counter uint64) bool {
+type guardKey struct {
+	access Access
+	from   Sender
+}
+
+// foreign tells whether a frame is not one of ours.
+func (g *replayGuard) foreign(from Sender) bool { return from != g.self }
+
+// accept tells whether a signed frame, checked already, is new, and if it
+// is, remembers it.
+func (g *replayGuard) accept(access Access, from Sender, counter uint64) bool {
 	if from == g.self {
 		return false
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if counter <= g.last[from] {
+	key := guardKey{access, from}
+	if counter <= g.last[key] {
 		return false
 	}
 	if g.last == nil {
-		g.last = map[Sender]uint64{}
+		g.last = map[guardKey]uint64{}
 	}
-	g.last[from] = counter
+	g.last[key] = counter
 	return true
 }

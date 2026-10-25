@@ -256,7 +256,7 @@ func joinAsGuestHearing(t *testing.T, relay *prototest.Relay, shareURL string, o
 	aw := awareness.New(uint64(doc.ClientID()))
 	aw.SetLocalState(map[string]any{}) // like a JavaScript Awareness starts
 	c, err := protocol.NewClient(protocol.ClientOptions{
-		URL: "ws://guest", Key: key, Doc: doc, Awareness: aw, Dial: relay.Dial, OnAttachment: onAttachment,
+		URL: "ws://guest", RoomID: strings.TrimPrefix(u.Path, "/r/"), Key: key, Doc: doc, Awareness: aw, Dial: relay.Dial, OnAttachment: onAttachment,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -973,7 +973,11 @@ func TestTellsWhenAnImageCannotBeSaved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	keys, err := protocol.DeriveBlobKeys(raw)
+	room, err := protocol.EditKeys(raw, strings.TrimPrefix(u.Path, "/r/"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, err := protocol.DeriveBlobKeys(room.FrameKey)
 	if err != nil {
 		t.Fatal(err)
 	}

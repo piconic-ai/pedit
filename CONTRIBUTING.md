@@ -55,13 +55,30 @@ go run ./cmd/pedit /tmp/pedit-dev-notes.md
 The wire format (AES-GCM frames, message types, y-protocols sync and awareness)
 is shared by both implementations: change them together.
 
-- A frame is `iv || AES-GCM(room key, sender || counter || type || payload)`.
-  `sender` is 16 random bytes each client picks when it starts, and `counter`
-  a big-endian uint64 it raises by one for every frame it sends, across
-  reconnects. Receivers drop a frame whose counter is not above the last one
-  from its sender, and their own: the relay could send any frame again.
-  Types: `0` sync, `1` awareness, `2` attachment, `3` canvas, `4` files.
-  Clients skip types they do not know, so newer peers can add more.
+- A room link's fragment holds the secrets of its access (#122): an edit
+  link the edit secret S, a comment-only link `c.` and the comment secret C
+  with the editors' verifying key, a read-only link `r.` and the read secret
+  V with both verifying keys. S derives the editors' Ed25519 key and C, C
+  the commenters' Ed25519 key and V, all with HKDF-SHA256; the frame key K
+  is derived from V, the room id and both verifying keys
+  (`internal/protocol/access.go`, `packages/protocol/src/access.ts`,
+  `packages/testdata/access-vectors.json`).
+- A frame is `iv || AES-GCM(K, sender || counter || message)`. `sender` is
+  16 random bytes each client picks when it starts, and `counter` a
+  big-endian uint64 it raises by one for every frame it sends, across
+  reconnects. Editors and commenters sign every message:
+  `5 || tier || Ed25519 signature || type || payload`, tier `0` for the
+  editors' key and `1` for the commenters', the signature over a context
+  string, the tier, `sender || counter` and `type || payload`
+  (`signed.go`, `signed.ts`). Readers send `type || payload` unsigned.
+  Receivers check the signature first, then drop a signed frame whose
+  counter is not above the last one from its sender and tier, and their
+  own: the relay could send any frame again. What a frame may do follows
+  from the tier that verified: commenters change only the docs of a file's
+  comments, readers nothing; both may ask for a doc's state (SyncStep1) and
+  for attachments (`want`). Types: `0` sync, `1` awareness, `2` attachment,
+  `3` canvas, `4` files. Clients skip types they do not know, so newer peers
+  can add more.
 - A room that shares several files keeps each in a Y.Doc of its own. File `0`
   is the room's own doc, synced with plain sync messages as in a room that
   shares one file; the others are synced in files messages. These carry a
@@ -92,9 +109,9 @@ is shared by both implementations: change them together.
   release and is noted in the CHANGELOG.
 - Attachments (images) are named by content: `hash` is the first 128 bits of
   SHA-256 of the bytes, in hex. Their bytes are encrypted with a key derived
-  from the room key (HKDF-SHA256, info `pedit blob enc v1`) and stored under
+  from the frame key (HKDF-SHA256, info `pedit blob enc v2`) and stored under
   `blobId`, the first 128 bits of HMAC-SHA256 over `hash` with another derived
-  key (info `pedit blob id v1`), in base64url. The server sees neither the
+  key (info `pedit blob id v2`), in base64url. The server sees neither the
   content nor its hash.
 - Attachment messages carry a lib0 varint kind and fields: `0` announce
   (hash, mime), `1` want (hashes), `2` stored (hash, path), `3` rejected

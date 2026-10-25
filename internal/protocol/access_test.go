@@ -3,6 +3,8 @@ package protocol_test
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/hkdf"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"os"
@@ -27,8 +29,8 @@ type accessVectors struct {
 	FrameKey      string `json:"frameKey"`
 	EditAdmission string `json:"editAdmission"`
 	ReadAdmission string `json:"readAdmission"`
-	// V1Admission is today's admission token of the same 32 bytes, which no
-	// value of the chain may equal.
+	// V1Admission is the admission token protocol versions 1 to 4 derived
+	// from the same 32 bytes, which no value of the chain may equal.
 	V1Admission string `json:"v1Admission"`
 }
 
@@ -54,7 +56,7 @@ func makeAccessVectors(t *testing.T) accessVectors {
 	edit := vectorKey()
 	k := roomKeys(t, edit, vectorRoomID)
 	raw, _ := protocol.DecodeKey(edit)
-	v1, err := protocol.AdmissionToken(raw)
+	v1, err := hkdf.Key(sha256.New, raw, nil, "pedit admission v1", protocol.KeyBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +70,7 @@ func makeAccessVectors(t *testing.T) accessVectors {
 		FrameKey:      b64(k.FrameKey),
 		EditAdmission: k.EditAdmission,
 		ReadAdmission: k.ReadAdmission,
-		V1Admission:   v1,
+		V1Admission:   b64(v1),
 	}
 }
 
@@ -176,8 +178,9 @@ func withKeys(l protocol.LinkSecrets, edit, comment ed25519.PublicKey) protocol.
 	return l
 }
 
-// No value of the chain is today's admission token or the secret itself, so
-// a client that takes an edit link for a room key reads and writes nothing.
+// No value of the chain is the admission token of versions 1 to 4 or the
+// secret itself, so a client that takes an edit link for a room key reads
+// and writes nothing.
 func TestChainIsSeparateFromVersion1(t *testing.T) {
 	v := makeAccessVectors(t)
 	values := []string{v.Comment, v.Read, v.EditKey, v.CommentKey, v.FrameKey, v.EditAdmission, v.ReadAdmission}

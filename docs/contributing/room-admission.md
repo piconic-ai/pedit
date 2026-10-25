@@ -8,19 +8,20 @@ someone who knows only the ID from exhausting a room's peer or blob quota.
 ## Derivation and transport
 
 Both Go and TypeScript derive 32 bytes with HKDF-SHA256: input key material
-is the decoded 32-byte room key, salt is empty, and info is the UTF-8 string
-`pedit admission v1`. Encode the output as unpadded base64url (43 characters).
-The dedicated info string separates this capability from the AES-GCM frame
-key and both attachment keys. Never send the room key or reuse an encryption
-key as the capability.
+is the room's 32-byte frame key, which every room link derives (see
+`internal/protocol/access.go`), salt is empty, and info is the UTF-8 string
+`pedit v5 read admission`. Encode the output as unpadded base64url (43
+characters). The dedicated info string separates this capability from the
+AES-GCM frame key and both attachment keys. Never send a link's secrets or
+reuse an encryption key as the capability.
 
 WebSocket clients offer two subprotocols:
 
 ```text
-Sec-WebSocket-Protocol: pedit-v4, pedit-admission.<token>
+Sec-WebSocket-Protocol: pedit-v5, pedit-admission.<token>
 ```
 
-The server selects only `pedit-v4`, never echoes the capability, and rejects
+The server selects only `pedit-v5`, never echoes the capability, and rejects
 missing, malformed, or multiple admission tokens. Browsers use the standard
 WebSocket protocols argument; the Go client uses its handshake options.
 Blob GET and PUT requests send `X-Pedit-Admission: <token>`. The capability

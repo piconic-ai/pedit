@@ -139,7 +139,7 @@ describe('rooms', () => {
     ).toBe(403)
     const valid = await upgrade(room.id)
     expect(valid.status).toBe(101)
-    expect(valid.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v4')
+    expect(valid.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v5')
     valid.webSocket?.accept()
     valid.webSocket?.close()
   })
@@ -160,13 +160,13 @@ describe('rooms', () => {
     const room = await createRoom()
     await host(room)
     const admission = admissionProtocols(admissions.get(room.id)!)[1]
-    // pedit-v3 is a pedit from before the relay waited for a host that dropped.
-    const old = await upgrade(room.id, { 'Sec-WebSocket-Protocol': `pedit-v3, ${admission}` })
+    // pedit-v4 is a pedit from before peers signed their frames.
+    const old = await upgrade(room.id, { 'Sec-WebSocket-Protocol': `pedit-v4, ${admission}` })
     expect(old.status).toBe(101)
-    expect(old.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v3')
+    expect(old.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v4')
     // A wrong admission makes no difference: the version is checked first.
     const newer = await connect(room.id, {
-      'Sec-WebSocket-Protocol': `pedit-v5, pedit-admission.${'B'.repeat(43)}`,
+      'Sec-WebSocket-Protocol': `pedit-v6, pedit-admission.${'B'.repeat(43)}`,
     })
     expect((await newer.closed).code).toBe(SERVER_OUTDATED)
     const ws = old.webSocket!
@@ -781,7 +781,7 @@ describe('rate limits', () => {
     expect(turnedAway.map((r) => r.status)).toEqual(Array(60).fill(403))
     const res = await upgrade(room.id, { 'CF-Connecting-IP': ip })
     expect(res.status).toBe(101)
-    expect(res.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v4')
+    expect(res.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v5')
     const ws = res.webSocket as WebSocket
     const closed = new Promise<CloseEvent>((resolve) => ws.addEventListener('close', resolve))
     ws.accept()
@@ -863,7 +863,7 @@ describe('maintenance', () => {
       }),
     )
     expect(upgraded.status).toBe(101)
-    expect(upgraded.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v4')
+    expect(upgraded.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v5')
     const ws = upgraded.webSocket as WebSocket
     const closed = new Promise<CloseEvent>((resolve) => ws.addEventListener('close', resolve))
     ws.accept()

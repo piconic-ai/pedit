@@ -21,7 +21,7 @@ const bytes = (s: string) => new TextEncoder().encode(s)
 
 describe('blob', () => {
   it('matches the Go implementation', async () => {
-    const keys = await deriveBlobKeys(vectors.key)
+    const keys = await deriveBlobKeys(fromBase64Url(vectors.key))
     expect(vectors.cases.length).toBeGreaterThan(0)
     for (const c of vectors.cases) {
       const plaintext = hex(c.plaintext)
@@ -40,15 +40,17 @@ describe('blob', () => {
   it('derives blob ids per room', async () => {
     const key = generateKey()
     const hash = await contentHash(bytes('an image'))
-    const id = await blobIdFor(await deriveBlobKeys(key), hash)
+    const id = await blobIdFor(await deriveBlobKeys(fromBase64Url(key)), hash)
     expect(id).toMatch(BLOB_ID_PATTERN)
-    expect(await blobIdFor(await deriveBlobKeys(key), hash)).toBe(id)
-    expect(await blobIdFor(await deriveBlobKeys(generateKey()), hash)).not.toBe(id)
-    await expect(blobIdFor(await deriveBlobKeys(key), 'not a hash')).rejects.toThrow()
+    expect(await blobIdFor(await deriveBlobKeys(fromBase64Url(key)), hash)).toBe(id)
+    expect(await blobIdFor(await deriveBlobKeys(fromBase64Url(generateKey())), hash)).not.toBe(id)
+    await expect(
+      blobIdFor(await deriveBlobKeys(fromBase64Url(key)), 'not a hash'),
+    ).rejects.toThrow()
   })
 
   it('round-trips and checks the hash', async () => {
-    const keys = await deriveBlobKeys(generateKey())
+    const keys = await deriveBlobKeys(fromBase64Url(generateKey()))
     const content = bytes('an image')
     const hash = await contentHash(content)
     const blob = await encryptBlob(keys, content)
@@ -60,7 +62,7 @@ describe('blob', () => {
 
   it('keeps blobs and frames apart', async () => {
     const key = generateKey()
-    const keys = await deriveBlobKeys(key)
+    const keys = await deriveBlobKeys(fromBase64Url(key))
     const frames = await importKey(key)
     const content = bytes('an image')
     await expect(decrypt(frames, await encryptBlob(keys, content))).rejects.toThrow()

@@ -24,10 +24,14 @@ const awareness = new Awareness(doc)
 awareness.setLocalState({ role: 'guest' })
 let manifest = null
 const synced = new Set()
+const keys = await protocol.deriveRoomKeys(
+  protocol.parseFragment(key),
+  new URL(url).pathname.split('/')[3],
+)
 const client = new protocol.RoomClient({
-  admissionToken: await protocol.deriveAdmissionToken(key),
+  admissionToken: keys.readAdmission,
   url,
-  key: await protocol.importKey(key),
+  keys,
   doc,
   awareness,
   onManifest: (files) => {

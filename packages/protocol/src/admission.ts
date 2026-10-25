@@ -1,21 +1,24 @@
-import { decodeKey, toBase64Url } from './key.ts'
+import { toBase64Url } from './key.ts'
 
 export const ADMISSION_HEADER = 'X-Pedit-Admission'
 /**
  * The wire format version. Bump it only for changes older peers cannot skip;
  * adding a message type or kind does not need a bump.
  */
-export const PROTOCOL_VERSION = 4
+export const PROTOCOL_VERSION = 5
 export const SOCKET_PROTOCOL = `pedit-v${PROTOCOL_VERSION}`
 const VERSION_PROTOCOL = /^pedit-v(0|[1-9][0-9]{0,8})$/
 export const ADMISSION_PROTOCOL_PREFIX = 'pedit-admission.'
 export const ADMISSION_PATTERN = /^[A-Za-z0-9_-]{43}$/
 
-/** Relay capability, domain-separated from every encryption key. Never send the room key. */
-export async function deriveAdmissionToken(roomKey: string): Promise<string> {
+/**
+ * The relay capability of everyone in a room, from its frame key (access.ts),
+ * domain-separated from every encryption key. Never send the frame key.
+ */
+export async function deriveAdmissionToken(frameSecret: Uint8Array): Promise<string> {
   const base = await crypto.subtle.importKey(
     'raw',
-    decodeKey(roomKey) as Uint8Array<ArrayBuffer>,
+    frameSecret as Uint8Array<ArrayBuffer>,
     'HKDF',
     false,
     ['deriveBits'],
@@ -25,7 +28,7 @@ export async function deriveAdmissionToken(roomKey: string): Promise<string> {
       name: 'HKDF',
       hash: 'SHA-256',
       salt: new Uint8Array(),
-      info: new TextEncoder().encode('pedit admission v1'),
+      info: new TextEncoder().encode('pedit v5 read admission'),
     },
     base,
     256,

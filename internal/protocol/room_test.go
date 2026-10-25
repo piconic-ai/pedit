@@ -48,6 +48,8 @@ type joinOpts struct {
 	onFileAttachment func(uint64, protocol.Attachment)
 	onFileCanvas     func(uint64, protocol.CanvasMessage)
 	bytes            protocol.Rate
+	// link joins with a link below the edit link of key (access_room_test.go).
+	link *protocol.LinkSecrets
 }
 
 func join(t *testing.T, relay *prototest.Relay, key string, o joinOpts) *peer {
@@ -69,6 +71,7 @@ func join(t *testing.T, relay *prototest.Relay, key string, o joinOpts) *peer {
 	client, err := protocol.NewClient(protocol.ClientOptions{
 		URL:          "ws://test",
 		Key:          raw,
+		Link:         o.link,
 		Doc:          doc,
 		Awareness:    aw,
 		Header:       o.header,
@@ -293,8 +296,7 @@ func TestSkipsMessagesFromNewerPeers(t *testing.T) {
 	// A newer peer sends a message type, an attachment kind, a canvas kind,
 	// a files kind and a message about a file that b does not know, then an
 	// edit.
-	raw, _ := protocol.DecodeKey(key)
-	c, _ := protocol.NewCipher(raw)
+	c := sealer(t, key)
 	conn, err := relay.Dial(t.Context(), "ws://test", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -307,7 +309,7 @@ func TestSkipsMessagesFromNewerPeers(t *testing.T) {
 		protocol.EncodeMessage(protocol.MessageFiles, []byte{9, 1, 2, 3}),
 		protocol.EncodeMessage(protocol.MessageFiles, []byte{byte(protocol.FilesDoc), 1, 9, 1, 2, 3}),
 	} {
-		if err := conn.Write(t.Context(), c.Encrypt(protocol.EncodeFrame(protocol.Sender{1}, uint64(i+1), m))); err != nil {
+		if err := conn.Write(t.Context(), c(protocol.Sender{1}, uint64(i+1), m)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -332,8 +334,7 @@ func TestReportsMalformedMessages(t *testing.T) {
 	}})
 	prototest.WaitFor(t, wait, func() bool { return b.Status() == protocol.StatusConnected }, "b connected")
 
-	raw, _ := protocol.DecodeKey(key)
-	c, _ := protocol.NewCipher(raw)
+	c := sealer(t, key)
 	conn, err := relay.Dial(t.Context(), "ws://test", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -344,7 +345,7 @@ func TestReportsMalformedMessages(t *testing.T) {
 		protocol.EncodeMessage(protocol.MessageCanvas, nil),
 		protocol.EncodeMessage(protocol.MessageAwareness, nil),
 	} {
-		if err := conn.Write(t.Context(), c.Encrypt(protocol.EncodeFrame(protocol.Sender{1}, uint64(i+1), m))); err != nil {
+		if err := conn.Write(t.Context(), c(protocol.Sender{1}, uint64(i+1), m)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -374,8 +375,7 @@ func TestDropsReplayedFrames(t *testing.T) {
 	})
 	prototest.WaitFor(t, wait, func() bool { return b.Status() == protocol.StatusConnected }, "b connected")
 
-	raw, _ := protocol.DecodeKey(key)
-	c, _ := protocol.NewCipher(raw)
+	c := sealer(t, key)
 	conn, err := relay.Dial(t.Context(), "ws://test", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -388,13 +388,13 @@ func TestDropsReplayedFrames(t *testing.T) {
 		}
 		return protocol.EncodeMessage(protocol.MessageCanvas, payload)
 	}
-	first := c.Encrypt(protocol.EncodeFrame(protocol.Sender{1}, 1, edit("first")))
+	first := c(protocol.Sender{1}, 1, edit("first"))
 	for _, frame := range [][]byte{
 		first,
-		c.Encrypt(protocol.EncodeFrame(protocol.Sender{1}, 2, edit("second"))),
+		c(protocol.Sender{1}, 2, edit("second")),
 		first, // sent again
-		c.Encrypt(protocol.EncodeFrame(protocol.Sender{1}, 2, edit("same counter"))),
-		c.Encrypt(protocol.EncodeFrame(protocol.Sender{2}, 1, edit("other sender"))),
+		c(protocol.Sender{1}, 2, edit("same counter")),
+		c(protocol.Sender{2}, 1, edit("other sender")),
 	} {
 		if err := conn.Write(t.Context(), frame); err != nil {
 			t.Fatal(err)
@@ -670,5 +670,21 @@ func TestExpiredWithoutAReasonHasNoTimeLimit(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if p.TimeLimit() != 0 || len(relay.URLs()) != 1 {
 		t.Fatalf("limit=%v dials=%d", p.TimeLimit(), len(relay.URLs()))
+	}
+}
+
+// sealer makes frames as an editor of the room of key sends them.
+func sealer(t *testing.T, key string) func(protocol.Sender, uint64, []byte) []byte {
+	t.Helper()
+	raw, err := protocol.DecodeKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, err := protocol.EditKeys(raw, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return func(from protocol.Sender, counter uint64, message []byte) []byte {
+		return protocol.SealFrame(keys, from, counter, message)
 	}
 }

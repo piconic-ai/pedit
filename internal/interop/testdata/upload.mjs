@@ -24,10 +24,11 @@ const protocol = await import(pathToFileURL(join(protocolDir, 'src/index.ts')).h
 const doc = new Y.Doc()
 const awareness = new Awareness(doc)
 const received = []
+const keys = await protocol.deriveRoomKeys(protocol.parseFragment(key), room)
 const client = new protocol.RoomClient({
-  admissionToken: await protocol.deriveAdmissionToken(key),
+  admissionToken: keys.readAdmission,
   url: `${server.replace(/^http/, 'ws')}/api/rooms/${room}/ws`,
-  key: await protocol.importKey(key),
+  keys,
   doc,
   awareness,
   onAttachment: (a) => received.push(a),
@@ -43,10 +44,10 @@ async function until(what, cond) {
   throw new Error(`timed out waiting for ${what}`)
 }
 
-const keys = await protocol.deriveBlobKeys(key)
-const headers = { [protocol.ADMISSION_HEADER]: keys.admission }
+const blobKeys = await protocol.deriveBlobKeys(keys.frameSecret)
+const headers = { [protocol.ADMISSION_HEADER]: blobKeys.admission }
 const blobUrl = async (hash) =>
-  `${server}/api/rooms/${room}/blobs/${await protocol.blobIdFor(keys, hash)}`
+  `${server}/api/rooms/${room}/blobs/${await protocol.blobIdFor(blobKeys, hash)}`
 
 // Paste only once the host says it saves images.
 await until('the host to offer attachments', () =>
@@ -68,7 +69,7 @@ const hash = await protocol.contentHash(png)
 const put = await fetch(await blobUrl(hash), {
   method: 'PUT',
   headers,
-  body: await protocol.encryptBlob(keys, png),
+  body: await protocol.encryptBlob(blobKeys, png),
 })
 if (!put.ok) throw new Error(`upload failed: ${put.status}`)
 client.sendAttachment({ kind: 'announce', hash, mime: 'image/png' })
@@ -85,7 +86,7 @@ await until('the host to upload it', () =>
   received.some((a) => a.kind === 'announce' && a.hash === wanted),
 )
 const res = await fetch(await blobUrl(wanted), { headers })
-const bytes = await protocol.decryptBlob(keys, new Uint8Array(await res.arrayBuffer()), wanted)
+const bytes = await protocol.decryptBlob(blobKeys, new Uint8Array(await res.arrayBuffer()), wanted)
 const hex = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('')
 process.stdout.write(`wanted ${hex}\n`)
 await client.destroy()

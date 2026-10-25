@@ -150,6 +150,7 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 	var waited atomic.Bool // the host was away
 	s.Client, err = protocol.NewClient(protocol.ClientOptions{
 		URL:       wsURL,
+		RoomID:    roomID,
 		Key:       rawKey,
 		Doc:       doc,
 		Awareness: aw,
@@ -474,10 +475,14 @@ func parseShareURL(link string) (wsURL, roomID string, key []byte, err error) {
 	if u.Fragment == "" {
 		return "", "", nil, errors.New("the link has no key after #; copy the whole link, including the part after #")
 	}
-	key, err = protocol.DecodeKey(u.Fragment)
+	secrets, err := protocol.ParseFragment(u.Fragment)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("the link's key after # is not valid: %w", err)
+		return "", "", nil, errors.New("the link's key after # is not valid")
 	}
+	if secrets.Access != protocol.AccessEdit {
+		return "", "", nil, fmt.Errorf("this link is %s only: open it in a browser", secrets.Access)
+	}
+	key = secrets.Edit
 	wsURL = "ws" + strings.TrimPrefix(u.Scheme, "http") + "://" + u.Host + "/api/rooms/" + id + "/ws"
 	return wsURL, id, key, nil
 }

@@ -16,13 +16,15 @@ export const MAX_FRAME_BYTES = 1024 * 1024
  * the host never applies a frame twice. Keep in sync with internal/protocol.
  */
 export const SENDER_BYTES = 16
-const HEADER_BYTES = SENDER_BYTES + 8
+export const HEADER_BYTES = SENDER_BYTES + 8
 
 /**
- * What a frame adds to its payload: the sender and counter, the message type
- * byte, and AES-GCM's 12-byte IV and 16-byte tag.
+ * What a frame adds to its payload: the sender and counter, the signature
+ * and what goes with it (signed.ts), the message type byte, and AES-GCM's
+ * 12-byte IV and 16-byte tag. Frames of a read link carry no signature, so
+ * they are smaller.
  */
-export const FRAME_OVERHEAD = HEADER_BYTES + 1 + 12 + 16
+export const FRAME_OVERHEAD = HEADER_BYTES + 2 + 64 + 1 + 12 + 16
 
 /** The size on the wire of a frame carrying `payload` bytes. */
 export function frameBytes(payload: number): number {
@@ -64,8 +66,13 @@ const hex = (bytes: Uint8Array) =>
   Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
 
 /**
- * Remembers the last counter from each sender. Only peers with the key can
- * add senders, so it grows with the people who joined the room.
+ * Remembers the last counter from each sender of signed frames, by the tier
+ * that signed them (signed.ts): what anyone below a tier sends cannot move
+ * that tier's counters, so a peer that names another's sender cannot have
+ * that peer's frames dropped. Plain frames, a read link's, are only
+ * requests that change nothing when sent again, and are not counted.
+ * Only peers with a signing key can add senders, so it grows with the
+ * people who joined the room.
  */
 export class ReplayGuard {
   private readonly self: string
@@ -75,11 +82,17 @@ export class ReplayGuard {
     this.self = hex(self)
   }
 
-  /** Whether a frame is new, remembering it when it is. */
-  accept(sender: Uint8Array, counter: bigint): boolean {
+  /** Whether a frame is not one of ours. */
+  foreign(sender: Uint8Array): boolean {
+    return hex(sender) !== this.self
+  }
+
+  /** Whether a signed frame, checked already, is new, remembering it when it is. */
+  accept(tier: string, sender: Uint8Array, counter: bigint): boolean {
     const id = hex(sender)
-    if (id === this.self || counter <= (this.last.get(id) ?? 0n)) return false
-    this.last.set(id, counter)
+    const key = `${tier}:${id}`
+    if (id === this.self || counter <= (this.last.get(key) ?? 0n)) return false
+    this.last.set(key, counter)
     return true
   }
 }

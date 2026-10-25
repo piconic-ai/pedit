@@ -18,7 +18,7 @@ function esm(pkg, subpath) {
 }
 const Y = await esm('yjs', '.')
 const { Awareness } = await esm('y-protocols', './awareness')
-const { importKey, RoomClient, deriveAdmissionToken } = await import(
+const { deriveRoomKeys, parseFragment, RoomClient } = await import(
   pathToFileURL(join(protocolDir, 'src/index.ts')).href
 )
 
@@ -28,10 +28,11 @@ const awareness = new Awareness(doc)
 awareness.setLocalState({ name: 'js guest' })
 // Exercise Node's headers + protocols constructor as well as the browser-style
 // protocols constructor used by the other interop guests.
+const keys = await deriveRoomKeys(parseFragment(key), new URL(url).pathname.split('/')[3])
 const client = new RoomClient({
-  admissionToken: await deriveAdmissionToken(key),
+  admissionToken: keys.readAdmission,
   url,
-  key: await importKey(key),
+  keys,
   doc,
   awareness,
   headers: { 'X-Pedit-Test': 'interop' },

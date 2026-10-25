@@ -1,6 +1,53 @@
+import {
+  type Access,
+  deriveRoomKeys,
+  generateEditSecret,
+  parseFragment,
+  type RoomKeys,
+} from './access.ts'
+import { encrypt } from './cipher.ts'
 import { MESSAGE_TOO_BIG, RELAY_BUSY, ROOM_CLOSED, ROOM_FULL } from './close.ts'
+import { encodeFrame } from './frame.ts'
 import type { Rate } from './pace.ts'
 import type { SocketLike } from './room.ts'
+import { signMessage } from './signed.ts'
+
+/** The room id tests derive keys for. */
+export const TEST_ROOM = 'test-room'
+
+/** An editor's keys for a new room, or for the room of `secret`. */
+export async function editKeys(secret = generateEditSecret()): Promise<RoomKeys> {
+  return linkKeys(secret)
+}
+
+/** The keys of a room link's fragment, in TEST_ROOM. */
+export async function linkKeys(fragment: string): Promise<RoomKeys> {
+  const link = parseFragment(fragment)
+  if (!link) throw new Error(`not a room link: ${fragment}`)
+  return deriveRoomKeys(link, TEST_ROOM)
+}
+
+/** The keys of the link below `keys` with this access, in the same room. */
+export function lowerKeys(keys: RoomKeys, access: Access): Promise<RoomKeys> {
+  const fragment = keys.fragments[access]
+  if (!fragment) throw new Error(`no ${access} link below ${keys.access}`)
+  return linkKeys(fragment)
+}
+
+/**
+ * A frame as a client with `keys` sends it: `message` (encodeMessage) from
+ * `sender`, numbered `counter`, signed if the link signs, and encrypted.
+ */
+export async function sealFrame(
+  keys: RoomKeys,
+  sender: Uint8Array,
+  counter: number,
+  message: Uint8Array,
+): Promise<Uint8Array> {
+  const header = encodeFrame(sender, counter, new Uint8Array())
+  const body = keys.signer ? await signMessage(keys.signer, header, message) : message
+  return encrypt(keys.frameKey, encodeFrame(sender, counter, body))
+}
 
 /** The Room's close code for a connection over its rate (RATE_LIMITED in packages/worker). */
 export const RATE_LIMITED = 1008

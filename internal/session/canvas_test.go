@@ -50,7 +50,7 @@ func joinCanvas(t *testing.T, relay *prototest.Relay, shareURL string) *canvasGu
 	g.aw = awareness.New(uint64(g.doc.ClientID()))
 	g.aw.SetLocalState(map[string]any{})
 	g.Client, err = protocol.NewClient(protocol.ClientOptions{
-		URL: "ws://guest", Key: key, Doc: g.doc, Awareness: g.aw, Dial: relay.Dial,
+		URL: "ws://guest", RoomID: strings.TrimPrefix(u.Path, "/r/"), Key: key, Doc: g.doc, Awareness: g.aw, Dial: relay.Dial,
 		OnCanvas: func(m protocol.CanvasMessage) {
 			g.mu.Lock()
 			g.messages = append(g.messages, m)

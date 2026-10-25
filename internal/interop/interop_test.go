@@ -202,7 +202,11 @@ func TestAttachmentsWithJavaScriptGuest(t *testing.T) {
 	server := newServer(t)
 	key := protocol.GenerateKey()
 	raw, _ := protocol.DecodeKey(key)
-	keys, err := protocol.DeriveBlobKeys(raw)
+	room, err := protocol.EditKeys(raw, roomID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, err := protocol.DeriveBlobKeys(room.FrameKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,6 +215,7 @@ func TestAttachmentsWithJavaScriptGuest(t *testing.T) {
 	host, err := protocol.NewClient(protocol.ClientOptions{
 		URL:          wsURL(server),
 		Header:       http.Header{"Authorization": {"Bearer host-token"}},
+		RoomID:       roomID,
 		Key:          raw,
 		Doc:          doc,
 		Awareness:    awareness.New(uint64(doc.ClientID())),
@@ -457,6 +462,7 @@ func TestGoHostSharesSeveralFilesWithJavaScriptGuest(t *testing.T) {
 	host, err := protocol.NewClient(protocol.ClientOptions{
 		URL:       wsURL(server),
 		Header:    http.Header{"Authorization": {"Bearer host-token"}},
+		RoomID:    roomID,
 		Key:       raw,
 		Doc:       doc,
 		Awareness: awareness.New(uint64(doc.ClientID())),

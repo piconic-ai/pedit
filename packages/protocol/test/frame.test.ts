@@ -15,6 +15,7 @@ import {
   ReplayGuard,
   SENDER_BYTES,
 } from '../src/index.ts'
+import { editKeys, sealFrame } from '../src/testing.ts'
 
 describe('frame', () => {
   it('pins the limit the relay enforces', () => {
@@ -24,11 +25,15 @@ describe('frame', () => {
   })
 
   it('knows the size of an encrypted message on the wire', async () => {
-    const key = await importKey(generateKey())
+    const keys = await editKeys()
     for (const n of [0, 1, 1000]) {
       const message = encodeMessage(MessageType.Sync, new Uint8Array(n))
-      const frame = await encrypt(key, encodeFrame(new Uint8Array(SENDER_BYTES), 1, message))
+      const sender = new Uint8Array(SENDER_BYTES)
+      const frame = await sealFrame(keys, sender, 1, message)
       expect(frame.length).toBe(frameBytes(n))
+      // A read link's frames carry no signature.
+      const plain = await encrypt(keys.frameKey, encodeFrame(sender, 1, message))
+      expect(plain.length).toBeLessThan(frame.length)
     }
   })
 
@@ -54,12 +59,23 @@ describe('frame', () => {
   it('takes each frame from a sender once, never our own', () => {
     const of = (n: number) => new Uint8Array(SENDER_BYTES).fill(n)
     const guard = new ReplayGuard(of(9))
-    expect(guard.accept(of(1), 1n)).toBe(true)
-    expect(guard.accept(of(1), 1n)).toBe(false)
-    expect(guard.accept(of(1), 3n)).toBe(true) // one lost on the way is fine
-    expect(guard.accept(of(1), 2n)).toBe(false)
-    expect(guard.accept(of(2), 1n)).toBe(true)
-    expect(guard.accept(of(1), 0n)).toBe(false)
-    expect(guard.accept(of(9), 100n)).toBe(false)
+    expect(guard.accept('edit', of(1), 1n)).toBe(true)
+    expect(guard.accept('edit', of(1), 1n)).toBe(false)
+    expect(guard.accept('edit', of(1), 3n)).toBe(true) // one lost on the way is fine
+    expect(guard.accept('edit', of(1), 2n)).toBe(false)
+    expect(guard.accept('edit', of(2), 1n)).toBe(true)
+    expect(guard.accept('edit', of(1), 0n)).toBe(false)
+    expect(guard.accept('edit', of(9), 100n)).toBe(false)
+    expect(guard.foreign(of(9))).toBe(false)
+    expect(guard.foreign(of(1))).toBe(true)
+  })
+
+  it('counts each tier apart, so a lower one cannot move a higher one', () => {
+    const of = (n: number) => new Uint8Array(SENDER_BYTES).fill(n)
+    const guard = new ReplayGuard(of(9))
+    // A commenter that names an editor's sender, with a counter far ahead.
+    expect(guard.accept('comment', of(1), 2n ** 63n)).toBe(true)
+    expect(guard.accept('edit', of(1), 1n)).toBe(true)
+    expect(guard.accept('edit', of(1), 2n)).toBe(true)
   })
 })

@@ -3,6 +3,7 @@ package protocol
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/rand/v2"
 	"net/http"
 	"sync"
@@ -79,8 +80,13 @@ func (s Status) Final() bool {
 
 type ClientOptions struct {
 	// URL is the WebSocket URL of the room. It must never contain the key.
-	URL       string
+	URL string
+	// RoomID is the id of the room, which its keys are bound to (access.go).
+	RoomID string
+	// Key is an edit secret, the link of an editor; Link, when set, is the
+	// link the Client joins with instead, of any access.
 	Key       []byte
+	Link      *LinkSecrets
 	Doc       *crdt.Doc
 	Awareness *awareness.Awareness
 	// Header holds extra handshake headers.
@@ -129,9 +135,16 @@ type ClientOptions struct {
 // (to push what others are missing) and its awareness state. Every peer answers
 // SyncStep1 with SyncStep2. All frames are end-to-end encrypted.
 //
+// What a peer may change follows from its link (access.go): editors sign
+// their frames with the editors' key, commenters with the commenters' key,
+// and readers sign nothing. Every peer applies a frame only as far as the
+// key that signed it allows, and a Client sends only what its own access
+// lets others apply.
+//
 // Changes applied from the room carry the Client as their origin.
 type Client struct {
 	opts   ClientOptions
+	keys   *RoomKeys
 	cipher *Cipher
 	doc    *crdt.Doc
 	aw     *awareness.Awareness
@@ -164,11 +177,15 @@ type Client struct {
 }
 
 func NewClient(opts ClientOptions) (*Client, error) {
-	cipher, err := NewCipher(opts.Key)
+	link := LinkSecrets{Access: AccessEdit, Edit: opts.Key}
+	if opts.Link != nil {
+		link = *opts.Link
+	}
+	keys, err := DeriveRoomKeys(link, opts.RoomID)
 	if err != nil {
 		return nil, err
 	}
-	token, err := AdmissionToken(opts.Key)
+	cipher, err := NewCipher(keys.FrameKey)
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +193,7 @@ func NewClient(opts ClientOptions) (*Client, error) {
 	if opts.Header == nil {
 		opts.Header = http.Header{}
 	}
-	opts.Header.Set("Sec-WebSocket-Protocol", SocketProtocol+", "+AdmissionProtocolPrefix+token)
+	opts.Header.Set("Sec-WebSocket-Protocol", SocketProtocol+", "+AdmissionProtocolPrefix+keys.ReadAdmission)
 	if opts.Dial == nil {
 		opts.Dial = DialWebSocket
 	}
@@ -192,6 +209,7 @@ func NewClient(opts ClientOptions) (*Client, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &Client{
 		opts:   opts,
+		keys:   keys,
 		cipher: cipher,
 		doc:    opts.Doc,
 		aw:     opts.Awareness,
@@ -208,6 +226,13 @@ func NewClient(opts ClientOptions) (*Client, error) {
 	}
 	return c, nil
 }
+
+// Keys returns what the Client's link gives in its room.
+func (c *Client) Keys() *RoomKeys { return c.keys }
+
+// edits tells whether the Client's link lets it edit the file, as only
+// editors may.
+func (c *Client) edits() bool { return c.keys.Access == AccessEdit }
 
 // Status returns the current connection state.
 func (c *Client) Status() Status {
@@ -367,17 +392,23 @@ func (c *Client) serve(conn Conn) error {
 	c.out = out
 	c.mu.Unlock()
 
-	// The whole state goes to the room on connecting. When it does not fit a
-	// frame, send nothing: a SyncStep1 alone would have every peer answer
-	// with a state as large, which they could not send either.
-	step2 := syncStep2(c.doc)
+	// The whole state goes to the room on connecting, from a peer that may
+	// write it. When it does not fit a frame, send nothing: a SyncStep1
+	// alone would have every peer answer with a state as large, which they
+	// could not send either.
+	var step2 []byte
+	if c.edits() {
+		step2 = syncStep2(c.doc)
+	}
 	if FrameBytes(len(step2)) > MaxFrameBytes {
 		out.fail(ErrFrameTooLarge)
 	} else {
 		c.setStatus(StatusConnected)
 		c.send(MessageSync, ysync.EncodeSyncStep1(c.doc))
-		c.send(MessageSync, step2)
-		c.sendAwareness([]uint64{c.aw.ClientID()})
+		if c.edits() {
+			c.send(MessageSync, step2)
+			c.sendAwareness([]uint64{c.aw.ClientID()})
+		}
 		c.syncFiles()
 	}
 
@@ -420,21 +451,31 @@ func (c *Client) relaySignal(sig Signal) {
 	}
 }
 
+// receive decrypts a frame, checks its signature, takes it once, and
+// applies its message as far as the access it speaks for allows.
 func (c *Client) receive(data []byte) error {
 	plaintext, err := c.cipher.Decrypt(data)
 	if err != nil {
 		return err
 	}
-	from, counter, message, err := DecodeFrame(plaintext)
+	from, counter, signed, err := DecodeFrame(plaintext)
 	if err != nil {
 		return err
 	}
-	if !c.guard.accept(from, counter) {
+	if !c.guard.foreign(from) {
+		return ErrReplayedFrame
+	}
+	access, message, err := c.keys.openMessage(plaintext[:frameHeaderBytes], signed)
+	if err != nil {
+		return err
+	}
+	if access != AccessRead && !c.guard.accept(access, from, counter) {
 		return ErrReplayedFrame
 	}
 	t, payload, err := DecodeMessage(message)
 	if errors.Is(err, ErrUnknownMessageType) {
-		// A newer peer may send message types we do not know yet.
+		// A newer peer may send message types we do not know yet; a signed
+		// message inside another is one of those.
 		return nil
 	}
 	if err != nil {
@@ -442,23 +483,26 @@ func (c *Client) receive(data []byte) error {
 	}
 	switch t {
 	case MessageFiles:
-		return c.receiveFiles(payload)
+		return c.receiveFiles(access, payload)
 	case MessageAttachment:
-		return c.receiveAttachment(payload)
+		return c.receiveAttachment(access, payload)
 	case MessageCanvas:
-		return c.receiveCanvas(payload)
+		return c.receiveCanvas(access, payload)
 	case MessageSync:
-		return c.receiveSync(payload)
+		return c.receiveSync(access, payload)
 	}
-	return c.receiveAwareness(payload)
+	return c.receiveAwareness(access, payload)
 }
 
-func (c *Client) receiveAttachment(payload []byte) error {
+func (c *Client) receiveAttachment(access Access, payload []byte) error {
 	a, err := DecodeAttachment(payload)
 	if errors.Is(err, ErrUnknownAttachmentKind) {
 		return nil
 	}
 	if err != nil {
+		return err
+	}
+	if err := allowAttachment(a, access); err != nil {
 		return err
 	}
 	if c.opts.OnAttachment != nil {
@@ -467,7 +511,10 @@ func (c *Client) receiveAttachment(payload []byte) error {
 	return nil
 }
 
-func (c *Client) receiveCanvas(payload []byte) error {
+func (c *Client) receiveCanvas(access Access, payload []byte) error {
+	if err := editorsOnly("a canvas message", access); err != nil {
+		return err
+	}
 	m, err := DecodeCanvas(payload)
 	if errors.Is(err, ErrUnknownCanvasKind) {
 		return nil
@@ -481,14 +528,17 @@ func (c *Client) receiveCanvas(payload []byte) error {
 	return nil
 }
 
-func (c *Client) receiveSync(payload []byte) error {
+func (c *Client) receiveSync(access Access, payload []byte) error {
+	if err := allowSync(payload, access == AccessEdit, access); err != nil {
+		return err
+	}
 	c.applying.Lock()
-	reply, err := ysync.ApplySyncMessage(c.doc, payload, c)
+	reply, err := applySync(c.doc, payload, c)
 	c.applying.Unlock()
 	if err != nil {
 		return err
 	}
-	if len(reply) > 0 {
+	if len(reply) > 0 && c.edits() {
 		c.send(MessageSync, reply)
 	}
 	if kind, _, err := ysync.ReadSyncMessage(payload); err == nil && kind == ysync.MsgSyncStep2 {
@@ -497,7 +547,22 @@ func (c *Client) receiveSync(payload []byte) error {
 	return nil
 }
 
-func (c *Client) receiveAwareness(payload []byte) error {
+// applySync applies a sync message to doc, and turns a panic in ygo into an
+// error: anyone in the room may send a SyncStep1, and the host's process is
+// the session.
+func applySync(doc *crdt.Doc, payload []byte, origin any) (reply []byte, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			reply, err = nil, fmt.Errorf("sync message makes ygo panic: %v", r)
+		}
+	}()
+	return ysync.ApplySyncMessage(doc, payload, origin)
+}
+
+func (c *Client) receiveAwareness(access Access, payload []byte) error {
+	if err := editorsOnly("awareness", access); err != nil {
+		return err
+	}
 	update, err := encoding.NewDecoder(payload).ReadVarBytes()
 	if err != nil {
 		return err
@@ -529,14 +594,14 @@ func syncStep2(doc *crdt.Doc) []byte {
 }
 
 func (c *Client) handleDocUpdate(update []byte, origin any) {
-	if origin == c {
+	if origin == c || !c.edits() {
 		return
 	}
 	c.send(MessageSync, ysync.EncodeUpdate(update))
 }
 
 func (c *Client) handleAwarenessUpdate(ev awareness.UpdateEvent) {
-	if ev.Origin == c {
+	if ev.Origin == c || !c.edits() {
 		return
 	}
 	ids := append(append(append([]uint64{}, ev.Added...), ev.Updated...), ev.Removed...)
@@ -546,7 +611,7 @@ func (c *Client) handleAwarenessUpdate(ev awareness.UpdateEvent) {
 // Someone new showed up: tell them about us right away instead of waiting for the
 // periodic awareness renewal, and which files the room shares.
 func (c *Client) handleAwarenessChange(ev awareness.ChangeEvent) {
-	if ev.Origin == c && len(ev.Added) > 0 {
+	if ev.Origin == c && len(ev.Added) > 0 && c.edits() {
 		c.sendAwareness([]uint64{c.aw.ClientID()})
 		c.sendManifest()
 	}
@@ -607,7 +672,12 @@ func (c *Client) send(t MessageType, payload []byte) {
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
 	c.sent++
-	out.push(c.cipher.Encrypt(EncodeFrame(c.guard.self, c.sent, EncodeMessage(t, payload))))
+	message := EncodeMessage(t, payload)
+	if c.keys.Signer != nil {
+		header := EncodeFrame(c.guard.self, c.sent, nil)
+		message = signMessage(c.keys.Signer, c.keys.Access, header, message)
+	}
+	out.push(c.cipher.Encrypt(EncodeFrame(c.guard.self, c.sent, message)))
 }
 
 func (c *Client) setStatus(s Status) {

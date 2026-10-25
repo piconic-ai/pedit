@@ -6,6 +6,7 @@ import {
   decryptBlob,
   deriveBlobKeys,
   encryptBlob,
+  fromBase64Url,
   generateKey,
 } from '@pedit/protocol'
 import { describe, expect, it, vi } from 'vitest'
@@ -41,7 +42,7 @@ const PNG = new Uint8Array([
 const STRIPPED = new Uint8Array([...PNG.subarray(0, 8), ...PNG.subarray(22)])
 
 async function setup(statuses: number[] = [201], opts: Partial<AttachmentsOptions> = {}) {
-  const keys = await deriveBlobKeys(generateKey())
+  const keys = await deriveBlobKeys(fromBase64Url(generateKey()))
   const sent: Attachment[] = []
   const requests: { url: string; body: Uint8Array }[] = []
   const fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
@@ -255,7 +256,7 @@ describe('Attachments as the preview sees them', () => {
   let release404 = () => {}
   async function viewer(opts: Partial<AttachmentsOptions> & { gate?: boolean } = {}) {
     offline = false
-    const keys = await deriveBlobKeys(generateKey())
+    const keys = await deriveBlobKeys(fromBase64Url(generateKey()))
     const sent: Attachment[] = []
     const blobs = new Map<string, Uint8Array>()
     const gets: string[] = []

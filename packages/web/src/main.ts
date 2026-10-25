@@ -4,10 +4,11 @@ import { Compartment, EditorState, type Extension, Prec } from '@codemirror/stat
 import { EditorView, keymap } from '@codemirror/view'
 import {
   deriveBlobKeys,
+  deriveRoomKeys,
   type FileEntry,
-  importKey,
   isFinalStatus,
   metaFiles,
+  parseFragment,
   RoomClient,
   type RoomStatus,
 } from '@pedit/protocol'
@@ -318,7 +319,10 @@ async function joinRoom(
   })
   // Filled in once the client exists; nothing is sent before it connects.
   let client: RoomClient | undefined
-  const blobKeys = await deriveBlobKeys(key)
+  const link = parseFragment(key)
+  if (!link) throw new Error('not a room link')
+  const keys = await deriveRoomKeys(link, id)
+  const blobKeys = await deriveBlobKeys(keys.frameSecret)
   const attachments = new Attachments({
     roomId: id,
     keys: blobKeys,
@@ -774,8 +778,8 @@ async function joinRoom(
 
   client = new RoomClient({
     url: roomSocketUrl(location, id),
-    key: await importKey(key),
-    admissionToken: blobKeys.admission,
+    keys,
+    admissionToken: keys.readAdmission,
     doc,
     awareness,
     onStatus: (s) => {

@@ -179,6 +179,11 @@ func DeriveRoomKeys(link LinkSecrets, roomID string) (*RoomKeys, error) {
 	return k, nil
 }
 
+// EditKeys derives an editor's keys from an edit secret, in the room with this id.
+func EditKeys(secret []byte, roomID string) (*RoomKeys, error) {
+	return DeriveRoomKeys(LinkSecrets{Access: AccessEdit, Edit: secret}, roomID)
+}
+
 func (l LinkSecrets) check() error {
 	var parts [][]byte
 	switch l.Access {

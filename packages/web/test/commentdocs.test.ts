@@ -5,8 +5,9 @@ import {
   MAX_FILES,
   metaFiles,
   RoomClient,
+  type RoomKeys,
 } from '@pedit/protocol'
-import { Relay } from '@pedit/protocol/testing'
+import { editKeys, Relay } from '@pedit/protocol/testing'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Awareness } from 'y-protocols/awareness'
 import * as Y from 'yjs'
@@ -17,14 +18,14 @@ afterEach(async () => {
   for (const c of clients.splice(0)) await c.destroy()
 })
 
-function join(relay: Relay, key: CryptoKey) {
+function join(relay: Relay, key: RoomKeys) {
   const doc = new Y.Doc()
   const awareness = new Awareness(doc)
   awareness.setLocalState({ user: {} })
   const client = new RoomClient({
     admissionToken: 'A'.repeat(43),
     url: 'ws://test',
-    key,
+    keys: key,
     doc,
     awareness,
     createSocket: relay.create,
@@ -40,7 +41,7 @@ const text = (doc: Y.Doc) => doc.getText('content').toString()
 describe('CommentDocs', () => {
   it('lets go of a comments doc a forged list put under a file id, so the file opens', async () => {
     const relay = new Relay()
-    const key = await importKey(generateKey())
+    const key = await editKeys()
     const host = join(relay, key)
     const notes = new Y.Doc()
     notes.getText('content').insert(0, 'the real file 1')
@@ -66,7 +67,7 @@ describe('CommentDocs', () => {
 
   it('joins no comments doc under the room doc, nor more than a room has files', async () => {
     const relay = new Relay()
-    const key = await importKey(generateKey())
+    const key = await editKeys()
     const docs = new CommentDocs(join(relay, key))
     expect(docs.docFor(0)).toBeNull()
     const first = docs.docFor(1)
@@ -77,7 +78,7 @@ describe('CommentDocs', () => {
 
   it('lets go of the comments docs a later list no longer names, making room for its own', async () => {
     const relay = new Relay()
-    const key = await importKey(generateKey())
+    const key = await editKeys()
     const docs = new CommentDocs(join(relay, key))
     // A forged list fills every place.
     for (let id = 1; id <= MAX_FILES; id++) docs.docFor(id)

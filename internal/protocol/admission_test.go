@@ -43,7 +43,7 @@ func TestAdmissionToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if token != "yLmGLPEIKTlJRTyTeaGzls7vTRq2eymHCb_TJWm55EI" {
+	if token != "G8eCuavz2F_pjyWhj9ozn44ZXf9ZGxvqFKL8L52-udA" {
 		t.Fatalf("token = %q", token)
 	}
 	if _, err := protocol.AdmissionToken(raw[:31]); err == nil {
@@ -53,6 +53,12 @@ func TestAdmissionToken(t *testing.T) {
 	if err != nil || keys.Admission != token {
 		t.Fatalf("blob admission mismatch: %v", err)
 	}
+	// A client offers the token of its room's frame key, never its link's secret.
+	room, err := protocol.EditKeys(raw, "")
+	if err != nil || room.ReadAdmission == token {
+		t.Fatalf("room admission = %v, %v", room, err)
+	}
+	token = room.ReadAdmission
 	relay := prototest.NewRelay(false)
 	header := http.Header{"Cf-Access-Token": {"access-token"}}
 	join(t, relay, key, joinOpts{header: header})

@@ -179,8 +179,12 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	key := protocol.GenerateKey()
+	key := protocol.GenerateEditSecret()
 	rawKey, err := protocol.DecodeKey(key)
+	if err != nil {
+		return nil, err
+	}
+	keys, err := protocol.EditKeys(rawKey, room.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +211,7 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 		state["format"] = formatCanvas
 	}
 	aw.SetLocalState(state)
-	blobKeys, err := protocol.DeriveBlobKeys(rawKey)
+	blobKeys, err := protocol.DeriveBlobKeys(keys.FrameKey)
 	if err != nil {
 		return nil, err
 	}
@@ -251,6 +255,7 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 	header.Set("Authorization", "Bearer "+room.HostToken)
 	s.Client, err = protocol.NewClient(protocol.ClientOptions{
 		URL:       wsURL,
+		RoomID:    room.ID,
 		Key:       rawKey,
 		Doc:       doc,
 		Awareness: aw,

@@ -23,10 +23,14 @@ const protocol = await import(pathToFileURL(join(protocolDir, 'src/index.ts')).h
 const doc = new Y.Doc()
 const awareness = new Awareness(doc)
 const replies = new Map()
+const keys = await protocol.deriveRoomKeys(
+  protocol.parseFragment(key),
+  new URL(url).pathname.split('/')[3],
+)
 const client = new protocol.RoomClient({
-  admissionToken: await protocol.deriveAdmissionToken(key),
+  admissionToken: keys.readAdmission,
   url,
-  key: await protocol.importKey(key),
+  keys,
   doc,
   awareness,
   onCanvas: (m) => replies.set(m.id, m),
