@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 
 	"github.com/piconic-ai/pedit/internal/filewriter"
 	"github.com/piconic-ai/pedit/internal/protocol"
@@ -35,21 +36,21 @@ type mirror struct {
 	// done holds the ids seen, mirrored or not, so each is reported once.
 	done map[uint64]bool
 	// latest is the last list, kept until the first copy is in place.
-	latest []protocol.FileEntry
+	latest atomic.Pointer[[]protocol.FileEntry]
 }
 
 // takeManifest mirrors the room's files as the host lists them. It is called
 // on the client's read loop, so the work goes to its own goroutine.
 func (s *Session) takeManifest(files []protocol.FileEntry) {
+	if s.mirror == nil {
+		return
+	}
+	s.mirror.latest.Store(&files)
 	go func() {
 		s.mirrorMu.Lock()
 		defer s.mirrorMu.Unlock()
-		if s.mirror == nil {
-			return
-		}
 		if !s.mirror.started {
 			// The first copy is not in place yet: Join mirrors this list then.
-			s.mirror.latest = files
 			return
 		}
 		s.mirrorFiles(files)
@@ -60,8 +61,8 @@ func (s *Session) takeManifest(files []protocol.FileEntry) {
 // holds s.mirrorMu.
 func (s *Session) startMirror() {
 	s.mirror.started = true
-	if s.mirror.latest != nil {
-		s.mirrorFiles(s.mirror.latest)
+	if latest := s.mirror.latest.Load(); latest != nil {
+		s.mirrorFiles(*latest)
 	}
 }
 

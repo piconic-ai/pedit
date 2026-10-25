@@ -46,6 +46,36 @@ func (l *mirrorLog) count() int {
 	return len(l.seen)
 }
 
+func TestJoinKeepsTheLatestManifestBeforeMirroring(t *testing.T) {
+	previous := runtime.GOMAXPROCS(1)
+	t.Cleanup(func() { runtime.GOMAXPROCS(previous) })
+	var log mirrorLog
+	s := &Session{mirror: &mirror{
+		opts: JoinOptions{OnMirrored: log.add},
+		done: map[uint64]bool{},
+	}}
+	files := []protocol.FileEntry{
+		{ID: 1, Path: "first.canvas", Format: protocol.FormatCanvas},
+		{ID: 2, Path: "second.canvas", Format: protocol.FormatCanvas},
+	}
+	s.mirrorMu.Lock()
+	s.takeManifest(files[:1])
+	s.takeManifest(files)
+	s.mirrorMu.Unlock()
+	runtime.Gosched()
+	runtime.Gosched()
+
+	s.mirrorMu.Lock()
+	s.startMirror()
+	s.mirrorMu.Unlock()
+	for _, entry := range files {
+		m, ok := log.get(entry.Path)
+		if !ok || !errors.Is(m.err, errNotText) {
+			t.Errorf("OnMirrored(%s) = %+v, %v", entry.Path, m, ok)
+		}
+	}
+}
+
 func TestJoinMirrorsTheRoomsOtherFiles(t *testing.T) {
 	f := setup(t, "# agenda\n", setupOpts{watch: true})
 	spec := writeBeside(t, f, "docs/spec.md", "# spec\n")
