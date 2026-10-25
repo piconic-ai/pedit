@@ -3,6 +3,7 @@ import {
   ADMISSION_HEADER,
   ADMISSION_PATTERN,
   checkProtocolVersion,
+  READ_ADMISSION_HEADER,
   readAdmissionProtocol,
   SOCKET_PROTOCOL,
 } from '@pedit/protocol/admission'
@@ -78,8 +79,13 @@ export const ALARM_INTERVAL_MS = 60 * 60 * 1000
  * (vitest.config.ts).
  */
 export interface Limits {
-  /** Guests at once, the host not counted. */
+  /** Guests with an edit link at once, the host not counted. */
   guests: number
+  /**
+   * Guests with a comment-only or read-only link at once, apart from the
+   * others, so they cannot take editors' places.
+   */
+  readers: number
   /** One attachment, before encryption. */
   blobBytes: number
   /** All attachments of a session together, encrypted, and their number. */
@@ -93,6 +99,7 @@ export interface Limits {
 
 export const DEFAULT_LIMITS: Limits = {
   guests: MAX_PEERS - 1,
+  readers: MAX_PEERS - 1,
   blobBytes: 10 * 1024 * 1024,
   quotaBytes: 100 * 1024 * 1024,
   quotaCount: 500,
@@ -107,6 +114,7 @@ export const DEFAULT_LIMITS: Limits = {
 /** Worker vars that lower or raise the limits; unset or invalid ones keep the default. */
 export interface LimitVars {
   ROOM_GUESTS?: string
+  ROOM_READERS?: string
   BLOB_MAX_BYTES?: string
   BLOB_QUOTA_BYTES?: string
   BLOB_QUOTA_COUNT?: string
@@ -119,8 +127,12 @@ export function limits(env: LimitVars): Limits {
     const n = Number(value)
     return Number.isSafeInteger(n) && n > 0 ? n : fallback
   }
+  const guests = Math.min(positive(env.ROOM_GUESTS, DEFAULT_LIMITS.guests), MAX_PEERS - 1)
   return {
-    guests: Math.min(positive(env.ROOM_GUESTS, DEFAULT_LIMITS.guests), MAX_PEERS - 1),
+    guests,
+    // As many as the editors' places unless set: a relay that limits guests
+    // limits readers alike.
+    readers: Math.min(positive(env.ROOM_READERS, guests), MAX_PEERS - 1),
     blobBytes: positive(env.BLOB_MAX_BYTES, DEFAULT_LIMITS.blobBytes),
     quotaBytes: positive(env.BLOB_QUOTA_BYTES, DEFAULT_LIMITS.quotaBytes),
     quotaCount: positive(env.BLOB_QUOTA_COUNT, DEFAULT_LIMITS.quotaCount),
@@ -141,14 +153,20 @@ export function maintenance(env: { MAINTENANCE?: string }): Maintenance {
 }
 
 const HOST_TAG = 'host'
+// A guest admitted with the reader token: a comment-only or read-only link.
+const READER_TAG = 'reader'
 const BLOB_PATH = /\/blobs\/([A-Za-z0-9_-]{22})$/
 const USAGE_KEY = 'blobUsage'
+// The digests of the editor and reader admission tokens (access.ts).
 const ADMISSION_KEY = 'admissionHash'
+const READ_ADMISSION_KEY = 'readAdmissionHash'
 // When the host first connected, in ms since the epoch. Never deleted: once
 // the room is over it is the tombstone that stops its ID being used again.
 const OPENED_KEY = 'openedAt'
 // Until when, in ms since the epoch, the room waits for a host that dropped.
 const AWAY_KEY = 'hostAwayUntil'
+
+type Role = 'editor' | 'reader'
 
 interface Usage {
   bytes: number
@@ -225,27 +243,33 @@ export class Room extends DurableObject<Env> {
     const token = readAdmissionProtocol(protocols)
     if (!token) return new Response('room admission required; update your client', { status: 403 })
     const isHost = request.headers.get(HOST_HEADER) === '1'
+    const read = (isHost && request.headers.get(READ_ADMISSION_HEADER)) || null
+    if (read !== null && !ADMISSION_PATTERN.test(read)) {
+      return new Response('invalid reader admission', { status: 403 })
+    }
     // The hash below is an await during which an alarm may run. Counting the
     // host handshakes in flight keeps that alarm from cleaning up a session
     // whose host is just reconnecting.
     if (isHost) this.hostHandshakes++
     try {
-      return await this.admit(token, isHost)
+      return await this.admit(token, isHost, read)
     } finally {
       if (isHost) this.hostHandshakes--
     }
   }
 
-  private async admit(token: string, isHost: boolean): Promise<Response> {
+  private async admit(token: string, isHost: boolean, read: string | null): Promise<Response> {
     const digest = await sha256(token)
+    const readDigest = read === null ? null : await sha256(read)
     // Deploys can drop every socket without a close callback. Only a guest
-    // with this session's admission may start its missing host grace period.
+    // with this session's editor admission may start its missing host grace
+    // period: the reader token goes to anyone a link was passed on to.
     if (
       !isHost &&
       !this.expired() &&
       this.hosts().length === 0 &&
       this.awayUntil() === undefined &&
-      this.authorize(digest)
+      this.role(digest) === 'editor'
     ) {
       await this.waitForHost()
     }
@@ -266,18 +290,19 @@ export class Room extends DurableObject<Env> {
       return refuse(ROOM_CLOSED, 'room is closed')
     }
     // Authenticate before taking a peer slot. Only the authenticated host may
-    // register the verifier; a guest cannot claim an unopened room's token.
-    if (!this.authorize(digest, isHost))
-      return new Response('invalid room admission', { status: 403 })
-    const peers = this.ctx.getWebSockets().length
-    const guests = peers - this.hosts().length
-    if (peers >= MAX_PEERS || (!isHost && guests >= limits(this.env).guests)) {
-      return refuse(ROOM_FULL, 'room is full')
-    }
+    // register the verifiers; a guest cannot claim an unopened room's tokens.
+    const role = isHost ? this.registerHost(digest, readDigest) : this.role(digest)
+    if (!role) return new Response('invalid room admission', { status: 403 })
+    if (this.full(isHost, role)) return refuse(ROOM_FULL, 'room is full')
+    return this.accept(isHost, role)
+  }
+
+  // Takes a peer admitted to a place. Nothing awaits before the accept.
+  private async accept(isHost: boolean, role: Role): Promise<Response> {
     // The clock starts at the host's first connection and never again.
     if (isHost && this.openedAt() === undefined) this.ctx.storage.kv.put(OPENED_KEY, Date.now())
     const { 0: client, 1: server } = new WebSocketPair()
-    this.ctx.acceptWebSocket(server, isHost ? [HOST_TAG] : [])
+    this.ctx.acceptWebSocket(server, isHost ? [HOST_TAG] : role === 'reader' ? [READER_TAG] : [])
     if (isHost) {
       this.log('host connected')
       if (this.awayUntil() !== undefined) this.hostReturned()
@@ -292,15 +317,44 @@ export class Room extends DurableObject<Env> {
     })
   }
 
-  // Takes the digest of the admission token, hashed before this runs.
-  private authorize(digest: ArrayBuffer, register = false): boolean {
-    // Persist the verifier across hibernation. Read after hashing so concurrent
-    // host handshakes cannot each install a different token.
-    const expected = this.ctx.storage.kv.get<ArrayBuffer>(ADMISSION_KEY)
-    if (expected) return crypto.subtle.timingSafeEqual(expected, digest)
-    if (!register) return false
-    this.ctx.storage.kv.put(ADMISSION_KEY, digest)
-    return true
+  /**
+   * Which admission token a digest is, hashed before this runs: the editors'
+   * or the readers' (a comment-only or read-only link). The relay uses it
+   * only to keep places and uploads for editors; what anyone may change in
+   * the room, every peer checks by signatures it cannot see.
+   */
+  private role(digest: ArrayBuffer): Role | null {
+    const kv = this.ctx.storage.kv
+    const editor = kv.get<ArrayBuffer>(ADMISSION_KEY)
+    if (editor && crypto.subtle.timingSafeEqual(editor, digest)) return 'editor'
+    const reader = kv.get<ArrayBuffer>(READ_ADMISSION_KEY)
+    if (reader && crypto.subtle.timingSafeEqual(reader, digest)) return 'reader'
+    return null
+  }
+
+  /**
+   * Checks the host's editor token against the session's, or registers both
+   * tokens when it has none. Persisted across hibernation, and read after
+   * hashing so concurrent host handshakes cannot each install other tokens.
+   */
+  private registerHost(digest: ArrayBuffer, readDigest: ArrayBuffer | null): Role | null {
+    const kv = this.ctx.storage.kv
+    const expected = kv.get<ArrayBuffer>(ADMISSION_KEY)
+    if (expected) return crypto.subtle.timingSafeEqual(expected, digest) ? 'editor' : null
+    kv.put(ADMISSION_KEY, digest)
+    if (readDigest) kv.put(READ_ADMISSION_KEY, readDigest)
+    return 'editor'
+  }
+
+  /** Whether the room has no place for a newcomer: guests and readers count apart. */
+  private full(isHost: boolean, role: Role): boolean {
+    const sockets = this.ctx.getWebSockets()
+    if (sockets.length >= MAX_PEERS) return true
+    if (isHost) return false
+    const { guests, readers } = limits(this.env)
+    const reading = this.ctx.getWebSockets(READER_TAG).length
+    if (role === 'reader') return reading >= readers
+    return sockets.length - this.hosts().length - reading >= guests
   }
 
   private openedAt(): number | undefined {
@@ -555,6 +609,7 @@ export class Room extends DurableObject<Env> {
     this.generation++
     this.ctx.storage.kv.delete(USAGE_KEY)
     this.ctx.storage.kv.delete(ADMISSION_KEY)
+    this.ctx.storage.kv.delete(READ_ADMISSION_KEY)
     this.ctx.storage.kv.delete(AWAY_KEY)
     this.cleaning = this.cleaning.then(() => this.deleteBlobs())
     await this.cleaning
@@ -577,8 +632,13 @@ export class Room extends DurableObject<Env> {
       if (request.method !== 'GET') return new Response('the host is away', { status: 503 })
     }
     // Hashed first, so the verifier is read after any await.
-    if (!this.authorize(await sha256(token)))
-      return new Response('invalid room admission', { status: 403 })
+    const role = this.role(await sha256(token))
+    if (!role) return new Response('invalid room admission', { status: 403 })
+    // Readers see the images; only editors add them, so nobody else can
+    // take an image's place or the room's quota.
+    if (request.method === 'PUT' && role !== 'editor') {
+      return new Response('adding images needs an edit link', { status: 403 })
+    }
     const key = this.blobPrefix() + id
     if (request.method === 'GET') {
       const object = await this.env.BLOBS.get(key)

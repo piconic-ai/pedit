@@ -7,13 +7,23 @@ someone who knows only the ID from exhausting a room's peer or blob quota.
 
 ## Derivation and transport
 
-Both Go and TypeScript derive 32 bytes with HKDF-SHA256: input key material
-is the room's 32-byte frame key, which every room link derives (see
-`internal/protocol/access.go`), salt is empty, and info is the UTF-8 string
-`pedit v5 read admission`. Encode the output as unpadded base64url (43
-characters). The dedicated info string separates this capability from the
-AES-GCM frame key and both attachment keys. Never send a link's secrets or
-reuse an encryption key as the capability.
+A room has two capabilities (#122). Both Go and TypeScript derive each as 32
+bytes with HKDF-SHA256 and an empty salt (see `internal/protocol/access.go`):
+
+- the **editor token**, from the edit secret in an edit link, info
+  `pedit v5 edit admission`;
+- the **reader token**, from the room's frame key, which every link derives,
+  info `pedit v5 read admission`.
+
+Encode each as unpadded base64url (43 characters). The dedicated info strings
+separate these capabilities from the AES-GCM frame key and both attachment
+keys. A comment-only or read-only link yields only the reader token. Never
+send a link's secrets or reuse an encryption key as a capability.
+
+Editors offer the editor token, and comment-only and read-only links the
+reader token. The relay uses the difference only to keep places and uploads
+for editors: what anyone may change in the room, every peer checks by
+signatures the relay cannot see.
 
 WebSocket clients offer two subprotocols:
 
@@ -24,7 +34,8 @@ Sec-WebSocket-Protocol: pedit-v5, pedit-admission.<token>
 The server selects only `pedit-v5`, never echoes the capability, and rejects
 missing, malformed, or multiple admission tokens. Browsers use the standard
 WebSocket protocols argument; the Go client uses its handshake options.
-Blob GET and PUT requests send `X-Pedit-Admission: <token>`. The capability
+Blob GET and PUT requests send `X-Pedit-Admission: <token>`. A blob PUT
+needs the editor token; a GET takes either. The capability
 never appears in a path, query string, response body, or application log.
 Custom infrastructure must redact these request headers.
 
@@ -32,9 +43,17 @@ Custom infrastructure must redact these request headers.
 
 The Worker still validates the host's independent bearer token against the
 room ID and strips caller-supplied `X-Pedit-Host`. Only a verified host can
-register an admission verifier in the Durable Object. The verifier is
-SHA-256 of the admission token's UTF-8 representation; it is persisted in
-SQLite KV and checked with Workers' constant-time `timingSafeEqual`.
+register the admission verifiers in the Durable Object: the editor token it
+offers as its subprotocol, and the reader token it sends in
+`X-Pedit-Read-Admission`, which the room ignores on any other request. Each
+verifier is SHA-256 of the token's UTF-8 representation; they are persisted
+in SQLite KV and checked with Workers' constant-time `timingSafeEqual`. A
+reconnecting host must offer the registered editor token.
+
+Readers (the reader token) take places of their own, `ROOM_READERS` (as
+many as `ROOM_GUESTS` unless set), so they cannot take editors' places.
+Only the editor token may start the grace period of a host cut off by a
+deploy.
 Concurrent handshakes read the verifier after hashing, and cannot change it
 while the session exists. No token/key verifier can be installed by a guest
 or a blob request.

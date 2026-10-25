@@ -2,6 +2,12 @@ import { toBase64Url } from './key.ts'
 
 export const ADMISSION_HEADER = 'X-Pedit-Admission'
 /**
+ * Carries the reader admission token (access.ts) on the host's upgrade
+ * request, so the relay admits comment-only and read-only links too. The
+ * host offers the editor token as its subprotocol, as every editor does.
+ */
+export const READ_ADMISSION_HEADER = 'X-Pedit-Read-Admission'
+/**
  * The wire format version. Bump it only for changes older peers cannot skip;
  * adding a message type or kind does not need a bump.
  */

@@ -27,8 +27,16 @@ export const BLOB_ID_PATTERN = /^[A-Za-z0-9_-]{22}$/
 const buf = (bytes: Uint8Array) => bytes as Uint8Array<ArrayBuffer>
 const utf8 = new TextEncoder()
 
-/** Derives the attachment keys from the frame key's bytes (RoomKeys.frameSecret). */
-export async function deriveBlobKeys(frameSecret: Uint8Array): Promise<BlobKeys> {
+/**
+ * Derives the attachment keys from the frame key's bytes (RoomKeys.frameSecret).
+ * `admission` is the token to send the relay, the reader token of the frame
+ * key by default; an editor sends its own (RoomKeys.editAdmission), which
+ * also lets it add images.
+ */
+export async function deriveBlobKeys(
+  frameSecret: Uint8Array,
+  admission?: string,
+): Promise<BlobKeys> {
   const subtle = globalThis.crypto.subtle
   const base = await subtle.importKey('raw', buf(frameSecret), 'HKDF', false, ['deriveKey'])
   const hkdf = (info: string) => ({
@@ -46,7 +54,7 @@ export async function deriveBlobKeys(frameSecret: Uint8Array): Promise<BlobKeys>
       'sign',
     ]),
   ])
-  return { enc, id, admission: await deriveAdmissionToken(frameSecret) }
+  return { enc, id, admission: admission ?? (await deriveAdmissionToken(frameSecret)) }
 }
 
 /** Names an attachment by its content; the host uses it as the file name. */

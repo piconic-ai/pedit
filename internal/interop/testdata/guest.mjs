@@ -30,7 +30,7 @@ awareness.setLocalState({ name: 'js guest' })
 // protocols constructor used by the other interop guests.
 const keys = await deriveRoomKeys(parseFragment(key), new URL(url).pathname.split('/')[3])
 const client = new RoomClient({
-  admissionToken: keys.readAdmission,
+  admissionToken: keys.editAdmission,
   url,
   keys,
   doc,

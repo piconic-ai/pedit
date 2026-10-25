@@ -5,7 +5,11 @@ import {
   runInDurableObject,
 } from 'cloudflare:test'
 import { env, exports } from 'cloudflare:workers'
-import { ADMISSION_HEADER, admissionProtocols } from '@pedit/protocol/admission'
+import {
+  ADMISSION_HEADER,
+  admissionProtocols,
+  READ_ADMISSION_HEADER,
+} from '@pedit/protocol/admission'
 import { expiredReason } from '@pedit/protocol/close'
 import { MAX_FRAME_BYTES } from '@pedit/protocol/frame'
 import { describe, expect, it, vi } from 'vitest'
@@ -32,13 +36,15 @@ const ROOM_EXPIRED = 4007
 const HOST_LEFT = 4008
 const MESSAGE_TOO_BIG = 1009
 // The tests run with small limits (vitest.config.ts).
-const { guests: GUESTS, blobBytes: BLOB_BYTES, roomSeconds } = limits(env)
+const { guests: GUESTS, readers: READERS, blobBytes: BLOB_BYTES, roomSeconds } = limits(env)
 const LIFETIME_MS = roomSeconds * 1000
 
 interface Room {
   id: string
   hostToken: string
+  /** The editor admission token, and the readers' (comment-only and read-only links). */
   admission: string
+  read: string
 }
 
 const admissions = new Map<string, string>()
@@ -62,6 +68,7 @@ async function createRoom(): Promise<Room> {
   expect(res.status).toBe(201)
   const room = await res.json<Room>()
   room.admission = crypto.randomUUID().replaceAll('-', '') + 'A'.repeat(11)
+  room.read = crypto.randomUUID().replaceAll('-', '') + 'R'.repeat(11)
   admissions.set(room.id, room.admission)
   return room
 }
@@ -103,7 +110,16 @@ async function connect(id: string, headers: Record<string, string> = {}): Promis
 }
 
 const host = (room: Room, headers: Record<string, string> = {}) =>
-  connect(room.id, { Authorization: `Bearer ${room.hostToken}`, ...headers })
+  connect(room.id, {
+    Authorization: `Bearer ${room.hostToken}`,
+    [READ_ADMISSION_HEADER]: room.read,
+    ...headers,
+  })
+
+/** The upgrade headers of a guest with a comment-only or read-only link. */
+const asReader = (room: Room) => ({
+  'Sec-WebSocket-Protocol': admissionProtocols(room.read).join(', '),
+})
 
 /**
  * Stops the room's clock at 0 and returns a way to move it, so a test decides
@@ -392,6 +408,32 @@ describe('rooms', () => {
     })
   })
 
+  it('admits comment-only and read-only links in places of their own', async () => {
+    const room = await createRoom()
+    await host(room)
+    for (let i = 0; i < READERS; i++) await connect(room.id, asReader(room))
+    const late = await connect(room.id, asReader(room))
+    expect((await late.closed).code).toBe(ROOM_FULL)
+    // Readers do not take editors' places.
+    const editor = await connect(room.id)
+    expect(editor.ws.readyState).toBe(WebSocket.OPEN)
+  })
+
+  it('admits readers only when the host registered their token', async () => {
+    const room = await createRoom()
+    await host(room, { [READ_ADMISSION_HEADER]: '' })
+    expect((await upgrade(room.id, asReader(room))).status).toBe(403)
+    // Only the host may register it: a guest's header does nothing.
+    const other = await createRoom()
+    await host(other)
+    const spoof = await upgrade(other.id, {
+      'Sec-WebSocket-Protocol': admissionProtocols('B'.repeat(43)).join(', '),
+      [READ_ADMISSION_HEADER]: 'B'.repeat(43),
+    })
+    expect(spoof.status).toBe(403)
+    expect((await upgrade(room.id, { [READ_ADMISSION_HEADER]: 'bad' })).status).toBe(101)
+  })
+
   it('caps the number of connections', async () => {
     const room = await createRoom()
     for (let i = 0; i < MAX_PEERS; i++) await host(room)
@@ -401,6 +443,7 @@ describe('rooms', () => {
   it('reads its limits from the Worker vars, within the defaults', () => {
     expect(limits({})).toEqual({
       guests: MAX_PEERS - 1,
+      readers: MAX_PEERS - 1,
       blobBytes: 10 * 1024 * 1024,
       quotaBytes: 100 * 1024 * 1024,
       quotaCount: 500,
@@ -416,6 +459,10 @@ describe('rooms', () => {
       expect(limits({ ROOM_MAX_SECONDS: bad }).roomSeconds).toBe(Number.POSITIVE_INFINITY)
     }
     expect(limits({ ROOM_GUESTS: '100' }).guests).toBe(MAX_PEERS - 1)
+    // Readers take as many places as guests unless set apart.
+    expect(limits({ ROOM_GUESTS: '4' }).readers).toBe(4)
+    expect(limits({ ROOM_GUESTS: '4', ROOM_READERS: '10' }).readers).toBe(10)
+    expect(limits({ ROOM_READERS: '100' }).readers).toBe(MAX_PEERS - 1)
     for (const bad of ['0', '-1', '1.5', 'many']) {
       expect(limits({ ROOM_GUESTS: bad, BLOB_MAX_BYTES: bad }).guests).toBe(MAX_PEERS - 1)
       expect(limits({ BLOB_MAX_BYTES: bad }).blobBytes).toBe(10 * 1024 * 1024)
@@ -569,6 +616,24 @@ describe('blobs', () => {
     expect(await roomBlobs(room)).toEqual([])
     expect((await putBlob(room, blobId(1), new Uint8Array(90))).status).toBe(201)
     expect((await getBlob(room, blobId(1))).status).toBe(200)
+  })
+
+  it('lets readers fetch images but not add them', async () => {
+    const room = await createRoom()
+    await host(room)
+    const asReaderBlob = { [ADMISSION_HEADER]: room.read }
+    const put = await exports.default.fetch(blobUrl(room, blobId(1)), {
+      method: 'PUT',
+      body: new Uint8Array(90),
+      headers: asReaderBlob,
+    })
+    expect(put.status).toBe(403)
+    expect(await put.text()).toBe('adding images needs an edit link')
+    expect(await roomBlobs(room)).toEqual([])
+    expect((await putBlob(room, blobId(1), new Uint8Array([1, 2]))).status).toBe(201)
+    const got = await exports.default.fetch(blobUrl(room, blobId(1)), { headers: asReaderBlob })
+    expect(got.status).toBe(200)
+    expect([...new Uint8Array(await got.arrayBuffer())]).toEqual([1, 2])
   })
 
   it('stores and serves blobs while the host is connected', async () => {
@@ -1238,6 +1303,20 @@ describe('a host that drops', () => {
     const grace = await awayUntil(room)
     expect((await upgrade(room.id, wrong)).status).toBe(403)
     expect(await awayUntil(room)).toBe(grace)
+  })
+
+  it('does not let a reader start recovery after a deploy', async () => {
+    const room = await createRoom()
+    await host(room)
+    await evictDurableObject(stubOf(room), { webSockets: 'close' })
+    const reader = await connect(room.id, asReader(room))
+    expect((await reader.closed).code).toBe(ROOM_CLOSED)
+    expect(await awayUntil(room)).toBeUndefined()
+    // Once an editor started it, readers come in and wait too.
+    const guest = await connect(room.id)
+    await until(() => guest.signals.includes('host away'))
+    const waiting = await connect(room.id, asReader(room))
+    await until(() => waiting.signals.includes('host away'))
   })
 
   it('does not restart an expired grace period after another deploy', async () => {

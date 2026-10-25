@@ -215,6 +215,8 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The host's token lets it add images as well as fetch them.
+	blobKeys.Admission = keys.EditAdmission
 
 	s := &Session{
 		URL:  server + "/r/" + room.ID + "#" + key,

@@ -10,6 +10,12 @@ import (
 // AdmissionHeader carries a room capability, never the encryption key.
 const AdmissionHeader = "X-Pedit-Admission"
 
+// ReadAdmissionHeader carries the reader admission token (access.go) on the
+// host's upgrade request, so the relay admits comment-only and read-only
+// links too. The host offers the editor token as its subprotocol, as every
+// editor does. Keep it equal to READ_ADMISSION_HEADER in packages/protocol.
+const ReadAdmissionHeader = "X-Pedit-Read-Admission"
+
 // ProtocolVersion is the wire format version, offered as SocketProtocol.
 // Bump it only for changes older peers cannot skip; adding a message type or
 // kind does not need a bump. Keep it in sync with packages/protocol.

@@ -322,7 +322,9 @@ async function joinRoom(
   const link = parseFragment(key)
   if (!link) throw new Error('not a room link')
   const keys = await deriveRoomKeys(link, id)
-  const blobKeys = await deriveBlobKeys(keys.frameSecret)
+  // Editors show the relay their own token, which also lets them add images.
+  const admission = keys.editAdmission ?? keys.readAdmission
+  const blobKeys = await deriveBlobKeys(keys.frameSecret, admission)
   const attachments = new Attachments({
     roomId: id,
     keys: blobKeys,
@@ -779,7 +781,7 @@ async function joinRoom(
   client = new RoomClient({
     url: roomSocketUrl(location, id),
     keys,
-    admissionToken: keys.readAdmission,
+    admissionToken: admission,
     doc,
     awareness,
     onStatus: (s) => {

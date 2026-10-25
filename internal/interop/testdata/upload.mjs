@@ -26,7 +26,7 @@ const awareness = new Awareness(doc)
 const received = []
 const keys = await protocol.deriveRoomKeys(protocol.parseFragment(key), room)
 const client = new protocol.RoomClient({
-  admissionToken: keys.readAdmission,
+  admissionToken: keys.editAdmission,
   url: `${server.replace(/^http/, 'ws')}/api/rooms/${room}/ws`,
   keys,
   doc,
@@ -44,7 +44,7 @@ async function until(what, cond) {
   throw new Error(`timed out waiting for ${what}`)
 }
 
-const blobKeys = await protocol.deriveBlobKeys(keys.frameSecret)
+const blobKeys = await protocol.deriveBlobKeys(keys.frameSecret, keys.editAdmission)
 const headers = { [protocol.ADMISSION_HEADER]: blobKeys.admission }
 const blobUrl = async (hash) =>
   `${server}/api/rooms/${room}/blobs/${await protocol.blobIdFor(blobKeys, hash)}`

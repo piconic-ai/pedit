@@ -28,7 +28,7 @@ const keys = await protocol.deriveRoomKeys(
   new URL(url).pathname.split('/')[3],
 )
 const client = new protocol.RoomClient({
-  admissionToken: keys.readAdmission,
+  admissionToken: keys.editAdmission,
   url,
   keys,
   doc,

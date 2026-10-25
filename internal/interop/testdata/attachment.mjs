@@ -27,7 +27,7 @@ const keys = await protocol.deriveRoomKeys(
   new URL(url).pathname.split('/')[3],
 )
 const client = new protocol.RoomClient({
-  admissionToken: keys.readAdmission,
+  admissionToken: keys.editAdmission,
   url,
   keys,
   doc,
@@ -48,7 +48,7 @@ async function until(what, cond) {
 
 const content = new TextEncoder().encode('pedit 居間')
 const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, ...content])
-const blobKeys = await protocol.deriveBlobKeys(keys.frameSecret)
+const blobKeys = await protocol.deriveBlobKeys(keys.frameSecret, keys.editAdmission)
 const hash = await protocol.contentHash(png)
 const blobId = await protocol.blobIdFor(blobKeys, hash)
 const blob = protocol.toBase64Url(await protocol.encryptBlob(blobKeys, png))

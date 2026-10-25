@@ -197,7 +197,17 @@ func NewClient(opts ClientOptions) (*Client, error) {
 	if opts.Header == nil {
 		opts.Header = http.Header{}
 	}
-	opts.Header.Set("Sec-WebSocket-Protocol", SocketProtocol+", "+AdmissionProtocolPrefix+keys.ReadAdmission)
+	// Editors show the relay their own token, which keeps them places of
+	// their own and lets them add images; the host registers the readers'
+	// as well.
+	token := keys.ReadAdmission
+	if keys.Access == AccessEdit {
+		token = keys.EditAdmission
+	}
+	opts.Header.Set("Sec-WebSocket-Protocol", SocketProtocol+", "+AdmissionProtocolPrefix+token)
+	if opts.Host {
+		opts.Header.Set(ReadAdmissionHeader, keys.ReadAdmission)
+	}
 	if opts.Dial == nil {
 		opts.Dial = DialWebSocket
 	}

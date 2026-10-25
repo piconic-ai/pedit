@@ -53,12 +53,12 @@ func TestAdmissionToken(t *testing.T) {
 	if err != nil || keys.Admission != token {
 		t.Fatalf("blob admission mismatch: %v", err)
 	}
-	// A client offers the token of its room's frame key, never its link's secret.
+	// An editor offers the editors' token, never its link's secret.
 	room, err := protocol.EditKeys(raw, "")
-	if err != nil || room.ReadAdmission == token {
+	if err != nil || room.EditAdmission == token {
 		t.Fatalf("room admission = %v, %v", room, err)
 	}
-	token = room.ReadAdmission
+	token = room.EditAdmission
 	relay := prototest.NewRelay(false)
 	header := http.Header{"Cf-Access-Token": {"access-token"}}
 	join(t, relay, key, joinOpts{header: header})
@@ -72,6 +72,37 @@ func TestAdmissionToken(t *testing.T) {
 	}
 	if strings.Contains(got.Get("Sec-WebSocket-Protocol"), key) || strings.Contains(strings.Join(relay.URLs(), ""), token) {
 		t.Fatal("secret in wrong transport")
+	}
+}
+
+// The host registers the readers' token beside its own, and a comment-only
+// link offers the readers' token.
+func TestHostRegistersTheReadersToken(t *testing.T) {
+	key := protocol.GenerateKey()
+	keys := editKeys(t, key)
+	raw, _ := protocol.DecodeKey(key)
+	relay := prototest.NewRelay(false)
+	doc := crdt.New()
+	host, err := protocol.NewClient(protocol.ClientOptions{
+		URL: "ws://test", Key: raw, Doc: doc, Awareness: awareness.New(uint64(doc.ClientID())),
+		Host: true, Dial: relay.Dial,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(host.Destroy)
+	host.Connect()
+	join(t, relay, key, joinOpts{link: lowerLink(t, key, protocol.AccessComment)})
+	prototest.WaitFor(t, wait, func() bool { return len(relay.Headers()) == 2 }, "both handshakes")
+	offered := func(h http.Header) string {
+		return strings.TrimPrefix(h.Get("Sec-WebSocket-Protocol"), protocol.SocketProtocol+", "+protocol.AdmissionProtocolPrefix)
+	}
+	hostHeader, commenterHeader := relay.Headers()[0], relay.Headers()[1]
+	if offered(hostHeader) != keys.EditAdmission || hostHeader.Get(protocol.ReadAdmissionHeader) != keys.ReadAdmission {
+		t.Fatalf("host offered %q and registered %q", offered(hostHeader), hostHeader.Get(protocol.ReadAdmissionHeader))
+	}
+	if offered(commenterHeader) != keys.ReadAdmission || commenterHeader.Get(protocol.ReadAdmissionHeader) != "" {
+		t.Fatalf("commenter offered %q", offered(commenterHeader))
 	}
 }
 

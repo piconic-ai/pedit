@@ -38,15 +38,18 @@ func newServer(t *testing.T) *httptest.Server {
 	var mu sync.Mutex
 	conns := map[*websocket.Conn]bool{}
 	blobs := map[string][]byte{}
-	admission := ""
-	checkAdmission := func(r *http.Request) bool {
+	// The editor and reader admission tokens, as the relay registers them
+	// from the host's handshake.
+	admission, readAdmission := "", ""
+	checkAdmission := func(r *http.Request, editorsOnly bool) bool {
 		mu.Lock()
 		defer mu.Unlock()
-		return admission != "" && r.Header.Get(protocol.AdmissionHeader) == admission
+		token := r.Header.Get(protocol.AdmissionHeader)
+		return admission != "" && token == admission || !editorsOnly && readAdmission != "" && token == readAdmission
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("PUT /api/rooms/{id}/blobs/{blob}", func(w http.ResponseWriter, r *http.Request) {
-		if !checkAdmission(r) {
+		if !checkAdmission(r, true) {
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
@@ -64,7 +67,7 @@ func newServer(t *testing.T) *httptest.Server {
 		w.WriteHeader(http.StatusCreated)
 	})
 	mux.HandleFunc("GET /api/rooms/{id}/blobs/{blob}", func(w http.ResponseWriter, r *http.Request) {
-		if !checkAdmission(r) {
+		if !checkAdmission(r, false) {
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
@@ -91,8 +94,9 @@ func newServer(t *testing.T) *httptest.Server {
 		mu.Lock()
 		if admission == "" && r.Header.Get("Authorization") == "Bearer host-token" && len(token) == 43 {
 			admission = token
+			readAdmission = r.Header.Get(protocol.ReadAdmissionHeader)
 		}
-		allowed := admission != "" && admission == token
+		allowed := admission != "" && (admission == token || readAdmission != "" && readAdmission == token)
 		mu.Unlock()
 		if !allowed {
 			w.WriteHeader(http.StatusForbidden)
