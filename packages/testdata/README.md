@@ -28,3 +28,11 @@ file's comments (#121) before applying it. `internal/meta/check_test.go` and
 UndoManager's run of values and a deleted thread) and its measure, which
 `internal/meta`'s `DocSize` and `packages/protocol`'s `metaDocSize` must both
 work out.
+
+`access-vectors.json` pins the key chain of room links (#122): the edit,
+comment-only and read-only fragments derived from one edit secret, both
+verifying keys, the frame key and both admission tokens, and today's admission
+token of the same 32 bytes, which no value of the chain may repeat.
+`internal/protocol/access_test.go` writes it (`PEDIT_UPDATE_VECTORS=1 go test
+./internal/protocol/`), and `packages/protocol/test/access.test.ts` checks the
+TypeScript side derives the same.
