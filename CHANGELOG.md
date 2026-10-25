@@ -1,5 +1,10 @@
 # Changelog
 
+## [v0.1.17](https://github.com/piconic-ai/pedit/compare/v0.1.16...v0.1.17) - 2026-10-25
+
+- Raise vitest, zod and undici past their open advisories by @kfly8 in https://github.com/piconic-ai/pedit/pull/219
+- fix(recovery): preserve room state across host disconnects by @kfly8 in https://github.com/piconic-ai/pedit/pull/218
+
 ## [v0.1.16](https://github.com/piconic-ai/pedit/compare/v0.1.15...v0.1.16) - 2026-10-24
 
 - Render canvas text cards as Markdown by @kfly8 in https://github.com/piconic-ai/pedit/pull/211
