@@ -51,7 +51,8 @@ in SQLite KV and checked with Workers' constant-time `timingSafeEqual`. A
 reconnecting host must offer the registered editor token.
 
 Readers (the reader token) take places of their own, `ROOM_READERS` (as
-many as `ROOM_GUESTS` unless set), so they cannot take editors' places.
+many as `ROOM_GUESTS` unless set), so they cannot take editors' places: the
+cap of 32 connections a room takes counts editors and hosts only.
 Only the editor token may start the grace period of a host cut off by a
 deploy.
 Concurrent handshakes read the verifier after hashing, and cannot change it

@@ -33,7 +33,10 @@ declare global {
   }
 }
 
-/** Connections one room takes at most, hosts included. */
+/**
+ * Connections with an edit link one room takes at most, hosts included.
+ * Comment-only and read-only links take at most as many again, apart.
+ */
 export const MAX_PEERS = 32
 /** Set by the Worker (never by clients) on the host's upgrade request. */
 export const HOST_HEADER = 'X-Pedit-Host'
@@ -346,15 +349,19 @@ export class Room extends DurableObject<Env> {
     return 'editor'
   }
 
-  /** Whether the room has no place for a newcomer: guests and readers count apart. */
+  /**
+   * Whether the room has no place for a newcomer. Readers count apart from
+   * everyone else, even against MAX_PEERS, so they cannot take editors'
+   * places.
+   */
   private full(isHost: boolean, role: Role): boolean {
-    const sockets = this.ctx.getWebSockets()
-    if (sockets.length >= MAX_PEERS) return true
-    if (isHost) return false
     const { guests, readers } = limits(this.env)
     const reading = this.ctx.getWebSockets(READER_TAG).length
     if (role === 'reader') return reading >= readers
-    return sockets.length - this.hosts().length - reading >= guests
+    const editing = this.ctx.getWebSockets().length - reading
+    if (editing >= MAX_PEERS) return true
+    if (isHost) return false
+    return editing - this.hosts().length >= guests
   }
 
   private openedAt(): number | undefined {

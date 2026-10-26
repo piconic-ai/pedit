@@ -440,6 +440,17 @@ describe('rooms', () => {
     expect((await (await host(room)).closed).code).toBe(ROOM_FULL)
   })
 
+  it('keeps every editor place while readers fill theirs', async () => {
+    const room = await createRoom()
+    for (let i = 0; i < MAX_PEERS - 1; i++) await host(room)
+    const readers: Peer[] = []
+    for (let i = 0; i < READERS; i++) readers.push(await connect(room.id, asReader(room)))
+    const last = await host(room)
+    expect((await (await host(room)).closed).code).toBe(ROOM_FULL)
+    // Sockets the room refused have closed by now, as the one above did.
+    for (const peer of [...readers, last]) expect(peer.ws.readyState).toBe(WebSocket.OPEN)
+  })
+
   it('reads its limits from the Worker vars, within the defaults', () => {
     expect(limits({})).toEqual({
       guests: MAX_PEERS - 1,
