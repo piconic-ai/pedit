@@ -8,27 +8,37 @@
 https://github.com/user-attachments/assets/14bec9ab-8c14-495c-8faf-9cdd98d8fd5b
 
 **What it looks like.** Carol shares a file with `pedit`; Alice and Bob edit
-it in their browsers. This is Alice's view:
+it in their browsers. The first three are Alice's view; the last is Bob's,
+opened from a comment-only link:
 
 <table>
   <tr>
     <td><a href="docs/assets/screenshots/markdown.png"><picture>
       <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/markdown-dark.png">
-      <img src="docs/assets/screenshots/markdown.png" width="240" alt="The Markdown editor: the source on the left with Bob's cursor and selection, the rendered preview on the right">
+      <img src="docs/assets/screenshots/markdown.png" width="320" alt="The Markdown editor: the source on the left with Bob's cursor and selection, the rendered preview on the right">
     </picture></a></td>
     <td><a href="docs/assets/screenshots/csv.png"><picture>
       <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/csv-dark.png">
-      <img src="docs/assets/screenshots/csv.png" width="240" alt="A CSV file as a table, with Alice's selected cell and Bob's selected cell outlined in their colors">
-    </picture></a></td>
-    <td><a href="docs/assets/screenshots/canvas.png"><picture>
-      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/canvas-dark.png">
-      <img src="docs/assets/screenshots/canvas.png" width="240" alt="A canvas file as a board of nodes, edges and a group, with the node Bob has selected outlined">
+      <img src="docs/assets/screenshots/csv.png" width="320" alt="A CSV file as a table, with Alice's selected cell and Bob's selected cell outlined in their colors">
     </picture></a></td>
   </tr>
   <tr>
     <td>Markdown, with a live preview and Bob's cursor</td>
     <td>CSV as a table, with Bob's selected cell</td>
+  </tr>
+  <tr>
+    <td><a href="docs/assets/screenshots/canvas.png"><picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/canvas-dark.png">
+      <img src="docs/assets/screenshots/canvas.png" width="320" alt="A canvas file as a board of nodes, edges and a group, with the node Bob has selected outlined">
+    </picture></a></td>
+    <td><a href="docs/assets/screenshots/comments.png"><picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/comments-dark.png">
+      <img src="docs/assets/screenshots/comments.png" width="320" alt="Bob's view from a comment-only link: the header says Comment only, and the comments panel shows Alice's comment on a highlighted line with Bob's reply">
+    </picture></a></td>
+  </tr>
+  <tr>
     <td>Canvas as a board, with Bob's selected node</td>
+    <td>Comments, from a comment-only link</td>
   </tr>
 </table>
 
@@ -44,11 +54,19 @@ browsers. Edits are saved back to your file:
     https://edit.piconic.ai/r/<room-id>#<key>
 
   Press Ctrl+C when you are done. Everything is saved to notes.md.
+  To share another file in this room, type its path and press Enter.
+  Press Ctrl+L for links that can only comment or read.
 
   ● Alice and Bob are here
 ```
 
 No install or account needed for collaborators on the public server.
+
+Besides editing, people in the room can comment on text, table cells and
+canvas nodes; comments never go into the file ([Comments](#comments)). What
+each person can do depends on the link you send them: the printed link lets
+them edit, and Ctrl+L shows links that let them only comment or only read
+([Comment-only and read-only links](#comment-only-and-read-only-links)).
 
 If the connection drops, keep `pedit` running. It reconnects with the same
 link and merges edits made while disconnected. The terminal keeps an offline
@@ -137,8 +155,13 @@ send one of these instead:
     Read only     https://edit.piconic.ai/r/<room-id>#r.<key>
 ```
 
-Someone with a comment-only link reads the files and writes comments, and
-someone with a read-only link reads both. They are listed among the
+| Link | Read the files and comments | Write comments | Edit the files |
+| --- | --- | --- | --- |
+| Edit | ✓ | ✓ | ✓ |
+| Comment only | ✓ | ✓ | |
+| Read only | ✓ | | |
+
+People with a comment-only or read-only link are listed among the
 participants as comment only or read only. A comment-only link is offered while
 some file keeps comments. Each link also gives the ones below it, never the
 ones above, and every peer checks what the others may do, not the relay. These
