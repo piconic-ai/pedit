@@ -119,3 +119,11 @@ describe('Layout', () => {
     )
   })
 })
+
+describe('UnsupportedBrowser', () => {
+  it('asks to update a browser that cannot check signatures', () => {
+    const el = mount('UnsupportedBrowser')
+    expect(el.querySelector('h1')?.textContent).toBe('Update your browser')
+    expect(el.querySelector('p')?.textContent).toContain('cannot check who changed the file')
+  })
+})

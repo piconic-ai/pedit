@@ -268,11 +268,11 @@ func (s *Session) startMeta() {
 	s.filesMu.Lock()
 	defer s.filesMu.Unlock()
 	s.addMeta(s.sharedFile)
-	if s.meta != nil {
-		// A room of one file needs no list, unless it has comments.
-		if err := s.Client.SetManifest(s.manifest()); err != nil {
-			s.onError(err)
-		}
+	// Always listed, comments or not: comment-only and read-only links send
+	// no awareness the host's could answer, and learn the file's name and
+	// format from the list (#122).
+	if err := s.Client.SetManifest(s.manifest()); err != nil {
+		s.onError(err)
 	}
 }
 

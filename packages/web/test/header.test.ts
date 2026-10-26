@@ -30,7 +30,7 @@ class Counted<T> extends Store<T> {
   }
 }
 
-function mount() {
+function mount(extra: Record<string, unknown> = {}) {
   const file = new Counted<string | null>(null)
   const status = new Counted<RoomStatus>('connecting')
   const people = new Counted<readonly Participant[]>([])
@@ -59,6 +59,7 @@ function mount() {
     commentable,
     commentsOpen,
     onToggleComments: () => commentsOpen.set(!commentsOpen.get()),
+    ...extra,
   })
   const q = <T extends Element = HTMLElement>(sel: string) => container.querySelector<T>(sel)
   const list = () => q('.people') as HTMLElement
@@ -191,6 +192,25 @@ describe('Header', () => {
     expect(first.querySelector('.avatar')?.textContent).toBe('AL')
     people.set([person(2, 'Grace', { isSelf: true })])
     expect(names()).toEqual(['Grace (you)'])
+  })
+
+  it('says what this browser’s link lets it do, and offers its links to share', () => {
+    const shared: string[] = []
+    const { q } = mount({
+      access: 'comment',
+      onShare: (b: HTMLElement) => shared.push(b.textContent ?? ''),
+    })
+    const chip = q('.access') as HTMLElement
+    expect(chip.textContent).toBe('Comment only')
+    expect(chip.title).toBe('You can read this file and comment on it.')
+    const share = q<HTMLButtonElement>('.share-button') as HTMLButtonElement
+    share.click()
+    expect(shared).toEqual(['Share'])
+    expect(mount({ access: 'read' }).q('.access')?.textContent).toBe('Read only')
+    // An editor sees no chip; without onShare there is no button.
+    const editor = mount({ access: 'edit' })
+    expect(editor.q('.access')).toBeNull()
+    expect(editor.q('.share-button')).toBeNull()
   })
 
   it('says what each participant may do, when less than editing', () => {

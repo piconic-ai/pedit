@@ -1,7 +1,7 @@
 'use client'
 
 import { createEffect, createMemo, createSignal } from '@barefootjs/client'
-import type { FileEntry, RoomStatus } from '@pedit/protocol'
+import type { Access, FileEntry, RoomStatus } from '@pedit/protocol'
 import { initials } from '../identity.ts'
 import type { Participant } from '../room.ts'
 import type { SettingsModel } from '../settings.ts'
@@ -47,6 +47,16 @@ export interface HeaderProps {
   /** Whether the comments panel is open. */
   commentsOpen: Readable<boolean>
   onToggleComments: () => void
+  /** What this browser's link lets it do; edit when not given. */
+  access?: Access
+  /** Opens the Share menu next to its button; no button without it. */
+  onShare?: (button: HTMLElement) => void
+}
+
+/** What the header says of a link below edit, and its longer explanation. */
+const ACCESS_CHIPS: Partial<Record<Access, { text: string; title: string }>> = {
+  comment: { text: 'Comment only', title: 'You can read this file and comment on it.' },
+  read: { text: 'Read only', title: 'You can read this file and its comments.' },
 }
 
 /** A speech bubble, on a 24 by 24 grid. */
@@ -110,6 +120,11 @@ export function Header(props: HeaderProps) {
         <span className="dot" />
         <span>{STATUS_LABELS[status()]}</span>
       </span>
+      {props.access && ACCESS_CHIPS[props.access] ? (
+        <span className="access" title={ACCESS_CHIPS[props.access]?.title}>
+          {ACCESS_CHIPS[props.access]?.text}
+        </span>
+      ) : null}
       <ul
         className="people"
         aria-label="Participants"
@@ -156,6 +171,16 @@ export function Header(props: HeaderProps) {
           </button>
         ))}
       </div>
+      {props.onShare ? (
+        <button
+          type="button"
+          className="share-button"
+          aria-haspopup="menu"
+          onClick={(e) => props.onShare?.(e.currentTarget as HTMLElement)}
+        >
+          Share
+        </button>
+      ) : null}
       <button
         type="button"
         className="icon comments-button"

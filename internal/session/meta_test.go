@@ -174,10 +174,11 @@ func TestUnreadableMetadataIsLeftAlone(t *testing.T) {
 		t.Fatalf("reason %q", x.Reason)
 	}
 	g := joinFiles(t, f.relay, f.session.URL)
-	// A room that shares one file and no metadata sends no manifest.
-	prototest.WaitFor(t, wait, func() bool { return g.String() == "a\n" }, "the text")
-	if len(g.files()) != 0 {
-		t.Fatalf("manifest %+v", g.files())
+	// The manifest lists the file alone, with no metadata (always sent, for
+	// comment-only and read-only links).
+	prototest.WaitFor(t, wait, func() bool { return g.String() == "a\n" && len(g.files()) == 1 }, "the text and its manifest")
+	if files := g.files(); files[0].Format == protocol.FormatMeta || files[0].ID != 0 {
+		t.Fatalf("manifest %+v", files)
 	}
 	if err := f.session.Stop(); err != nil {
 		t.Fatal(err)

@@ -17,6 +17,16 @@ describe('parseRoomLocation', () => {
     expect(parseRoomLocation({ pathname: `/r/${id}`, hash: `#${key}` })).toEqual({ id, key })
   })
 
+  it('reads comment-only and read-only links too', () => {
+    for (const fragment of [`c.${'C'.repeat(86)}`, `r.${'R'.repeat(128)}`]) {
+      expect(parseRoomLocation({ pathname: `/r/${id}`, hash: `#${fragment}` })).toEqual({
+        id,
+        key: fragment,
+      })
+    }
+    expect(parseRoomLocation({ pathname: `/r/${id}`, hash: `#c.${key}` })).toBeNull()
+  })
+
   it('rejects links without a valid key or id', () => {
     expect(parseRoomLocation({ pathname: `/r/${id}`, hash: '' })).toBeNull()
     expect(parseRoomLocation({ pathname: `/r/${id}`, hash: '#short' })).toBeNull()

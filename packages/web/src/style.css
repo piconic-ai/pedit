@@ -2139,3 +2139,28 @@ main.editor .cm-vim-panel {
 .comments-button[hidden] {
   display: none;
 }
+/* What a link below edit lets this browser do (#122), beside the status. */
+.access {
+  font-size: 0.75rem;
+  padding: 1px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+/* Opens the menu of links this browser can hand out. */
+.share-button {
+  font: inherit;
+  font-size: 0.8rem;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.share-button:hover,
+.share-button:focus-visible {
+  color: var(--ink);
+}
