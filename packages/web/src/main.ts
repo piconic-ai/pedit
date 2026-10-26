@@ -628,7 +628,7 @@ async function joinRoom(
   // Markdown until the host tells us the file name; other languages load lazily.
   let languageFor: string | undefined
   const applyLanguage = async (fileName: string, canvas: boolean) => {
-    const key = `${shown.id}:${fileName}`
+    const key = `${shown.id}:${canvas}:${fileName}`
     if (key === languageFor) return
     languageFor = key
     if (canvas) {
@@ -797,7 +797,10 @@ async function joinRoom(
     const known = list.filter((f) => f.format === 'text' || f.format === 'canvas')
     files.set(known)
     const named = known.find((f) => f.id === shown.id)
-    if (named) showName(named.path)
+    if (!named) return
+    // The list may come before the host's state, which says so too.
+    if (named.format === 'canvas') shown.canvas = true
+    showName(named.path)
   }
 
   const renderPeople = () => {
@@ -810,7 +813,12 @@ async function joinRoom(
     const host = [...awareness.getStates()].find(
       ([id, s]) => s.role === 'host' && accessOf(id) === 'edit',
     )?.[1]
-    if (host?.format === 'canvas') first.canvas = true
+    if (host?.format === 'canvas' && !first.canvas) {
+      first.canvas = true
+      // The list may have named the file already, as text.
+      const named = fileName.get()
+      if (shown === first && named) showName(named)
+    }
     // Keep showing the file name after the host has gone. Once the host
     // lists the room's files, the list names them.
     if (typeof host?.file === 'string' && shown === first && files.get().length === 0) {
