@@ -287,33 +287,43 @@ func (c *Client) receiveFiles(access Access, payload []byte) error {
 	case MessageSync:
 		return c.receiveFileSync(m.File, access, m.Payload)
 	case MessageAttachment:
-		a, err := DecodeAttachment(m.Payload)
-		if errors.Is(err, ErrUnknownAttachmentKind) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if err := allowAttachment(a, access); err != nil {
-			return err
-		}
-		if c.opts.OnFileAttachment != nil {
-			c.opts.OnFileAttachment(m.File, a)
-		}
+		return c.receiveFileAttachment(m.File, access, m.Payload)
 	case MessageCanvas:
-		if err := editorsOnly("a canvas message", access); err != nil {
-			return err
-		}
-		cm, err := DecodeCanvas(m.Payload)
-		if errors.Is(err, ErrUnknownCanvasKind) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if c.opts.OnFileCanvas != nil {
-			c.opts.OnFileCanvas(m.File, cm)
-		}
+		return c.receiveFileCanvas(m.File, access, m.Payload)
+	}
+	return nil
+}
+
+func (c *Client) receiveFileAttachment(id uint64, access Access, payload []byte) error {
+	a, err := DecodeAttachment(payload)
+	if errors.Is(err, ErrUnknownAttachmentKind) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := allowAttachment(a, access); err != nil {
+		return err
+	}
+	if c.opts.OnFileAttachment != nil {
+		c.opts.OnFileAttachment(id, a)
+	}
+	return nil
+}
+
+func (c *Client) receiveFileCanvas(id uint64, access Access, payload []byte) error {
+	if err := editorsOnly("a canvas message", access); err != nil {
+		return err
+	}
+	m, err := DecodeCanvas(payload)
+	if errors.Is(err, ErrUnknownCanvasKind) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if c.opts.OnFileCanvas != nil {
+		c.opts.OnFileCanvas(id, m)
 	}
 	return nil
 }
