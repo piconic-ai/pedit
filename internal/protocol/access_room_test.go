@@ -323,3 +323,25 @@ func TestCommentersWriteCommentsOnly(t *testing.T) {
 		t.Fatalf("host: notes %q, comments %q", hostNotes.String(), hostComments.String())
 	}
 }
+
+// Peers below an editor send no awareness, which is what tells a host of
+// other newcomers; asking for file 0 gets them the manifest all the same,
+// with the IDs of the other files and their comments.
+func TestLowerLinksLearnTheRoomsFiles(t *testing.T) {
+	relay := prototest.NewRelay(false)
+	key := protocol.GenerateKey()
+	host := join(t, relay, key, joinOpts{init: "agenda"})
+	files := []protocol.FileEntry{
+		{ID: 1, Path: "notes.md", Format: "text"},
+		{ID: 2, Path: protocol.MetaPath("notes.md"), Format: "meta"},
+	}
+	if err := host.SetManifest(files); err != nil {
+		t.Fatal(err)
+	}
+	prototest.WaitFor(t, wait, func() bool { return host.Status() == protocol.StatusConnected }, "host connected")
+	for _, access := range []protocol.Access{protocol.AccessComment, protocol.AccessRead} {
+		var got manifestLog
+		p := join(t, relay, key, joinOpts{link: lowerLink(t, key, access), onManifest: got.add})
+		prototest.WaitFor(t, wait, func() bool { return p.String() == "agenda" && len(got.last()) == 2 }, access.String()+" link to learn the files")
+	}
+}

@@ -170,6 +170,10 @@ type Client struct {
 	unsubs    []func()
 	files     map[uint64]*fileDoc
 	manifest  []byte // the encoded FilesManifest, when this Client set one
+	// When the manifest was last sent to someone who asked for file 0, and
+	// the timer that sends it again (room_files.go).
+	manifestAt    time.Time
+	manifestTimer *time.Timer
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -313,6 +317,9 @@ func (c *Client) Destroy() {
 
 	c.mu.Lock()
 	c.destroyed = true
+	if c.manifestTimer != nil {
+		c.manifestTimer.Stop()
+	}
 	out := c.out
 	c.out = nil
 	started := c.started
@@ -541,8 +548,12 @@ func (c *Client) receiveSync(access Access, payload []byte) error {
 	if len(reply) > 0 && c.edits() {
 		c.send(MessageSync, reply)
 	}
-	if kind, _, err := ysync.ReadSyncMessage(payload); err == nil && kind == ysync.MsgSyncStep2 {
+	kind, _, err := ysync.ReadSyncMessage(payload)
+	switch {
+	case err == nil && kind == ysync.MsgSyncStep2:
 		c.markSynced()
+	case err == nil && kind == ysync.MsgSyncStep1:
+		c.offerManifest()
 	}
 	return nil
 }

@@ -70,6 +70,11 @@ const (
 // resyncEvery spaces out the Client's asking again; tests shorten it.
 var resyncEvery = 5 * time.Second
 
+// manifestEvery spaces out the manifest a Client sends to whoever asks for
+// file 0 (a SyncStep1): peers below an editor send no awareness, which is
+// what tells the room of other newcomers.
+const manifestEvery = 2 * time.Second
+
 // AddFile keeps doc in sync with the room as the file with this ID, from 1
 // up (file 0 is the Client's Doc): it sends
 // the doc's state now if connected, and on every connection after. Messages
@@ -214,6 +219,32 @@ func (c *Client) syncFiles() {
 	for id, f := range files {
 		c.syncFile(id, f)
 	}
+}
+
+// offerManifest sends the manifest to someone who asked for file 0, at most
+// every manifestEvery: whoever asks meanwhile gets it once that has passed.
+func (c *Client) offerManifest() {
+	c.mu.Lock()
+	if c.manifest == nil || c.destroyed {
+		c.mu.Unlock()
+		return
+	}
+	if wait := time.Until(c.manifestAt.Add(manifestEvery)); wait > 0 {
+		if c.manifestTimer == nil {
+			c.manifestTimer = time.AfterFunc(wait, func() {
+				c.mu.Lock()
+				c.manifestTimer = nil
+				c.mu.Unlock()
+				c.offerManifest()
+			})
+		}
+		c.mu.Unlock()
+		return
+	}
+	c.manifestAt = time.Now()
+	manifest := c.manifest
+	c.mu.Unlock()
+	c.send(MessageFiles, manifest)
 }
 
 // sendManifest sends the manifest again, if this Client has one.

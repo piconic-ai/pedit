@@ -13,7 +13,9 @@ import {
   encodeManifest,
   encodeMessage,
   encrypt,
+  type FileEntry,
   MessageType,
+  metaPath,
   NotAllowedError,
   RoomClient,
   type RoomClientOptions,
@@ -233,5 +235,30 @@ describe('room links below edit', () => {
     expect(text(hostNotes)).toBe('')
     expect(text(hostComments)).toBe('from the commenter')
     peer.close()
+  })
+
+  it('learn the files of the room without sending awareness', async () => {
+    const relay = new Relay()
+    const keys = await editKeys()
+    const host = join(relay, keys, 'agenda')
+    const files: FileEntry[] = [
+      { id: 1, path: 'notes.md', format: 'text' },
+      { id: 2, path: metaPath('notes.md'), format: 'meta' },
+    ]
+    host.setManifest(files)
+    await vi.waitFor(() => expect(host.status).toBe('connected'))
+    for (const access of ['comment', 'read'] as Access[]) {
+      const heard: FileEntry[][] = []
+      const lower = join(relay, await lowerKeys(keys, access), '', {
+        onManifest: (f) => heard.push(f),
+      })
+      await vi.waitFor(
+        () => {
+          expect(text(lower.doc)).toBe('agenda')
+          expect(heard.at(-1)).toEqual(files)
+        },
+        { timeout: 3000 },
+      )
+    }
   })
 })

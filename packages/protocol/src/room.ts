@@ -204,6 +204,12 @@ export class NotAllowedError extends Error {
 const CHECK_SHARE = 4
 const CHECK_BURST_MS = 1000
 const RESYNC_EVERY_MS = 5000
+/**
+ * A client that set a manifest sends it again to someone who asks for file 0
+ * (a SyncStep1), at most this often: peers below an editor send no
+ * awareness, which is what tells the room of other newcomers.
+ */
+const MANIFEST_EVERY_MS = 2000
 
 const OPEN = 1
 
@@ -246,8 +252,11 @@ export class RoomClient {
   private pacer = new Pacer()
   // Ends the pacing wait of the frame next in line, when its socket closes.
   private wake: (() => void) | null = null
-  // The encoded manifest, when this client set one.
+  // The encoded manifest, when this client set one, when it was last sent
+  // to someone who asked for file 0, and the timer that sends it again.
   private manifest: Uint8Array | null = null
+  private manifestAt = Number.NEGATIVE_INFINITY
+  private manifestTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(opts: RoomClientOptions) {
     this.opts = opts
@@ -344,6 +353,7 @@ export class RoomClient {
     await this.sendChain
     this.destroyed = true
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
+    if (this.manifestTimer) clearTimeout(this.manifestTimer)
     this.doc.off('update', this.handleDocUpdate)
     this.awareness.off('update', this.handleAwarenessUpdate)
     this.awareness.off('change', this.handleAwarenessChange)
@@ -451,8 +461,9 @@ export class RoomClient {
     switch (message.type) {
       case MessageType.Sync: {
         allowSync(payload, access === 'edit', access)
-        const reply = readSync(payload, this.doc, this).reply
+        const { kind, reply } = readSync(payload, this.doc, this)
         if (reply && this.edits()) this.send(MessageType.Sync, reply)
+        if (kind === syncProtocol.messageYjsSyncStep1) this.offerManifest()
         break
       }
       case MessageType.Awareness:
@@ -576,6 +587,24 @@ export class RoomClient {
       return
     }
     this.send(MessageType.Files, state)
+  }
+
+  /**
+   * Sends the manifest to someone who asked for file 0, at most every
+   * MANIFEST_EVERY_MS: whoever asks meanwhile gets it once that has passed.
+   */
+  private offerManifest(): void {
+    if (!this.manifest || this.destroyed) return
+    const wait = this.manifestAt + MANIFEST_EVERY_MS - performance.now()
+    if (wait > 0) {
+      this.manifestTimer ??= setTimeout(() => {
+        this.manifestTimer = null
+        this.offerManifest()
+      }, wait)
+      return
+    }
+    this.manifestAt = performance.now()
+    this.send(MessageType.Files, this.manifest)
   }
 
   private sendFileSync(id: number, write: (encoder: encoding.Encoder) => void): void {
