@@ -1,5 +1,16 @@
 # Changelog
 
+## [v0.1.18](https://github.com/piconic-ai/pedit/compare/v0.1.17...v0.1.18) - 2026-10-26
+
+- fix(session): preserve the latest manifest before mirroring by @kfly8 in https://github.com/piconic-ai/pedit/pull/221
+- feat(protocol): key chain for edit, comment-only and read-only links by @kfly8 in https://github.com/piconic-ai/pedit/pull/223
+- feat(protocol): sign frames and apply them as far as the signer's link allows (v5) by @kfly8 in https://github.com/piconic-ai/pedit/pull/224
+- feat(worker): admit editors and readers with tokens of their own by @kfly8 in https://github.com/piconic-ai/pedit/pull/225
+- feat(presence): list everyone with the access of their link by @kfly8 in https://github.com/piconic-ai/pedit/pull/226
+- feat(web): open comment-only and read-only links by @kfly8 in https://github.com/piconic-ai/pedit/pull/227
+- feat(cli): show comment-only and read-only links with Ctrl+L by @kfly8 in https://github.com/piconic-ai/pedit/pull/228
+- feat(protocol): take a signer's frames only once it answers our nonce by @kfly8 in https://github.com/piconic-ai/pedit/pull/229
+
 ## [v0.1.17](https://github.com/piconic-ai/pedit/compare/v0.1.16...v0.1.17) - 2026-10-25
 
 - Raise vitest, zod and undici past their open advisories by @kfly8 in https://github.com/piconic-ai/pedit/pull/219
