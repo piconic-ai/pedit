@@ -12,6 +12,7 @@ import {
   type RoomClientOptions,
   type RoomKeys,
   SENDER_BYTES,
+  SETTLE_AFTER_MS,
 } from '../src/index.ts'
 import { answer, editKeys, lowerKeys, Relay, sealFrame } from '../src/testing.ts'
 
@@ -61,7 +62,10 @@ describe('fresh messages', () => {
     await vi.waitFor(() => expect(host.status).toBe('connected'))
     const before = relay.frames.length
     host.sendCanvas({ kind: 'edit', id: 'old', base: '{}', next: '{}' })
-    await vi.waitFor(() => expect(relay.frames.length).toBe(before + 1))
+    // Alone in the room, the host holds it until it settles (fresh.ts).
+    await vi.waitFor(() => expect(relay.frames.length).toBe(before + 1), {
+      timeout: SETTLE_AFTER_MS + 2000,
+    })
     const kept = relay.frames[before] as Uint8Array
 
     const peer = relay.create('ws://test')
