@@ -92,8 +92,10 @@ const MessageTooBig = 1009
 const MaxFrameBytes = 1 << 20
 
 // FrameOverhead is what a frame adds to its payload: the sender and counter
-// (EncodeFrame), the message type byte, and AES-GCM's IV and tag.
-const FrameOverhead = frameHeaderBytes + 1 + ivBytes + tagBytes // 53
+// (EncodeFrame), the signature and what goes with it (signed.go), the
+// message type byte, and AES-GCM's IV and tag. Frames of a read link carry
+// no signature, so they are smaller.
+const FrameOverhead = frameHeaderBytes + signedOverhead + 1 + ivBytes + tagBytes // 119
 
 // FrameBytes is the size on the wire of a frame carrying payload bytes.
 func FrameBytes(payload int) int { return payload + FrameOverhead }
@@ -120,7 +122,7 @@ func DecodeMessage(data []byte) (MessageType, []byte, error) {
 	}
 	t := MessageType(data[0])
 	switch t {
-	case MessageSync, MessageAwareness, MessageAttachment, MessageCanvas, MessageFiles:
+	case MessageSync, MessageAwareness, MessageAttachment, MessageCanvas, MessageFiles, MessageFresh:
 		return t, data[1:], nil
 	}
 	return 0, nil, fmt.Errorf("%w: %d", ErrUnknownMessageType, data[0])
@@ -171,27 +173,80 @@ func DecodeFrame(data []byte) (Sender, uint64, []byte, error) {
 	return from, binary.BigEndian.Uint64(data[SenderBytes:]), data[frameHeaderBytes:], nil
 }
 
-// replayGuard remembers the last counter from each sender. Only peers with
-// the key can add senders, so it grows with the people who joined the room.
+// replayGuard remembers the last counter from each sender of signed frames,
+// by the access that signed them (signed.go): what anyone below a tier sends
+// cannot move that tier's counters, so a peer that names another's sender
+// cannot have that peer's frames dropped. Plain frames, a read link's, are
+// only requests that change nothing when sent again, and are not counted.
+// Only peers with a signing key can add senders, and only by answering the
+// Client's nonce (fresh.go), so it grows with the people who joined the room.
 type replayGuard struct {
 	self Sender
 	mu   sync.Mutex
-	last map[Sender]uint64
+	last map[guardKey]uint64
+	// live holds the signers that answered the nonce of the Client's
+	// current connection (fresh.go).
+	live map[guardKey]bool
 }
 
-// accept tells whether a frame is new, and if it is, remembers it.
-func (g *replayGuard) accept(from Sender, counter uint64) bool {
+type guardKey struct {
+	access Access
+	from   Sender
+}
+
+// known tells whether a signer showed it is live on the Client's current
+// connection (fresh.go).
+func (g *replayGuard) known(access Access, from Sender) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.live[guardKey{access, from}]
+}
+
+// vouch takes a signer as live, from its answer to the Client's nonce,
+// numbered counter, on: what it sent before is dropped.
+func (g *replayGuard) vouch(access Access, from Sender, counter uint64) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	key := guardKey{access, from}
+	if g.live[key] || from == g.self {
+		return
+	}
+	if g.last == nil {
+		g.last = map[guardKey]uint64{}
+	}
+	if g.live == nil {
+		g.live = map[guardKey]bool{}
+	}
+	g.live[key] = true
+	g.last[key] = max(g.last[key], counter)
+}
+
+// forgetLive has every signer show again that it is live, on a new
+// connection; the counters stay.
+func (g *replayGuard) forgetLive() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	clear(g.live)
+}
+
+// foreign tells whether a frame is not one of ours.
+func (g *replayGuard) foreign(from Sender) bool { return from != g.self }
+
+// accept tells whether a signed frame, checked already, is new, and if it
+// is, remembers it.
+func (g *replayGuard) accept(access Access, from Sender, counter uint64) bool {
 	if from == g.self {
 		return false
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if counter <= g.last[from] {
+	key := guardKey{access, from}
+	if counter <= g.last[key] {
 		return false
 	}
 	if g.last == nil {
-		g.last = map[Sender]uint64{}
+		g.last = map[guardKey]uint64{}
 	}
-	g.last[from] = counter
+	g.last[key] = counter
 	return true
 }

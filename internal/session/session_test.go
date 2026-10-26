@@ -79,6 +79,7 @@ type setupOpts struct {
 	name     string
 	onNotice func(Notice)
 	onError  func(error)
+	onPeople func([]string)
 	// project makes the directory name is in the project, whose
 	// .pedit/meta/ keeps comments; meta, if set, is its metadata file before
 	// Start.
@@ -145,6 +146,7 @@ func setup(t *testing.T, content string, o setupOpts) *fixture {
 		Watch:      o.watch,
 		OnNotice:   o.onNotice,
 		OnError:    o.onError,
+		OnPeople:   o.onPeople,
 		Dial: func(ctx context.Context, url string, header http.Header) (protocol.Conn, error) {
 			c, err := f.relay.Dial(ctx, url, header)
 			if err == nil && o.wrap != nil {
@@ -256,7 +258,7 @@ func joinAsGuestHearing(t *testing.T, relay *prototest.Relay, shareURL string, o
 	aw := awareness.New(uint64(doc.ClientID()))
 	aw.SetLocalState(map[string]any{}) // like a JavaScript Awareness starts
 	c, err := protocol.NewClient(protocol.ClientOptions{
-		URL: "ws://guest", Key: key, Doc: doc, Awareness: aw, Dial: relay.Dial, OnAttachment: onAttachment,
+		URL: "ws://guest", RoomID: strings.TrimPrefix(u.Path, "/r/"), Key: key, Doc: doc, Awareness: aw, Dial: relay.Dial, OnAttachment: onAttachment,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -973,7 +975,11 @@ func TestTellsWhenAnImageCannotBeSaved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	keys, err := protocol.DeriveBlobKeys(raw)
+	room, err := protocol.EditKeys(raw, strings.TrimPrefix(u.Path, "/r/"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, err := protocol.DeriveBlobKeys(room.FrameKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1242,4 +1248,48 @@ func holdLock(t *testing.T, mu *sync.Mutex) func() {
 	unlock := func() { once.Do(mu.Unlock) }
 	t.Cleanup(unlock)
 	return unlock
+}
+
+// The host lists who joined below an edit link with what they may do,
+// whatever their states say they are.
+func TestHostListsWhatEachParticipantMayDo(t *testing.T) {
+	var mu sync.Mutex
+	var people []string
+	f := setup(t, "x\n", setupOpts{onPeople: func(names []string) {
+		mu.Lock()
+		defer mu.Unlock()
+		people = names
+	}})
+	u, _ := url.Parse(f.session.URL)
+	raw, err := protocol.DecodeKey(u.Fragment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	room := strings.TrimPrefix(u.Path, "/r/")
+	keys, err := protocol.EditKeys(raw, room)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for access, name := range map[protocol.Access]string{protocol.AccessComment: "Carol", protocol.AccessRead: "Rin"} {
+		link, err := protocol.ParseFragment(keys.Fragments[access])
+		if err != nil {
+			t.Fatal(err)
+		}
+		doc := crdt.New()
+		aw := awareness.New(uint64(doc.ClientID()))
+		aw.SetLocalState(map[string]any{"name": name, "role": "host"})
+		c, err := protocol.NewClient(protocol.ClientOptions{
+			URL: "ws://guest", RoomID: room, Link: &link, Doc: doc, Awareness: aw, Dial: f.relay.Dial,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(c.Destroy)
+		c.Connect()
+	}
+	prototest.WaitFor(t, wait, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Equal(people, []string{"Carol (comment only)", "Rin (read only)"})
+	}, "both listed with their access")
 }

@@ -17,9 +17,24 @@ func TestReplayGuard(t *testing.T) {
 		{Sender{1}, 0, false},
 		{Sender{9}, 100, false}, // our own, sent back
 	} {
-		if got := g.accept(c.from, c.counter); got != c.want {
+		if got := g.accept(AccessEdit, c.from, c.counter); got != c.want {
 			t.Errorf("accept(%v, %d) = %v", c.from[0], c.counter, got)
 		}
+	}
+	if g.foreign(Sender{9}) || !g.foreign(Sender{1}) {
+		t.Error("foreign does not tell our frames from others'")
+	}
+}
+
+// What a commenter sends under an editor's sender cannot move that editor's
+// counter: the editor's frames still come through.
+func TestReplayGuardCountsEachAccessApart(t *testing.T) {
+	g := replayGuard{self: Sender{9}}
+	if !g.accept(AccessComment, Sender{1}, 1<<63) {
+		t.Fatal("refused the commenter's frame")
+	}
+	if !g.accept(AccessEdit, Sender{1}, 1) || !g.accept(AccessEdit, Sender{1}, 2) {
+		t.Fatal("the commenter's counter blocked the editor's frames")
 	}
 }
 

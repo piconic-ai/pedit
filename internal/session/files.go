@@ -292,3 +292,34 @@ func (s *Session) handleFileCanvas(id uint64, m protocol.CanvasMessage) {
 		f.handleCanvas(m)
 	}
 }
+
+// Link is a link to the room the host can hand out.
+type Link struct {
+	Access protocol.Access
+	URL    string
+}
+
+// Links are the links to the room with less access than the host's (#122):
+// comment only, while some file offers comments, then read only. They come
+// from the fragments the host's keys derive, and like URL hold secrets that
+// must never be sent to the server.
+func (s *Session) Links() []Link {
+	fragments := s.Client.Keys().Fragments
+	base := s.server + "/r/" + s.roomID + "#"
+	var out []Link
+	if s.offersComments() {
+		out = append(out, Link{protocol.AccessComment, base + fragments[protocol.AccessComment]})
+	}
+	return append(out, Link{protocol.AccessRead, base + fragments[protocol.AccessRead]})
+}
+
+func (s *Session) offersComments() bool {
+	s.filesMu.Lock()
+	defer s.filesMu.Unlock()
+	for _, f := range s.files() {
+		if f.meta != nil {
+			return true
+		}
+	}
+	return false
+}

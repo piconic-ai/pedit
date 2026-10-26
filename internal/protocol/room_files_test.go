@@ -452,3 +452,29 @@ func TestACheckedFileAsksAgainForWhatItRefusedWhileItWaited(t *testing.T) {
 	g.insert(0, "later")
 	prototest.WaitFor(t, wait, func() bool { return checked.String() == "later" }, "the update, asked for a second time")
 }
+
+// A destroyed Client asks for nothing again: its timers would outlive it.
+func TestDestroyStopsAskingAgain(t *testing.T) {
+	protocol.ShortenResyncForTest(t, time.Hour)
+	relay := prototest.NewRelay(true)
+	key := protocol.GenerateKey()
+	host := join(t, relay, key, joinOpts{header: hostHeader(), onError: func(error) {}})
+	checked := newFileText("")
+	check := func(*crdt.Doc, []byte) error {
+		return fmt.Errorf("%w: for the test", protocol.ErrRetryLater)
+	}
+	if err := host.AddCheckedFile(1, checked.doc, check); err != nil {
+		t.Fatal(err)
+	}
+	prototest.WaitFor(t, wait, func() bool { return host.Status() == protocol.StatusConnected }, "host connected")
+	guest := join(t, relay, key, joinOpts{})
+	g := newFileText("")
+	addFile(t, guest, 1, g)
+	prototest.WaitFor(t, wait, func() bool { return guest.Status() == protocol.StatusConnected }, "guest connected")
+	g.insert(0, "refused")
+	prototest.WaitFor(t, wait, func() bool { return host.PendingResyncs() == 1 }, "asking again, later")
+	host.Destroy()
+	if n := host.PendingResyncs(); n != 0 {
+		t.Fatalf("%d files still mean to ask again", n)
+	}
+}

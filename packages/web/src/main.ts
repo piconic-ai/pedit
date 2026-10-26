@@ -4,11 +4,13 @@ import { Compartment, EditorState, type Extension, Prec } from '@codemirror/stat
 import { EditorView, keymap } from '@codemirror/view'
 import {
   deriveBlobKeys,
+  deriveRoomKeys,
   type FileEntry,
-  importKey,
   isFinalStatus,
   metaFiles,
+  parseFragment,
   RoomClient,
+  type RoomKeys,
   type RoomStatus,
 } from '@pedit/protocol'
 import { basicSetup } from 'codemirror'
@@ -43,6 +45,7 @@ import {
   saveCommentsOpen,
   type ThreadList,
 } from './comments.ts'
+import { copyText } from './copy.ts'
 import { delimiterFor } from './csv.ts'
 import { avatarFor, fetchIdentity } from './identity.ts'
 import { JsonPane } from './jsonpane.ts'
@@ -63,6 +66,7 @@ import {
   selectionTint,
 } from './room.ts'
 import type { SettingsModel } from './settings.ts'
+import { COPIED, shareLinks } from './share.ts'
 import { Splitter } from './splitter.ts'
 import { Store } from './store.ts'
 import { describeError, TableErrors, TableView } from './table.ts'
@@ -248,6 +252,20 @@ async function joinRoom(
   appearance: Appearance,
   theme: LoadedTheme,
 ): Promise<void> {
+  // What the link gives in this room (#122). A browser that cannot check
+  // signatures could only show changes nobody checked.
+  const link = parseFragment(key)
+  if (!link) throw new Error('not a room link')
+  let keys: RoomKeys
+  try {
+    keys = await deriveRoomKeys(link, id)
+  } catch {
+    render(app, 'UnsupportedBrowser')
+    return
+  }
+  // Editors edit the file; commenters only its comments; readers nothing.
+  const writesFile = keys.access === 'edit'
+  const writesComments = keys.access !== 'read'
   const doc = new Y.Doc()
   const text = doc.getText('content')
   const awareness = new Awareness(doc)
@@ -304,7 +322,7 @@ async function joinRoom(
   // What a new comment goes on: the table's cells in the table view, else
   // the editor's selection.
   const commentTarget = new Store<CommentTarget | null>(null)
-  const locked = new Store(false)
+  const locked = new Store(!writesComments)
   // The room closes as soon as the host leaves (or was never there).
   let parts: LayoutParts | undefined
   render(app, 'Layout', { onReady: (p: LayoutParts) => (parts = p) })
@@ -318,7 +336,9 @@ async function joinRoom(
   })
   // Filled in once the client exists; nothing is sent before it connects.
   let client: RoomClient | undefined
-  const blobKeys = await deriveBlobKeys(key)
+  // Editors show the relay their own token, which also lets them add images.
+  const admission = keys.editAdmission ?? keys.readAdmission
+  const blobKeys = await deriveBlobKeys(keys.frameSecret, admission)
   const attachments = new Attachments({
     roomId: id,
     keys: blobKeys,
@@ -360,6 +380,16 @@ async function joinRoom(
     const s = roomStatus.get()
     return s === 'waiting' || isFinalStatus(s)
   }
+  // Nor does anyone whose link is below edit, ever.
+  const fileLocked = () => editLocked() || !writesFile
+  const noImages = () =>
+    writesFile
+      ? whyNoImages(
+          roomStatus.get(),
+          people.get().some((p) => p.isHost),
+          attachments.host,
+        )
+      : 'This link cannot add images.'
   // One instance for every editor on the page: readerTheme() alternates.
   const reader = readerTheme()
   const undoManager = new Y.UndoManager(text)
@@ -377,12 +407,12 @@ async function joinRoom(
       vimMode.of(held(vimMode, [])),
       basicSetup,
       // Undo only this browser's edits, not everyone's.
-      Prec.high(keymap.of(lockedUndo(yUndoManagerKeymap, editLocked))),
+      Prec.high(keymap.of(lockedUndo(yUndoManagerKeymap, fileLocked))),
       language.of(held(language, markdownSupport)),
       themeMode.of(held(themeMode, theme.extension)),
       fontMode.of(held(fontMode, reader)),
       wrap.of(held(wrap, lineWrapping(appearance.wrap))),
-      editable.of(held(editable, [])),
+      editable.of(held(editable, writesFile ? [] : readOnly)),
       yCollab(fileText, awareness, { undoManager: undo }),
       commentMarks(threadsShown, commentFocus),
       EditorView.updateListener.of((u) => {
@@ -391,12 +421,7 @@ async function joinRoom(
         if (s.from !== was.from || s.to !== was.to) selection.set({ from: s.from, to: s.to })
       }),
       imagePaste({
-        blocked: () =>
-          whyNoImages(
-            roomStatus.get(),
-            people.get().some((p) => p.isHost),
-            attachments.host,
-          ),
+        blocked: noImages,
         // To the file it was added to, and into it, though another
         // file may be on screen by then.
         upload: (file) => attachments.upload(file, fileId),
@@ -432,6 +457,7 @@ async function joinRoom(
     const t = new TableView(fileText, awareness, undo, {
       onError: (error) => tableErrors.report(id, error),
     })
+    if (!writesFile) t.readOnly = true
     // The cell selected can come or go with the table, as well as move.
     const follow = () => {
       if (t === shown.table) aim()
@@ -470,16 +496,12 @@ async function joinRoom(
       alwaysLoad,
       editorExtensions: () => [themeMode.get(editor.state) ?? theme.extension],
       imagePaste: {
-        blocked: () =>
-          whyNoImages(
-            roomStatus.get(),
-            people.get().some((p) => p.isHost),
-            attachments.host,
-          ),
+        blocked: noImages,
         upload: (file) => attachments.upload(file, id),
         onError: (message) => notices.show(message),
       },
     })
+    if (!writesFile) board.readOnly = true
     attachments.version.subscribe(() => board.refreshMarkdown())
     board.selected.subscribe(() => {
       if (board === shown.board) aim()
@@ -527,10 +549,14 @@ async function joinRoom(
     editor.dispatch({ effects: EditorView.scrollIntoView(editor.state.selection.main.head) })
   })
 
+  // The links this browser can hand out: its own and the ones below it.
+  const shareMenu = new ContextMenu()
+  document.body.append(shareMenu.element)
+
   // Vim's u and Ctrl-r undo in the file on screen.
   const undoShown = {
-    undo: () => (editLocked() ? null : shown.undo.undo()),
-    redo: () => (editLocked() ? null : shown.undo.redo()),
+    undo: () => (fileLocked() ? null : shown.undo.undo()),
+    redo: () => (fileLocked() ? null : shown.undo.redo()),
   }
   const vim = new VimToggle(editor, vimMode, () => vimExtension(undoShown))
   themes = new ThemeSwitcher(editor, themeMode, theme.id)
@@ -559,6 +585,22 @@ async function joinRoom(
     commentable,
     commentsOpen: panel.open,
     onToggleComments: () => panel.toggle(),
+    access: keys.access,
+    onShare: (button: HTMLElement) => {
+      const at = button.getBoundingClientRect()
+      const links = shareLinks(location.origin, id, keys.fragments, metaOf.size > 0)
+      shareMenu.show(
+        links.map((l) => ({
+          label: l.unavailable ? `${l.label} (${l.unavailable})` : l.label,
+          disabled: l.unavailable !== undefined,
+          action: async () => {
+            notices.show((await copyText(l.url)) ? COPIED[l.access] : 'Could not copy the link.')
+          },
+        })),
+        at.left,
+        at.bottom + 4,
+      )
+    },
   })
 
   // Nobody edits while the host is away: nobody would save it. Once the room
@@ -566,14 +608,14 @@ async function joinRoom(
   const setStatus = (s: RoomStatus) => {
     const was = roomStatus.get()
     roomStatus.set(s)
-    locked.set(editLocked())
+    locked.set(editLocked() || !writesComments)
     if (isFinalStatus(s)) {
       editor.dispatch({ effects: editable.reconfigure(readOnly) })
       for (const f of opened.values()) {
         f.board.readOnly = true
         f.table.readOnly = true
       }
-    } else if ((s === 'waiting') !== (was === 'waiting')) {
+    } else if (writesFile && (s === 'waiting') !== (was === 'waiting')) {
       const away = s === 'waiting'
       editor.dispatch({ effects: editable.reconfigure(away ? readOnly : []) })
       for (const f of opened.values()) {
@@ -586,7 +628,7 @@ async function joinRoom(
   // Markdown until the host tells us the file name; other languages load lazily.
   let languageFor: string | undefined
   const applyLanguage = async (fileName: string, canvas: boolean) => {
-    const key = `${shown.id}:${fileName}`
+    const key = `${shown.id}:${canvas}:${fileName}`
     if (key === languageFor) return
     languageFor = key
     if (canvas) {
@@ -669,7 +711,7 @@ async function joinRoom(
     }
     f.comments = new CommentsView(metaDoc, f.doc, {
       name,
-      locked: editLocked,
+      locked: () => editLocked() || !writesComments,
       table: f.table.parsed,
       canvas: format === 'canvas',
     })
@@ -755,16 +797,28 @@ async function joinRoom(
     const known = list.filter((f) => f.format === 'text' || f.format === 'canvas')
     files.set(known)
     const named = known.find((f) => f.id === shown.id)
-    if (named) showName(named.path)
+    if (!named) return
+    // The list may come before the host's state, which says so too.
+    if (named.format === 'canvas') shown.canvas = true
+    showName(named.path)
   }
 
   const renderPeople = () => {
-    people.set(participants(awareness.getStates(), doc.clientID))
+    const accessOf = (clientId: number) => client?.accessOf(clientId)
+    people.set(participants(awareness.getStates(), doc.clientID, accessOf))
     const colors = colorsByName(people.get())
     if (!sameColors(colors, authorColors.get())) authorColors.set(colors)
-    attachments.host = hostAttachments(awareness.getStates())
-    const host = [...awareness.getStates().values()].find((s) => s.role === 'host')
-    if (host?.format === 'canvas') first.canvas = true
+    attachments.host = hostAttachments(awareness.getStates(), accessOf)
+    // Only an editor's state speaks for the host: anyone can say they are.
+    const host = [...awareness.getStates()].find(
+      ([id, s]) => s.role === 'host' && accessOf(id) === 'edit',
+    )?.[1]
+    if (host?.format === 'canvas' && !first.canvas) {
+      first.canvas = true
+      // The list may have named the file already, as text.
+      const named = fileName.get()
+      if (shown === first && named) showName(named)
+    }
     // Keep showing the file name after the host has gone. Once the host
     // lists the room's files, the list names them.
     if (typeof host?.file === 'string' && shown === first && files.get().length === 0) {
@@ -774,8 +828,8 @@ async function joinRoom(
 
   client = new RoomClient({
     url: roomSocketUrl(location, id),
-    key: await importKey(key),
-    admissionToken: blobKeys.admission,
+    keys,
+    admissionToken: admission,
     doc,
     awareness,
     onStatus: (s) => {
@@ -790,6 +844,8 @@ async function joinRoom(
     onAttachment: (a) => attachments.handle(a),
     onCanvas: (m) => first.json.handle(m),
     onManifest: takeManifest,
+    // A peer's state may stay the same while what it may do rises.
+    onAccess: renderPeople,
     onFileAttachment: (_, a) => attachments.handle(a),
     onFileCanvas: (fileId, m) => opened.get(fileId)?.json.handle(m),
   })

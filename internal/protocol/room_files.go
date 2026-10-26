@@ -17,10 +17,13 @@ import (
 
 // fileDoc is a file's Y.Doc that the Client keeps in sync.
 type fileDoc struct {
-	doc    *crdt.Doc
-	check  UpdateCheck
-	unsub  func()
-	synced bool
+	doc   *crdt.Doc
+	check UpdateCheck
+	// comments is set for a doc that commenters write as well as editors: a
+	// file's comments, not the file.
+	comments bool
+	unsub    func()
+	synced   bool
 
 	// When the Client may next ask the room for what the check refused, and
 	// the timer that asks then; under Client.applying.
@@ -67,6 +70,11 @@ const (
 // resyncEvery spaces out the Client's asking again; tests shorten it.
 var resyncEvery = 5 * time.Second
 
+// manifestEvery spaces out the manifest a Client sends to whoever asks for
+// file 0 (a SyncStep1), as every newcomer does: awareness does not tell of
+// all of them, as the Client follows only so many that sign nothing.
+const manifestEvery = 2 * time.Second
+
 // AddFile keeps doc in sync with the room as the file with this ID, from 1
 // up (file 0 is the Client's Doc): it sends
 // the doc's state now if connected, and on every connection after. Messages
@@ -80,16 +88,27 @@ func (c *Client) AddFile(id uint64, doc *crdt.Doc) error {
 // must pass check before they are applied; one that does not is dropped,
 // and reported to OnError.
 func (c *Client) AddCheckedFile(id uint64, doc *crdt.Doc, check UpdateCheck) error {
+	return c.addFile(&fileDoc{doc: doc, check: check}, id)
+}
+
+// AddCommentsFile is AddCheckedFile for a doc that holds a file's comments,
+// which commenters write as well as editors.
+func (c *Client) AddCommentsFile(id uint64, doc *crdt.Doc, check UpdateCheck) error {
+	return c.addFile(&fileDoc{doc: doc, check: check, comments: true}, id)
+}
+
+func (c *Client) addFile(f *fileDoc, id uint64) error {
 	if id == 0 || id > MaxFileID {
 		return fmt.Errorf("invalid file id %d", id)
 	}
+	doc := f.doc
 	// Subscribed outside c.mu: an update in another goroutine holds the
 	// doc's lock while it sends, which takes c.mu.
-	f := &fileDoc{doc: doc, check: check}
 	f.unsub = doc.OnUpdate(func(update []byte, origin any) {
-		if origin == c {
+		if origin == c || !mayWrite(c.keys.Access, f.comments) {
 			return
 		}
+		c.fresh.wrote()
 		_ = c.sendFile(id, MessageSync, ysync.EncodeUpdate(update))
 	})
 	c.mu.Lock()
@@ -111,7 +130,7 @@ func (c *Client) AddCheckedFile(id uint64, doc *crdt.Doc, check UpdateCheck) err
 		f.unsub()
 		return err
 	}
-	c.syncFile(id, doc)
+	c.syncFile(id, f)
 	return nil
 }
 
@@ -136,7 +155,7 @@ func (c *Client) SendFileAttachment(id uint64, a Attachment) error {
 	if err != nil {
 		return err
 	}
-	return c.sendFile(id, MessageAttachment, payload)
+	return c.sendFileOnce(id, MessageAttachment, payload)
 }
 
 // SendFileCanvas sends a canvas message about one file to everyone else in
@@ -146,7 +165,7 @@ func (c *Client) SendFileCanvas(id uint64, m CanvasMessage) error {
 	if err != nil {
 		return err
 	}
-	return c.sendFile(id, MessageCanvas, payload)
+	return c.sendFileOnce(id, MessageCanvas, payload)
 }
 
 // FileStateFrameBytes is StateFrameBytes for a file's doc: the size on the
@@ -164,20 +183,28 @@ func fileStep2(id uint64, doc *crdt.Doc) []byte {
 }
 
 // syncFile sends a file's state to the room, as serve does for the Doc, if
-// connected.
-func (c *Client) syncFile(id uint64, doc *crdt.Doc) {
+// connected: a request for what it is missing, and its state if others
+// apply what this Client writes to it.
+func (c *Client) syncFile(id uint64, f *fileDoc) {
 	c.mu.Lock()
 	out := c.out
 	c.mu.Unlock()
 	if out == nil {
 		return
 	}
-	step2 := fileStep2(id, doc)
+	if !mayWrite(c.keys.Access, f.comments) {
+		_ = c.sendFile(id, MessageSync, ysync.EncodeSyncStep1(f.doc))
+		return
+	}
+	step2 := fileStep2(id, f.doc)
 	if FrameBytes(len(step2)) > MaxFrameBytes {
 		out.fail(ErrFrameTooLarge)
 		return
 	}
-	_ = c.sendFile(id, MessageSync, ysync.EncodeSyncStep1(doc))
+	if len(f.doc.StateVector()) > 0 {
+		c.fresh.wrote()
+	}
+	_ = c.sendFile(id, MessageSync, ysync.EncodeSyncStep1(f.doc))
 	c.send(MessageFiles, step2)
 }
 
@@ -185,27 +212,62 @@ func (c *Client) syncFile(id uint64, doc *crdt.Doc) {
 func (c *Client) syncFiles() {
 	c.mu.Lock()
 	manifest := c.manifest
-	files := make(map[uint64]*crdt.Doc, len(c.files))
+	files := make(map[uint64]*fileDoc, len(c.files))
 	for id, f := range c.files {
-		files[id] = f.doc
+		files[id] = f
 	}
 	c.mu.Unlock()
 	if manifest != nil {
 		c.send(MessageFiles, manifest)
 	}
-	for id, doc := range files {
-		c.syncFile(id, doc)
+	for id, f := range files {
+		c.syncFile(id, f)
 	}
 }
 
-// sendManifest sends the manifest again, if this Client has one.
-func (c *Client) sendManifest() {
+// resendFiles sends again the state of every file this Client writes
+// (fresh.go).
+func (c *Client) resendFiles() {
 	c.mu.Lock()
+	files := make(map[uint64]*fileDoc, len(c.files))
+	for id, f := range c.files {
+		files[id] = f
+	}
+	c.mu.Unlock()
+	for id, f := range files {
+		if !mayWrite(c.keys.Access, f.comments) {
+			continue
+		}
+		if step2 := fileStep2(id, f.doc); FrameBytes(len(step2)) <= MaxFrameBytes {
+			c.send(MessageFiles, step2)
+		}
+	}
+}
+
+// offerManifest sends the manifest to someone who asked for file 0, at most
+// every manifestEvery: whoever asks meanwhile gets it once that has passed.
+func (c *Client) offerManifest() {
+	c.mu.Lock()
+	if c.manifest == nil || c.destroyed {
+		c.mu.Unlock()
+		return
+	}
+	if wait := time.Until(c.manifestAt.Add(manifestEvery)); wait > 0 {
+		if c.manifestTimer == nil {
+			c.manifestTimer = time.AfterFunc(wait, func() {
+				c.mu.Lock()
+				c.manifestTimer = nil
+				c.mu.Unlock()
+				c.offerManifest()
+			})
+		}
+		c.mu.Unlock()
+		return
+	}
+	c.manifestAt = time.Now()
 	manifest := c.manifest
 	c.mu.Unlock()
-	if manifest != nil {
-		c.send(MessageFiles, manifest)
-	}
+	c.send(MessageFiles, manifest)
 }
 
 func (c *Client) sendFile(id uint64, t MessageType, payload []byte) error {
@@ -217,7 +279,17 @@ func (c *Client) sendFile(id uint64, t MessageType, payload []byte) error {
 	return nil
 }
 
-func (c *Client) receiveFiles(payload []byte) error {
+// sendFileOnce is sendFile for what is sent once (fresh.go).
+func (c *Client) sendFileOnce(id uint64, t MessageType, payload []byte) error {
+	envelope, err := EncodeFileDoc(id, t, payload)
+	if err != nil {
+		return err
+	}
+	c.sendOnce(MessageFiles, envelope)
+	return nil
+}
+
+func (c *Client) receiveFiles(access Access, payload []byte) error {
 	m, err := DecodeFiles(payload)
 	if errors.Is(err, ErrUnknownFilesKind) || errors.Is(err, ErrUnknownMessageType) {
 		return nil
@@ -226,6 +298,9 @@ func (c *Client) receiveFiles(payload []byte) error {
 		return err
 	}
 	if m.Kind == FilesManifest {
+		if err := editorsOnly("a manifest", access); err != nil {
+			return err
+		}
 		if c.opts.OnManifest != nil {
 			c.opts.OnManifest(m.Files)
 		}
@@ -233,39 +308,58 @@ func (c *Client) receiveFiles(payload []byte) error {
 	}
 	switch m.Type {
 	case MessageSync:
-		return c.receiveFileSync(m.File, m.Payload)
+		return c.receiveFileSync(m.File, access, m.Payload)
 	case MessageAttachment:
-		a, err := DecodeAttachment(m.Payload)
-		if errors.Is(err, ErrUnknownAttachmentKind) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if c.opts.OnFileAttachment != nil {
-			c.opts.OnFileAttachment(m.File, a)
-		}
+		return c.receiveFileAttachment(m.File, access, m.Payload)
 	case MessageCanvas:
-		cm, err := DecodeCanvas(m.Payload)
-		if errors.Is(err, ErrUnknownCanvasKind) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if c.opts.OnFileCanvas != nil {
-			c.opts.OnFileCanvas(m.File, cm)
-		}
+		return c.receiveFileCanvas(m.File, access, m.Payload)
 	}
 	return nil
 }
 
-func (c *Client) receiveFileSync(id uint64, payload []byte) error {
+func (c *Client) receiveFileAttachment(id uint64, access Access, payload []byte) error {
+	a, err := DecodeAttachment(payload)
+	if errors.Is(err, ErrUnknownAttachmentKind) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := allowAttachment(a, access); err != nil {
+		return err
+	}
+	if c.opts.OnFileAttachment != nil {
+		c.opts.OnFileAttachment(id, a)
+	}
+	return nil
+}
+
+func (c *Client) receiveFileCanvas(id uint64, access Access, payload []byte) error {
+	if err := editorsOnly("a canvas message", access); err != nil {
+		return err
+	}
+	m, err := DecodeCanvas(payload)
+	if errors.Is(err, ErrUnknownCanvasKind) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if c.opts.OnFileCanvas != nil {
+		c.opts.OnFileCanvas(id, m)
+	}
+	return nil
+}
+
+func (c *Client) receiveFileSync(id uint64, access Access, payload []byte) error {
 	c.mu.Lock()
 	f := c.files[id]
 	c.mu.Unlock()
 	if f == nil {
 		return nil
+	}
+	if err := allowSync(payload, mayWrite(access, f.comments), access); err != nil {
+		return err
 	}
 	c.applying.Lock()
 	kind, reply, err := f.apply(payload, c, &c.checks)
@@ -277,7 +371,7 @@ func (c *Client) receiveFileSync(id uint64, payload []byte) error {
 	if err != nil {
 		return fmt.Errorf("file %d: %w", id, err)
 	}
-	if len(reply) > 0 {
+	if len(reply) > 0 && mayWrite(c.keys.Access, f.comments) {
 		_ = c.sendFile(id, MessageSync, reply)
 	}
 	if kind == ysync.MsgSyncStep2 {
@@ -293,25 +387,23 @@ func (c *Client) receiveFileSync(id uint64, payload []byte) error {
 }
 
 // apply applies a sync message, after its check, if it has one, and returns
-// its kind. A panic in ygo on a checked doc's message is an error: such a
-// doc takes updates from anyone in the room, and the host's process is the
+// its kind. A panic in ygo is an error: a checked doc takes updates from
+// commenters, anyone may send a SyncStep1, and the host's process is the
 // session.
 func (f *fileDoc) apply(payload []byte, origin any, share *timeShare) (kind int, reply []byte, err error) {
 	kind, update, err := ysync.ReadSyncMessage(payload)
 	if err != nil {
 		return 0, nil, err
 	}
-	if f.check != nil {
-		defer func() {
-			if r := recover(); r != nil {
-				reply, err = nil, fmt.Errorf("sync message makes ygo panic: %v", r)
-			}
-		}()
-	}
 	if f.check == nil || kind != ysync.MsgSyncStep2 && kind != ysync.MsgUpdate {
-		reply, err = ysync.ApplySyncMessage(f.doc, payload, origin)
+		reply, err = applySync(f.doc, payload, origin)
 		return kind, reply, err
 	}
+	defer func() {
+		if r := recover(); r != nil {
+			reply, err = nil, fmt.Errorf("sync message makes ygo panic: %v", r)
+		}
+	}()
 	reply, err = share.take(func() ([]byte, error) {
 		if err := f.check(f.doc, update); err != nil {
 			return nil, err
@@ -358,12 +450,10 @@ func (c *Client) askAgain(id uint64, f *fileDoc) bool {
 		f.resyncTimer = time.AfterFunc(wait, func() {
 			c.applying.Lock()
 			f.resyncTimer = nil
-			ask := c.askAgain(id, f)
+			// Destroy may have stopped the timer after it fired.
+			ask := !c.isDestroyed() && c.askAgain(id, f)
 			c.applying.Unlock()
-			c.mu.Lock()
-			destroyed := c.destroyed
-			c.mu.Unlock()
-			if ask && !destroyed {
+			if ask && !c.isDestroyed() {
 				_ = c.sendFile(id, MessageSync, ysync.EncodeSyncStep1(f.doc))
 			}
 		})
@@ -376,7 +466,14 @@ func (c *Client) unsubscribeFiles() {
 	c.mu.Lock()
 	files := c.files
 	c.mu.Unlock()
+	c.applying.Lock()
+	defer c.applying.Unlock()
 	for _, f := range files {
 		f.unsub()
+		// As the TypeScript client does: a destroyed Client asks for nothing.
+		if f.resyncTimer != nil {
+			f.resyncTimer.Stop()
+			f.resyncTimer = nil
+		}
 	}
 }

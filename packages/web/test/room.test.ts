@@ -17,6 +17,16 @@ describe('parseRoomLocation', () => {
     expect(parseRoomLocation({ pathname: `/r/${id}`, hash: `#${key}` })).toEqual({ id, key })
   })
 
+  it('reads comment-only and read-only links too', () => {
+    for (const fragment of [`c.${'C'.repeat(86)}`, `r.${'R'.repeat(128)}`]) {
+      expect(parseRoomLocation({ pathname: `/r/${id}`, hash: `#${fragment}` })).toEqual({
+        id,
+        key: fragment,
+      })
+    }
+    expect(parseRoomLocation({ pathname: `/r/${id}`, hash: `#c.${key}` })).toBeNull()
+  })
+
   it('rejects links without a valid key or id', () => {
     expect(parseRoomLocation({ pathname: `/r/${id}`, hash: '' })).toBeNull()
     expect(parseRoomLocation({ pathname: `/r/${id}`, hash: '#short' })).toBeNull()
@@ -48,6 +58,21 @@ describe('participants', () => {
     expect(list.map((p) => p.name)).toEqual(['alice', 'Me', 'Bob', 'anonymous'])
     expect(list[0]?.isHost).toBe(true)
     expect(list[1]?.isSelf).toBe(true)
+  })
+
+  it('takes the host and what each may do from their links, not their states', () => {
+    const states = new Map<number, Record<string, unknown>>([
+      [1, { role: 'host', name: 'claims to host' }],
+      [2, { role: 'host', name: 'host' }],
+      [3, { name: 'reader' }],
+    ])
+    const access = { 1: 'comment', 2: 'edit', 3: 'read' } as const
+    const list = participants(states, 0, (id) => access[id as 1 | 2 | 3])
+    expect(list.map((p) => [p.name, p.isHost, p.access])).toEqual([
+      ['host', true, 'edit'],
+      ['claims to host', false, 'comment'],
+      ['reader', false, 'read'],
+    ])
   })
 
   it('keeps avatars only from known hosts', () => {

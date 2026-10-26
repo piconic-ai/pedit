@@ -249,4 +249,3 @@ Tests: `packages/web/test/comments.test.ts` and
 - Comments in the Markdown preview, on canvas edges, or in a CLI guest.
 - A pending state, for a thread whose content has not arrived yet: it shows
   as gone until it does.
-- Comment-only links (#122).

@@ -25,7 +25,7 @@ export class CommentDocs {
     if (doc) return doc
     if (this.#files.has(metaId) || this.#docs.size >= MAX_FILES) return null
     doc = new Y.Doc()
-    this.#client.addFile(metaId, doc, checkMetaUpdate)
+    this.#client.addFile(metaId, doc, checkMetaUpdate, { comments: true })
     this.#docs.set(metaId, doc)
     return doc
   }

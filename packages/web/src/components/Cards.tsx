@@ -80,6 +80,24 @@ export function IncompleteLink() {
   )
 }
 
+/**
+ * A browser that cannot check signatures (Ed25519, #122): opening the room
+ * anyway would show changes nobody checked.
+ */
+export function UnsupportedBrowser() {
+  return (
+    <div className="center">
+      <div className="card">
+        <h1>Update your browser</h1>
+        <p>
+          This browser cannot check who changed the file, so pedit cannot open this link safely.
+          Update your browser and open the link again.
+        </p>
+      </div>
+    </div>
+  )
+}
+
 /** Asks for the name others see next to this browser's cursor. */
 export function JoinCard(props: { onJoin: (name: string) => void }) {
   let input: HTMLInputElement | undefined

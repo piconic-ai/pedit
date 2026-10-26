@@ -179,8 +179,12 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	key := protocol.GenerateKey()
+	key := protocol.GenerateEditSecret()
 	rawKey, err := protocol.DecodeKey(key)
+	if err != nil {
+		return nil, err
+	}
+	keys, err := protocol.EditKeys(rawKey, room.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -207,10 +211,12 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 		state["format"] = formatCanvas
 	}
 	aw.SetLocalState(state)
-	blobKeys, err := protocol.DeriveBlobKeys(rawKey)
+	blobKeys, err := protocol.DeriveBlobKeys(keys.FrameKey)
 	if err != nil {
 		return nil, err
 	}
+	// The host's token lets it add images as well as fetch them.
+	blobKeys.Admission = keys.EditAdmission
 
 	s := &Session{
 		URL:  server + "/r/" + room.ID + "#" + key,
@@ -251,6 +257,7 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 	header.Set("Authorization", "Bearer "+room.HostToken)
 	s.Client, err = protocol.NewClient(protocol.ClientOptions{
 		URL:       wsURL,
+		RoomID:    room.ID,
 		Key:       rawKey,
 		Doc:       doc,
 		Awareness: aw,
@@ -264,6 +271,7 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 		OnCanvas:         func(m protocol.CanvasMessage) { s.handleCanvas(m) },
 		OnFileAttachment: s.handleFileAttachment,
 		OnFileCanvas:     s.handleFileCanvas,
+		OnAccess:         func(uint64) { s.reportPeople(opts.OnPeople) },
 	})
 	if err != nil {
 		return nil, err

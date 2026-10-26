@@ -22,10 +22,14 @@ const protocol = await import(pathToFileURL(join(protocolDir, 'src/index.ts')).h
 
 const doc = new Y.Doc()
 let stored = null
+const keys = await protocol.deriveRoomKeys(
+  protocol.parseFragment(key),
+  new URL(url).pathname.split('/')[3],
+)
 const client = new protocol.RoomClient({
-  admissionToken: await protocol.deriveAdmissionToken(key),
+  admissionToken: keys.editAdmission,
   url,
-  key: await protocol.importKey(key),
+  keys,
   doc,
   awareness: new Awareness(doc),
   onAttachment: (a) => {
@@ -44,10 +48,10 @@ async function until(what, cond) {
 
 const content = new TextEncoder().encode('pedit 居間')
 const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, ...content])
-const keys = await protocol.deriveBlobKeys(key)
+const blobKeys = await protocol.deriveBlobKeys(keys.frameSecret, keys.editAdmission)
 const hash = await protocol.contentHash(png)
-const blobId = await protocol.blobIdFor(keys, hash)
-const blob = protocol.toBase64Url(await protocol.encryptBlob(keys, png))
+const blobId = await protocol.blobIdFor(blobKeys, hash)
+const blob = protocol.toBase64Url(await protocol.encryptBlob(blobKeys, png))
 
 await until('the connection', () => client.status === 'connected')
 client.sendAttachment({ kind: 'announce', hash, mime: 'image/png' })

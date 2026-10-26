@@ -41,6 +41,9 @@ Issues that break it are in scope, for example:
   or any third party
 - joining a room, or reading or writing its encrypted attachments, without the
   key in the link
+- a comment-only or read-only link changing the shared files, a read-only link
+  changing comments, or a lower link passing for a higher one among the
+  participants
 - tampering with document updates or attachments that clients accept without
   noticing
 - the CLI writing outside the intended file or directory, or exposing local files
@@ -49,7 +52,10 @@ Issues that break it are in scope, for example:
 
 The following are expected behavior and out of scope:
 
-- anyone holding the full link reading and editing the room
+- anyone holding the full link doing what the link allows: an edit link
+  reading and editing the room, a comment-only link reading it and adding,
+  changing or deleting any comment, a read-only link reading it
+- anyone holding a link deriving the links below it
 - a modified editor, malicious relay operator or compromised participant device
   reading the key or plaintext
 - metadata visible to infrastructure: IP addresses, room IDs, request timing and

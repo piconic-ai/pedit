@@ -1,9 +1,9 @@
 import { deriveAdmissionToken } from './admission.ts'
 import { decrypt, encrypt } from './cipher.ts'
-import { decodeKey, toBase64Url } from './key.ts'
+import { toBase64Url } from './key.ts'
 
 /**
- * Keys for attachments, derived from the room key with HKDF-SHA256. They are
+ * Keys for attachments, derived from the frame key (access.ts) with HKDF-SHA256. They are
  * separate from the frame key, so a blob can never be replayed as a frame.
  */
 export interface BlobKeys {
@@ -15,8 +15,8 @@ export interface BlobKeys {
   id: CryptoKey
 }
 
-const ENC_INFO = 'pedit blob enc v1'
-const ID_INFO = 'pedit blob id v1'
+const ENC_INFO = 'pedit blob enc v2'
+const ID_INFO = 'pedit blob id v2'
 
 /** A content hash: the first 128 bits of SHA-256, as 32 lowercase hex digits. */
 export const HASH_PATTERN = /^[0-9a-f]{32}$/
@@ -27,10 +27,18 @@ export const BLOB_ID_PATTERN = /^[A-Za-z0-9_-]{22}$/
 const buf = (bytes: Uint8Array) => bytes as Uint8Array<ArrayBuffer>
 const utf8 = new TextEncoder()
 
-/** Derives the attachment keys from a room key encoded as in the URL fragment. */
-export async function deriveBlobKeys(roomKey: string): Promise<BlobKeys> {
+/**
+ * Derives the attachment keys from the frame key's bytes (RoomKeys.frameSecret).
+ * `admission` is the token to send the relay, the reader token of the frame
+ * key by default; an editor sends its own (RoomKeys.editAdmission), which
+ * also lets it add images.
+ */
+export async function deriveBlobKeys(
+  frameSecret: Uint8Array,
+  admission?: string,
+): Promise<BlobKeys> {
   const subtle = globalThis.crypto.subtle
-  const base = await subtle.importKey('raw', buf(decodeKey(roomKey)), 'HKDF', false, ['deriveKey'])
+  const base = await subtle.importKey('raw', buf(frameSecret), 'HKDF', false, ['deriveKey'])
   const hkdf = (info: string) => ({
     name: 'HKDF',
     hash: 'SHA-256',
@@ -46,7 +54,7 @@ export async function deriveBlobKeys(roomKey: string): Promise<BlobKeys> {
       'sign',
     ]),
   ])
-  return { enc, id, admission: await deriveAdmissionToken(roomKey) }
+  return { enc, id, admission: admission ?? (await deriveAdmissionToken(frameSecret)) }
 }
 
 /** Names an attachment by its content; the host uses it as the file name. */

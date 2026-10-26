@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	blobEncInfo = "pedit blob enc v1"
-	blobIDInfo  = "pedit blob id v1"
+	blobEncInfo = "pedit blob enc v2"
+	blobIDInfo  = "pedit blob id v2"
 )
 
 var (
@@ -29,8 +29,8 @@ func ValidHash(s string) bool { return hashPattern.MatchString(s) }
 // ValidBlobID reports whether s is a blob id.
 func ValidBlobID(s string) bool { return blobIDPattern.MatchString(s) }
 
-// BlobKeys holds the attachment keys, derived from the room key with
-// HKDF-SHA256. They are separate from the frame key, so a blob can never be
+// BlobKeys holds the attachment keys, derived from the frame key
+// (RoomKeys.FrameKey) with HKDF-SHA256. They are separate from the frame key, so a blob can never be
 // replayed as a frame.
 type BlobKeys struct {
 	cipher *Cipher
@@ -39,7 +39,7 @@ type BlobKeys struct {
 	Admission string
 }
 
-// DeriveBlobKeys derives the attachment keys from a raw room key.
+// DeriveBlobKeys derives the attachment keys from a room's frame key.
 func DeriveBlobKeys(key []byte) (*BlobKeys, error) {
 	if len(key) != KeyBytes {
 		return nil, fmt.Errorf("key must be %d bytes", KeyBytes)

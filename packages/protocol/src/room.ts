@@ -3,6 +3,7 @@ import * as encoding from 'lib0/encoding'
 import * as awarenessProtocol from 'y-protocols/awareness'
 import * as syncProtocol from 'y-protocols/sync'
 import type * as Y from 'yjs'
+import type { Access, RoomKeys } from './access.ts'
 import { admissionProtocols } from './admission.ts'
 import {
   type Attachment,
@@ -37,11 +38,20 @@ import {
   decodeFrame,
   encodeFrame,
   frameBytes,
+  HEADER_BYTES,
   MAX_FRAME_BYTES,
   ReplayedFrameError,
   ReplayGuard,
   SENDER_BYTES,
 } from './frame.ts'
+import {
+  decodeFresh,
+  encodeFresh,
+  type FreshMessage,
+  Freshness,
+  RESEND_EVERY_MS,
+  SETTLE_AFTER_MS,
+} from './fresh.ts'
 import {
   decodeMessage,
   encodeMessage,
@@ -50,6 +60,14 @@ import {
   UnknownMessageTypeError,
 } from './message.ts'
 import { Pacer, type Rate } from './pace.ts'
+import {
+  ANNOUNCE_EVERY_MS,
+  decodeAwarenessEntry,
+  encodeAwarenessEntry,
+  MAX_WIRE_CLOCK,
+  Presence,
+} from './presence.ts'
+import { openMessage, signMessage } from './signed.ts'
 
 /**
  * `closed` is final: the host ended the session. So is `full`: the room had no
@@ -115,7 +133,8 @@ export interface SocketLike {
 export interface RoomClientOptions {
   /** WebSocket URL of the room. Must never contain the key. */
   url: string
-  key: CryptoKey
+  /** What the client's link gives in this room (access.ts). */
+  keys: RoomKeys
   admissionToken: string
   doc: Y.Doc
   awareness: awarenessProtocol.Awareness
@@ -130,6 +149,11 @@ export interface RoomClientOptions {
   onError?: (error: unknown) => void
   onAttachment?: (attachment: Attachment) => void
   onCanvas?: (message: CanvasMessage) => void
+  /**
+   * A peer's access rose (see accessOf). Its state may be the same as
+   * before, so the awareness says nothing of it.
+   */
+  onAccess?: (clientId: number) => void
   /**
    * In a room that shares several files (see addFile): each list of the
    * room's files, once per added file the first SyncStep2 for it, and the
@@ -148,6 +172,8 @@ export interface RoomClientOptions {
 interface FileDoc {
   doc: Y.Doc
   check?: UpdateCheck
+  /** Whether commenters write this doc: a file's comments, not the file. */
+  comments: boolean
   onUpdate: (update: Uint8Array, origin: unknown) => void
   synced: boolean
   /** When the client may next ask the room for what a check refused, and the timer that will. */
@@ -179,6 +205,17 @@ export interface Refusal {
 }
 
 /**
+ * A frame its sender's access does not allow (#122): a write from a peer
+ * that may only read it, or a message only editors send. Dropped.
+ */
+export class NotAllowedError extends Error {
+  constructor(what: string, access: Access) {
+    super(`dropped ${what} from a peer with ${access} access`)
+    this.name = 'NotAllowedError'
+  }
+}
+
+/**
  * Checking and applying the updates of all checked files together may take
  * a quarter of the time, with up to a second in hand, so a peer flooding the
  * room cannot keep the client checking; an update past that is refused for
@@ -187,6 +224,13 @@ export interface Refusal {
 const CHECK_SHARE = 4
 const CHECK_BURST_MS = 1000
 const RESYNC_EVERY_MS = 5000
+/**
+ * A client that set a manifest sends it again to someone who asks for file 0
+ * (a SyncStep1), as every newcomer does, at most this often: awareness does
+ * not tell of all of them, as a client follows only so many that sign
+ * nothing.
+ */
+const MANIFEST_EVERY_MS = 2000
 
 const OPEN = 1
 
@@ -197,6 +241,12 @@ const OPEN = 1
  * peer sends SyncStep1 (to pull what it is missing), its full state as an update
  * (to push what others are missing) and its awareness state. Every peer answers
  * SyncStep1 with SyncStep2. All frames are end-to-end encrypted.
+ *
+ * What a peer may change follows from its link (access.ts): editors sign
+ * their frames with the editors' key, commenters with the commenters' key,
+ * and readers sign nothing. Every peer applies a frame only as far as the
+ * key that signed it allows, and a client sends only what its own access
+ * lets others apply.
  */
 export class RoomClient {
   readonly doc: Y.Doc
@@ -216,6 +266,18 @@ export class RoomClient {
   private readonly sender = globalThis.crypto.getRandomValues(new Uint8Array(SENDER_BYTES))
   private sent = 0
   private readonly guard = new ReplayGuard(this.sender)
+  // This client's side of the handshake that shows peers are live
+  // (fresh.ts), when it last sent its state again for peers that dropped
+  // it, and the timer that sends it again.
+  private readonly fresh = new Freshness()
+  private resentAt = Number.NEGATIVE_INFINITY
+  private resendTimer: ReturnType<typeof setTimeout> | null = null
+  private resendState = false
+  // What this client sends once, held after connecting until it settles
+  // (fresh.ts), and the timer that settles it.
+  private settled = false
+  private held: { type: MessageType; payload: Uint8Array }[] = []
+  private settleTimer: ReturnType<typeof setTimeout> | null = null
   private readonly files = new Map<number, FileDoc>()
   /** The time checked files' updates may take, as CHECK_SHARE says. */
   private readonly checks: TimeShare = { credit: CHECK_BURST_MS, counted: performance.now() }
@@ -223,8 +285,17 @@ export class RoomClient {
   private pacer = new Pacer()
   // Ends the pacing wait of the frame next in line, when its socket closes.
   private wake: (() => void) | null = null
-  // The encoded manifest, when this client set one.
+  // The encoded manifest, when this client set one, when it was last sent
+  // to someone who asked for file 0, and the timer that sends it again.
   private manifest: Uint8Array | null = null
+  private manifestAt = Number.NEGATIVE_INFINITY
+  private manifestTimer: ReturnType<typeof setTimeout> | null = null
+  // The access each awareness client ID spoke with (presence.ts).
+  private readonly presence = new Presence()
+  // When this client last sent its state to newcomers, and the timer that
+  // sends it again.
+  private announcedAt = Number.NEGATIVE_INFINITY
+  private announceTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(opts: RoomClientOptions) {
     this.opts = opts
@@ -252,19 +323,30 @@ export class RoomClient {
     socket.onopen = () => {
       if (this.socket !== socket) return
       this.attempts = 0
-      // The whole state goes to the room on connecting. When it does not fit a
-      // frame, send nothing: a SyncStep1 alone would have every peer answer
-      // with a state as large.
+      // The whole state goes to the room on connecting, from a peer that may
+      // write it. When it does not fit a frame, send nothing: a SyncStep1
+      // alone would have every peer answer with a state as large.
+      const edits = this.edits()
+      this.fresh.connected()
+      if (edits && this.doc.store.clients.size > 0) this.fresh.wrote()
       const step2 = encoding.createEncoder()
-      syncProtocol.writeSyncStep2(step2, this.doc)
+      if (edits) syncProtocol.writeSyncStep2(step2, this.doc)
       const state = encoding.toUint8Array(step2)
       if (frameBytes(state.length) > MAX_FRAME_BYTES) {
         this.tooLarge(socket)
         return
       }
+      // Before anyone hears this client is connected, and sends once. Signers
+      // show they are live anew on every connection: what they sent while
+      // this one was down could be sent again now.
+      this.guard.forgetLive()
+      this.settled = false
+      this.settleIn(SETTLE_AFTER_MS)
       this.setStatus('connected')
+      // First, so that peers answer it before what they send in reply.
+      this.send(MessageType.Fresh, encodeFresh({ nonce: this.fresh.renew() }))
       this.sendSync((encoder) => syncProtocol.writeSyncStep1(encoder, this.doc))
-      this.send(MessageType.Sync, state)
+      if (edits) this.send(MessageType.Sync, state)
       this.sendAwareness([this.doc.clientID])
       if (this.manifest) this.send(MessageType.Files, this.manifest)
       for (const [id, f] of this.files) this.syncFile(id, f.doc)
@@ -318,6 +400,11 @@ export class RoomClient {
     await this.sendChain
     this.destroyed = true
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
+    if (this.manifestTimer) clearTimeout(this.manifestTimer)
+    if (this.announceTimer) clearTimeout(this.announceTimer)
+    if (this.resendTimer) clearTimeout(this.resendTimer)
+    if (this.settleTimer) clearTimeout(this.settleTimer)
+    this.held = []
     this.doc.off('update', this.handleDocUpdate)
     this.awareness.off('update', this.handleAwarenessUpdate)
     this.awareness.off('change', this.handleAwarenessChange)
@@ -336,7 +423,7 @@ export class RoomClient {
    * frame, it is dropped while disconnected; retrying is up to the caller.
    */
   sendAttachment(attachment: Attachment): void {
-    this.send(MessageType.Attachment, encodeAttachment(attachment))
+    this.sendOnce(MessageType.Attachment, encodeAttachment(attachment))
   }
 
   /**
@@ -344,7 +431,7 @@ export class RoomClient {
    * frame, it is dropped while disconnected.
    */
   sendCanvas(message: CanvasMessage): void {
-    this.send(MessageType.Canvas, encodeCanvas(message))
+    this.sendOnce(MessageType.Canvas, encodeCanvas(message))
   }
 
   /*
@@ -361,19 +448,30 @@ export class RoomClient {
    * file that was not added are dropped, so a peer follows only the files it
    * added. With `check`, an update anyone sends for the file is applied only
    * if it passes: one that does not is dropped and reported to onError (see
-   * Refusal for one refused for now).
+   * Refusal for one refused for now). With `comments`, the doc holds a
+   * file's comments, which commenters write as well as editors.
    */
-  addFile(id: number, doc: Y.Doc, check?: UpdateCheck): void {
+  addFile(id: number, doc: Y.Doc, check?: UpdateCheck, opts: { comments?: boolean } = {}): void {
     if (!Number.isInteger(id) || id < 1 || id > MAX_FILE_ID)
       throw new Error(`invalid file id ${id}`)
     if (this.destroyed) throw new Error('client destroyed')
     if (this.files.has(id)) throw new Error(`file ${id} added twice`)
     const onUpdate = (update: Uint8Array, origin: unknown) => {
-      if (origin === this) return
+      if (origin === this || !this.writes(id)) return
+      this.fresh.wrote()
       this.sendFileSync(id, (encoder) => syncProtocol.writeUpdate(encoder, update))
     }
     doc.on('update', onUpdate)
-    this.files.set(id, { doc, check, onUpdate, synced: false, resyncAt: 0, resyncTimer: null })
+    const comments = opts.comments ?? false
+    this.files.set(id, {
+      doc,
+      check,
+      comments,
+      onUpdate,
+      synced: false,
+      resyncAt: 0,
+      resyncTimer: null,
+    })
     const open = this.status === 'connected' || this.status === 'waiting'
     if (this.socket?.readyState === OPEN && open) this.syncFile(id, doc)
   }
@@ -399,81 +497,241 @@ export class RoomClient {
 
   /** Sends an attachment message about one file. Dropped while disconnected. */
   sendFileAttachment(file: number, attachment: Attachment): void {
-    this.sendFile(file, MessageType.Attachment, encodeAttachment(attachment))
+    this.sendOnce(
+      MessageType.Files,
+      encodeFileDoc(file, MessageType.Attachment, encodeAttachment(attachment)),
+    )
   }
 
   /** Sends a canvas message about one file. Dropped while disconnected. */
   sendFileCanvas(file: number, message: CanvasMessage): void {
-    this.sendFile(file, MessageType.Canvas, encodeCanvas(message))
+    this.sendOnce(MessageType.Files, encodeFileDoc(file, MessageType.Canvas, encodeCanvas(message)))
   }
 
   private async receive(data: Uint8Array): Promise<void> {
-    const message = await this.readFrame(data)
-    if (!message) return
+    const frame = await this.readFrame(data)
+    if (!frame) return
+    const { access, message, vouched } = frame
+    if (message.type === MessageType.Fresh) {
+      this.receiveFresh(frame, decodeFresh(message.payload))
+      return
+    }
+    if (vouched) {
+      this.dispatch(access, message)
+      return
+    }
+    // Meanwhile what it sends counts as a reader's: requests only, which
+    // change nothing when sent again. Its state comes once it is live.
+    if (message.type === MessageType.Awareness) return
+    try {
+      this.dispatch('read', message)
+    } catch (error) {
+      if (!(error instanceof NotAllowedError)) throw error
+    }
+  }
+
+  /** Applies a message as far as the access it speaks for allows. */
+  private dispatch(access: Access, message: Message): void {
     const { payload } = message
     switch (message.type) {
       case MessageType.Sync: {
-        const reply = readSync(payload, this.doc, this).reply
-        if (reply) this.send(MessageType.Sync, reply)
+        allowSync(payload, access === 'edit', access)
+        const { kind, reply } = readSync(payload, this.doc, this)
+        if (reply && this.edits()) this.send(MessageType.Sync, reply)
+        if (kind === syncProtocol.messageYjsSyncStep1) this.offerManifest()
         break
       }
       case MessageType.Awareness:
-        awarenessProtocol.applyAwarenessUpdate(
-          this.awareness,
-          decoding.readVarUint8Array(decoding.createDecoder(payload)),
-          this,
-        )
+        this.receiveAwareness(access, payload)
         break
       case MessageType.Files:
-        this.receiveFiles(payload)
+        this.receiveFiles(access, payload)
         break
       case MessageType.Canvas: {
+        editorsOnly('a canvas message', access)
         const canvas = decodeKnown(decodeCanvas, payload, UnknownCanvasKindError)
         if (canvas) this.opts.onCanvas?.(canvas)
         break
       }
       default: {
-        const attachment = decodeKnown(decodeAttachment, payload, UnknownAttachmentKindError)
+        const attachment = readAttachment(payload, access)
         if (attachment) this.opts.onAttachment?.(attachment)
       }
     }
   }
 
-  /** Decrypts a frame, taking it once, and decodes its message; null for an unknown type. */
-  private async readFrame(data: Uint8Array): Promise<Message | null> {
-    const frame = decodeFrame(await decrypt(this.opts.key, data))
-    if (!this.guard.accept(frame.sender, frame.counter)) throw new ReplayedFrameError()
-    // A newer peer may send message types we do not know yet.
-    return decodeKnown(decodeMessage, frame.message, UnknownMessageTypeError)
+  /**
+   * What access the peer with this awareness client ID has, from the frames
+   * its state came in, if this client heard of it. This client's own ID has
+   * its link's.
+   */
+  accessOf(clientId: number): Access | undefined {
+    return clientId === this.doc.clientID ? this.opts.keys.access : this.presence.of(clientId)
   }
 
-  private receiveFiles(payload: Uint8Array): void {
+  /** Applies a peer's state by the rules in presence.ts. */
+  private receiveAwareness(access: Access, payload: Uint8Array): void {
+    const entry = decodeAwarenessEntry(decoding.readVarUint8Array(decoding.createDecoder(payload)))
+    if (entry.id === this.doc.clientID) throw new NotAllowedError('a state of this client', access)
+    if (access === 'read' && entry.clock > MAX_WIRE_CLOCK) {
+      throw new NotAllowedError('an awareness clock out of range', access)
+    }
+    const before = this.presence.of(entry.id)
+    const active = this.awareness.getStates().has(entry.id)
+    if (!this.presence.admit(entry.id, access, active, () => this.unsignedStates())) {
+      throw new NotAllowedError('awareness of a client heard from above', access)
+    }
+    if (access !== 'read') entry.clock = (this.awareness.meta.get(entry.id)?.clock ?? 0) + 1
+    awarenessProtocol.applyAwarenessUpdate(this.awareness, encodeAwarenessEntry(entry), this)
+    if (!this.awareness.getStates().has(entry.id)) this.presence.forget(entry.id)
+    if (before && before !== access) this.opts.onAccess?.(entry.id)
+  }
+
+  /** The clients that sign nothing whose states this client holds now. */
+  private unsignedStates(): number {
+    let n = 0
+    for (const id of this.awareness.getStates().keys()) if (this.presence.of(id) === 'read') n++
+    return n
+  }
+
+  /**
+   * Decrypts a frame, checks its signature, takes it once, and decodes its
+   * message with the access it speaks for; null for an unknown type.
+   */
+  private async readFrame(data: Uint8Array): Promise<ReadFrame | null> {
+    const plaintext = await decrypt(this.opts.keys.frameKey, data)
+    const frame = decodeFrame(plaintext)
+    if (!this.guard.foreign(frame.sender)) throw new ReplayedFrameError()
+    const opened = await openMessage(
+      this.opts.keys,
+      plaintext.subarray(0, HEADER_BYTES),
+      frame.message,
+    )
+    const { access } = opened
+    // A signer that has not shown it is live yet (fresh.ts) may be one the
+    // relay kept from before: its counters prove nothing yet.
+    const vouched = access === 'read' || this.guard.known(access, frame.sender)
+    if (vouched && access !== 'read' && !this.guard.accept(access, frame.sender, frame.counter))
+      throw new ReplayedFrameError()
+    // A newer peer may send message types we do not know yet; a signed
+    // message inside another is one of those.
+    const message = decodeKnown(decodeMessage, opened.message, UnknownMessageTypeError)
+    return message && { access, message, vouched, sender: frame.sender, counter: frame.counter }
+  }
+
+  /**
+   * Takes a fresh message: an answer to this client's nonce shows its signer
+   * is live, and a nonce not answered yet gets an answer.
+   */
+  private receiveFresh(frame: ReadFrame, m: FreshMessage): void {
+    const answersMe = this.fresh.answersMe(m.answer)
+    if (answersMe && frame.access !== 'read' && !frame.vouched) {
+      this.guard.vouch(frame.access, frame.sender, frame.counter)
+    }
+    if (!this.fresh.toAnswer(m.nonce)) return
+    const state = this.fresh.hasToResend(answersMe)
+    this.send(MessageType.Fresh, encodeFresh({ nonce: this.fresh.nonce, answer: m.nonce }))
+    this.resend(state)
+    this.settleIn(RESEND_EVERY_MS)
+  }
+
+  /**
+   * Sends what is sent once rather than as state: held until this client
+   * settles, for a client that signs (fresh.ts).
+   */
+  private sendOnce(type: MessageType, payload: Uint8Array): void {
+    if (!this.settled && this.opts.keys.signer) {
+      this.held.push({ type, payload })
+      return
+    }
+    this.send(type, payload)
+  }
+
+  /** Has this client settle after `ms`, unless something puts it off. */
+  private settleIn(ms: number): void {
+    if (this.settleTimer) clearTimeout(this.settleTimer)
+    this.settleTimer = setTimeout(() => {
+      this.settleTimer = null
+      this.settled = true
+      const held = this.held
+      this.held = []
+      for (const m of held) this.send(m.type, m.payload)
+    }, ms)
+  }
+
+  /**
+   * Sends again, at most every RESEND_EVERY_MS, what a peer that did not
+   * know yet that this client is live dropped: its awareness, and with
+   * `state` the doc's state and that of each file this client writes.
+   */
+  private resend(state: boolean): void {
+    if (this.destroyed) return
+    this.resendState ||= state
+    const wait = this.resentAt + RESEND_EVERY_MS - performance.now()
+    if (wait > 0) {
+      this.resendTimer ??= setTimeout(() => {
+        this.resendTimer = null
+        this.resend(false)
+      }, wait)
+      return
+    }
+    this.resentAt = performance.now()
+    this.sendAwareness([this.doc.clientID])
+    if (!this.resendState) return
+    this.resendState = false
+    if (this.edits()) {
+      const step2 = encoding.createEncoder()
+      syncProtocol.writeSyncStep2(step2, this.doc)
+      const state = encoding.toUint8Array(step2)
+      if (frameBytes(state.length) <= MAX_FRAME_BYTES) this.send(MessageType.Sync, state)
+    }
+    for (const [id, f] of this.files) {
+      if (!this.writes(id)) continue
+      const step2 = encoding.createEncoder()
+      syncProtocol.writeSyncStep2(step2, f.doc)
+      const state = encodeFileDoc(id, MessageType.Sync, encoding.toUint8Array(step2))
+      if (frameBytes(state.length) <= MAX_FRAME_BYTES) this.send(MessageType.Files, state)
+    }
+  }
+
+  /**
+   * The nonce of this client's connection, which a peer's answer carries
+   * (fresh.ts). Not a secret.
+   */
+  get nonce(): Uint8Array {
+    return this.fresh.nonce
+  }
+
+  private receiveFiles(access: Access, payload: Uint8Array): void {
     // As in readFrame, for files kinds and message types about a file.
     const m = decodeKnown(decodeFiles, payload, UnknownFilesKindError, UnknownMessageTypeError)
     if (!m) return
     if (m.kind === 'manifest') {
+      editorsOnly('a manifest', access)
       this.opts.onManifest?.(m.files)
       return
     }
     switch (m.type) {
       case MessageType.Sync:
-        this.receiveFileSync(m.file, m.payload)
+        this.receiveFileSync(m.file, access, m.payload)
         break
       case MessageType.Canvas: {
+        editorsOnly('a canvas message', access)
         const canvas = decodeKnown(decodeCanvas, m.payload, UnknownCanvasKindError)
         if (canvas) this.opts.onFileCanvas?.(m.file, canvas)
         break
       }
       default: {
-        const attachment = decodeKnown(decodeAttachment, m.payload, UnknownAttachmentKindError)
+        const attachment = readAttachment(m.payload, access)
         if (attachment) this.opts.onFileAttachment?.(m.file, attachment)
       }
     }
   }
 
-  private receiveFileSync(id: number, payload: Uint8Array): void {
+  private receiveFileSync(id: number, access: Access, payload: Uint8Array): void {
     const f = this.files.get(id)
     if (!f) return
+    allowSync(payload, mayWrite(access, f.comments), access)
     const read = f.check
       ? checkedSync(payload, f.doc, f.check, this.checks, this)
       : readSync(payload, f.doc, this)
@@ -483,7 +741,7 @@ export class RoomClient {
       return
     }
     const { kind, reply } = read
-    if (reply) this.sendFile(id, MessageType.Sync, reply)
+    if (reply && this.writes(id)) this.sendFile(id, MessageType.Sync, reply)
     if (kind === syncProtocol.messageYjsSyncStep2 && !f.synced) {
       f.synced = true
       this.opts.onFileSynced?.(id)
@@ -510,6 +768,8 @@ export class RoomClient {
   private syncFile(id: number, doc: Y.Doc): void {
     const socket = this.socket
     if (!socket) return
+    this.sendFileSync(id, (encoder) => syncProtocol.writeSyncStep1(encoder, doc))
+    if (!this.writes(id)) return
     const step2 = encoding.createEncoder()
     syncProtocol.writeSyncStep2(step2, doc)
     const state = encodeFileDoc(id, MessageType.Sync, encoding.toUint8Array(step2))
@@ -517,8 +777,26 @@ export class RoomClient {
       this.tooLarge(socket)
       return
     }
-    this.sendFileSync(id, (encoder) => syncProtocol.writeSyncStep1(encoder, doc))
+    if (doc.store.clients.size > 0) this.fresh.wrote()
     this.send(MessageType.Files, state)
+  }
+
+  /**
+   * Sends the manifest to someone who asked for file 0, at most every
+   * MANIFEST_EVERY_MS: whoever asks meanwhile gets it once that has passed.
+   */
+  private offerManifest(): void {
+    if (!this.manifest || this.destroyed) return
+    const wait = this.manifestAt + MANIFEST_EVERY_MS - performance.now()
+    if (wait > 0) {
+      this.manifestTimer ??= setTimeout(() => {
+        this.manifestTimer = null
+        this.offerManifest()
+      }, wait)
+      return
+    }
+    this.manifestAt = performance.now()
+    this.send(MessageType.Files, this.manifest)
   }
 
   private sendFileSync(id: number, write: (encoder: encoding.Encoder) => void): void {
@@ -531,26 +809,59 @@ export class RoomClient {
     this.send(MessageType.Files, encodeFileDoc(id, type, payload))
   }
 
+  /** Whether this client's link lets it edit the file, as only editors may. */
+  private edits(): boolean {
+    return this.opts.keys.access === 'edit'
+  }
+
+  /** Whether others apply what this client writes to the file with this id. */
+  private writes(id: number): boolean {
+    return mayWrite(this.opts.keys.access, this.files.get(id)?.comments ?? false)
+  }
+
   private handleDocUpdate = (update: Uint8Array, origin: unknown) => {
-    if (origin === this) return
+    if (origin === this || !this.edits()) return
+    this.fresh.wrote()
     this.sendSync((encoder) => syncProtocol.writeUpdate(encoder, update))
   }
 
+  // Sends this client's own state when it changes. Others' states, and their
+  // timing out, are each peer's own to follow.
   private handleAwarenessUpdate = (
     { added, updated, removed }: AwarenessChanges,
     origin: unknown,
   ) => {
     if (origin === this) return
-    this.sendAwareness([...added, ...updated, ...removed])
+    const self = this.doc.clientID
+    if ([...added, ...updated, ...removed].includes(self)) this.sendAwareness([self])
   }
 
-  // Someone new showed up: tell them about us right away instead of waiting for the
+  // Someone new showed up: tell them about us soon instead of waiting for the
   // periodic awareness renewal, and which files the room shares.
-  private handleAwarenessChange = ({ added }: AwarenessChanges, origin: unknown) => {
-    if (origin === this && added.length > 0) {
-      this.sendAwareness([this.doc.clientID])
-      if (this.manifest) this.send(MessageType.Files, this.manifest)
+  private handleAwarenessChange = ({ added, removed }: AwarenessChanges, origin: unknown) => {
+    // Peers that time out go too.
+    for (const id of removed) this.presence.forget(id)
+    if (origin === this && added.length > 0) this.announce()
+  }
+
+  /**
+   * Sends this client's state, at most every ANNOUNCE_EVERY_MS: newcomers
+   * that show up meanwhile get it once that has passed. The manifest goes
+   * with it, as offerManifest allows.
+   */
+  private announce(): void {
+    if (this.destroyed) return
+    const wait = this.announcedAt + ANNOUNCE_EVERY_MS - performance.now()
+    if (wait > 0) {
+      this.announceTimer ??= setTimeout(() => {
+        this.announceTimer = null
+        this.announce()
+      }, wait)
+      return
     }
+    this.announcedAt = performance.now()
+    this.sendAwareness([this.doc.clientID])
+    this.offerManifest()
   }
 
   private dropRemoteAwareness(): void {
@@ -584,7 +895,9 @@ export class RoomClient {
       return
     }
     // Numbered now, in the order frames are produced, which the chain keeps.
-    const plaintext = encodeFrame(this.sender, ++this.sent, encodeMessage(type, payload))
+    const counter = ++this.sent
+    const message = encodeMessage(type, payload)
+    const signer = this.opts.keys.signer
     const pacer = this.pacer
     this.sendChain = this.sendChain
       .then(async () => {
@@ -604,7 +917,12 @@ export class RoomClient {
           })
           this.wake = null
         }
-        const data = await encrypt(this.opts.key, plaintext)
+        const header = encodeFrame(this.sender, counter, new Uint8Array())
+        const signed = signer ? await signMessage(signer, header, message) : message
+        const data = await encrypt(
+          this.opts.keys.frameKey,
+          encodeFrame(this.sender, counter, signed),
+        )
         if (socket.readyState === OPEN) socket.send(data)
       })
       .catch((error) => this.opts.onError?.(error))
@@ -645,6 +963,15 @@ export class RoomClient {
   }
 }
 
+/** A frame read: the access it speaks for, whether its signer showed it is live, and where it came from. */
+interface ReadFrame {
+  access: Access
+  message: Message
+  vouched: boolean
+  sender: Uint8Array
+  counter: bigint
+}
+
 interface AwarenessChanges {
   added: number[]
   updated: number[]
@@ -668,6 +995,42 @@ function decodeKnown<T>(
     if (unknown.some((type) => error instanceof type)) return null
     throw error
   }
+}
+
+/** Whether a peer with this access writes a doc that commenters write if `comments`. */
+const mayWrite = (access: Access, comments: boolean) =>
+  access === 'edit' || (access === 'comment' && comments)
+
+/**
+ * Lets a sync message through only if it is a request for what the sender
+ * is missing (SyncStep1), unless the sender may write the doc: anyone in the
+ * room needs to receive the doc, but only its writers change it.
+ */
+function allowSync(payload: Uint8Array, writes: boolean, access: Access): void {
+  if (writes) return
+  let kind: number
+  try {
+    kind = decoding.readVarUint(decoding.createDecoder(payload))
+  } catch {
+    throw new NotAllowedError('a sync message', access)
+  }
+  if (kind !== syncProtocol.messageYjsSyncStep1) throw new NotAllowedError('an update', access)
+}
+
+/** Refuses a message that only editors may send, from anyone else. */
+function editorsOnly(what: string, access: Access): void {
+  if (access !== 'edit') throw new NotAllowedError(what, access)
+}
+
+/**
+ * Decodes an attachment message, of a kind only editors send unless it asks
+ * for attachments (`want`), which everyone needs to see the images.
+ */
+function readAttachment(payload: Uint8Array, access: Access): Attachment | null {
+  const attachment = decodeKnown(decodeAttachment, payload, UnknownAttachmentKindError)
+  if (attachment && attachment.kind !== 'want')
+    editorsOnly(`an attachment ${attachment.kind}`, access)
+  return attachment
 }
 
 /**

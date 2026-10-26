@@ -148,8 +148,20 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 		hostSeen: make(chan struct{}, 1),
 	}
 	var waited atomic.Bool // the host was away
+	// What the room's people are, and whether the host is among them, follows
+	// from their states and the access they speak with.
+	peopleChanged := func() {
+		if _, ok := hostState(aw, s.Client); ok {
+			select {
+			case room.hostSeen <- struct{}{}:
+			default:
+			}
+		}
+		s.reportPeople(opts.OnPeople)
+	}
 	s.Client, err = protocol.NewClient(protocol.ClientOptions{
 		URL:       wsURL,
+		RoomID:    roomID,
 		Key:       rawKey,
 		Doc:       doc,
 		Awareness: aw,
@@ -171,6 +183,7 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 		OnSynced:   func() { close(room.synced) },
 		OnError:    onError,
 		OnManifest: s.takeManifest,
+		OnAccess:   func(uint64) { peopleChanged() },
 	})
 	if err != nil {
 		_ = root.Close()
@@ -192,15 +205,7 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 			w.Schedule(s.content.render())
 		}
 	})
-	aw.OnChange(func(awareness.ChangeEvent) {
-		if _, ok := hostState(aw); ok {
-			select {
-			case room.hostSeen <- struct{}{}:
-			default:
-			}
-		}
-		s.reportPeople(opts.OnPeople)
-	})
+	aw.OnChange(func(awareness.ChangeEvent) { peopleChanged() })
 	s.stopAlive = keepAlive(aw)
 	s.Client.Connect()
 
@@ -225,7 +230,7 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 		_ = removeTemp(temp)
 		return nil, err
 	}
-	host, err := room.wait(ctx, aw, opts.Timeout)
+	host, err := room.wait(ctx, aw, s.Client, opts.Timeout)
 	if err != nil {
 		return fail(err)
 	}
@@ -336,14 +341,14 @@ func (r *roomWait) canceled(ctx context.Context) error {
 
 // wait waits for a host to show up in the room, and then for the room's
 // content, both within timeout. It returns the host's awareness state.
-func (r *roomWait) wait(ctx context.Context, aw *awareness.Awareness, timeout time.Duration) (map[string]any, error) {
+func (r *roomWait) wait(ctx context.Context, aw *awareness.Awareness, client *protocol.Client, timeout time.Duration) (map[string]any, error) {
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
 	var host map[string]any
 	for host == nil {
 		select {
 		case <-r.hostSeen:
-			host, _ = hostState(aw)
+			host, _ = hostState(aw, client)
 		case <-r.closed:
 			return nil, r.endedErr()
 		case <-deadline.C:
@@ -437,18 +442,26 @@ func (s *Session) reportPeople(onPeople func([]string)) {
 	}
 	var names []string
 	for id, st := range s.awareness.GetStates() {
-		if id != s.awareness.ClientID() {
-			names = append(names, displayName(st.State))
+		if id == s.awareness.ClientID() {
+			continue
 		}
+		name := displayName(st.State)
+		// What a participant may do follows from the link it joined with.
+		if access, ok := s.Client.AccessOf(id); ok && access != protocol.AccessEdit {
+			name += " (" + access.String() + " only)"
+		}
+		names = append(names, name)
 	}
 	sort.Strings(names)
 	onPeople(names)
 }
 
-// hostState returns the awareness state of the host, if one is in the room.
-func hostState(aw *awareness.Awareness) (map[string]any, bool) {
+// hostState returns the awareness state of the host, if one is in the room:
+// one that came signed by an editor (protocol.Client.AccessOf), since anyone
+// can say they are the host.
+func hostState(aw *awareness.Awareness, client *protocol.Client) (map[string]any, bool) {
 	for id, st := range aw.GetStates() {
-		if id == aw.ClientID() {
+		if access, _ := client.AccessOf(id); id == aw.ClientID() || access != protocol.AccessEdit {
 			continue
 		}
 		if role, _ := st.State["role"].(string); role == "host" {
@@ -474,10 +487,14 @@ func parseShareURL(link string) (wsURL, roomID string, key []byte, err error) {
 	if u.Fragment == "" {
 		return "", "", nil, errors.New("the link has no key after #; copy the whole link, including the part after #")
 	}
-	key, err = protocol.DecodeKey(u.Fragment)
+	secrets, err := protocol.ParseFragment(u.Fragment)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("the link's key after # is not valid: %w", err)
+		return "", "", nil, errors.New("the link's key after # is not valid")
 	}
+	if secrets.Access != protocol.AccessEdit {
+		return "", "", nil, fmt.Errorf("this link is %s only: open it in a browser", secrets.Access)
+	}
+	key = secrets.Edit
 	wsURL = "ws" + strings.TrimPrefix(u.Scheme, "http") + "://" + u.Host + "/api/rooms/" + id + "/ws"
 	return wsURL, id, key, nil
 }

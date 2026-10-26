@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -174,10 +175,11 @@ func TestUnreadableMetadataIsLeftAlone(t *testing.T) {
 		t.Fatalf("reason %q", x.Reason)
 	}
 	g := joinFiles(t, f.relay, f.session.URL)
-	// A room that shares one file and no metadata sends no manifest.
-	prototest.WaitFor(t, wait, func() bool { return g.String() == "a\n" }, "the text")
-	if len(g.files()) != 0 {
-		t.Fatalf("manifest %+v", g.files())
+	// The manifest lists the file alone, with no metadata (always sent, for
+	// comment-only and read-only links).
+	prototest.WaitFor(t, wait, func() bool { return g.String() == "a\n" && len(g.files()) == 1 }, "the text and its manifest")
+	if files := g.files(); files[0].Format == protocol.FormatMeta || files[0].ID != 0 {
+		t.Fatalf("manifest %+v", files)
 	}
 	if err := f.session.Stop(); err != nil {
 		t.Fatal(err)
@@ -459,4 +461,23 @@ func TestMovingCommentAnchorsSaveDuringContinuousEdits(t *testing.T) {
 		}
 	}
 	t.Fatal("continuous edits kept the moved comment anchor off disk")
+}
+
+func TestLinksOfferCommentOnlyWhileAFileOffersComments(t *testing.T) {
+	for _, project := range []bool{true, false} {
+		f := setup(t, "x\n", setupOpts{project: project})
+		u, _ := url.Parse(f.session.URL)
+		keys, err := protocol.EditKeys(mustDecodeKey(t, u.Fragment), strings.TrimPrefix(u.Path, "/r/"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		base, _, _ := strings.Cut(f.session.URL, "#")
+		want := []Link{{protocol.AccessRead, base + "#" + keys.Fragments[protocol.AccessRead]}}
+		if project {
+			want = append([]Link{{protocol.AccessComment, base + "#" + keys.Fragments[protocol.AccessComment]}}, want...)
+		}
+		if got := f.session.Links(); !reflect.DeepEqual(got, want) {
+			t.Errorf("project %v: Links() = %+v, want %+v", project, got, want)
+		}
+	}
 }

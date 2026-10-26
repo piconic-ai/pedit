@@ -27,23 +27,41 @@ To run no code from the relay:
 
 ## Keys
 
-- **Room key.** The host's `pedit` makes 32 random bytes for every room it
-  starts (`GenerateKey` in `internal/protocol/key.go`, from `crypto/rand`,
-  called in `internal/session/session.go` after the relay has made the room).
-  The key travels only in the link's fragment: `/r/<room-id>#<key>`, base64url.
+- **Edit secret.** The host's `pedit` makes 32 random bytes for every room
+  it starts (`GenerateEditSecret` in `internal/protocol/access.go`, from
+  `crypto/rand`, called in `internal/session/session.go` after the relay has
+  made the room). It travels only in the link's fragment:
+  `/r/<room-id>#<secret>`, base64url.
+- **Keys of the room.** HKDF-SHA256 with an empty salt derives, one way:
+  from the edit secret, the editors' Ed25519 signing key (info
+  `pedit v5 edit sign`) and the comment secret (`pedit v5 comment`); from
+  the comment secret, the commenters' Ed25519 key (`pedit v5 comment sign`)
+  and the read secret (`pedit v5 read`). The frame key is derived from the
+  read secret with info `pedit v5 frame`, the room ID and both verifying
+  keys. Comment-only and read-only links carry the lower secrets and the
+  verifying keys they cannot derive (#122).
 - **Frames.** Every message (document updates, cursors and names, attachment
-  and canvas messages) is encrypted with AES-256-GCM under the room key itself:
-  the raw link key, not passed through HKDF (`packages/protocol/src/key.ts`,
-  `internal/protocol/cipher.go`). Each frame gets a random 96-bit IV and is
-  sent as `iv || ciphertext`, the 128-bit tag at the end, with no additional
-  authenticated data. Inside, before the message, are the sender's random
-  16-byte ID and the number of the frame, counted by each sender
-  (`packages/protocol/src/frame.ts`, `internal/protocol/message.go`).
-- **Attachment keys.** HKDF-SHA256 of the room key, empty salt. Info
-  `pedit blob enc v1` gives the AES-256-GCM key for image bodies, and
-  `pedit blob id v1` the HMAC-SHA256 key that names each stored image from its
+  and canvas messages) is encrypted with AES-256-GCM under the frame key
+  (`packages/protocol/src/cipher.ts`, `internal/protocol/cipher.go`). Each
+  frame gets a random 96-bit IV and is sent as `iv || ciphertext`, the
+  128-bit tag at the end, with no additional authenticated data. Inside,
+  before the message, are the sender's random 16-byte ID and the number of
+  the frame, counted by each sender (`packages/protocol/src/frame.ts`,
+  `internal/protocol/message.go`). Editors and commenters sign the message
+  with Ed25519, over the ID and number too; every peer checks the signature
+  and applies a frame only as far as the signer's link allows
+  (`signed.ts`, `signed.go`). Peers drop a signed frame whose number is not
+  above the last from its sender. A peer that has just joined has no
+  number yet, so it takes a signer's frames only after the signer answers
+  the random nonce the peer sent on connecting: anyone holding a link can
+  decrypt and keep frames, but cannot have an old one taken as new
+  (`fresh.ts`, `fresh.go`).
+- **Attachment keys.** HKDF-SHA256 of the frame key, empty salt. Info
+  `pedit blob enc v2` gives the AES-256-GCM key for image bodies, and
+  `pedit blob id v2` the HMAC-SHA256 key that names each stored image from its
   content hash. Receivers check decrypted images against that hash.
-- **Admission token.** HKDF-SHA256 of the room key, info `pedit admission v1`.
+- **Admission token.** HKDF-SHA256 of the frame key, info
+  `pedit v5 read admission`.
   Clients send it to the relay to connect to the room and to read or write its
   images. The host's first connection registers it; the relay keeps only
   its SHA-256, and deletes that when the host leaves, two minutes after its
@@ -92,22 +110,25 @@ AES-GCM rejects a frame made or altered without the key.
 
 ## What pedit does not provide
 
-- **No authentication between participants.** Names, avatars and the host
-  badge come from each peer's own presence state. Anyone with the link can
-  claim any name, or to be the host, in what others see, and can send any
-  edit. The same goes for the list of a room's files: anyone with the link
-  can send one, and browsers show it. The host never acts on a list or a path
+- **No authentication between participants of one access.** Names, avatars
+  and the host badge come from each peer's own presence state. Anyone with an
+  edit link can claim any name, or to be the host, in what others see, and
+  can send any edit. The same goes for the list of a room's files: anyone
+  with an edit link can send one, and browsers show it. Signatures tell only
+  which kind of link sent a frame, so someone with a lower link can claim
+  another's name, shown as comment only or read only, but not pass for an
+  editor. The host never acts on a list or a path
   from the room, and a guest from the command line names its copies itself,
   so a path from the room is only a label there. Frames carry no authenticated sender: the Yjs client ID in an update is
   one each peer picks for itself.
 - **No forward secrecy.** A room has one key, never rotated. Whoever records
   the traffic and later gets the link can decrypt all of it. Every run of
   `pedit <file>` makes a new key.
-- **The link is a bearer capability.** Anyone holding it can read and edit
-  until the host ends the session. One person's access cannot be revoked.
-- **No read-only link yet.** Every link can edit.
-  [#122](https://github.com/piconic-ai/pedit/issues/122) plans comment-only
-  links.
+- **The link is a bearer capability.** Anyone holding it can do what it
+  allows until the host ends the session, and derive the links below it. One
+  person's access cannot be revoked.
+- **Comments are not checked by author.** Anyone with a comment-only or edit
+  link can change or delete any comment.
 
 ## Where a link can leak
 

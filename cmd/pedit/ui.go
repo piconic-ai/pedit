@@ -153,6 +153,7 @@ func (u *ui) sharing(files []string, url string, copied, scratch bool) {
 	lines = append(lines, "", u.dim("Press Ctrl+C when you are done. "+saved))
 	if u.resumable {
 		lines = append(lines, u.dim("To share another file in this room, type its path and press Enter."))
+		lines = append(lines, u.dim("Press Ctrl+L for links that can only comment or read."))
 	}
 	lines = append(lines, "")
 	if scratch {
@@ -329,6 +330,19 @@ func (u *ui) aboveLocked(lines ...string) {
 // added says that a file typed in is now shared in the room.
 func (u *ui) added(path string) {
 	u.above(u.green("✓") + " Sharing " + printable(path) + " too.")
+}
+
+// links shows the links with less access than the host's, for Ctrl+L.
+func (u *ui) links(links []session.Link) {
+	lines := []string{"", "Links with less access:"}
+	for _, l := range links {
+		label := "Read only   "
+		if l.Access == protocol.AccessComment {
+			label = "Comment only"
+		}
+		lines = append(lines, "  "+label+"  "+u.link(l.URL))
+	}
+	u.above(append(lines, "")...)
 }
 
 // notAdded says why a file typed in is not shared.

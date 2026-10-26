@@ -21,6 +21,8 @@ const (
 	edited edit = iota
 	entered
 	interrupted
+	// linksAsked is Ctrl+L, which shows the links with less access.
+	linksAsked
 )
 
 // maxEscape bounds an escape sequence pedit waits to see the end of.
@@ -34,8 +36,9 @@ type editor struct {
 	pending []byte
 }
 
-// feed takes the bytes typed. on hears each Enter with the line entered, and
-// Ctrl+C; it hears edited once, after the keys that changed the line.
+// feed takes the bytes typed. on hears each Enter with the line entered,
+// Ctrl+C and Ctrl+L; it hears edited once, after the keys that changed the
+// line.
 // Arrows and other keys that send escape sequences are ignored.
 func (e *editor) feed(b []byte, on func(edit, string)) {
 	data := append(e.pending, b...)
@@ -83,6 +86,8 @@ func (e *editor) key(data []byte) (int, edit, bool) {
 		return 1, entered, true
 	case c == 3: // Ctrl+C
 		return 1, interrupted, true
+	case c == 12: // Ctrl+L
+		return 1, linksAsked, true
 	case c == 127 || c == 8: // Backspace
 		if len(e.line) == 0 {
 			return 1, edited, false
@@ -152,12 +157,13 @@ func escapeLength(b []byte) (int, bool) {
 // readTyped reads what the host types into a raw terminal, until in ends or
 // ctx is done. The line goes to the ui as it changes. An empty line calls
 // resume and any other is the path of a file to add, as with readLines;
-// Ctrl+C calls interrupt, since a raw terminal sends no signal for it.
+// Ctrl+C calls interrupt, since a raw terminal sends no signal for it, and
+// Ctrl+L calls links.
 //
 // A read may end in the middle of a key, so an Esc last in a read waits for
 // the rest of its sequence; when nothing follows within escWait, it was the
 // Esc key alone, which does nothing.
-func readTyped(ctx context.Context, in io.Reader, out *ui, resume func(), add func(path string), interrupt func()) {
+func readTyped(ctx context.Context, in io.Reader, out *ui, resume func(), add func(path string), interrupt, links func()) {
 	chunks := make(chan []byte)
 	go func() {
 		defer close(chunks)
@@ -190,6 +196,8 @@ func readTyped(ctx context.Context, in io.Reader, out *ui, resume func(), add fu
 			}
 		case interrupted:
 			interrupt()
+		case linksAsked:
+			links()
 		}
 	}
 	for {

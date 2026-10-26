@@ -125,6 +125,25 @@ Comments are kept for files inside the project: the directory of
 an older pedit, does not see them. See
 [the design](docs/design/comments.md) for how they are anchored and checked.
 
+### Comment-only and read-only links
+
+The link pedit prints lets people edit. To let someone only comment, or only
+read, press Ctrl+L while sharing, or choose Share in the browser's header, and
+send one of these instead:
+
+```text
+  Links with less access:
+    Comment only  https://edit.piconic.ai/r/<room-id>#c.<key>
+    Read only     https://edit.piconic.ai/r/<room-id>#r.<key>
+```
+
+Someone with a comment-only link reads the files and writes comments, and
+someone with a read-only link reads both. They are listed among the
+participants as comment only or read only. A comment-only link is offered while
+some file keeps comments. Each link also gives the ones below it, never the
+ones above, and every peer checks what the others may do, not the relay. These
+links open in a browser; the command line joins with an edit link only.
+
 ## Why pedit?
 
 Local files work naturally with coding agents and your own editor. Keeping
@@ -247,10 +266,13 @@ Edits in the opposite direction follow the same process.
   their own, end to end like edits, and only the host saves them, in
   `.pedit/meta/`; commit that only if you want them in the repository. The
   editor lets you change or delete only your own comments, but anyone with
-  the link could change or delete any comment.
+  an edit or comment-only link could change or delete any comment.
 - **The link grants editing access.** Anyone with the full link can read and
-  edit during the session. Share it only with people you trust. Closing a
-  session does not erase copies participants have made.
+  edit during the session. Share it only with people you trust, or send a
+  [comment-only or read-only link](#comment-only-and-read-only-links), which
+  cannot change the files: editors sign what they send, and every peer drops
+  what a link cannot sign. Closing a session does not erase copies
+  participants have made.
 - **Room IDs alone do not grant access.** Clients derive a separate admission
   token from the fragment key. The relay checks this token before accepting
   connections or attachment requests; the token cannot decrypt content.

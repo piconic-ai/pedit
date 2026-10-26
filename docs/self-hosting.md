@@ -136,7 +136,8 @@ Cloudflare dashboard → your Worker → Settings → Variables and Secrets):
 
 | Variable | Meaning | Default |
 | --- | --- | --- |
-| `ROOM_GUESTS` | Guests at once, the host not counted (at most 31) | `31` |
+| `ROOM_GUESTS` | Guests with an edit link at once, the host not counted (at most 31) | `31` |
+| `ROOM_READERS` | Guests with a comment-only or read-only link at once, apart from the others (at most 31) | `ROOM_GUESTS` |
 | `BLOB_MAX_BYTES` | One image, in bytes | `10485760` |
 | `BLOB_QUOTA_BYTES` | All images of a session, in bytes | `104857600` |
 | `BLOB_QUOTA_COUNT` | All images of a session, in number | `500` |

@@ -3,8 +3,10 @@ package protocol
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/rand/v2"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -79,8 +81,13 @@ func (s Status) Final() bool {
 
 type ClientOptions struct {
 	// URL is the WebSocket URL of the room. It must never contain the key.
-	URL       string
+	URL string
+	// RoomID is the id of the room, which its keys are bound to (access.go).
+	RoomID string
+	// Key is an edit secret, the link of an editor; Link, when set, is the
+	// link the Client joins with instead, of any access.
 	Key       []byte
+	Link      *LinkSecrets
 	Doc       *crdt.Doc
 	Awareness *awareness.Awareness
 	// Header holds extra handshake headers.
@@ -110,6 +117,10 @@ type ClientOptions struct {
 	// OnCanvas is called with each canvas message from the room, on the
 	// connection's read loop: return quickly.
 	OnCanvas func(CanvasMessage)
+	// OnAccess is called when a peer's access rises (AccessOf), on the
+	// connection's read loop: return quickly. Its state may be the same as
+	// before, so the Awareness says nothing of it.
+	OnAccess func(id uint64)
 
 	// In a room that shares several files (room_files.go), these are called
 	// on the connection's read loop too: return quickly. OnManifest gets
@@ -129,9 +140,16 @@ type ClientOptions struct {
 // (to push what others are missing) and its awareness state. Every peer answers
 // SyncStep1 with SyncStep2. All frames are end-to-end encrypted.
 //
+// What a peer may change follows from its link (access.go): editors sign
+// their frames with the editors' key, commenters with the commenters' key,
+// and readers sign nothing. Every peer applies a frame only as far as the
+// key that signed it allows, and a Client sends only what its own access
+// lets others apply.
+//
 // Changes applied from the room carry the Client as their origin.
 type Client struct {
 	opts   ClientOptions
+	keys   *RoomKeys
 	cipher *Cipher
 	doc    *crdt.Doc
 	aw     *awareness.Awareness
@@ -146,6 +164,16 @@ type Client struct {
 	sendMu sync.Mutex
 	sent   uint64
 	guard  replayGuard
+	// fresh is the Client's side of the handshake that shows peers are
+	// live (fresh.go).
+	fresh freshness
+
+	// presence is the access each awareness client ID spoke with (presence.go).
+	presence presence
+	// When the Client last sent its state to newcomers, and the timer that
+	// sends it again; under mu.
+	announced     time.Time
+	announceTimer *time.Timer
 
 	mu        sync.Mutex
 	status    Status
@@ -157,6 +185,10 @@ type Client struct {
 	unsubs    []func()
 	files     map[uint64]*fileDoc
 	manifest  []byte // the encoded FilesManifest, when this Client set one
+	// When the manifest was last sent to someone who asked for file 0, and
+	// the timer that sends it again (room_files.go).
+	manifestAt    time.Time
+	manifestTimer *time.Timer
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -164,11 +196,15 @@ type Client struct {
 }
 
 func NewClient(opts ClientOptions) (*Client, error) {
-	cipher, err := NewCipher(opts.Key)
+	link := LinkSecrets{Access: AccessEdit, Edit: opts.Key}
+	if opts.Link != nil {
+		link = *opts.Link
+	}
+	keys, err := DeriveRoomKeys(link, opts.RoomID)
 	if err != nil {
 		return nil, err
 	}
-	token, err := AdmissionToken(opts.Key)
+	cipher, err := NewCipher(keys.FrameKey)
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +212,17 @@ func NewClient(opts ClientOptions) (*Client, error) {
 	if opts.Header == nil {
 		opts.Header = http.Header{}
 	}
+	// Editors show the relay their own token, which keeps them places of
+	// their own and lets them add images; the host registers the readers'
+	// as well.
+	token := keys.ReadAdmission
+	if keys.Access == AccessEdit {
+		token = keys.EditAdmission
+	}
 	opts.Header.Set("Sec-WebSocket-Protocol", SocketProtocol+", "+AdmissionProtocolPrefix+token)
+	if opts.Host {
+		opts.Header.Set(ReadAdmissionHeader, keys.ReadAdmission)
+	}
 	if opts.Dial == nil {
 		opts.Dial = DialWebSocket
 	}
@@ -192,6 +238,7 @@ func NewClient(opts ClientOptions) (*Client, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &Client{
 		opts:   opts,
+		keys:   keys,
 		cipher: cipher,
 		doc:    opts.Doc,
 		aw:     opts.Awareness,
@@ -208,6 +255,13 @@ func NewClient(opts ClientOptions) (*Client, error) {
 	}
 	return c, nil
 }
+
+// Keys returns what the Client's link gives in its room.
+func (c *Client) Keys() *RoomKeys { return c.keys }
+
+// edits tells whether the Client's link lets it edit the file, as only
+// editors may.
+func (c *Client) edits() bool { return c.keys.Access == AccessEdit }
 
 // Status returns the current connection state.
 func (c *Client) Status() Status {
@@ -288,11 +342,20 @@ func (c *Client) Destroy() {
 
 	c.mu.Lock()
 	c.destroyed = true
+	if c.manifestTimer != nil {
+		c.manifestTimer.Stop()
+	}
+	if c.announceTimer != nil {
+		c.announceTimer.Stop()
+	}
 	out := c.out
 	c.out = nil
 	started := c.started
 	done := c.done
 	c.mu.Unlock()
+	// Without c.mu: what the Client holds is sent under its own lock, and
+	// sending takes c.mu (fresh.go).
+	c.fresh.stop()
 
 	for _, unsub := range c.unsubs {
 		unsub()
@@ -366,20 +429,7 @@ func (c *Client) serve(conn Conn) error {
 	}
 	c.out = out
 	c.mu.Unlock()
-
-	// The whole state goes to the room on connecting. When it does not fit a
-	// frame, send nothing: a SyncStep1 alone would have every peer answer
-	// with a state as large, which they could not send either.
-	step2 := syncStep2(c.doc)
-	if FrameBytes(len(step2)) > MaxFrameBytes {
-		out.fail(ErrFrameTooLarge)
-	} else {
-		c.setStatus(StatusConnected)
-		c.send(MessageSync, ysync.EncodeSyncStep1(c.doc))
-		c.send(MessageSync, step2)
-		c.sendAwareness([]uint64{c.aw.ClientID()})
-		c.syncFiles()
-	}
+	c.greet(out)
 
 	for {
 		data, err := conn.Read(c.ctx)
@@ -407,6 +457,39 @@ func (c *Client) serve(conn Conn) error {
 	}
 }
 
+// greet sends the room what a Client sends on connecting. The whole state
+// goes to the room, from a peer that may write it. When it does not fit a
+// frame, send nothing: a SyncStep1 alone would have every peer answer with
+// a state as large, which they could not send either.
+func (c *Client) greet(out *outbox) {
+	var step2 []byte
+	c.fresh.connected()
+	if c.edits() {
+		step2 = syncStep2(c.doc)
+		if len(c.doc.StateVector()) > 0 {
+			c.fresh.wrote()
+		}
+	}
+	if FrameBytes(len(step2)) > MaxFrameBytes {
+		out.fail(ErrFrameTooLarge)
+		return
+	}
+	// Before anyone hears the Client is connected, and sends once. Signers
+	// show they are live anew on every connection: what they sent while
+	// this one was down could be sent again now.
+	c.guard.forgetLive()
+	c.unsettle()
+	c.setStatus(StatusConnected)
+	// First, so that peers answer it before what they send in reply.
+	c.sendFresh()
+	c.send(MessageSync, ysync.EncodeSyncStep1(c.doc))
+	if c.edits() {
+		c.send(MessageSync, step2)
+	}
+	c.sendAwareness([]uint64{c.aw.ClientID()})
+	c.syncFiles()
+}
+
 // relaySignal takes the relay's own word on the host.
 func (c *Client) relaySignal(sig Signal) {
 	c.mu.Lock()
@@ -420,45 +503,80 @@ func (c *Client) relaySignal(sig Signal) {
 	}
 }
 
+// receive decrypts a frame, checks its signature, takes it once, and
+// applies its message as far as the access it speaks for allows.
 func (c *Client) receive(data []byte) error {
 	plaintext, err := c.cipher.Decrypt(data)
 	if err != nil {
 		return err
 	}
-	from, counter, message, err := DecodeFrame(plaintext)
+	from, counter, signed, err := DecodeFrame(plaintext)
 	if err != nil {
 		return err
 	}
-	if !c.guard.accept(from, counter) {
+	if !c.guard.foreign(from) {
+		return ErrReplayedFrame
+	}
+	access, message, err := c.keys.openMessage(plaintext[:frameHeaderBytes], signed)
+	if err != nil {
+		return err
+	}
+	// A signer that has not shown it is live yet (fresh.go) may be one the
+	// relay kept from before: its counters prove nothing yet.
+	vouched := access == AccessRead || c.guard.known(access, from)
+	if vouched && access != AccessRead && !c.guard.accept(access, from, counter) {
 		return ErrReplayedFrame
 	}
 	t, payload, err := DecodeMessage(message)
 	if errors.Is(err, ErrUnknownMessageType) {
-		// A newer peer may send message types we do not know yet.
+		// A newer peer may send message types we do not know yet; a signed
+		// message inside another is one of those.
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	switch t {
-	case MessageFiles:
-		return c.receiveFiles(payload)
-	case MessageAttachment:
-		return c.receiveAttachment(payload)
-	case MessageCanvas:
-		return c.receiveCanvas(payload)
-	case MessageSync:
-		return c.receiveSync(payload)
+	if t == MessageFresh {
+		return c.receiveFresh(access, vouched, from, counter, payload)
 	}
-	return c.receiveAwareness(payload)
+	if vouched {
+		return c.dispatch(access, t, payload)
+	}
+	// Meanwhile what it sends counts as a reader's: requests only, which
+	// change nothing when sent again. Its state comes once it is live.
+	if t == MessageAwareness {
+		return nil
+	}
+	if err := c.dispatch(AccessRead, t, payload); !errors.Is(err, ErrNotAllowed) {
+		return err
+	}
+	return nil
 }
 
-func (c *Client) receiveAttachment(payload []byte) error {
+// dispatch applies a message as far as the access it speaks for allows.
+func (c *Client) dispatch(access Access, t MessageType, payload []byte) error {
+	switch t {
+	case MessageFiles:
+		return c.receiveFiles(access, payload)
+	case MessageAttachment:
+		return c.receiveAttachment(access, payload)
+	case MessageCanvas:
+		return c.receiveCanvas(access, payload)
+	case MessageSync:
+		return c.receiveSync(access, payload)
+	}
+	return c.receiveAwareness(access, payload)
+}
+
+func (c *Client) receiveAttachment(access Access, payload []byte) error {
 	a, err := DecodeAttachment(payload)
 	if errors.Is(err, ErrUnknownAttachmentKind) {
 		return nil
 	}
 	if err != nil {
+		return err
+	}
+	if err := allowAttachment(a, access); err != nil {
 		return err
 	}
 	if c.opts.OnAttachment != nil {
@@ -467,7 +585,10 @@ func (c *Client) receiveAttachment(payload []byte) error {
 	return nil
 }
 
-func (c *Client) receiveCanvas(payload []byte) error {
+func (c *Client) receiveCanvas(access Access, payload []byte) error {
+	if err := editorsOnly("a canvas message", access); err != nil {
+		return err
+	}
 	m, err := DecodeCanvas(payload)
 	if errors.Is(err, ErrUnknownCanvasKind) {
 		return nil
@@ -481,28 +602,89 @@ func (c *Client) receiveCanvas(payload []byte) error {
 	return nil
 }
 
-func (c *Client) receiveSync(payload []byte) error {
+func (c *Client) receiveSync(access Access, payload []byte) error {
+	if err := allowSync(payload, access == AccessEdit, access); err != nil {
+		return err
+	}
 	c.applying.Lock()
-	reply, err := ysync.ApplySyncMessage(c.doc, payload, c)
+	reply, err := applySync(c.doc, payload, c)
 	c.applying.Unlock()
 	if err != nil {
 		return err
 	}
-	if len(reply) > 0 {
+	if len(reply) > 0 && c.edits() {
 		c.send(MessageSync, reply)
 	}
-	if kind, _, err := ysync.ReadSyncMessage(payload); err == nil && kind == ysync.MsgSyncStep2 {
+	kind, _, err := ysync.ReadSyncMessage(payload)
+	switch {
+	case err == nil && kind == ysync.MsgSyncStep2:
 		c.markSynced()
+	case err == nil && kind == ysync.MsgSyncStep1:
+		c.offerManifest()
 	}
 	return nil
 }
 
-func (c *Client) receiveAwareness(payload []byte) error {
+// applySync applies a sync message to doc, and turns a panic in ygo into an
+// error: anyone in the room may send a SyncStep1, and the host's process is
+// the session.
+func applySync(doc *crdt.Doc, payload []byte, origin any) (reply []byte, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			reply, err = nil, fmt.Errorf("sync message makes ygo panic: %v", r)
+		}
+	}()
+	return ysync.ApplySyncMessage(doc, payload, origin)
+}
+
+// receiveAwareness applies a peer's state by the rules in presence.go.
+func (c *Client) receiveAwareness(access Access, payload []byte) (err error) {
 	update, err := encoding.NewDecoder(payload).ReadVarBytes()
 	if err != nil {
 		return err
 	}
-	return c.aw.ApplyUpdate(update, c)
+	e, err := decodeAwarenessEntry(update)
+	if err != nil {
+		return err
+	}
+	if e.id == c.aw.ClientID() {
+		return notAllowed("a state of this client", access)
+	}
+	if access == AccessRead && e.clock > maxWireClock {
+		return notAllowed("an awareness clock out of range", access)
+	}
+	unsigned := 0
+	if access == AccessRead {
+		unsigned = c.unsignedStates()
+	}
+	before, known := c.presence.of(e.id)
+	_, active := c.aw.GetStates()[e.id]
+	if !c.presence.admit(e.id, access, active, unsigned) {
+		return notAllowed("awareness of a client heard from above", access)
+	}
+	if access != AccessRead {
+		meta, _ := c.aw.Meta(e.id)
+		e.clock = meta.Clock + 1
+	}
+	if err := c.applyAwarenessEntry(e); err != nil {
+		return err
+	}
+	if _, ok := c.aw.GetStates()[e.id]; !ok {
+		c.presence.forget(e.id)
+	}
+	if known && before != access && c.opts.OnAccess != nil {
+		c.opts.OnAccess(e.id)
+	}
+	return nil
+}
+
+func (c *Client) applyAwarenessEntry(e awarenessEntry) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("awareness makes ygo panic: %v", r)
+		}
+	}()
+	return c.aw.ApplyUpdate(e.encode(), c)
 }
 
 // markSynced reports the first full state received from a peer, once.
@@ -529,27 +711,63 @@ func syncStep2(doc *crdt.Doc) []byte {
 }
 
 func (c *Client) handleDocUpdate(update []byte, origin any) {
-	if origin == c {
+	if origin == c || !c.edits() {
 		return
 	}
+	c.fresh.wrote()
 	c.send(MessageSync, ysync.EncodeUpdate(update))
 }
 
+// handleAwarenessUpdate sends the Client's own state when it changes. Others'
+// states, and their timing out, are each peer's own to follow.
 func (c *Client) handleAwarenessUpdate(ev awareness.UpdateEvent) {
 	if ev.Origin == c {
 		return
 	}
-	ids := append(append(append([]uint64{}, ev.Added...), ev.Updated...), ev.Removed...)
-	c.sendAwareness(ids)
+	self := c.aw.ClientID()
+	if slices.Contains(ev.Added, self) || slices.Contains(ev.Updated, self) || slices.Contains(ev.Removed, self) {
+		c.sendAwareness([]uint64{self})
+	}
 }
 
-// Someone new showed up: tell them about us right away instead of waiting for the
+// Someone new showed up: tell them about us soon instead of waiting for the
 // periodic awareness renewal, and which files the room shares.
 func (c *Client) handleAwarenessChange(ev awareness.ChangeEvent) {
-	if ev.Origin == c && len(ev.Added) > 0 {
-		c.sendAwareness([]uint64{c.aw.ClientID()})
-		c.sendManifest()
+	// Peers that time out go too.
+	for _, id := range ev.Removed {
+		c.presence.forget(id)
 	}
+	if ev.Origin == c && len(ev.Added) > 0 {
+		c.announce()
+	}
+}
+
+// announce sends the Client's state, at most every announceEvery: newcomers
+// that show up meanwhile get it once that has passed. The manifest goes with
+// it, as offerManifest allows.
+func (c *Client) announce() {
+	c.mu.Lock()
+	if c.destroyed {
+		c.mu.Unlock()
+		return
+	}
+	wait := time.Until(c.announced.Add(announceEvery))
+	if wait > 0 {
+		if c.announceTimer == nil {
+			c.announceTimer = time.AfterFunc(wait, func() {
+				c.mu.Lock()
+				c.announceTimer = nil
+				c.mu.Unlock()
+				c.announce()
+			})
+		}
+		c.mu.Unlock()
+		return
+	}
+	c.announced = time.Now()
+	c.mu.Unlock()
+	c.sendAwareness([]uint64{c.aw.ClientID()})
+	c.offerManifest()
 }
 
 func (c *Client) dropRemoteAwareness() {
@@ -568,7 +786,7 @@ func (c *Client) SendAttachment(a Attachment) error {
 	if err != nil {
 		return err
 	}
-	c.send(MessageAttachment, payload)
+	c.sendOnce(MessageAttachment, payload)
 	return nil
 }
 
@@ -579,7 +797,7 @@ func (c *Client) SendCanvas(m CanvasMessage) error {
 	if err != nil {
 		return err
 	}
-	c.send(MessageCanvas, payload)
+	c.sendOnce(MessageCanvas, payload)
 	return nil
 }
 
@@ -607,7 +825,12 @@ func (c *Client) send(t MessageType, payload []byte) {
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
 	c.sent++
-	out.push(c.cipher.Encrypt(EncodeFrame(c.guard.self, c.sent, EncodeMessage(t, payload))))
+	message := EncodeMessage(t, payload)
+	if c.keys.Signer != nil {
+		header := EncodeFrame(c.guard.self, c.sent, nil)
+		message = signMessage(c.keys.Signer, c.keys.Access, header, message)
+	}
+	out.push(c.cipher.Encrypt(EncodeFrame(c.guard.self, c.sent, message)))
 }
 
 func (c *Client) setStatus(s Status) {

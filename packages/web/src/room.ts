@@ -1,3 +1,4 @@
+import { type Access, FRAGMENT_PATTERN } from '@pedit/protocol'
 import { safeAvatar } from './identity.ts'
 
 export interface RoomLocation {
@@ -5,11 +6,14 @@ export interface RoomLocation {
   key: string
 }
 
-/** Reads `/r/<id>#<key>`. The key lives only in the fragment, which browsers never send. */
+/**
+ * Reads `/r/<id>#<key>`: an edit, comment-only or read-only link (access.ts).
+ * The key lives only in the fragment, which browsers never send.
+ */
 export function parseRoomLocation(loc: { pathname: string; hash: string }): RoomLocation | null {
   const match = /^\/r\/([A-Za-z0-9_-]{22})\/?$/.exec(loc.pathname)
   const key = loc.hash.replace(/^#/, '')
-  if (!match?.[1] || !/^[A-Za-z0-9_-]{43}$/.test(key)) return null
+  if (!match?.[1] || !FRAGMENT_PATTERN.test(key)) return null
   return { id: match[1], key }
 }
 
@@ -26,6 +30,8 @@ export interface Participant {
   avatar?: string
   isHost: boolean
   isSelf: boolean
+  /** What the link they joined with lets them do, when known. */
+  access?: Access
 }
 
 type State = { [key: string]: unknown }
@@ -57,12 +63,22 @@ export function sanitizeUser(state: State, clientId: number): boolean {
   return true
 }
 
-export function participants(states: Map<number, State>, selfId: number): Participant[] {
+/**
+ * The people in the room. With `accessOf` (RoomClient.accessOf), each says
+ * what the link they joined with lets them do, and only an editor's state
+ * can make its peer the host: anyone can say they are the host.
+ */
+export function participants(
+  states: Map<number, State>,
+  selfId: number,
+  accessOf?: (clientId: number) => Access | undefined,
+): Participant[] {
   const list: Participant[] = []
   for (const [clientId, state] of states) {
     const user = (state.user ?? {}) as { name?: unknown; color?: unknown; avatar?: unknown }
     const name = typeof user.name === 'string' ? user.name : state.name
-    const isHost = state.role === 'host'
+    const access = accessOf?.(clientId)
+    const isHost = state.role === 'host' && (!accessOf || access === 'edit')
     const avatar = safeAvatar(user.avatar)
     list.push({
       clientId,
@@ -71,6 +87,7 @@ export function participants(states: Map<number, State>, selfId: number): Partic
       ...(avatar && { avatar }),
       isHost,
       isSelf: clientId === selfId,
+      ...(access && { access }),
     })
   }
   return list.sort(

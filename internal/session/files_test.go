@@ -47,7 +47,7 @@ func joinFiles(t *testing.T, relay *prototest.Relay, shareURL string) *filesGues
 		images: make(chan protocol.Attachment, 4),
 	}
 	c, err := protocol.NewClient(protocol.ClientOptions{
-		URL: "ws://guest", Key: key, Doc: doc, Awareness: aw, Dial: relay.Dial,
+		URL: "ws://guest", RoomID: strings.TrimPrefix(u.Path, "/r/"), Key: key, Doc: doc, Awareness: aw, Dial: relay.Dial,
 		OnManifest: func(files []protocol.FileEntry) {
 			g.mu.Lock()
 			defer g.mu.Unlock()

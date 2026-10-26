@@ -1,4 +1,5 @@
 import {
+  type Access,
   ADMISSION_HEADER,
   type Attachment,
   type BlobKeys,
@@ -26,11 +27,16 @@ type State = { [key: string]: unknown }
 
 /**
  * Whether the host saves images, and where. Hosts before attachments say
- * nothing, and then nobody can add images.
+ * nothing, and then nobody can add images. Only a state that came signed by
+ * an editor (RoomClient.accessOf) speaks for the host: anyone can say they
+ * are the host.
  */
-export function hostAttachments(states: Map<number, State>): HostAttachments | null {
-  for (const state of states.values()) {
-    if (state.role !== 'host') continue
+export function hostAttachments(
+  states: Map<number, State>,
+  accessOf: (clientId: number) => Access | undefined,
+): HostAttachments | null {
+  for (const [clientId, state] of states) {
+    if (state.role !== 'host' || accessOf(clientId) !== 'edit') continue
     const a = state.attachments as { dir?: unknown; maxBytes?: unknown } | undefined
     if (!a || typeof a.dir !== 'string' || !/^[A-Za-z0-9._-]+$/.test(a.dir)) return null
     if (typeof a.maxBytes !== 'number' || !(a.maxBytes > 0)) return null

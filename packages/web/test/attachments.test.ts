@@ -6,6 +6,7 @@ import {
   decryptBlob,
   deriveBlobKeys,
   encryptBlob,
+  fromBase64Url,
   generateKey,
 } from '@pedit/protocol'
 import { describe, expect, it, vi } from 'vitest'
@@ -41,7 +42,7 @@ const PNG = new Uint8Array([
 const STRIPPED = new Uint8Array([...PNG.subarray(0, 8), ...PNG.subarray(22)])
 
 async function setup(statuses: number[] = [201], opts: Partial<AttachmentsOptions> = {}) {
-  const keys = await deriveBlobKeys(generateKey())
+  const keys = await deriveBlobKeys(fromBase64Url(generateKey()))
   const sent: Attachment[] = []
   const requests: { url: string; body: Uint8Array }[] = []
   const fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
@@ -221,30 +222,42 @@ describe('whyNoImages', () => {
 
 describe('hostAttachments', () => {
   const states = (...list: Record<string, unknown>[]) => new Map(list.map((s, i) => [i, s]))
+  const editors = () => 'edit' as const
 
   it('reads what the host says', () => {
     expect(
       hostAttachments(
         states({ name: 'guest' }, { role: 'host', attachments: { dir: 'assets', maxBytes: 500 } }),
+        editors,
       ),
     ).toEqual({ dir: 'assets', maxBytes: 500 })
   })
 
   it('caps the size at what the server takes', () => {
-    const got = hostAttachments(states({ role: 'host', attachments: { dir: 'a', maxBytes: 1e12 } }))
+    const got = hostAttachments(
+      states({ role: 'host', attachments: { dir: 'a', maxBytes: 1e12 } }),
+      editors,
+    )
     expect(got?.maxBytes).toBe(MAX_BYTES)
   })
 
+  it('takes the host only from an editor', () => {
+    const host = states({ role: 'host', attachments: { dir: 'assets', maxBytes: 500 } })
+    for (const access of ['comment', 'read', undefined] as const) {
+      expect(hostAttachments(host, () => access)).toBeNull()
+    }
+  })
+
   it('is null for older hosts and odd values', () => {
-    expect(hostAttachments(states({ role: 'host' }))).toBeNull()
-    expect(hostAttachments(states({ name: 'guest' }))).toBeNull()
+    expect(hostAttachments(states({ role: 'host' }), editors)).toBeNull()
+    expect(hostAttachments(states({ name: 'guest' }), editors)).toBeNull()
     for (const attachments of [
       { dir: '../x', maxBytes: 1 },
       { dir: 'a b', maxBytes: 1 },
       { dir: 'assets', maxBytes: 0 },
       { dir: 'assets', maxBytes: '1' },
     ]) {
-      expect(hostAttachments(states({ role: 'host', attachments }))).toBeNull()
+      expect(hostAttachments(states({ role: 'host', attachments }), editors)).toBeNull()
     }
   })
 })
@@ -255,7 +268,7 @@ describe('Attachments as the preview sees them', () => {
   let release404 = () => {}
   async function viewer(opts: Partial<AttachmentsOptions> & { gate?: boolean } = {}) {
     offline = false
-    const keys = await deriveBlobKeys(generateKey())
+    const keys = await deriveBlobKeys(fromBase64Url(generateKey()))
     const sent: Attachment[] = []
     const blobs = new Map<string, Uint8Array>()
     const gets: string[] = []
