@@ -1,6 +1,7 @@
 package protocol_test
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/piconic-ai/pedit/internal/protocol"
@@ -135,5 +136,98 @@ func TestAwarenessHoldsOneState(t *testing.T) {
 	prototest.WaitFor(t, wait, func() bool { return errs.len() == 2 }, "both refused")
 	if st := p.aw.GetStates()[p.aw.ClientID()].State; st["name"] != "me" {
 		t.Fatalf("own state = %v", st)
+	}
+}
+
+// From review: a reader cannot follow more clients than maxUnsigned by
+// naming them first with removals, which hold no place, then filling them.
+// Clients that sign nothing are forgotten once their state is gone.
+func TestClientsThatSignNothingStayWithinTheirLimit(t *testing.T) {
+	relay := prototest.NewRelay(false)
+	key := protocol.GenerateKey()
+	var errs errorLog
+	p := join(t, relay, key, joinOpts{onError: errs.add})
+	prototest.WaitFor(t, wait, func() bool { return p.Status() == protocol.StatusConnected }, "connected")
+	conn, err := relay.Dial(t.Context(), "ws://test", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	read := lowerKeys(t, key, protocol.AccessRead)
+	const ids = protocol.MaxUnsigned + 36
+	counter := uint64(0)
+	send := func(id uint64, clock uint64, state string) {
+		counter++
+		if err := conn.Write(t.Context(), protocol.SealFrame(read, protocol.Sender{1}, counter, stateFor(id, clock, state))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for id := uint64(1000); id < 1000+ids; id++ {
+		send(id, 1, "null")
+	}
+	for id := uint64(1000); id < 1000+ids; id++ {
+		send(id, 2, `{"name":"r"}`)
+	}
+	prototest.WaitFor(t, wait, func() bool { return errs.count(protocol.ErrNotAllowed) == ids-protocol.MaxUnsigned }, "the clients past the limit refused")
+	known := 0
+	for id := uint64(1000); id < 1000+ids; id++ {
+		if _, ok := p.AccessOf(id); ok {
+			known++
+		}
+	}
+	if n := len(p.aw.GetStates()) - 1; n != protocol.MaxUnsigned || known != protocol.MaxUnsigned {
+		t.Fatalf("%d states and %d clients known, want %d", n, known, protocol.MaxUnsigned)
+	}
+
+	send(1000, 3, "null")
+	prototest.WaitFor(t, wait, func() bool { _, ok := p.AccessOf(1000); return !ok }, "a client gone forgotten")
+	send(1000+ids-1, 3, `{"name":"r"}`)
+	prototest.WaitFor(t, wait, func() bool { _, ok := p.AccessOf(1000 + ids - 1); return ok }, "its place taken by another")
+}
+
+// From review: an editor whose state a reader sent first, word for word, is
+// shown as an editor once it speaks, though its state does not change.
+func TestARiseInAccessIsReported(t *testing.T) {
+	relay := prototest.NewRelay(false)
+	key := protocol.GenerateKey()
+	var mu sync.Mutex
+	var raised []uint64
+	newcomer := join(t, relay, key, joinOpts{onAccess: func(id uint64) {
+		mu.Lock()
+		defer mu.Unlock()
+		raised = append(raised, id)
+	}})
+	prototest.WaitFor(t, wait, func() bool { return newcomer.Status() == protocol.StatusConnected }, "newcomer connected")
+	conn, err := relay.Dial(t.Context(), "ws://test", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	hostDoc := crdt.New()
+	hostID := uint64(hostDoc.ClientID())
+	state := `{"file":"notes.md","role":"host"}`
+	if err := conn.Write(t.Context(), protocol.SealFrame(lowerKeys(t, key, protocol.AccessRead), protocol.Sender{1}, 1, stateFor(hostID, 1, state))); err != nil {
+		t.Fatal(err)
+	}
+	prototest.WaitFor(t, wait, func() bool { _, ok := newcomer.AccessOf(hostID); return ok }, "the claim from below")
+
+	aw := awareness.New(hostID)
+	aw.SetLocalState(map[string]any{"role": "host", "file": "notes.md"})
+	raw, _ := protocol.DecodeKey(key)
+	host, err := protocol.NewClient(protocol.ClientOptions{URL: "ws://test", Key: raw, Doc: hostDoc, Awareness: aw, Dial: relay.Dial})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(host.Destroy)
+	host.Connect()
+	prototest.WaitFor(t, wait, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(raised) > 0
+	}, "the rise reported")
+	mu.Lock()
+	defer mu.Unlock()
+	if got, _ := newcomer.AccessOf(hostID); raised[0] != hostID || got != protocol.AccessEdit {
+		t.Fatalf("reported %v, access %s", raised, got)
 	}
 }

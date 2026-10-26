@@ -5,6 +5,9 @@ import (
 	"time"
 )
 
+// MaxUnsigned is how many clients that sign nothing a Client follows at once.
+const MaxUnsigned = maxUnsigned
+
 // ShortenResyncForTest has Clients ask the room again after d, not
 // resyncEvery, until the test ends.
 func ShortenResyncForTest(t *testing.T, d time.Duration) {

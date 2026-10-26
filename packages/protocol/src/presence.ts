@@ -19,8 +19,12 @@ import type { Access } from './access.ts'
  *   holds, so a clock someone below claimed first does not hold it back;
  *   signed frames come in order already (frame.ts). States from below may
  *   not claim clocks past MAX_WIRE_CLOCK, so that next clock stays exact.
- * - The client follows at most MAX_UNSIGNED clients that sign nothing, and
- *   sends its own state to newcomers at most every ANNOUNCE_EVERY_MS.
+ * - The client follows at most MAX_UNSIGNED clients that sign nothing at
+ *   once, and forgets each when its state is gone, so ones that come and go
+ *   take no room. It sends its own state to newcomers at most every
+ *   ANNOUNCE_EVERY_MS.
+ * - When a client ID's access rises, how it is shown may change though its
+ *   state does not, so the client says so (onAccess).
  *
  * Keep in sync with internal/protocol/presence.go.
  */
@@ -36,15 +40,21 @@ export class Presence {
 
   /**
    * Whether a state for `id`, from a peer with this access, may be applied,
-   * remembering the access when it is the highest yet. `unsigned` counts
-   * the clients that sign nothing whose states the client holds now.
+   * remembering the access when it is the highest yet. `active` tells
+   * whether the client holds a state for `id` now, and `unsigned` counts the
+   * clients that sign nothing whose states it holds.
    */
-  admit(id: number, access: Access, unsigned: () => number): boolean {
+  admit(id: number, access: Access, active: boolean, unsigned: () => number): boolean {
     const seen = this.access.get(id)
     if (seen && RANK[access] < RANK[seen]) return false
-    if (!seen && access === 'read' && unsigned() >= MAX_UNSIGNED) return false
+    if (access === 'read' && !active && unsigned() >= MAX_UNSIGNED) return false
     if (!seen || RANK[access] > RANK[seen]) this.access.set(id, access)
     return true
+  }
+
+  /** Forgets a client that signed nothing; access from above is kept for the session. */
+  forget(id: number): void {
+    if (this.access.get(id) === 'read') this.access.delete(id)
   }
 
   of(id: number): Access | undefined {

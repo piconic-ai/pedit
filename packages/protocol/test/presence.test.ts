@@ -4,6 +4,7 @@ import { Awareness } from 'y-protocols/awareness'
 import * as Y from 'yjs'
 import {
   encodeMessage,
+  MAX_UNSIGNED,
   MAX_WIRE_CLOCK,
   MessageType,
   NotAllowedError,
@@ -137,6 +138,66 @@ describe('presence', () => {
     await vi.waitFor(() => expect(errors).toHaveLength(2))
     expect(me.awareness.getLocalState()).toEqual({ name: 'me' })
     expect(me.awareness.getStates().size).toBe(1)
+    peer.close()
+  })
+
+  // From review: a reader cannot follow more clients than MAX_UNSIGNED by
+  // naming them first with removals, which hold no place, then filling
+  // them. Clients that sign nothing are forgotten once their state is gone.
+  it('follows a bounded number of clients that sign nothing', async () => {
+    const relay = new Relay()
+    const keys = await editKeys()
+    const errors: unknown[] = []
+    const me = join(relay, keys, null, { onError: (e) => errors.push(e) })
+    await vi.waitFor(() => expect(me.status).toBe('connected'))
+    const peer = relay.create('ws://test')
+    await vi.waitFor(() => expect(peer.readyState).toBe(1))
+    const read = await lowerKeys(keys, 'read')
+    const ids = Array.from({ length: MAX_UNSIGNED + 36 }, (_, i) => 1000 + i)
+    let counter = 0
+    const send = async (id: number, clock: number, state: unknown) =>
+      peer.send(await sealFrame(read, sender(1), ++counter, stateFor(id, clock, state)))
+    for (const id of ids) await send(id, 1, null)
+    for (const id of ids) await send(id, 2, { name: 'r' })
+    await vi.waitFor(() =>
+      expect(errors.filter((e) => e instanceof NotAllowedError)).toHaveLength(36),
+    )
+    expect(ids.filter((id) => me.accessOf(id))).toHaveLength(MAX_UNSIGNED)
+    expect(ids.filter((id) => me.awareness.getStates().has(id))).toHaveLength(MAX_UNSIGNED)
+
+    const first = 1000
+    const last = 1000 + ids.length - 1
+    await send(first, 3, null)
+    await vi.waitFor(() => expect(me.accessOf(first)).toBeUndefined())
+    await send(last, 3, { name: 'r' })
+    await vi.waitFor(() => expect(me.accessOf(last)).toBe('read'))
+    peer.close()
+  })
+
+  // From review: an editor whose state a reader sent first, word for word,
+  // is shown as an editor once it speaks, though its state does not change.
+  it('says when an access rises', async () => {
+    const relay = new Relay()
+    const keys = await editKeys()
+    const raised: number[] = []
+    const newcomer = join(relay, keys, null, { onAccess: (id) => raised.push(id) })
+    await vi.waitFor(() => expect(newcomer.status).toBe('connected'))
+    const peer = relay.create('ws://test')
+    await vi.waitFor(() => expect(peer.readyState).toBe(1))
+    const hostDoc = new Y.Doc()
+    const hostId = hostDoc.clientID
+    const state = { role: 'host', file: 'notes.md' }
+    const read = await lowerKeys(keys, 'read')
+    peer.send(await sealFrame(read, sender(1), 1, stateFor(hostId, 1, state)))
+    await vi.waitFor(() => expect(newcomer.accessOf(hostId)).toBe('read'))
+    const changes: number[] = []
+    newcomer.awareness.on('change', () => changes.push(1))
+
+    join(relay, keys, state, {}, hostDoc)
+    await vi.waitFor(() => expect(raised).toEqual([hostId]))
+    expect(newcomer.accessOf(hostId)).toBe('edit')
+    // The awareness alone would not have told.
+    expect(changes).toHaveLength(0)
     peer.close()
   })
 })

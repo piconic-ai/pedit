@@ -142,6 +142,11 @@ export interface RoomClientOptions {
   onAttachment?: (attachment: Attachment) => void
   onCanvas?: (message: CanvasMessage) => void
   /**
+   * A peer's access rose (see accessOf). Its state may be the same as
+   * before, so the awareness says nothing of it.
+   */
+  onAccess?: (clientId: number) => void
+  /**
    * In a room that shares several files (see addFile): each list of the
    * room's files, once per added file the first SyncStep2 for it, and the
    * messages about one file.
@@ -514,11 +519,15 @@ export class RoomClient {
     if (access === 'read' && entry.clock > MAX_WIRE_CLOCK) {
       throw new NotAllowedError('an awareness clock out of range', access)
     }
-    if (!this.presence.admit(entry.id, access, () => this.unsignedStates())) {
+    const before = this.presence.of(entry.id)
+    const active = this.awareness.getStates().has(entry.id)
+    if (!this.presence.admit(entry.id, access, active, () => this.unsignedStates())) {
       throw new NotAllowedError('awareness of a client heard from above', access)
     }
     if (access !== 'read') entry.clock = (this.awareness.meta.get(entry.id)?.clock ?? 0) + 1
     awarenessProtocol.applyAwarenessUpdate(this.awareness, encodeAwarenessEntry(entry), this)
+    if (!this.awareness.getStates().has(entry.id)) this.presence.forget(entry.id)
+    if (before && before !== access) this.opts.onAccess?.(entry.id)
   }
 
   /** The clients that sign nothing whose states this client holds now. */
@@ -683,7 +692,9 @@ export class RoomClient {
 
   // Someone new showed up: tell them about us soon instead of waiting for the
   // periodic awareness renewal, and which files the room shares.
-  private handleAwarenessChange = ({ added }: AwarenessChanges, origin: unknown) => {
+  private handleAwarenessChange = ({ added, removed }: AwarenessChanges, origin: unknown) => {
+    // Peers that time out go too.
+    for (const id of removed) this.presence.forget(id)
     if (origin === this && added.length > 0) this.announce()
   }
 

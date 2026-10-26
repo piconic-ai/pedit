@@ -117,6 +117,10 @@ type ClientOptions struct {
 	// OnCanvas is called with each canvas message from the room, on the
 	// connection's read loop: return quickly.
 	OnCanvas func(CanvasMessage)
+	// OnAccess is called when a peer's access rises (AccessOf), on the
+	// connection's read loop: return quickly. Its state may be the same as
+	// before, so the Awareness says nothing of it.
+	OnAccess func(id uint64)
 
 	// In a room that shares several files (room_files.go), these are called
 	// on the connection's read loop too: return quickly. OnManifest gets
@@ -611,13 +615,28 @@ func (c *Client) receiveAwareness(access Access, payload []byte) (err error) {
 	if access == AccessRead {
 		unsigned = c.unsignedStates()
 	}
-	if !c.presence.admit(e.id, access, unsigned) {
+	before, known := c.presence.of(e.id)
+	_, active := c.aw.GetStates()[e.id]
+	if !c.presence.admit(e.id, access, active, unsigned) {
 		return notAllowed("awareness of a client heard from above", access)
 	}
 	if access != AccessRead {
 		meta, _ := c.aw.Meta(e.id)
 		e.clock = meta.Clock + 1
 	}
+	if err := c.applyAwarenessEntry(e); err != nil {
+		return err
+	}
+	if _, ok := c.aw.GetStates()[e.id]; !ok {
+		c.presence.forget(e.id)
+	}
+	if known && before != access && c.opts.OnAccess != nil {
+		c.opts.OnAccess(e.id)
+	}
+	return nil
+}
+
+func (c *Client) applyAwarenessEntry(e awarenessEntry) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("awareness makes ygo panic: %v", r)
@@ -671,6 +690,10 @@ func (c *Client) handleAwarenessUpdate(ev awareness.UpdateEvent) {
 // Someone new showed up: tell them about us soon instead of waiting for the
 // periodic awareness renewal, and which files the room shares.
 func (c *Client) handleAwarenessChange(ev awareness.ChangeEvent) {
+	// Peers that time out go too.
+	for _, id := range ev.Removed {
+		c.presence.forget(id)
+	}
 	if ev.Origin == c && len(ev.Added) > 0 {
 		c.announce()
 	}

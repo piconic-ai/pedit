@@ -25,8 +25,12 @@ import (
 //     signed frames come in order already (replayGuard). States from below
 //     may not claim clocks past maxWireClock, so that next clock never runs
 //     out.
-//   - The Client follows at most maxUnsigned clients that sign nothing, and
-//     sends its own state to newcomers at most every announceEvery.
+//   - The Client follows at most maxUnsigned clients that sign nothing at
+//     once, and forgets each when its state is gone, so ones that come and
+//     go take no room. It sends its own state to newcomers at most every
+//     announceEvery.
+//   - When a client ID's access rises, how it is shown may change though its
+//     state does not, so the Client says so (OnAccess).
 //
 // Keep in sync with packages/protocol/src/presence.ts.
 const (
@@ -42,16 +46,17 @@ type presence struct {
 }
 
 // admit tells whether a state for id, from a peer with this access, may be
-// applied, remembering the access when it is the highest yet. unsigned
-// counts the clients that sign nothing whose states the Client holds now.
-func (p *presence) admit(id uint64, access Access, unsigned int) bool {
+// applied, remembering the access when it is the highest yet. active tells
+// whether the Client holds a state for id now, and unsigned counts the
+// clients that sign nothing whose states it holds.
+func (p *presence) admit(id uint64, access Access, active bool, unsigned int) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	seen, known := p.access[id]
 	if known && access < seen {
 		return false
 	}
-	if !known && access == AccessRead && unsigned >= maxUnsigned {
+	if access == AccessRead && !active && unsigned >= maxUnsigned {
 		return false
 	}
 	if p.access == nil {
@@ -61,6 +66,16 @@ func (p *presence) admit(id uint64, access Access, unsigned int) bool {
 		p.access[id] = access
 	}
 	return true
+}
+
+// forget forgets a client that signed nothing; access from above is kept for
+// the session.
+func (p *presence) forget(id uint64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if a, ok := p.access[id]; ok && a == AccessRead {
+		delete(p.access, id)
+	}
 }
 
 func (p *presence) of(id uint64) (Access, bool) {

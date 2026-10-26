@@ -148,6 +148,17 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 		hostSeen: make(chan struct{}, 1),
 	}
 	var waited atomic.Bool // the host was away
+	// What the room's people are, and whether the host is among them, follows
+	// from their states and the access they speak with.
+	peopleChanged := func() {
+		if _, ok := hostState(aw, s.Client); ok {
+			select {
+			case room.hostSeen <- struct{}{}:
+			default:
+			}
+		}
+		s.reportPeople(opts.OnPeople)
+	}
 	s.Client, err = protocol.NewClient(protocol.ClientOptions{
 		URL:       wsURL,
 		RoomID:    roomID,
@@ -172,6 +183,7 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 		OnSynced:   func() { close(room.synced) },
 		OnError:    onError,
 		OnManifest: s.takeManifest,
+		OnAccess:   func(uint64) { peopleChanged() },
 	})
 	if err != nil {
 		_ = root.Close()
@@ -193,15 +205,7 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 			w.Schedule(s.content.render())
 		}
 	})
-	aw.OnChange(func(awareness.ChangeEvent) {
-		if _, ok := hostState(aw, s.Client); ok {
-			select {
-			case room.hostSeen <- struct{}{}:
-			default:
-			}
-		}
-		s.reportPeople(opts.OnPeople)
-	})
+	aw.OnChange(func(awareness.ChangeEvent) { peopleChanged() })
 	s.stopAlive = keepAlive(aw)
 	s.Client.Connect()
 

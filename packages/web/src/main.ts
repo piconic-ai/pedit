@@ -800,6 +800,8 @@ async function joinRoom(
     onAttachment: (a) => attachments.handle(a),
     onCanvas: (m) => first.json.handle(m),
     onManifest: takeManifest,
+    // A peer's state may stay the same while what it may do rises.
+    onAccess: renderPeople,
     onFileAttachment: (_, a) => attachments.handle(a),
     onFileCanvas: (fileId, m) => opened.get(fileId)?.json.handle(m),
   })

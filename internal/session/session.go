@@ -271,6 +271,7 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 		OnCanvas:         func(m protocol.CanvasMessage) { s.handleCanvas(m) },
 		OnFileAttachment: s.handleFileAttachment,
 		OnFileCanvas:     s.handleFileCanvas,
+		OnAccess:         func(uint64) { s.reportPeople(opts.OnPeople) },
 	})
 	if err != nil {
 		return nil, err

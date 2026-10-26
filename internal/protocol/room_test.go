@@ -47,6 +47,7 @@ type joinOpts struct {
 	onFileSynced     func(uint64)
 	onFileAttachment func(uint64, protocol.Attachment)
 	onFileCanvas     func(uint64, protocol.CanvasMessage)
+	onAccess         func(uint64)
 	bytes            protocol.Rate
 	// link joins with a link below the edit link of key (access_room_test.go).
 	link *protocol.LinkSecrets
@@ -83,6 +84,7 @@ func join(t *testing.T, relay *prototest.Relay, key string, o joinOpts) *peer {
 		OnAttachment: o.onAttachment,
 		OnCanvas:     o.onCanvas,
 		OnSynced:     o.onSynced,
+		OnAccess:     o.onAccess,
 
 		OnManifest:       o.onManifest,
 		OnFileSynced:     o.onFileSynced,
