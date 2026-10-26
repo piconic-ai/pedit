@@ -87,9 +87,10 @@ is shared by both implementations: change them together.
   frames only from the signer's answer to its own current nonce on, whose
   counter becomes the signer's floor; until then the signer's frames count
   as a reader's requests and its awareness is dropped. After answering, a
-  client sends its awareness again, and its state if the asker was in the
-  room first or it sent state lately; attachments and canvas messages it
-  holds after connecting until the answers settle (`fresh.go`, `fresh.ts`).
+  client sends its awareness again, and its state if it sent content of its
+  own lately, or since connecting when the asker was in the room first;
+  attachments and canvas messages it holds after connecting until the
+  answers settle (`fresh.go`, `fresh.ts`).
 - Awareness frames hold one entry, the sender's own state; nobody forwards
   another client's state or its removal. Each peer remembers, per client
   ID, the highest access it heard the ID's state with, drops states for it

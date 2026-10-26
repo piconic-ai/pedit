@@ -32,3 +32,18 @@ func SealFrame(keys *RoomKeys, from Sender, counter uint64, message []byte) []by
 
 // Nonce is the nonce of the Client's connection (fresh.go).
 func (c *Client) Nonce() Nonce { return c.fresh.current() }
+
+// PendingResyncs counts the files the Client means to ask again for.
+func (c *Client) PendingResyncs() int {
+	c.applying.Lock()
+	defer c.applying.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := 0
+	for _, f := range c.files {
+		if f.resyncTimer != nil {
+			n++
+		}
+	}
+	return n
+}

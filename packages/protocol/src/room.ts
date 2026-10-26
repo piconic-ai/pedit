@@ -327,6 +327,8 @@ export class RoomClient {
       // write it. When it does not fit a frame, send nothing: a SyncStep1
       // alone would have every peer answer with a state as large.
       const edits = this.edits()
+      this.fresh.connected()
+      if (edits && this.doc.store.clients.size > 0) this.fresh.wrote()
       const step2 = encoding.createEncoder()
       if (edits) syncProtocol.writeSyncStep2(step2, this.doc)
       const state = encoding.toUint8Array(step2)
@@ -453,6 +455,7 @@ export class RoomClient {
     if (this.files.has(id)) throw new Error(`file ${id} added twice`)
     const onUpdate = (update: Uint8Array, origin: unknown) => {
       if (origin === this || !this.writes(id)) return
+      this.fresh.wrote()
       this.sendFileSync(id, (encoder) => syncProtocol.writeUpdate(encoder, update))
     }
     doc.on('update', onUpdate)
@@ -623,9 +626,9 @@ export class RoomClient {
       this.guard.vouch(frame.access, frame.sender, frame.counter)
     }
     if (!this.fresh.toAnswer(m.nonce)) return
-    const wrote = this.fresh.wroteLately()
+    const state = this.fresh.hasToResend(answersMe)
     this.send(MessageType.Fresh, encodeFresh({ nonce: this.fresh.nonce, answer: m.nonce }))
-    this.resend(answersMe || wrote)
+    this.resend(state)
     if (answersMe) this.settleIn(RESEND_EVERY_MS)
   }
 
@@ -771,6 +774,7 @@ export class RoomClient {
       this.tooLarge(socket)
       return
     }
+    if (doc.store.clients.size > 0) this.fresh.wrote()
     this.send(MessageType.Files, state)
   }
 
@@ -814,6 +818,7 @@ export class RoomClient {
 
   private handleDocUpdate = (update: Uint8Array, origin: unknown) => {
     if (origin === this || !this.edits()) return
+    this.fresh.wrote()
     this.sendSync((encoder) => syncProtocol.writeUpdate(encoder, update))
   }
 
@@ -886,7 +891,6 @@ export class RoomClient {
       this.tooLarge(socket)
       return
     }
-    if (type === MessageType.Sync || type === MessageType.Files) this.fresh.wrote()
     // Numbered now, in the order frames are produced, which the chain keeps.
     const counter = ++this.sent
     const message = encodeMessage(type, payload)

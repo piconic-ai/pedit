@@ -28,10 +28,14 @@ import (
 //   - A peer drops what the Client sent until the Client answers its nonce.
 //     So after each answer the Client sends its awareness again. Its state,
 //     a peer asks for after the answer, unless the peer was in the room
-//     before the Client (its answer carried the Client's nonce), or the
-//     Client sent state shortly before the nonce reached it, which may have
+//     before the Client (its answer carried the Client's nonce) and the
+//     Client sent content of its own since connecting, or the Client sent
+//     content of its own shortly before the nonce reached it, which may have
 //     been after the peer connected: then the Client sends its state again
-//     too. Both at most every resendEvery.
+//     too. Both at most every resendEvery. Only content of its own counts
+//     (edits, and a state with something in it pushed on connecting or
+//     adding a file): a state the peer has already still makes an update
+//     there.
 //
 //   - What the Client sends once rather than as state (attachments and
 //     canvas messages) is not sent again. So a Client that signs holds it
@@ -61,7 +65,7 @@ const (
 	// answering: long enough to cover the answers of everyone in the room
 	// to its connecting, short enough not to keep them waiting.
 	resendEvery = 250 * time.Millisecond
-	// stateWindow is how long before a nonce reached the Client the state
+	// stateWindow is how long before a nonce reached the Client the content
 	// it sent may have reached the nonce's peer after it connected.
 	stateWindow = 5 * time.Second
 	// settleAfter is how long a Client that hears no answer after
@@ -107,9 +111,11 @@ type freshness struct {
 	nonce    Nonce
 	answered map[Nonce]bool
 	order    []Nonce
-	// When the Client last sent state, and last sent it again for peers
-	// that dropped it, and the timer that sends it again.
+	// When the Client last sent content of its own, whether it did since
+	// connecting, when it last sent its state again for peers that dropped
+	// it, and the timer that sends it again.
 	wroteAt     time.Time
+	wroteSince  bool
 	resentAt    time.Time
 	resendTimer *time.Timer
 	resendState bool
@@ -128,18 +134,28 @@ type heldMessage struct {
 	payload []byte
 }
 
-// wrote notes that the Client sent state, or asked for it.
+// wrote notes that the Client sent content of its own.
 func (f *freshness) wrote() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.wroteAt = time.Now()
+	f.wroteSince = true
 }
 
-// wroteLately tells whether the Client sent state within stateWindow.
-func (f *freshness) wroteLately() bool {
+// connected starts counting what the Client sends on a new connection.
+func (f *freshness) connected() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return time.Since(f.wroteAt) < stateWindow
+	f.wroteSince = false
+}
+
+// hasToResend tells whether the Client sent content of its own a peer
+// whose nonce it answers may have dropped: lately, or since connecting if
+// the peer was in the room before it.
+func (f *freshness) hasToResend(peerWasFirst bool) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return time.Since(f.wroteAt) < stateWindow || peerWasFirst && f.wroteSince
 }
 
 // renew picks the nonce of a new connection.
@@ -196,9 +212,9 @@ func (c *Client) receiveFresh(access Access, vouched bool, from Sender, counter 
 	if !c.fresh.toAnswer(m.Nonce) {
 		return nil
 	}
-	wrote := c.fresh.wroteLately()
+	state := c.fresh.hasToResend(answersMe)
 	c.send(MessageFresh, EncodeFresh(FreshMessage{Nonce: c.fresh.current(), Answer: &m.Nonce}))
-	c.resend(answersMe || wrote)
+	c.resend(state)
 	if answersMe {
 		c.settleIn(resendEvery)
 	}

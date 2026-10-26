@@ -108,6 +108,7 @@ func (c *Client) addFile(f *fileDoc, id uint64) error {
 		if origin == c || !mayWrite(c.keys.Access, f.comments) {
 			return
 		}
+		c.fresh.wrote()
 		_ = c.sendFile(id, MessageSync, ysync.EncodeUpdate(update))
 	})
 	c.mu.Lock()
@@ -199,6 +200,9 @@ func (c *Client) syncFile(id uint64, f *fileDoc) {
 	if FrameBytes(len(step2)) > MaxFrameBytes {
 		out.fail(ErrFrameTooLarge)
 		return
+	}
+	if len(f.doc.StateVector()) > 0 {
+		c.fresh.wrote()
 	}
 	_ = c.sendFile(id, MessageSync, ysync.EncodeSyncStep1(f.doc))
 	c.send(MessageFiles, step2)
@@ -446,12 +450,10 @@ func (c *Client) askAgain(id uint64, f *fileDoc) bool {
 		f.resyncTimer = time.AfterFunc(wait, func() {
 			c.applying.Lock()
 			f.resyncTimer = nil
-			ask := c.askAgain(id, f)
+			// Destroy may have stopped the timer after it fired.
+			ask := !c.isDestroyed() && c.askAgain(id, f)
 			c.applying.Unlock()
-			c.mu.Lock()
-			destroyed := c.destroyed
-			c.mu.Unlock()
-			if ask && !destroyed {
+			if ask && !c.isDestroyed() {
 				_ = c.sendFile(id, MessageSync, ysync.EncodeSyncStep1(f.doc))
 			}
 		})
@@ -464,7 +466,14 @@ func (c *Client) unsubscribeFiles() {
 	c.mu.Lock()
 	files := c.files
 	c.mu.Unlock()
+	c.applying.Lock()
+	defer c.applying.Unlock()
 	for _, f := range files {
 		f.unsub()
+		// As the TypeScript client does: a destroyed Client asks for nothing.
+		if f.resyncTimer != nil {
+			f.resyncTimer.Stop()
+			f.resyncTimer = nil
+		}
 	}
 }

@@ -433,8 +433,12 @@ func (c *Client) serve(conn Conn) error {
 	// alone would have every peer answer with a state as large, which they
 	// could not send either.
 	var step2 []byte
+	c.fresh.connected()
 	if c.edits() {
 		step2 = syncStep2(c.doc)
+		if len(c.doc.StateVector()) > 0 {
+			c.fresh.wrote()
+		}
 	}
 	if FrameBytes(len(step2)) > MaxFrameBytes {
 		out.fail(ErrFrameTooLarge)
@@ -702,6 +706,7 @@ func (c *Client) handleDocUpdate(update []byte, origin any) {
 	if origin == c || !c.edits() {
 		return
 	}
+	c.fresh.wrote()
 	c.send(MessageSync, ysync.EncodeUpdate(update))
 }
 
@@ -802,9 +807,6 @@ func (c *Client) send(t MessageType, payload []byte) {
 	c.mu.Unlock()
 	if out == nil {
 		return
-	}
-	if t == MessageSync || t == MessageFiles {
-		c.fresh.wrote()
 	}
 	if FrameBytes(len(payload)) > MaxFrameBytes {
 		// The relay would close us with MessageTooBig, and the same frame

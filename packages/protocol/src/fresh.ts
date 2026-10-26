@@ -17,12 +17,15 @@
  *   floor of the replay guard for the signer: what it sent before seeing the
  *   nonce is dropped, as anything kept from before would be.
  * - A peer drops what the client sent until the client answers its nonce.
- *   So after each answer the client sends its awareness and manifest again
- *   (announce). Its state, a peer asks for after the answer, unless the peer
- *   was in the room before the client (its answer carried the client's
- *   nonce), or the client sent state shortly before the nonce reached it,
- *   which may have been after the peer connected. In either case the client
- *   sends its state again, at most every RESEND_EVERY_MS.
+ *   So after each answer the client sends its awareness again. Its state, a
+ *   peer asks for after the answer, unless the peer was in the room before
+ *   the client (its answer carried the client's nonce) and the client sent
+ *   content of its own since connecting, or the client sent content of its
+ *   own shortly before the nonce reached it, which may have been after the
+ *   peer connected: then the client sends its state again too. Both at most
+ *   every RESEND_EVERY_MS. Only content of its own counts (edits, and a state
+ *   with something in it pushed on connecting or adding a file): a state the
+ *   peer has already still makes an update there.
  *
  * - What a client sends once rather than as state (attachments and canvas
  *   messages) is not sent again. So a client that signs holds it after
@@ -46,7 +49,7 @@ const MAX_ANSWERED = 1024
  */
 export const RESEND_EVERY_MS = 250
 /**
- * How long before a nonce reached a client the state it sent may have
+ * How long before a nonce reached a client the content it sent may have
  * reached the nonce's peer after it connected.
  */
 export const STATE_WINDOW_MS = 5000
@@ -87,6 +90,7 @@ export class Freshness {
   private current = new Uint8Array(NONCE_BYTES)
   private readonly answered = new Set<string>()
   private wroteAt = Number.NEGATIVE_INFINITY
+  private wroteSince = false
 
   /** Picks the nonce of a new connection. */
   renew(): Uint8Array {
@@ -116,13 +120,23 @@ export class Freshness {
     return true
   }
 
-  /** Notes that the client sent state, or asked for it. */
+  /** Notes that the client sent content of its own. */
   wrote(): void {
     this.wroteAt = performance.now()
+    this.wroteSince = true
   }
 
-  /** Whether the client sent state within STATE_WINDOW_MS. */
-  wroteLately(): boolean {
-    return performance.now() - this.wroteAt < STATE_WINDOW_MS
+  /** Starts counting what the client sends on a new connection. */
+  connected(): void {
+    this.wroteSince = false
+  }
+
+  /**
+   * Whether the client sent content of its own a peer whose nonce it
+   * answers may have dropped: lately, or since connecting if the peer was in
+   * the room before it.
+   */
+  hasToResend(peerWasFirst: boolean): boolean {
+    return performance.now() - this.wroteAt < STATE_WINDOW_MS || (peerWasFirst && this.wroteSince)
   }
 }
