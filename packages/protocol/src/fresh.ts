@@ -15,7 +15,9 @@
  *   arrives, the client takes that signer's frames as a reader's (requests
  *   only), and drops its awareness. The answer's counter then becomes the
  *   floor of the replay guard for the signer: what it sent before seeing the
- *   nonce is dropped, as anything kept from before would be.
+ *   nonce is dropped, as anything kept from before would be. This holds on
+ *   every connection, a reconnection too: what a signer sent while the
+ *   client was away could be kept and sent again.
  * - A peer drops what the client sent until the client answers its nonce.
  *   So after each answer the client sends its awareness again. Its state, a
  *   peer asks for after the answer, unless the peer was in the room before

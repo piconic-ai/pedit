@@ -184,6 +184,9 @@ type replayGuard struct {
 	self Sender
 	mu   sync.Mutex
 	last map[guardKey]uint64
+	// live holds the signers that answered the nonce of the Client's
+	// current connection (fresh.go).
+	live map[guardKey]bool
 }
 
 type guardKey struct {
@@ -191,28 +194,39 @@ type guardKey struct {
 	from   Sender
 }
 
-// known tells whether a signer showed it is live (fresh.go): the guard
-// holds a counter for it.
+// known tells whether a signer showed it is live on the Client's current
+// connection (fresh.go).
 func (g *replayGuard) known(access Access, from Sender) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	_, ok := g.last[guardKey{access, from}]
-	return ok
+	return g.live[guardKey{access, from}]
 }
 
-// vouch takes counter, that of a signer's answer to the Client's nonce, as
-// the last one from it: what it sent before is dropped.
+// vouch takes a signer as live, from its answer to the Client's nonce,
+// numbered counter, on: what it sent before is dropped.
 func (g *replayGuard) vouch(access Access, from Sender, counter uint64) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	key := guardKey{access, from}
-	if _, ok := g.last[key]; ok || from == g.self {
+	if g.live[key] || from == g.self {
 		return
 	}
 	if g.last == nil {
 		g.last = map[guardKey]uint64{}
 	}
-	g.last[key] = counter
+	if g.live == nil {
+		g.live = map[guardKey]bool{}
+	}
+	g.live[key] = true
+	g.last[key] = max(g.last[key], counter)
+}
+
+// forgetLive has every signer show again that it is live, on a new
+// connection; the counters stay.
+func (g *replayGuard) forgetLive() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	clear(g.live)
 }
 
 // foreign tells whether a frame is not one of ours.

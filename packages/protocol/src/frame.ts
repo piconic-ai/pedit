@@ -77,6 +77,8 @@ const hex = (bytes: Uint8Array) =>
 export class ReplayGuard {
   private readonly self: string
   private readonly last = new Map<string, bigint>()
+  // The signers that answered the nonce of the client's current connection.
+  private readonly live = new Set<string>()
 
   constructor(self: Uint8Array) {
     this.self = hex(self)
@@ -87,20 +89,27 @@ export class ReplayGuard {
     return hex(sender) !== this.self
   }
 
-  /** Whether a signer showed it is live (fresh.ts): the guard holds a counter for it. */
+  /** Whether a signer showed it is live on the client's current connection (fresh.ts). */
   known(tier: string, sender: Uint8Array): boolean {
-    return this.last.has(`${tier}:${hex(sender)}`)
+    return this.live.has(`${tier}:${hex(sender)}`)
   }
 
   /**
-   * Takes counter, that of a signer's answer to the client's nonce, as the
-   * last one from it: what it sent before is dropped.
+   * Takes a signer as live, from its answer to the client's nonce, numbered
+   * `counter`, on: what it sent before is dropped.
    */
   vouch(tier: string, sender: Uint8Array, counter: bigint): void {
     const id = hex(sender)
     const key = `${tier}:${id}`
-    if (id === this.self || this.last.has(key)) return
-    this.last.set(key, counter)
+    if (id === this.self || this.live.has(key)) return
+    this.live.add(key)
+    const last = this.last.get(key) ?? 0n
+    this.last.set(key, counter > last ? counter : last)
+  }
+
+  /** Has every signer show again that it is live, on a new connection; the counters stay. */
+  forgetLive(): void {
+    this.live.clear()
   }
 
   /** Whether a signed frame, checked already, is new, remembering it when it is. */

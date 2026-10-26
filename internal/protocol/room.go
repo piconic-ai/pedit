@@ -348,12 +348,14 @@ func (c *Client) Destroy() {
 	if c.announceTimer != nil {
 		c.announceTimer.Stop()
 	}
-	c.fresh.stop()
 	out := c.out
 	c.out = nil
 	started := c.started
 	done := c.done
 	c.mu.Unlock()
+	// Without c.mu: what the Client holds is sent under its own lock, and
+	// sending takes c.mu (fresh.go).
+	c.fresh.stop()
 
 	for _, unsub := range c.unsubs {
 		unsub()
@@ -443,7 +445,10 @@ func (c *Client) serve(conn Conn) error {
 	if FrameBytes(len(step2)) > MaxFrameBytes {
 		out.fail(ErrFrameTooLarge)
 	} else {
-		// Before anyone hears the Client is connected, and sends once.
+		// Before anyone hears the Client is connected, and sends once. Signers
+		// show they are live anew on every connection: what they sent while
+		// this one was down could be sent again now.
+		c.guard.forgetLive()
 		c.unsettle()
 		c.setStatus(StatusConnected)
 		// First, so that peers answer it before what they send in reply.

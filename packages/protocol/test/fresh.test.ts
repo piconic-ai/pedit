@@ -136,3 +136,37 @@ describe('what is sent once', () => {
     await vi.waitFor(() => expect(edits).toEqual(['first', 'second']))
   })
 })
+
+describe('a reconnection', () => {
+  // From review: a signer answers the nonce of every connection, a
+  // reconnection too, or frames it sent while the peer was away could be
+  // sent again to it.
+  it('needs signers to show again that they are live', async () => {
+    const relay = new Relay()
+    const keys = await editKeys()
+    const edits: string[] = []
+    const me = join(relay, keys, { onCanvas: (m) => edits.push(m.id) })
+    await vi.waitFor(() => expect(me.status).toBe('connected'))
+    const sender = new Uint8Array(SENDER_BYTES).fill(1)
+    const write = async (...frames: [number, Uint8Array][]) => {
+      const peer = relay.create('ws://test')
+      await vi.waitFor(() => expect(peer.readyState).toBe(1))
+      for (const [counter, message] of frames) {
+        peer.send(await sealFrame(keys, sender, counter, message))
+      }
+    }
+    await write([1, answer(me)], [2, edit('before')])
+    await vi.waitFor(() => expect(edits).toEqual(['before']))
+
+    // The signer goes on while `me` is away; someone keeps its frame.
+    const kept = edit('while away')
+    const nonce = me.nonce
+    for (const s of relay.sockets) s.close()
+    await vi.waitFor(() => expect(me.status).toBe('disconnected'))
+    await vi.waitFor(() => expect(me.status).toBe('connected'), { timeout: 3000 })
+    expect(me.nonce).not.toEqual(nonce)
+    await write([3, kept], [4, answer(me)], [5, edit('after')])
+    await vi.waitFor(() => expect(edits).toContain('after'))
+    expect(edits).toEqual(['before', 'after'])
+  })
+})

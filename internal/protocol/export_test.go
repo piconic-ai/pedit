@@ -47,3 +47,6 @@ func (c *Client) PendingResyncs() int {
 	}
 	return n
 }
+
+// Settle has the Client send what it holds now (fresh.go).
+func (c *Client) Settle() { c.settle() }

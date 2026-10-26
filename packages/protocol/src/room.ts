@@ -336,7 +336,10 @@ export class RoomClient {
         this.tooLarge(socket)
         return
       }
-      // Before anyone hears this client is connected, and sends once.
+      // Before anyone hears this client is connected, and sends once. Signers
+      // show they are live anew on every connection: what they sent while
+      // this one was down could be sent again now.
+      this.guard.forgetLive()
       this.settled = false
       this.settleIn(SETTLE_AFTER_MS)
       this.setStatus('connected')
