@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -460,4 +461,23 @@ func TestMovingCommentAnchorsSaveDuringContinuousEdits(t *testing.T) {
 		}
 	}
 	t.Fatal("continuous edits kept the moved comment anchor off disk")
+}
+
+func TestLinksOfferCommentOnlyWhileAFileOffersComments(t *testing.T) {
+	for _, project := range []bool{true, false} {
+		f := setup(t, "x\n", setupOpts{project: project})
+		u, _ := url.Parse(f.session.URL)
+		keys, err := protocol.EditKeys(mustDecodeKey(t, u.Fragment), strings.TrimPrefix(u.Path, "/r/"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		base, _, _ := strings.Cut(f.session.URL, "#")
+		want := []Link{{protocol.AccessRead, base + "#" + keys.Fragments[protocol.AccessRead]}}
+		if project {
+			want = append([]Link{{protocol.AccessComment, base + "#" + keys.Fragments[protocol.AccessComment]}}, want...)
+		}
+		if got := f.session.Links(); !reflect.DeepEqual(got, want) {
+			t.Errorf("project %v: Links() = %+v, want %+v", project, got, want)
+		}
+	}
 }

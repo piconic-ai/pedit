@@ -23,7 +23,9 @@ By using it you accept that:
   them, and their edits are saved to your files. They can also save images
   into `assets/` beside each. They cannot choose a path, add a file to the
   room, read or write any other file, or make pedit run anything: only you add
-  files, by naming them or typing their paths into pedit.
+  files, by naming them or typing their paths into pedit. Someone with a
+  comment-only link (Ctrl+L) can write comments but not the files, and
+  someone with a read-only link neither.
 - **The link is the key.** pedit copies it to your clipboard and prints it in
   your terminal. A link you join with, `pedit '<link>'`, is in that command
   line, which other users of the same machine can see while it runs (`ps`),

@@ -556,3 +556,29 @@ func TestParseShareURL(t *testing.T) {
 		}
 	}
 }
+
+func TestParseShareURLSendsLowerLinksToTheBrowser(t *testing.T) {
+	keys, err := protocol.EditKeys(mustDecodeKey(t, protocol.GenerateKey()), "ROOM")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for access, want := range map[protocol.Access]string{protocol.AccessComment: "comment only", protocol.AccessRead: "read only"} {
+		fragment := keys.Fragments[access]
+		_, _, _, err := parseShareURL("https://edit.piconic.ai/r/ROOM#" + fragment)
+		if err == nil || !strings.Contains(err.Error(), "this link is "+want) || !strings.Contains(err.Error(), "browser") {
+			t.Errorf("%s: %v", want, err)
+		}
+		if err != nil && strings.Contains(err.Error(), fragment) {
+			t.Errorf("%s: secret leaked in %q", want, err)
+		}
+	}
+}
+
+func mustDecodeKey(t *testing.T, key string) []byte {
+	t.Helper()
+	raw, err := protocol.DecodeKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}

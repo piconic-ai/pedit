@@ -157,22 +157,22 @@ func TestReadTyped(t *testing.T) {
 	var out strings.Builder
 	u := newUI(&out, true, false)
 	r, w := io.Pipe()
-	var resumed, interrupted int
+	var resumed, interrupted, links int
 	var added []string
 	done := make(chan struct{})
 	go func() {
-		readTyped(context.Background(), r, u, func() { resumed++ }, func(path string) { added = append(added, path) }, func() { interrupted++ })
+		readTyped(context.Background(), r, u, func() { resumed++ }, func(path string) { added = append(added, path) }, func() { interrupted++ }, func() { links++ })
 		close(done)
 	}()
-	for _, chunk := range []string{"\r", "'a b.md'\r", "later", ".md\r", "x\x03"} {
+	for _, chunk := range []string{"\r", "'a b.md'\r", "later", ".md\r", "x\x0c", "\x03"} {
 		if _, err := w.Write([]byte(chunk)); err != nil {
 			t.Fatal(err)
 		}
 	}
 	w.Close()
 	<-done
-	if resumed != 1 || interrupted != 1 {
-		t.Fatalf("resumed %d, interrupted %d times; want once each", resumed, interrupted)
+	if resumed != 1 || interrupted != 1 || links != 1 {
+		t.Fatalf("resumed %d, interrupted %d, showed links %d times; want once each", resumed, interrupted, links)
 	}
 	if want := []string{"a b.md", "later.md"}; !slices.Equal(added, want) {
 		t.Fatalf("added %q, want %q", added, want)
@@ -193,7 +193,7 @@ func TestReadTypedEscKey(t *testing.T) {
 	var added []string
 	done := make(chan struct{})
 	go func() {
-		readTyped(context.Background(), r, u, func() {}, func(path string) { added = append(added, path) }, func() {})
+		readTyped(context.Background(), r, u, func() {}, func(path string) { added = append(added, path) }, func() {}, func() {})
 		close(done)
 	}()
 	for _, step := range []struct {
@@ -223,7 +223,7 @@ func TestReadTypedStopsWhenDone(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	added := 0
-	readTyped(ctx, strings.NewReader("later.md\r"), newUI(io.Discard, true, false), func() {}, func(string) { added++ }, func() {})
+	readTyped(ctx, strings.NewReader("later.md\r"), newUI(io.Discard, true, false), func() {}, func(string) { added++ }, func() {}, func() {})
 	if added != 0 {
 		t.Fatal("added a file after the session ended")
 	}

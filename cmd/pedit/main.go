@@ -76,6 +76,7 @@ Examples:
 
 Markdown supports previews and pasted images, saved beside your file in assets/.
 Anyone with the full link can read and edit while the session is open.
+Press Ctrl+L while sharing for links that can only comment or read.
 
 Options:
   -t, --template <name>  Use a template filename or type (csv, canvas, md)
@@ -295,7 +296,8 @@ func startFailed(out *ui, stderr io.Writer, err error) int {
 }
 
 // readInput reads what the host types while sharing: Enter resumes after
-// maintenance, and a path adds that file. On a terminal it switches to raw
+// maintenance, a path adds that file, and Ctrl+L shows the links with less
+// access. On a terminal it switches to raw
 // mode, and the function it returns switches back.
 func readInput(ctx context.Context, s *session.Session, out *ui, rawOut, rawErr *crlfWriter, signals chan os.Signal) (stopTyping func()) {
 	add := func(path string) {
@@ -330,7 +332,7 @@ func readInput(ctx context.Context, s *session.Session, out *ui, rawOut, rawErr 
 		default:
 		}
 	}
-	go readTyped(ctx, os.Stdin, out, s.Client.Resume, add, interrupt)
+	go readTyped(ctx, os.Stdin, out, s.Client.Resume, add, interrupt, func() { out.links(s.Links()) })
 	var once sync.Once
 	return func() {
 		once.Do(func() {

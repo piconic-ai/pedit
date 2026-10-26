@@ -502,6 +502,7 @@ func TestUISharingSeveralFiles(t *testing.T) {
 		"agenda.md, docs/spec.md are ready to write together.",
 		"Everything is saved to the files.",
 		"To share another file in this room, type its path and press Enter.",
+		"Press Ctrl+L for links that can only comment or read.",
 		"✓ Sharing board.canvas too.",
 		"Could not share big.md: big.md is 2.0 MiB; pedit shares files up to about 1 MiB for now.",
 		"Could not share x[2Jy.md: cannot open x[2Jy.md.",
@@ -509,6 +510,20 @@ func TestUISharingSeveralFiles(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("missing %q in:\n%s", want, out.String())
 		}
+	}
+}
+
+func TestUILinks(t *testing.T) {
+	var out strings.Builder
+	newUI(&out, false, false).links([]session.Link{
+		{Access: protocol.AccessComment, URL: "https://pedit.example.com/r/AAAA#c.x"},
+		{Access: protocol.AccessRead, URL: "https://pedit.example.com/r/AAAA#r.y"},
+	})
+	want := "\n  Links with less access:\n" +
+		"    Comment only  https://pedit.example.com/r/AAAA#c.x\n" +
+		"    Read only     https://pedit.example.com/r/AAAA#r.y\n\n"
+	if out.String() != want {
+		t.Errorf("got %q, want %q", out.String(), want)
 	}
 }
 

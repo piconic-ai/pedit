@@ -105,22 +105,25 @@ AES-GCM rejects a frame made or altered without the key.
 
 ## What pedit does not provide
 
-- **No authentication between participants.** Names, avatars and the host
-  badge come from each peer's own presence state. Anyone with the link can
-  claim any name, or to be the host, in what others see, and can send any
-  edit. The same goes for the list of a room's files: anyone with the link
-  can send one, and browsers show it. The host never acts on a list or a path
+- **No authentication between participants of one access.** Names, avatars
+  and the host badge come from each peer's own presence state. Anyone with an
+  edit link can claim any name, or to be the host, in what others see, and
+  can send any edit. The same goes for the list of a room's files: anyone
+  with an edit link can send one, and browsers show it. Signatures tell only
+  which kind of link sent a frame, so someone with a lower link can claim
+  another's name, shown as comment only or read only, but not pass for an
+  editor. The host never acts on a list or a path
   from the room, and a guest from the command line names its copies itself,
   so a path from the room is only a label there. Frames carry no authenticated sender: the Yjs client ID in an update is
   one each peer picks for itself.
 - **No forward secrecy.** A room has one key, never rotated. Whoever records
   the traffic and later gets the link can decrypt all of it. Every run of
   `pedit <file>` makes a new key.
-- **The link is a bearer capability.** Anyone holding it can read and edit
-  until the host ends the session. One person's access cannot be revoked.
-- **No read-only link yet.** Every link can edit.
-  [#122](https://github.com/piconic-ai/pedit/issues/122) plans comment-only
-  links.
+- **The link is a bearer capability.** Anyone holding it can do what it
+  allows until the host ends the session, and derive the links below it. One
+  person's access cannot be revoked.
+- **Comments are not checked by author.** Anyone with a comment-only or edit
+  link can change or delete any comment.
 
 ## Where a link can leak
 
