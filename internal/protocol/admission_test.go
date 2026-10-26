@@ -97,7 +97,11 @@ func TestHostRegistersTheReadersToken(t *testing.T) {
 	offered := func(h http.Header) string {
 		return strings.TrimPrefix(h.Get("Sec-WebSocket-Protocol"), protocol.SocketProtocol+", "+protocol.AdmissionProtocolPrefix)
 	}
+	// The two handshakes may arrive in either order.
 	hostHeader, commenterHeader := relay.Headers()[0], relay.Headers()[1]
+	if hostHeader.Get(protocol.ReadAdmissionHeader) == "" {
+		hostHeader, commenterHeader = commenterHeader, hostHeader
+	}
 	if offered(hostHeader) != keys.EditAdmission || hostHeader.Get(protocol.ReadAdmissionHeader) != keys.ReadAdmission {
 		t.Fatalf("host offered %q and registered %q", offered(hostHeader), hostHeader.Get(protocol.ReadAdmissionHeader))
 	}
