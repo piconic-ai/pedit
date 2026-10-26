@@ -25,7 +25,7 @@ import {
   SENDER_BYTES,
   SERVER_OUTDATED,
 } from '../src/index.ts'
-import { editKeys, Relay, sealFrame } from '../src/testing.ts'
+import { answer, editKeys, Relay, sealFrame } from '../src/testing.ts'
 
 const clients: RoomClient[] = []
 afterEach(async () => {
@@ -259,13 +259,16 @@ describe('RoomClient', () => {
           encodeCanvas({ kind: 'edit', id, base: '{}', next: '{}' }),
         ),
       )
-    const first = await frame(1, 1, 'first')
+    const vouch = (n: number) => sealFrame(key, new Uint8Array(SENDER_BYTES).fill(n), 1, answer(b))
+    const first = await frame(1, 2, 'first')
     for (const data of [
+      await vouch(1),
       first,
-      await frame(1, 2, 'second'),
+      await frame(1, 3, 'second'),
       first,
-      await frame(1, 2, 'same counter'),
-      await frame(2, 1, 'other sender'),
+      await frame(1, 3, 'same counter'),
+      await vouch(2),
+      await frame(2, 2, 'other sender'),
     ]) {
       peer.send(data)
     }

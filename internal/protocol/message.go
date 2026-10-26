@@ -122,7 +122,7 @@ func DecodeMessage(data []byte) (MessageType, []byte, error) {
 	}
 	t := MessageType(data[0])
 	switch t {
-	case MessageSync, MessageAwareness, MessageAttachment, MessageCanvas, MessageFiles:
+	case MessageSync, MessageAwareness, MessageAttachment, MessageCanvas, MessageFiles, MessageFresh:
 		return t, data[1:], nil
 	}
 	return 0, nil, fmt.Errorf("%w: %d", ErrUnknownMessageType, data[0])
@@ -178,8 +178,8 @@ func DecodeFrame(data []byte) (Sender, uint64, []byte, error) {
 // cannot move that tier's counters, so a peer that names another's sender
 // cannot have that peer's frames dropped. Plain frames, a read link's, are
 // only requests that change nothing when sent again, and are not counted.
-// Only peers with a signing key can add senders, so it grows with the people
-// who joined the room.
+// Only peers with a signing key can add senders, and only by answering the
+// Client's nonce (fresh.go), so it grows with the people who joined the room.
 type replayGuard struct {
 	self Sender
 	mu   sync.Mutex
@@ -189,6 +189,30 @@ type replayGuard struct {
 type guardKey struct {
 	access Access
 	from   Sender
+}
+
+// known tells whether a signer showed it is live (fresh.go): the guard
+// holds a counter for it.
+func (g *replayGuard) known(access Access, from Sender) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	_, ok := g.last[guardKey{access, from}]
+	return ok
+}
+
+// vouch takes counter, that of a signer's answer to the Client's nonce, as
+// the last one from it: what it sent before is dropped.
+func (g *replayGuard) vouch(access Access, from Sender, counter uint64) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	key := guardKey{access, from}
+	if _, ok := g.last[key]; ok || from == g.self {
+		return
+	}
+	if g.last == nil {
+		g.last = map[guardKey]uint64{}
+	}
+	g.last[key] = counter
 }
 
 // foreign tells whether a frame is not one of ours.

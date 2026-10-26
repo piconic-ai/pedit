@@ -13,7 +13,7 @@ import {
   type RoomKeys,
   SENDER_BYTES,
 } from '../src/index.ts'
-import { editKeys, lowerKeys, Relay, sealFrame } from '../src/testing.ts'
+import { answer, editKeys, lowerKeys, Relay, sealFrame } from '../src/testing.ts'
 
 const clients: RoomClient[] = []
 afterEach(async () => {
@@ -100,7 +100,8 @@ describe('presence', () => {
     await vi.waitFor(() => expect(file()).toBe('notes.md'))
 
     peer.send(await sealFrame(read, sender(1), 3, stateFor(hostId, MAX_WIRE_CLOCK, null)))
-    peer.send(await sealFrame(comment, sender(2), 1, stateFor(hostId, 9, { file: 'evil.md' })))
+    peer.send(await sealFrame(comment, sender(2), 1, answer(newcomer)))
+    peer.send(await sealFrame(comment, sender(2), 2, stateFor(hostId, 9, { file: 'evil.md' })))
     await vi.waitFor(() =>
       expect(errors.filter((e) => e instanceof NotAllowedError)).toHaveLength(3),
     )
@@ -126,15 +127,16 @@ describe('presence', () => {
     }
     const several = encoding.createEncoder()
     encoding.writeVarUint8Array(several, encoding.toUint8Array(update))
+    peer.send(await sealFrame(keys, sender(1), 1, answer(me)))
     peer.send(
       await sealFrame(
         keys,
         sender(1),
-        1,
+        2,
         encodeMessage(MessageType.Awareness, encoding.toUint8Array(several)),
       ),
     )
-    peer.send(await sealFrame(keys, sender(1), 2, stateFor(me.doc.clientID, 99, null)))
+    peer.send(await sealFrame(keys, sender(1), 3, stateFor(me.doc.clientID, 99, null)))
     await vi.waitFor(() => expect(errors).toHaveLength(2))
     expect(me.awareness.getLocalState()).toEqual({ name: 'me' })
     expect(me.awareness.getStates().size).toBe(1)

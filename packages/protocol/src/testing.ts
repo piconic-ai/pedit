@@ -8,8 +8,10 @@ import {
 import { encrypt } from './cipher.ts'
 import { MESSAGE_TOO_BIG, RELAY_BUSY, ROOM_CLOSED, ROOM_FULL } from './close.ts'
 import { encodeFrame } from './frame.ts'
+import { encodeFresh, NONCE_BYTES } from './fresh.ts'
+import { encodeMessage, MessageType } from './message.ts'
 import type { Rate } from './pace.ts'
-import type { SocketLike } from './room.ts'
+import type { RoomClient, SocketLike } from './room.ts'
 import { signMessage } from './signed.ts'
 
 /** The room id tests derive keys for. */
@@ -47,6 +49,17 @@ export async function sealFrame(
   const header = encodeFrame(sender, counter, new Uint8Array())
   const body = keys.signer ? await signMessage(keys.signer, header, message) : message
   return encrypt(keys.frameKey, encodeFrame(sender, counter, body))
+}
+
+/**
+ * A fresh message answering `client`'s nonce of its connection: `client`
+ * takes the signed frames its sender sends after it (fresh.ts).
+ */
+export function answer(client: RoomClient): Uint8Array {
+  return encodeMessage(
+    MessageType.Fresh,
+    encodeFresh({ nonce: new Uint8Array(NONCE_BYTES), answer: client.nonce }),
+  )
 }
 
 /** The Room's close code for a connection over its rate (RATE_LIMITED in packages/worker). */

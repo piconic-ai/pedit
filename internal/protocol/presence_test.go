@@ -92,7 +92,8 @@ func TestStatesFromBelowCannotTakeAnEditorsPlace(t *testing.T) {
 	// Removals and states from below no longer touch it.
 	for i, frame := range [][]byte{
 		protocol.SealFrame(read, protocol.Sender{1}, 3, stateFor(hostID, 1<<32, "null")),
-		protocol.SealFrame(comment, protocol.Sender{2}, 1, stateFor(hostID, 9, `{"role":"host","file":"evil.md"}`)),
+		protocol.SealFrame(comment, protocol.Sender{2}, 1, answer(newcomer.Client)),
+		protocol.SealFrame(comment, protocol.Sender{2}, 2, stateFor(hostID, 9, `{"role":"host","file":"evil.md"}`)),
 	} {
 		if err := conn.Write(t.Context(), frame); err != nil {
 			t.Fatalf("frame %d: %v", i, err)
@@ -126,8 +127,9 @@ func TestAwarenessHoldsOneState(t *testing.T) {
 	several.WriteVarBytes(awareness.New(8).EncodeUpdate([]uint64{7, 8}))
 	edit := editKeys(t, key)
 	for i, frame := range [][]byte{
-		protocol.SealFrame(edit, protocol.Sender{1}, 1, protocol.EncodeMessage(protocol.MessageAwareness, several.Bytes())),
-		protocol.SealFrame(edit, protocol.Sender{1}, 2, stateFor(p.aw.ClientID(), 1, "null")),
+		protocol.SealFrame(edit, protocol.Sender{1}, 1, answer(p.Client)),
+		protocol.SealFrame(edit, protocol.Sender{1}, 2, protocol.EncodeMessage(protocol.MessageAwareness, several.Bytes())),
+		protocol.SealFrame(edit, protocol.Sender{1}, 3, stateFor(p.aw.ClientID(), 1, "null")),
 	} {
 		if err := conn.Write(t.Context(), frame); err != nil {
 			t.Fatalf("frame %d: %v", i, err)

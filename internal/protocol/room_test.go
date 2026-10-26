@@ -343,6 +343,7 @@ func TestReportsMalformedMessages(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = conn.Close() })
 	for i, m := range [][]byte{
+		answer(b.Client),
 		protocol.EncodeMessage(protocol.MessageAttachment, nil),
 		protocol.EncodeMessage(protocol.MessageCanvas, nil),
 		protocol.EncodeMessage(protocol.MessageAwareness, nil),
@@ -390,13 +391,15 @@ func TestDropsReplayedFrames(t *testing.T) {
 		}
 		return protocol.EncodeMessage(protocol.MessageCanvas, payload)
 	}
-	first := c(protocol.Sender{1}, 1, edit("first"))
+	first := c(protocol.Sender{1}, 2, edit("first"))
 	for _, frame := range [][]byte{
+		c(protocol.Sender{1}, 1, answer(b.Client)),
 		first,
-		c(protocol.Sender{1}, 2, edit("second")),
+		c(protocol.Sender{1}, 3, edit("second")),
 		first, // sent again
-		c(protocol.Sender{1}, 2, edit("same counter")),
-		c(protocol.Sender{2}, 1, edit("other sender")),
+		c(protocol.Sender{1}, 3, edit("same counter")),
+		c(protocol.Sender{2}, 1, answer(b.Client)),
+		c(protocol.Sender{2}, 2, edit("other sender")),
 	} {
 		if err := conn.Write(t.Context(), frame); err != nil {
 			t.Fatal(err)
@@ -574,9 +577,9 @@ func TestStopsForGoodOnProtocolVersionMismatch(t *testing.T) {
 func TestStateFrameBytesIsWhatIsSent(t *testing.T) {
 	relay := prototest.NewRelay(false)
 	p := join(t, relay, protocol.GenerateKey(), joinOpts{init: strings.Repeat("z", 5000)})
-	prototest.WaitFor(t, wait, func() bool { return len(relay.Frames()) >= 2 }, "the handshake")
-	// The frames are SyncStep1, then the whole state.
-	if got, want := len(relay.Frames()[1]), protocol.StateFrameBytes(p.doc); got != want {
+	prototest.WaitFor(t, wait, func() bool { return len(relay.Frames()) >= 3 }, "the handshake")
+	// The frames are the fresh message, SyncStep1, then the whole state.
+	if got, want := len(relay.Frames()[2]), protocol.StateFrameBytes(p.doc); got != want {
 		t.Fatalf("the state went as a frame of %d bytes, StateFrameBytes says %d", got, want)
 	}
 }
@@ -676,6 +679,13 @@ func TestExpiredWithoutAReasonHasNoTimeLimit(t *testing.T) {
 }
 
 // sealer makes frames as an editor of the room of key sends them.
+// answer is a fresh message answering c's nonce of its connection: c takes
+// the signed frames its sender sends after it (fresh.go).
+func answer(c *protocol.Client) []byte {
+	n := c.Nonce()
+	return protocol.EncodeMessage(protocol.MessageFresh, protocol.EncodeFresh(protocol.FreshMessage{Answer: &n}))
+}
+
 func sealer(t *testing.T, key string) func(protocol.Sender, uint64, []byte) []byte {
 	t.Helper()
 	raw, err := protocol.DecodeKey(key)

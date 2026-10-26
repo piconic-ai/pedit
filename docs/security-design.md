@@ -50,7 +50,12 @@ To run no code from the relay:
   `internal/protocol/message.go`). Editors and commenters sign the message
   with Ed25519, over the ID and number too; every peer checks the signature
   and applies a frame only as far as the signer's link allows
-  (`signed.ts`, `signed.go`).
+  (`signed.ts`, `signed.go`). Peers drop a signed frame whose number is not
+  above the last from its sender. A peer that has just joined has no
+  number yet, so it takes a signer's frames only after the signer answers
+  the random nonce the peer sent on connecting: anyone holding a link can
+  decrypt and keep frames, but cannot have an old one taken as new
+  (`fresh.ts`, `fresh.go`).
 - **Attachment keys.** HKDF-SHA256 of the frame key, empty salt. Info
   `pedit blob enc v2` gives the AES-256-GCM key for image bodies, and
   `pedit blob id v2` the HMAC-SHA256 key that names each stored image from its

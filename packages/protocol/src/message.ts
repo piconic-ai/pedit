@@ -4,6 +4,9 @@ export const MessageType = {
   Attachment: 2,
   Canvas: 3,
   Files: 4,
+  // 5 marks a signed message (signed.ts).
+  /** Asks peers to show they are live, and answers a peer's asking (fresh.ts). */
+  Fresh: 6,
 } as const
 export type MessageType = (typeof MessageType)[keyof typeof MessageType]
 

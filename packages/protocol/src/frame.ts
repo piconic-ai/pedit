@@ -71,8 +71,8 @@ const hex = (bytes: Uint8Array) =>
  * that tier's counters, so a peer that names another's sender cannot have
  * that peer's frames dropped. Plain frames, a read link's, are only
  * requests that change nothing when sent again, and are not counted.
- * Only peers with a signing key can add senders, so it grows with the
- * people who joined the room.
+ * Only peers with a signing key can add senders, and only by answering the
+ * client's nonce (fresh.ts), so it grows with the people who joined the room.
  */
 export class ReplayGuard {
   private readonly self: string
@@ -85,6 +85,22 @@ export class ReplayGuard {
   /** Whether a frame is not one of ours. */
   foreign(sender: Uint8Array): boolean {
     return hex(sender) !== this.self
+  }
+
+  /** Whether a signer showed it is live (fresh.ts): the guard holds a counter for it. */
+  known(tier: string, sender: Uint8Array): boolean {
+    return this.last.has(`${tier}:${hex(sender)}`)
+  }
+
+  /**
+   * Takes counter, that of a signer's answer to the client's nonce, as the
+   * last one from it: what it sent before is dropped.
+   */
+  vouch(tier: string, sender: Uint8Array, counter: bigint): void {
+    const id = hex(sender)
+    const key = `${tier}:${id}`
+    if (id === this.self || this.last.has(key)) return
+    this.last.set(key, counter)
   }
 
   /** Whether a signed frame, checked already, is new, remembering it when it is. */

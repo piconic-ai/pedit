@@ -77,8 +77,19 @@ is shared by both implementations: change them together.
   from the tier that verified: commenters change only the docs of a file's
   comments, readers nothing; both may ask for a doc's state (SyncStep1) and
   for attachments (`want`). Types: `0` sync, `1` awareness, `2` attachment,
-  `3` canvas, `4` files. Clients skip types they do not know, so newer peers
-  can add more.
+  `3` canvas, `4` files, `6` fresh (`5` marks a signed message). Clients
+  skip types they do not know, so newer peers can add more.
+- A peer that has just joined has no counter from anyone, so a reader could
+  have it take an editor's frame kept from before. A fresh message carries
+  the sender's 16-byte nonce of its connection, then, in an answer, the
+  nonce it answers. Each client sends one first on every connection, and
+  answers every nonce it has not answered yet. A receiver takes a signer's
+  frames only from the signer's answer to its own current nonce on, whose
+  counter becomes the signer's floor; until then the signer's frames count
+  as a reader's requests and its awareness is dropped. After answering, a
+  client sends its awareness again, and its state if the asker was in the
+  room first or it sent state lately; attachments and canvas messages it
+  holds after connecting until the answers settle (`fresh.go`, `fresh.ts`).
 - Awareness frames hold one entry, the sender's own state; nobody forwards
   another client's state or its removal. Each peer remembers, per client
   ID, the highest access it heard the ID's state with, drops states for it

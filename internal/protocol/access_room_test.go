@@ -181,6 +181,10 @@ func TestFramesFromLowerLinksChangeNothing(t *testing.T) {
 	counter := uint64(0)
 	for _, access := range []protocol.Access{protocol.AccessComment, protocol.AccessRead} {
 		keys := lowerKeys(t, key, access)
+		counter++
+		if err := conn.Write(t.Context(), protocol.SealFrame(keys, protocol.Sender{byte(access) + 1}, counter, answer(host.Client))); err != nil {
+			t.Fatal(err)
+		}
 		for _, m := range forbidden {
 			counter++
 			if err := conn.Write(t.Context(), protocol.SealFrame(keys, protocol.Sender{byte(access) + 1}, counter, m)); err != nil {
@@ -256,9 +260,11 @@ func TestLowerLinksCannotSilenceEditors(t *testing.T) {
 	}
 	editor := protocol.Sender{7}
 	for _, frame := range [][]byte{
+		protocol.SealFrame(lowerKeys(t, key, protocol.AccessComment), editor, 1, answer(host.Client)),
 		protocol.SealFrame(lowerKeys(t, key, protocol.AccessComment), editor, 1<<62, edit("commenter")),
 		protocol.SealFrame(lowerKeys(t, key, protocol.AccessRead), editor, 1<<62, edit("reader")),
-		protocol.SealFrame(editKeys(t, key), editor, 1, edit("editor")),
+		protocol.SealFrame(editKeys(t, key), editor, 1, answer(host.Client)),
+		protocol.SealFrame(editKeys(t, key), editor, 2, edit("editor")),
 	} {
 		if err := conn.Write(t.Context(), frame); err != nil {
 			t.Fatal(err)
@@ -317,7 +323,8 @@ func TestCommentersWriteCommentsOnly(t *testing.T) {
 	}
 	for i, frame := range [][]byte{
 		protocol.SealFrame(lowerKeys(t, key, protocol.AccessRead), protocol.Sender{1}, 1, update(2)),
-		protocol.SealFrame(lowerKeys(t, key, protocol.AccessComment), protocol.Sender{2}, 1, update(1)),
+		protocol.SealFrame(lowerKeys(t, key, protocol.AccessComment), protocol.Sender{2}, 1, answer(host.Client)),
+		protocol.SealFrame(lowerKeys(t, key, protocol.AccessComment), protocol.Sender{2}, 2, update(1)),
 	} {
 		if err := conn.Write(t.Context(), frame); err != nil {
 			t.Fatalf("frame %d: %v", i, err)

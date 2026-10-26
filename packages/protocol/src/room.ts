@@ -45,6 +45,14 @@ import {
   SENDER_BYTES,
 } from './frame.ts'
 import {
+  decodeFresh,
+  encodeFresh,
+  type FreshMessage,
+  Freshness,
+  RESEND_EVERY_MS,
+  SETTLE_AFTER_MS,
+} from './fresh.ts'
+import {
   decodeMessage,
   encodeMessage,
   type Message,
@@ -258,6 +266,18 @@ export class RoomClient {
   private readonly sender = globalThis.crypto.getRandomValues(new Uint8Array(SENDER_BYTES))
   private sent = 0
   private readonly guard = new ReplayGuard(this.sender)
+  // This client's side of the handshake that shows peers are live
+  // (fresh.ts), when it last sent its state again for peers that dropped
+  // it, and the timer that sends it again.
+  private readonly fresh = new Freshness()
+  private resentAt = Number.NEGATIVE_INFINITY
+  private resendTimer: ReturnType<typeof setTimeout> | null = null
+  private resendState = false
+  // What this client sends once, held after connecting until it settles
+  // (fresh.ts), and the timer that settles it.
+  private settled = false
+  private held: { type: MessageType; payload: Uint8Array }[] = []
+  private settleTimer: ReturnType<typeof setTimeout> | null = null
   private readonly files = new Map<number, FileDoc>()
   /** The time checked files' updates may take, as CHECK_SHARE says. */
   private readonly checks: TimeShare = { credit: CHECK_BURST_MS, counted: performance.now() }
@@ -314,7 +334,12 @@ export class RoomClient {
         this.tooLarge(socket)
         return
       }
+      // Before anyone hears this client is connected, and sends once.
+      this.settled = false
+      this.settleIn(SETTLE_AFTER_MS)
       this.setStatus('connected')
+      // First, so that peers answer it before what they send in reply.
+      this.send(MessageType.Fresh, encodeFresh({ nonce: this.fresh.renew() }))
       this.sendSync((encoder) => syncProtocol.writeSyncStep1(encoder, this.doc))
       if (edits) this.send(MessageType.Sync, state)
       this.sendAwareness([this.doc.clientID])
@@ -372,6 +397,9 @@ export class RoomClient {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
     if (this.manifestTimer) clearTimeout(this.manifestTimer)
     if (this.announceTimer) clearTimeout(this.announceTimer)
+    if (this.resendTimer) clearTimeout(this.resendTimer)
+    if (this.settleTimer) clearTimeout(this.settleTimer)
+    this.held = []
     this.doc.off('update', this.handleDocUpdate)
     this.awareness.off('update', this.handleAwarenessUpdate)
     this.awareness.off('change', this.handleAwarenessChange)
@@ -390,7 +418,7 @@ export class RoomClient {
    * frame, it is dropped while disconnected; retrying is up to the caller.
    */
   sendAttachment(attachment: Attachment): void {
-    this.send(MessageType.Attachment, encodeAttachment(attachment))
+    this.sendOnce(MessageType.Attachment, encodeAttachment(attachment))
   }
 
   /**
@@ -398,7 +426,7 @@ export class RoomClient {
    * frame, it is dropped while disconnected.
    */
   sendCanvas(message: CanvasMessage): void {
-    this.send(MessageType.Canvas, encodeCanvas(message))
+    this.sendOnce(MessageType.Canvas, encodeCanvas(message))
   }
 
   /*
@@ -463,18 +491,41 @@ export class RoomClient {
 
   /** Sends an attachment message about one file. Dropped while disconnected. */
   sendFileAttachment(file: number, attachment: Attachment): void {
-    this.sendFile(file, MessageType.Attachment, encodeAttachment(attachment))
+    this.sendOnce(
+      MessageType.Files,
+      encodeFileDoc(file, MessageType.Attachment, encodeAttachment(attachment)),
+    )
   }
 
   /** Sends a canvas message about one file. Dropped while disconnected. */
   sendFileCanvas(file: number, message: CanvasMessage): void {
-    this.sendFile(file, MessageType.Canvas, encodeCanvas(message))
+    this.sendOnce(MessageType.Files, encodeFileDoc(file, MessageType.Canvas, encodeCanvas(message)))
   }
 
   private async receive(data: Uint8Array): Promise<void> {
     const frame = await this.readFrame(data)
     if (!frame) return
-    const { access, message } = frame
+    const { access, message, vouched } = frame
+    if (message.type === MessageType.Fresh) {
+      this.receiveFresh(frame, decodeFresh(message.payload))
+      return
+    }
+    if (vouched) {
+      this.dispatch(access, message)
+      return
+    }
+    // Meanwhile what it sends counts as a reader's: requests only, which
+    // change nothing when sent again. Its state comes once it is live.
+    if (message.type === MessageType.Awareness) return
+    try {
+      this.dispatch('read', message)
+    } catch (error) {
+      if (!(error instanceof NotAllowedError)) throw error
+    }
+  }
+
+  /** Applies a message as far as the access it speaks for allows. */
+  private dispatch(access: Access, message: Message): void {
     const { payload } = message
     switch (message.type) {
       case MessageType.Sync: {
@@ -541,7 +592,7 @@ export class RoomClient {
    * Decrypts a frame, checks its signature, takes it once, and decodes its
    * message with the access it speaks for; null for an unknown type.
    */
-  private async readFrame(data: Uint8Array): Promise<{ access: Access; message: Message } | null> {
+  private async readFrame(data: Uint8Array): Promise<ReadFrame | null> {
     const plaintext = await decrypt(this.opts.keys.frameKey, data)
     const frame = decodeFrame(plaintext)
     if (!this.guard.foreign(frame.sender)) throw new ReplayedFrameError()
@@ -550,12 +601,99 @@ export class RoomClient {
       plaintext.subarray(0, HEADER_BYTES),
       frame.message,
     )
-    if (opened.access !== 'read' && !this.guard.accept(opened.access, frame.sender, frame.counter))
+    const { access } = opened
+    // A signer that has not shown it is live yet (fresh.ts) may be one the
+    // relay kept from before: its counters prove nothing yet.
+    const vouched = access === 'read' || this.guard.known(access, frame.sender)
+    if (vouched && access !== 'read' && !this.guard.accept(access, frame.sender, frame.counter))
       throw new ReplayedFrameError()
     // A newer peer may send message types we do not know yet; a signed
     // message inside another is one of those.
     const message = decodeKnown(decodeMessage, opened.message, UnknownMessageTypeError)
-    return message && { access: opened.access, message }
+    return message && { access, message, vouched, sender: frame.sender, counter: frame.counter }
+  }
+
+  /**
+   * Takes a fresh message: an answer to this client's nonce shows its signer
+   * is live, and a nonce not answered yet gets an answer.
+   */
+  private receiveFresh(frame: ReadFrame, m: FreshMessage): void {
+    const answersMe = this.fresh.answersMe(m.answer)
+    if (answersMe && frame.access !== 'read' && !frame.vouched) {
+      this.guard.vouch(frame.access, frame.sender, frame.counter)
+    }
+    if (!this.fresh.toAnswer(m.nonce)) return
+    const wrote = this.fresh.wroteLately()
+    this.send(MessageType.Fresh, encodeFresh({ nonce: this.fresh.nonce, answer: m.nonce }))
+    this.resend(answersMe || wrote)
+    if (answersMe) this.settleIn(RESEND_EVERY_MS)
+  }
+
+  /**
+   * Sends what is sent once rather than as state: held until this client
+   * settles, for a client that signs (fresh.ts).
+   */
+  private sendOnce(type: MessageType, payload: Uint8Array): void {
+    if (!this.settled && this.opts.keys.signer) {
+      this.held.push({ type, payload })
+      return
+    }
+    this.send(type, payload)
+  }
+
+  /** Has this client settle after `ms`, unless something puts it off. */
+  private settleIn(ms: number): void {
+    if (this.settleTimer) clearTimeout(this.settleTimer)
+    this.settleTimer = setTimeout(() => {
+      this.settleTimer = null
+      this.settled = true
+      const held = this.held
+      this.held = []
+      for (const m of held) this.send(m.type, m.payload)
+    }, ms)
+  }
+
+  /**
+   * Sends again, at most every RESEND_EVERY_MS, what a peer that did not
+   * know yet that this client is live dropped: its awareness, and with
+   * `state` the doc's state and that of each file this client writes.
+   */
+  private resend(state: boolean): void {
+    if (this.destroyed) return
+    this.resendState ||= state
+    const wait = this.resentAt + RESEND_EVERY_MS - performance.now()
+    if (wait > 0) {
+      this.resendTimer ??= setTimeout(() => {
+        this.resendTimer = null
+        this.resend(false)
+      }, wait)
+      return
+    }
+    this.resentAt = performance.now()
+    this.sendAwareness([this.doc.clientID])
+    if (!this.resendState) return
+    this.resendState = false
+    if (this.edits()) {
+      const step2 = encoding.createEncoder()
+      syncProtocol.writeSyncStep2(step2, this.doc)
+      const state = encoding.toUint8Array(step2)
+      if (frameBytes(state.length) <= MAX_FRAME_BYTES) this.send(MessageType.Sync, state)
+    }
+    for (const [id, f] of this.files) {
+      if (!this.writes(id)) continue
+      const step2 = encoding.createEncoder()
+      syncProtocol.writeSyncStep2(step2, f.doc)
+      const state = encodeFileDoc(id, MessageType.Sync, encoding.toUint8Array(step2))
+      if (frameBytes(state.length) <= MAX_FRAME_BYTES) this.send(MessageType.Files, state)
+    }
+  }
+
+  /**
+   * The nonce of this client's connection, which a peer's answer carries
+   * (fresh.ts). Not a secret.
+   */
+  get nonce(): Uint8Array {
+    return this.fresh.nonce
   }
 
   private receiveFiles(access: Access, payload: Uint8Array): void {
@@ -748,6 +886,7 @@ export class RoomClient {
       this.tooLarge(socket)
       return
     }
+    if (type === MessageType.Sync || type === MessageType.Files) this.fresh.wrote()
     // Numbered now, in the order frames are produced, which the chain keeps.
     const counter = ++this.sent
     const message = encodeMessage(type, payload)
@@ -815,6 +954,15 @@ export class RoomClient {
     this.status = status
     this.opts.onStatus?.(status)
   }
+}
+
+/** A frame read: the access it speaks for, whether its signer showed it is live, and where it came from. */
+interface ReadFrame {
+  access: Access
+  message: Message
+  vouched: boolean
+  sender: Uint8Array
+  counter: bigint
 }
 
 interface AwarenessChanges {

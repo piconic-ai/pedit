@@ -154,7 +154,7 @@ func (c *Client) SendFileAttachment(id uint64, a Attachment) error {
 	if err != nil {
 		return err
 	}
-	return c.sendFile(id, MessageAttachment, payload)
+	return c.sendFileOnce(id, MessageAttachment, payload)
 }
 
 // SendFileCanvas sends a canvas message about one file to everyone else in
@@ -164,7 +164,7 @@ func (c *Client) SendFileCanvas(id uint64, m CanvasMessage) error {
 	if err != nil {
 		return err
 	}
-	return c.sendFile(id, MessageCanvas, payload)
+	return c.sendFileOnce(id, MessageCanvas, payload)
 }
 
 // FileStateFrameBytes is StateFrameBytes for a file's doc: the size on the
@@ -221,6 +221,25 @@ func (c *Client) syncFiles() {
 	}
 }
 
+// resendFiles sends again the state of every file this Client writes
+// (fresh.go).
+func (c *Client) resendFiles() {
+	c.mu.Lock()
+	files := make(map[uint64]*fileDoc, len(c.files))
+	for id, f := range c.files {
+		files[id] = f
+	}
+	c.mu.Unlock()
+	for id, f := range files {
+		if !mayWrite(c.keys.Access, f.comments) {
+			continue
+		}
+		if step2 := fileStep2(id, f.doc); FrameBytes(len(step2)) <= MaxFrameBytes {
+			c.send(MessageFiles, step2)
+		}
+	}
+}
+
 // offerManifest sends the manifest to someone who asked for file 0, at most
 // every manifestEvery: whoever asks meanwhile gets it once that has passed.
 func (c *Client) offerManifest() {
@@ -253,6 +272,16 @@ func (c *Client) sendFile(id uint64, t MessageType, payload []byte) error {
 		return err
 	}
 	c.send(MessageFiles, envelope)
+	return nil
+}
+
+// sendFileOnce is sendFile for what is sent once (fresh.go).
+func (c *Client) sendFileOnce(id uint64, t MessageType, payload []byte) error {
+	envelope, err := EncodeFileDoc(id, t, payload)
+	if err != nil {
+		return err
+	}
+	c.sendOnce(MessageFiles, envelope)
 	return nil
 }
 

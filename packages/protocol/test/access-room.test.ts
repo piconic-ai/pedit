@@ -22,7 +22,7 @@ import {
   type RoomKeys,
   SENDER_BYTES,
 } from '../src/index.ts'
-import { editKeys, lowerKeys, Relay, sealFrame } from '../src/testing.ts'
+import { answer, editKeys, lowerKeys, Relay, sealFrame } from '../src/testing.ts'
 
 const clients: RoomClient[] = []
 afterEach(async () => {
@@ -147,7 +147,7 @@ describe('room links below edit', () => {
     let counter = 0
     for (const access of ['comment', 'read'] as Access[]) {
       const lower = await lowerKeys(keys, access)
-      for (const m of [...forbidden, want]) {
+      for (const m of [answer(host), ...forbidden, want]) {
         peer.send(await sealFrame(lower, sender(access === 'comment' ? 1 : 2), ++counter, m))
       }
     }
@@ -179,9 +179,12 @@ describe('room links below edit', () => {
     const edit = (id: string) =>
       encodeMessage(MessageType.Canvas, encodeCanvas({ kind: 'edit', id, base: '{}', next: '{}' }))
     const far = 2 ** 52
-    peer.send(await sealFrame(await lowerKeys(keys, 'comment'), sender(7), far, edit('commenter')))
+    const comment = await lowerKeys(keys, 'comment')
+    peer.send(await sealFrame(comment, sender(7), 1, answer(host)))
+    peer.send(await sealFrame(comment, sender(7), far, edit('commenter')))
     peer.send(await sealFrame(await lowerKeys(keys, 'read'), sender(7), far, edit('reader')))
-    peer.send(await sealFrame(keys, sender(7), 1, edit('editor')))
+    peer.send(await sealFrame(keys, sender(7), 1, answer(host)))
+    peer.send(await sealFrame(keys, sender(7), 2, edit('editor')))
     await vi.waitFor(() => expect(heard).toEqual(['editor']))
     peer.close()
   })
@@ -227,7 +230,9 @@ describe('room links below edit', () => {
         ),
       )
     peer.send(await sealFrame(await lowerKeys(keys, 'read'), sender(1), 1, update(2)))
-    peer.send(await sealFrame(await lowerKeys(keys, 'comment'), sender(2), 1, update(1)))
+    const comment = await lowerKeys(keys, 'comment')
+    peer.send(await sealFrame(comment, sender(2), 1, answer(host)))
+    peer.send(await sealFrame(comment, sender(2), 2, update(1)))
     await vi.waitFor(() =>
       expect(errors.filter((e) => e instanceof NotAllowedError)).toHaveLength(2),
     )

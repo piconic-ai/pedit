@@ -29,3 +29,6 @@ func SealFrame(keys *RoomKeys, from Sender, counter uint64, message []byte) []by
 	}
 	return c.Encrypt(EncodeFrame(from, counter, message))
 }
+
+// Nonce is the nonce of the Client's connection (fresh.go).
+func (c *Client) Nonce() Nonce { return c.fresh.current() }

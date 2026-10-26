@@ -164,6 +164,9 @@ type Client struct {
 	sendMu sync.Mutex
 	sent   uint64
 	guard  replayGuard
+	// fresh is the Client's side of the handshake that shows peers are
+	// live (fresh.go).
+	fresh freshness
 
 	// presence is the access each awareness client ID spoke with (presence.go).
 	presence presence
@@ -345,6 +348,7 @@ func (c *Client) Destroy() {
 	if c.announceTimer != nil {
 		c.announceTimer.Stop()
 	}
+	c.fresh.stop()
 	out := c.out
 	c.out = nil
 	started := c.started
@@ -435,7 +439,11 @@ func (c *Client) serve(conn Conn) error {
 	if FrameBytes(len(step2)) > MaxFrameBytes {
 		out.fail(ErrFrameTooLarge)
 	} else {
+		// Before anyone hears the Client is connected, and sends once.
+		c.unsettle()
 		c.setStatus(StatusConnected)
+		// First, so that peers answer it before what they send in reply.
+		c.sendFresh()
 		c.send(MessageSync, ysync.EncodeSyncStep1(c.doc))
 		if c.edits() {
 			c.send(MessageSync, step2)
@@ -501,7 +509,10 @@ func (c *Client) receive(data []byte) error {
 	if err != nil {
 		return err
 	}
-	if access != AccessRead && !c.guard.accept(access, from, counter) {
+	// A signer that has not shown it is live yet (fresh.go) may be one the
+	// relay kept from before: its counters prove nothing yet.
+	vouched := access == AccessRead || c.guard.known(access, from)
+	if vouched && access != AccessRead && !c.guard.accept(access, from, counter) {
 		return ErrReplayedFrame
 	}
 	t, payload, err := DecodeMessage(message)
@@ -513,6 +524,25 @@ func (c *Client) receive(data []byte) error {
 	if err != nil {
 		return err
 	}
+	if t == MessageFresh {
+		return c.receiveFresh(access, vouched, from, counter, payload)
+	}
+	if vouched {
+		return c.dispatch(access, t, payload)
+	}
+	// Meanwhile what it sends counts as a reader's: requests only, which
+	// change nothing when sent again. Its state comes once it is live.
+	if t == MessageAwareness {
+		return nil
+	}
+	if err := c.dispatch(AccessRead, t, payload); !errors.Is(err, ErrNotAllowed) {
+		return err
+	}
+	return nil
+}
+
+// dispatch applies a message as far as the access it speaks for allows.
+func (c *Client) dispatch(access Access, t MessageType, payload []byte) error {
 	switch t {
 	case MessageFiles:
 		return c.receiveFiles(access, payload)
@@ -743,7 +773,7 @@ func (c *Client) SendAttachment(a Attachment) error {
 	if err != nil {
 		return err
 	}
-	c.send(MessageAttachment, payload)
+	c.sendOnce(MessageAttachment, payload)
 	return nil
 }
 
@@ -754,7 +784,7 @@ func (c *Client) SendCanvas(m CanvasMessage) error {
 	if err != nil {
 		return err
 	}
-	c.send(MessageCanvas, payload)
+	c.sendOnce(MessageCanvas, payload)
 	return nil
 }
 
@@ -772,6 +802,9 @@ func (c *Client) send(t MessageType, payload []byte) {
 	c.mu.Unlock()
 	if out == nil {
 		return
+	}
+	if t == MessageSync || t == MessageFiles {
+		c.fresh.wrote()
 	}
 	if FrameBytes(len(payload)) > MaxFrameBytes {
 		// The relay would close us with MessageTooBig, and the same frame
