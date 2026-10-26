@@ -31,9 +31,10 @@
  *
  * - What a client sends once rather than as state (attachments and canvas
  *   messages) is not sent again. So a client that signs holds it after
- *   connecting until it settles: RESEND_EVERY_MS after the last answer from
- *   a peer that was in the room before it, or SETTLE_AFTER_MS if none
- *   answers. Then it sends what it held, in order.
+ *   connecting until it settles: a peer takes its frames from its answer
+ *   on, so RESEND_EVERY_MS after the last answer it sent, or
+ *   SETTLE_AFTER_MS if it sends none, alone in the room. Then it sends what
+ *   it held, in order.
  *
  * Peers that stay connected answer each other once; a newcomer gets one
  * answer from each signer before their answers to its requests.

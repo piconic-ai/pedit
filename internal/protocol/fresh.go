@@ -41,9 +41,10 @@ import (
 //
 //   - What the Client sends once rather than as state (attachments and
 //     canvas messages) is not sent again. So a Client that signs holds it
-//     after connecting until it settles: resendEvery after the last answer
-//     from a peer that was in the room before it, or settleAfter if none
-//     answers. Then it sends what it held, in order.
+//     after connecting until it settles: a peer takes its frames from its
+//     answer on, so resendEvery after the last answer it sent, or
+//     settleAfter if it sends none, alone in the room. Then it sends what it
+//     held, in order.
 //
 // Peers that stay connected answer each other once; a newcomer gets one
 // answer from each signer before their answers to its requests.
@@ -217,9 +218,7 @@ func (c *Client) receiveFresh(access Access, vouched bool, from Sender, counter 
 	state := c.fresh.hasToResend(answersMe)
 	c.send(MessageFresh, EncodeFresh(FreshMessage{Nonce: c.fresh.current(), Answer: &m.Nonce}))
 	c.resend(state)
-	if answersMe {
-		c.settleIn(resendEvery)
-	}
+	c.settleIn(resendEvery)
 	return nil
 }
 

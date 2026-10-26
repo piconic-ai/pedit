@@ -429,37 +429,7 @@ func (c *Client) serve(conn Conn) error {
 	}
 	c.out = out
 	c.mu.Unlock()
-
-	// The whole state goes to the room on connecting, from a peer that may
-	// write it. When it does not fit a frame, send nothing: a SyncStep1
-	// alone would have every peer answer with a state as large, which they
-	// could not send either.
-	var step2 []byte
-	c.fresh.connected()
-	if c.edits() {
-		step2 = syncStep2(c.doc)
-		if len(c.doc.StateVector()) > 0 {
-			c.fresh.wrote()
-		}
-	}
-	if FrameBytes(len(step2)) > MaxFrameBytes {
-		out.fail(ErrFrameTooLarge)
-	} else {
-		// Before anyone hears the Client is connected, and sends once. Signers
-		// show they are live anew on every connection: what they sent while
-		// this one was down could be sent again now.
-		c.guard.forgetLive()
-		c.unsettle()
-		c.setStatus(StatusConnected)
-		// First, so that peers answer it before what they send in reply.
-		c.sendFresh()
-		c.send(MessageSync, ysync.EncodeSyncStep1(c.doc))
-		if c.edits() {
-			c.send(MessageSync, step2)
-		}
-		c.sendAwareness([]uint64{c.aw.ClientID()})
-		c.syncFiles()
-	}
+	c.greet(out)
 
 	for {
 		data, err := conn.Read(c.ctx)
@@ -485,6 +455,39 @@ func (c *Client) serve(conn Conn) error {
 			c.onError(err)
 		}
 	}
+}
+
+// greet sends the room what a Client sends on connecting. The whole state
+// goes to the room, from a peer that may write it. When it does not fit a
+// frame, send nothing: a SyncStep1 alone would have every peer answer with
+// a state as large, which they could not send either.
+func (c *Client) greet(out *outbox) {
+	var step2 []byte
+	c.fresh.connected()
+	if c.edits() {
+		step2 = syncStep2(c.doc)
+		if len(c.doc.StateVector()) > 0 {
+			c.fresh.wrote()
+		}
+	}
+	if FrameBytes(len(step2)) > MaxFrameBytes {
+		out.fail(ErrFrameTooLarge)
+		return
+	}
+	// Before anyone hears the Client is connected, and sends once. Signers
+	// show they are live anew on every connection: what they sent while
+	// this one was down could be sent again now.
+	c.guard.forgetLive()
+	c.unsettle()
+	c.setStatus(StatusConnected)
+	// First, so that peers answer it before what they send in reply.
+	c.sendFresh()
+	c.send(MessageSync, ysync.EncodeSyncStep1(c.doc))
+	if c.edits() {
+		c.send(MessageSync, step2)
+	}
+	c.sendAwareness([]uint64{c.aw.ClientID()})
+	c.syncFiles()
 }
 
 // relaySignal takes the relay's own word on the host.

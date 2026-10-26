@@ -632,7 +632,7 @@ export class RoomClient {
     const state = this.fresh.hasToResend(answersMe)
     this.send(MessageType.Fresh, encodeFresh({ nonce: this.fresh.nonce, answer: m.nonce }))
     this.resend(state)
-    if (answersMe) this.settleIn(RESEND_EVERY_MS)
+    this.settleIn(RESEND_EVERY_MS)
   }
 
   /**
