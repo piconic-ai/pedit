@@ -102,7 +102,7 @@ twice, which matters for canvas edits typed as JSON in the browser: they are
 not Yjs updates, and applying one twice is not the same as once. A peer that
 joins later has not seen earlier frames, so the relay can send it frames from
 before it joined. It gets nothing new from them: the Yjs updates are already
-in the document it syncs, and an old cursor or name expires after 30 seconds
+in the document it syncs, and an old cursor or name expires after 90 seconds
 like any other.
 
 It cannot read frames or images, and cannot make frames that peers accept:
