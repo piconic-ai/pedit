@@ -1,5 +1,10 @@
 # Changelog
 
+## [v0.1.19](https://github.com/piconic-ai/pedit/compare/v0.1.18...v0.1.19) - 2026-10-27
+
+- docs(readme): introduce comments and comment-only and read-only links by @kfly8 in https://github.com/piconic-ai/pedit/pull/231
+- fix(presence): keep a guest in a background tab in the room by @kfly8 in https://github.com/piconic-ai/pedit/pull/233
+
 ## [v0.1.18](https://github.com/piconic-ai/pedit/compare/v0.1.17...v0.1.18) - 2026-10-26
 
 - fix(session): preserve the latest manifest before mirroring by @kfly8 in https://github.com/piconic-ai/pedit/pull/221
