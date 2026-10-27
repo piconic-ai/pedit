@@ -122,11 +122,14 @@ const fileOrigin = "file"
 // editOrigin tags a canvas someone edited by hand in the browser.
 const editOrigin = "edit"
 
-// Awareness timings of y-protocols: peers that stay silent for outdatedTimeout
-// are dropped, so renew our state well before that.
+// Awareness timings. We renew our state as often as y-protocols does, but drop
+// a peer only after 90 s of silence rather than its 30 s: Chrome wakes the
+// timers of a tab hidden for 5 minutes at most once a minute, so a guest in a
+// background tab renews only that often (#193). The web client drops peers
+// after the same timeout (packages/web/src/expiry.ts).
 const (
-	outdatedTimeout = 30 * time.Second
-	renewInterval   = outdatedTimeout / 2
+	outdatedTimeout = 90 * time.Second
+	renewInterval   = 15 * time.Second
 )
 
 func Start(ctx context.Context, opts Options) (*Session, error) {
@@ -431,8 +434,13 @@ func serverMessage(res *http.Response) string {
 // keepAlive renews our awareness state and drops peers that went silent, as the
 // JavaScript Awareness does on its own.
 func keepAlive(aw *awareness.Awareness) func() {
-	stopExpiry := aw.StartAutoExpiry(outdatedTimeout)
-	ticker := time.NewTicker(renewInterval)
+	return keepAliveFor(aw, outdatedTimeout, renewInterval)
+}
+
+// keepAliveFor is keepAlive with the given timings, for tests.
+func keepAliveFor(aw *awareness.Awareness, timeout, renew time.Duration) func() {
+	stopExpiry := aw.StartAutoExpiry(timeout)
+	ticker := time.NewTicker(renew)
 	done := make(chan struct{})
 	go func() {
 		for {

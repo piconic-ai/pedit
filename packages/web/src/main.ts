@@ -47,6 +47,7 @@ import {
 } from './comments.ts'
 import { copyText } from './copy.ts'
 import { delimiterFor } from './csv.ts'
+import { keepAlive } from './expiry.ts'
 import { avatarFor, fetchIdentity } from './identity.ts'
 import { JsonPane } from './jsonpane.ts'
 import { resolveLanguage } from './language.ts'
@@ -269,6 +270,8 @@ async function joinRoom(
   const doc = new Y.Doc()
   const text = doc.getText('content')
   const awareness = new Awareness(doc)
+  // A guest in a background tab renews only once a minute (#193).
+  keepAlive(awareness)
   // Before the editor subscribes, so remote cursors never see a hostile colour.
   awareness.on('change', ({ added, updated }: { added: number[]; updated: number[] }) => {
     for (const id of [...added, ...updated]) {
