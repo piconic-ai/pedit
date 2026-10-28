@@ -126,7 +126,7 @@ export class KeptLifecycle {
     const wallTime = this.now()
     if (!preserveObservation && wallTime < this.lastObserved)
       throw new Error('clock moved backwards')
-    const now = preserveObservation ? Math.max(wallTime, this.lastObserved) : wallTime
+    let now = preserveObservation ? Math.max(wallTime, this.lastObserved) : wallTime
     this.lastObserved = now
     const rawBefore = storage.kv.get(LIFETIME_KEY)
     if (rawBefore !== undefined && storage.kv.get(ADMISSION_KEY) !== undefined) {
@@ -138,6 +138,11 @@ export class KeptLifecycle {
     let next: KeptLifetime
     try {
       next = await storage.transaction(async () => {
+        const admittedAt = this.now()
+        if (!preserveObservation && admittedAt < this.lastObserved)
+          throw new Error('clock moved backwards')
+        now = preserveObservation ? Math.max(admittedAt, this.lastObserved) : admittedAt
+        this.lastObserved = now
         const raw = storage.kv.get(LIFETIME_KEY)
         const current = raw === undefined ? undefined : restoreKeptLifetime(raw)
         if (storage.kv.get(ADMISSION_KEY) === undefined) {
@@ -159,6 +164,16 @@ export class KeptLifecycle {
         return state
       })
     } catch (error) {
+      const raw = storage.kv.get(LIFETIME_KEY)
+      if (raw !== undefined && storage.kv.get(ADMISSION_KEY) !== undefined) {
+        const current = restoreKeptLifetime(raw)
+        const observed = observeKeptLifetime(
+          current,
+          Math.max(current.observedAt, this.lastObserved),
+        )
+        if (observed.observedAt !== current.observedAt || observed.host === 'closed')
+          storage.kv.put(LIFETIME_KEY, observed)
+      }
       await storage.sync()
       throw error
     }

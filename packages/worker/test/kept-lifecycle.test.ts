@@ -22,6 +22,60 @@ async function room() {
 }
 
 describe('kept lifecycle integration', () => {
+  it('preserves the admission clock when a transition fails', async () => {
+    const r = await room(),
+      c = capabilities()
+    const initial = Date.now() + 300_000
+    let now = initial
+    await runInDurableObject(r.stub, async (_: Room, state) => {
+      const a = new KeptTransport(state, env.ROOM, { bytes: 100, frames: 10 }, policy, () => now)
+      const b = new KeptTransport(state, env.ROOM, { bytes: 100, frames: 10 }, policy, () => now)
+      await a.initialize(r.id, r.host, c, 'one', bytes(0))
+      await a.leave(r.id, r.host)
+      now = initial + 1000
+      const transaction = state.storage.transaction.bind(state.storage)
+      const spy = vi
+        .spyOn(state.storage, 'transaction')
+        .mockImplementationOnce(async (callback) => {
+          now = initial + 70_000
+          return transaction(callback)
+        })
+      try {
+        await expect(a.leave(r.id, r.host)).rejects.toThrow('host is already away')
+      } finally {
+        spy.mockRestore()
+      }
+      now = initial + 2000
+      await expect(b.resume(r.id, r.host)).rejects.toThrow('clock moved backwards')
+    })
+  })
+
+  it('closes instead of extending a room when transaction admission crosses its deadline', async () => {
+    const r = await room(),
+      c = capabilities()
+    let now = Date.now() + 300_000
+    await runInDurableObject(r.stub, async (_: Room, state) => {
+      const t = new KeptTransport(state, env.ROOM, { bytes: 100, frames: 10 }, policy, () => now)
+      await t.initialize(r.id, r.host, c, 'one', bytes(0))
+      await t.append(c.editor, 'one', bytes(1))
+      now += 119_000
+      const transaction = state.storage.transaction.bind(state.storage)
+      const spy = vi
+        .spyOn(state.storage, 'transaction')
+        .mockImplementationOnce(async (callback) => {
+          now += 2_000
+          return transaction(callback)
+        })
+      try {
+        expect((await t.leave(r.id, r.host)).host).toBe('closed')
+        expect(state.storage.kv.get(ADMISSION_KEY)).toBeUndefined()
+        expect(state.storage.sql.exec('SELECT * FROM durable_log').toArray()).toEqual([])
+      } finally {
+        spy.mockRestore()
+      }
+    })
+  })
+
   it('persists cap, host departures, reconnect and expiry across eviction', async () => {
     const r = await room(),
       c = capabilities()
