@@ -48,6 +48,18 @@ export class KeptBlobCleanup {
     )
   }
 
+  private assertUnsentActive(id: string, phase: -1 | 0): Promise<void> | undefined {
+    try {
+      if (this.closed()) throw new Error('kept room is closed')
+      this.assertActive()
+    } catch (error) {
+      this.storage.sql.exec('DELETE FROM kept_blob_puts WHERE id = ? AND completed = ?', id, phase)
+      return this.storage.sync().then(() => {
+        throw error
+      })
+    }
+  }
+
   async put(
     id: string,
     content: Uint8Array,
@@ -102,18 +114,8 @@ export class KeptBlobCleanup {
       await this.storage.sync()
       throw error
     }
-    if (this.closed()) {
-      this.storage.sql.exec('DELETE FROM kept_blob_puts WHERE id = ? AND completed = -1', id)
-      await this.storage.sync()
-      throw new Error('kept room is closed')
-    }
-    try {
-      this.assertActive()
-    } catch (error) {
-      this.storage.sql.exec('DELETE FROM kept_blob_puts WHERE id = ? AND completed = -1', id)
-      await this.storage.sync()
-      throw error
-    }
+    const beforeSending = this.assertUnsentActive(id, -1)
+    if (beforeSending) await beforeSending
     const sending = this.storage.sql
       .exec(
         'UPDATE kept_blob_puts SET completed = 0 WHERE id = ? AND completed = -1 RETURNING id',
@@ -122,18 +124,8 @@ export class KeptBlobCleanup {
       .toArray()
     if (!sending.length) throw new Error('kept upload no longer reserved')
     await this.storage.sync()
-    if (this.closed()) {
-      this.storage.sql.exec('DELETE FROM kept_blob_puts WHERE id = ? AND completed = 0', id)
-      await this.storage.sync()
-      throw new Error('kept room is closed')
-    }
-    try {
-      this.assertActive()
-    } catch (error) {
-      this.storage.sql.exec('DELETE FROM kept_blob_puts WHERE id = ? AND completed = 0', id)
-      await this.storage.sync()
-      throw error
-    }
+    const beforePut = this.assertUnsentActive(id, 0)
+    if (beforePut) await beforePut
     await this.bucket.put(this.prefix + id, data)
     this.storage.sql.exec('UPDATE kept_blob_puts SET completed = 1 WHERE id = ?', id)
     await this.storage.sync()

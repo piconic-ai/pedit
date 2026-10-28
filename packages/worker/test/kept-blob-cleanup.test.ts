@@ -32,6 +32,31 @@ function proxy(bucket: R2Bucket, overrides: Partial<R2Bucket>): R2Bucket {
 }
 
 describe('kept attachment cleanup primitive', () => {
+  it('starts the R2 PUT without yielding after the final activity check', async () => {
+    const stub = room()
+    await runInDurableObject(stub, async (_: Room, state) => {
+      let checks = 0
+      let deferred = false
+      let deferredBeforePut = true
+      const bucket = proxy(env.BLOBS, {
+        put: (...args: Parameters<R2Bucket['put']>) => {
+          deferredBeforePut = deferred
+          return env.BLOBS.put(...args)
+        },
+      })
+      const x = new KeptBlobCleanup(state, bucket, limits, () => {
+        if (++checks === 3)
+          queueMicrotask(() => {
+            deferred = true
+          })
+      })
+      await x.put(id(1), Uint8Array.of(1))
+      expect(checks).toBe(3)
+      expect(deferredBeforePut).toBe(false)
+      expect(deferred).toBe(true)
+    })
+  })
+
   it('deletes only kept objects after close and cannot reopen', async () => {
     const stub = room()
     await runInDurableObject(stub, async (_: Room, state) => {
