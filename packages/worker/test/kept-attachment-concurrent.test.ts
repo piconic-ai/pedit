@@ -62,6 +62,9 @@ it('waits for a slow concurrent upload within the deadline', async () => {
     body,
   })
   await waiting
+  await expect
+    .poll(() => runInDurableObject(room, (instance) => instance['keptUploading'].has(blobID)))
+    .toBe(true)
   const fetcher: typeof fetch = (input, init) => room.fetch(new Request(input, init))
   try {
     setTimeout(release, 3200)
@@ -125,6 +128,9 @@ it('stops a conflicting upload at its deadline', async () => {
     body,
   })
   await waiting
+  await expect
+    .poll(() => runInDurableObject(room, (instance) => instance['keptUploading'].has(blobID)))
+    .toBe(true)
   const fetcher: typeof fetch = (input, init) => room.fetch(new Request(input, init))
   try {
     await expect(

@@ -446,6 +446,9 @@ The registry binding and cron are configured only by tests; the internal upload
 path fails closed without the binding. Enabling kept rooms requires a production
 binding, migration, schedule, capacity monitoring, and an operational policy for
 uncertain PUTs. No age-based R2 lifecycle is applied to live kept attachments.
+Registration failures return 503 after authorization; the v6 attachment client
+retries that status with the same ciphertext within its existing deadline. A
+403 remains a refusal and is not retried as a transient registry failure.
 
 The separate v6 `KeptAttachmentClient` derives the blob ID from plaintext,
 keeps one encrypted body for a network retry, and uses the editor capability to

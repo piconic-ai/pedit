@@ -289,9 +289,9 @@ it('releases the upload slot if registry RPC never finishes', async () => {
         body: Uint8Array.of(3),
       })
     try {
-      expect((await instance.fetch(request())).status).toBe(403)
+      expect((await instance.fetch(request())).status).toBe(503)
       expect(state.storage.sql.exec('SELECT * FROM kept_blob_puts').toArray()).toHaveLength(0)
-      expect((await instance.fetch(request())).status).toBe(403)
+      expect((await instance.fetch(request())).status).toBe(503)
       expect(registrations).toBe(1)
     } finally {
       instance['env'] = original

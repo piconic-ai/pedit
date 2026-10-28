@@ -137,6 +137,10 @@ export class KeptAttachmentClient {
         }
         if (response.status === 204) return { hash, disposition: 'stored' }
         void response.body?.cancel().catch(() => {})
+        if (response.status === 503) {
+          await delay()
+          continue
+        }
         if (response.status !== 409) throw new Error('attachment upload refused')
         const existing = await this.fetcher(url, {
           headers: { Authorization: `Bearer ${this.options.keys.readAdmission}` },
