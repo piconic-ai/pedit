@@ -133,7 +133,7 @@ export function decodeKeptMultiPayload(input: Uint8Array, ledgerLimit: number): 
   if (count > MAX_ATTACHMENTS) throw bad()
   const attachments: string[] = []
   for (let i = 0; i < count; i++)
-    attachments.push(new TextDecoder('utf-8', { fatal: true }).decode(read()))
+    attachments.push(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(read()))
   const ledger = decodeKeptLedger(ledgerLimit, read())
   if (at !== data.length) throw bad()
   const result = { manifest: decoded.files, documents, attachments, ledger }

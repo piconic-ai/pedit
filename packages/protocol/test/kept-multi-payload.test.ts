@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
+import bomVector from '../../testdata/kept-multi-payload-bom-vector.json'
 import vector from '../../testdata/kept-multi-payload-vectors.json'
 import { decodeKeptMultiPayload, encodeKeptMultiPayload } from '../src/kept-multi-payload.ts'
 
@@ -41,4 +42,9 @@ describe('multi-file checkpoint', () => {
     expect(() => decodeKeptMultiPayload(wire.subarray(0, wire.length - 1), 4)).toThrow()
     expect(() => decodeKeptMultiPayload(new Uint8Array([...wire, 0]), 4)).toThrow()
   })
+})
+
+it('rejects the shared BOM-prefixed inventory wire', () => {
+  const input = Uint8Array.from(Buffer.from(bomVector.payload, 'base64url'))
+  expect(() => decodeKeptMultiPayload(input, 4)).toThrow()
 })
