@@ -1,0 +1,35 @@
+{
+  "roomId": "AAECAwQFBgcICQoLDA0ODw",
+  "hostKey": "6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw",
+  "edit": "v6.e.AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwPqSmxj4pxSCr71UHsTLsX5lUd2rr6-e5JCHuppFEbSLA",
+  "comment": "v6.c.SfLrDmhrJx7bXFkr3K9Fv9sbBIOLLHWYx91__25mGqPHNSmi4pTeOC-QHhtOXgGtIXe9_zuxdes1kqBpkFweT-pKbGPinFIKvvVQexMuxfmVR3auvr57kkIe6mkURtIs",
+  "read": "v6.r.4RFmqmgMHvqDY4AvknKAg7xhufh3kzAxq0RLeyAmdIfHNSmi4pTeOC-QHhtOXgGtIXe9_zuxdes1kqBpkFweT3BFYh7RiLLQF8_N3siH7TTD4WyGfJOUMLwxCf28iIt26kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw",
+  "editKey": "xzUpouKU3jgvkB4bTl4BrSF3vf87sXXrNZKgaZBcHk8",
+  "commentKey": "cEViHtGIstAXz83eyIftNMPhbIZ8k5QwvDEJ_byIi3Y",
+  "frameKey": "FE6AV_G-pMPvTYE41WOiMXbPwBKbj5Kj-d3Ti-cSqx0",
+  "editAdmission": "THXB_L87zkGVNu9T5UK835wZmt1xq3oqmZeoCvHSWQA",
+  "readAdmission": "aV_hwac_zxxYoZ3576aN-oTfhz4iJdRvP2sOHeNepxc",
+  "hostSignature": "emnFXxBP8U-Jvw1Bsx5vWrY51ebuEjsMlmgwJchR4LHS40n8IGAwPDMEqNG7i2YK0A3nq9WznWcXCOMEFBNrCg",
+  "invalidPublicKeys": [
+    {
+      "name": "identity",
+      "key": "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    },
+    {
+      "name": "signed identity",
+      "key": "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIA"
+    },
+    {
+      "name": "order two",
+      "key": "7P_______________________________________38"
+    },
+    {
+      "name": "noncanonical identity",
+      "key": "7v_______________________________________38"
+    },
+    {
+      "name": "base point plus order two",
+      "key": "lZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZk"
+    }
+  ]
+}

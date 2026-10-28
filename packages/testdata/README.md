@@ -36,3 +36,8 @@ token of the same 32 bytes, which no value of the chain may repeat.
 `internal/protocol/access_test.go` writes it (`PEDIT_UPDATE_VECTORS=1 go test
 ./internal/protocol/`), and `packages/protocol/test/access.test.ts` checks the
 TypeScript side derives the same.
+
+`kept-access-vectors.json` pins the v6 kept-room links and their keys. Both Go
+and TypeScript tests read it. Regenerate it with `node
+packages/testdata/generate-kept-access.mjs > packages/testdata/kept-access-vectors.json`.
+The generator's fixed keys are for tests only.

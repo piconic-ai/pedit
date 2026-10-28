@@ -8,6 +8,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@noble/curves": "^2.4.0",
     "lib0": "^0.2.119",
     "y-protocols": "^1.0.7",
     "yjs": "^13.6.33"
@@ -19,7 +20,11 @@
     "./csp": "./src/csp.ts",
     "./embeds/define": "./src/embeds/define.ts",
     "./frame": "./src/frame.ts",
+    "./kept-access": "./src/kept-access.ts",
     "./pace": "./src/pace.ts",
     "./testing": "./src/testing.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.4"
   }
 }

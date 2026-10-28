@@ -15,6 +15,7 @@ ignore (
 )
 
 require (
+	filippo.io/edwards25519 v1.2.0
 	github.com/coder/websocket v1.8.15
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/reearth/ygo v1.51.11

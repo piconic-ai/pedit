@@ -298,6 +298,7 @@ export class RoomClient {
   private announceTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(opts: RoomClientOptions) {
+    if (opts.keys.version !== undefined) throw new Error('wrong room protocol')
     this.opts = opts
     this.doc = opts.doc
     this.awareness = opts.awareness

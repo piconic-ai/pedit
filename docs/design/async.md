@@ -30,6 +30,16 @@ explicit protocol. The live nonce handshake
 remains in use for live messages; stored frames have a separate validation
 path and do not advance the live handshake's floors.
 
+Kept-room links use `v6.e.`, `v6.c.` or `v6.r.` followed by canonical
+base64url data. Each contains the secret for its access tier and the host's
+public key; lower-tier links also contain the higher tiers' verification keys.
+The host's private key is generated independently and is never in a shared
+link. The v6 frame key binds the room ID and all three verification keys.
+Peers reject noncanonical, identity and non-prime-order public keys. The v6
+keys and signers cannot be passed to the existing v5 client and signing APIs.
+These primitives are not yet wired to rooms: v6 needs its own signed durable
+record format, including the room, epoch and sender identity, before use.
+
 Signatures cannot make an untrusted relay available or prove that it delivered
 every frame. A first-time guest with no independent fresh reference cannot
 detect the relay presenting an older valid checkpoint and its log. A returning

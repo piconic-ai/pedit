@@ -45,6 +45,7 @@ export async function signMessage(
   header: Uint8Array,
   message: Uint8Array,
 ): Promise<Uint8Array> {
+  if (signer.version !== undefined) throw new Error('wrong signing protocol')
   const tier = TIERS.indexOf(signer.access)
   const signature = new Uint8Array(
     await globalThis.crypto.subtle.sign(
@@ -75,10 +76,11 @@ export class BadSignatureError extends Error {
  * the access the message speaks for, and the message.
  */
 export async function openMessage(
-  keys: Pick<RoomKeys, 'editKey' | 'commentKey'>,
+  keys: Pick<RoomKeys, 'editKey' | 'commentKey' | 'version'>,
   header: Uint8Array,
   data: Uint8Array,
 ): Promise<{ access: Access; message: Uint8Array }> {
+  if (keys.version !== undefined) throw new Error('wrong signing protocol')
   if (data[0] !== SIGNED) return { access: 'read', message: data }
   const tier = TIERS[data[1] ?? -1]
   if (!tier || data.length <= SIGNED_OVERHEAD) throw new BadSignatureError()
