@@ -49,6 +49,7 @@ describe('kept room links', () => {
     })
     expect(toBase64Url(keys.frameSecret)).toBe(vector.frameKey)
     expect(keys.editAdmission).toBe(vector.editAdmission)
+    expect(keys.commentAdmission).toBe(vector.commentAdmission)
     expect(keys.readAdmission).toBe(vector.readAdmission)
     expect(toBase64Url(link.hostKey)).toBe(vector.hostKey)
     expect(parseFragment(vector.edit)).toBeNull()
@@ -78,6 +79,7 @@ describe('kept room links', () => {
     link.hostKey.fill(0)
     const keys = await deriving
     expect(keys.fragments.edit).toBe(vector.edit)
+    expect(keys.commentAdmission).toBe(vector.commentAdmission)
     expect(toBase64Url(keys.frameSecret)).toBe(vector.frameKey)
   })
 
@@ -91,7 +93,18 @@ describe('kept room links', () => {
     hostKey.fill(0)
     const keys = await deriving
     expect(keys.fragments.edit).toBe(vector.edit)
+    expect(keys.commentAdmission).toBe(vector.commentAdmission)
     expect(toBase64Url(keys.frameSecret)).toBe(vector.frameKey)
+  })
+
+  it('copies comment-link inputs before deriving its admission capability', async () => {
+    const link = parseKeptFragment(vector.comment)
+    if (!link || link.access !== 'comment') throw new Error('invalid vector')
+    const deriving = deriveKeptRoomKeys(link, vector.roomId)
+    link.secret.fill(0)
+    link.editKey.fill(0)
+    link.hostKey.fill(0)
+    expect((await deriving).commentAdmission).toBe(vector.commentAdmission)
   })
 
   it('copies all read-link keys before asynchronous derivation', async () => {
@@ -124,9 +137,25 @@ describe('kept room links', () => {
       if (!parsed) throw new Error('invalid fragment')
       const keys = await deriveKeptRoomKeys(parsed, vector.roomId)
       expect(keys.frameSecret).toEqual(editor.frameSecret)
+      expect(keys.commentAdmission).toBe(access === 'read' ? null : editor.commentAdmission)
+      if (keys.commentAdmission) {
+        expect(keys.commentAdmission).not.toBe(keys.readAdmission)
+        expect(keys.commentAdmission).not.toBe(keys.editAdmission)
+      }
       if (access !== 'edit') expect(keys.fragments.edit).toBeUndefined()
       if (access === 'read') expect(keys.fragments.comment).toBeUndefined()
     }
+    const commentLink = parseKeptFragment(vector.comment)
+    if (!commentLink || commentLink.access !== 'comment') throw new Error('invalid vector')
+    const alteredSecret = Uint8Array.from(commentLink.secret)
+    alteredSecret[0] = (alteredSecret[0] ?? 0) ^ 1
+    expect(
+      (await deriveKeptRoomKeys({ ...commentLink, secret: alteredSecret }, vector.roomId))
+        .commentAdmission,
+    ).not.toBe(vector.commentAdmission)
+    expect(
+      (await deriveKeptRoomKeys({ ...commentLink, editKey: host }, vector.roomId)).commentAdmission,
+    ).not.toBe(vector.commentAdmission)
     if (!editor.signer) throw new Error('missing editor signer')
     const signature = await crypto.subtle.sign('Ed25519', editor.signer.key, new Uint8Array([1]))
     expect(
@@ -137,6 +166,12 @@ describe('kept room links', () => {
     expect(
       (await deriveKeptRoomKeys({ ...link, hostKey: changed }, vector.roomId)).frameSecret,
     ).not.toEqual(editor.frameSecret)
+    expect(
+      (await deriveKeptRoomKeys({ ...link, hostKey: changed }, vector.roomId)).commentAdmission,
+    ).not.toBe(editor.commentAdmission)
+    expect((await deriveKeptRoomKeys(link, 'BAECAwQFBgcICQoLDA0ODw')).commentAdmission).not.toBe(
+      editor.commentAdmission,
+    )
     expect((await deriveKeptRoomKeys(link, 'BAECAwQFBgcICQoLDA0ODw')).frameSecret).not.toEqual(
       editor.frameSecret,
     )

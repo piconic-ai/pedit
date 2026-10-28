@@ -37,8 +37,13 @@ The host's private key is generated independently and is never in a shared
 link. The v6 frame key binds the room ID and all three verification keys.
 Peers reject noncanonical, identity and non-prime-order public keys. The v6
 keys and signers cannot be passed to the existing v5 client and signing APIs.
-These primitives are not yet wired to rooms: v6 needs its own signed durable
-record format, including the room, epoch and sender identity, before use.
+The editor and commenter links additionally derive the same comment admission
+capability from the comment secret. Its v6 HKDF context binds the room ID,
+editor and commenter verification keys, and host verification key. The read
+link cannot derive it. This capability is not yet registered or enforced by
+the relay; later transport must distinguish it from reader admission before it
+allows an append. V6 room transport and signed durable records are not yet
+wired together.
 
 Signatures cannot make an untrusted relay available or prove that it delivered
 every frame. A first-time guest with no independent fresh reference cannot

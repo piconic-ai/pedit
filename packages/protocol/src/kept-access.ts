@@ -30,6 +30,7 @@ export interface KeptRoomKeys extends Readonly<Omit<RoomKeys, 'version' | 'signe
   roomId: string
   signer: KeptSigner | null
   hostKey: CryptoKey
+  commentAdmission: string | null
 }
 
 export function parseKeptFragment(fragment: string): KeptLinkSecrets | null {
@@ -149,6 +150,21 @@ export async function deriveKeptRoomKeys(
     read,
     concat(utf8.encode('pedit v6 frame'), length, room, editKey, commentKey, link.hostKey),
   )
+  const commentAdmission = comment
+    ? toBase64Url(
+        await hkdf(
+          comment,
+          concat(
+            utf8.encode('pedit v6 comment admission'),
+            length,
+            room,
+            editKey,
+            commentKey,
+            link.hostKey,
+          ),
+        ),
+      )
+    : null
   const subtle = globalThis.crypto.subtle
   const [frameKey, edit, commentVerify, hostKey] = await Promise.all([
     subtle.importKey('raw', buf(frame), 'AES-GCM', false, ['encrypt', 'decrypt']),
@@ -170,6 +186,7 @@ export async function deriveKeptRoomKeys(
     signer,
     readAdmission: await deriveAdmissionToken(frame),
     editAdmission,
+    commentAdmission,
     fragments,
     get frameSecret() {
       return Uint8Array.from(frame)

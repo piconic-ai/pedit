@@ -41,6 +41,19 @@ const vector = {
   commentKey: b64(commentKey),
   frameKey: b64(frameKey),
   editAdmission: b64(kdf(secret, 'pedit v6 edit admission')),
+  commentAdmission: b64(
+    kdf(
+      comment,
+      Buffer.concat([
+        Buffer.from('pedit v6 comment admission'),
+        length,
+        Buffer.from(roomId),
+        editKey,
+        commentKey,
+        host,
+      ]),
+    ),
+  ),
   readAdmission: b64(kdf(frameKey, 'pedit v5 read admission')),
   hostSignature: b64(
     sign(null, Buffer.from('kept checkpoint vector'), privateKey(Buffer.alloc(32, 7))),
