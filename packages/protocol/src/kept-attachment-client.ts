@@ -79,7 +79,7 @@ export class KeptAttachmentClient {
       throw new Error('invalid kept endpoint')
     url.pathname = `${url.pathname.replace(/\/$/, '')}/internal/kept/${options.keys.roomId}/blobs/`
     this.base = url.toString()
-    this.fetcher = options.fetch ?? fetch
+    this.fetcher = options.fetch ?? ((...args) => fetch(...args))
   }
 
   async upload(plaintext: Uint8Array, signal?: AbortSignal): Promise<KeptAttachmentResult> {
