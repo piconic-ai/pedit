@@ -599,6 +599,7 @@ export class Room extends DurableObject<Env> {
       await new KeptAdmission(this.ctx, this.env.ROOM).authorizeHost(roomId, host)
       const policy = this.ctx.storage.kv.get<KeepPolicy>(KEPT_POLICY_KEY)
       if (!policy) return new Response(null, { status: 403 })
+      if (this.full(true, 'editor')) return new Response('room is full', { status: 429 })
       const pair = new WebSocketPair()
       this.ctx.acceptWebSocket(pair[1], [KEPT_HOST_TAG])
       try {
