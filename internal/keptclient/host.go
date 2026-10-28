@@ -17,7 +17,7 @@ import (
 )
 
 // ErrInitializationUncertain means the relay may have initialized the room,
-// but the saved credentials changed or became unreadable during the request.
+// but the response or saved credentials do not establish a safe outcome.
 var ErrInitializationUncertain = errors.New("initialization outcome uncertain: the relay may have initialized the room")
 
 type Host struct {
@@ -91,15 +91,18 @@ func (h *Host) Initialize(ctx context.Context, epoch [32]byte, checkpoint []byte
 	headers.Set("X-Pedit-Keep-Seconds", strconv.FormatInt(seconds, 10))
 	resp, err := h.request(ctx, "initialize", checkpoint, headers)
 	if err != nil {
-		return 0, err
+		return 0, ErrInitializationUncertain
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			return 0, ErrInitializationUncertain
+		}
 		return 0, fmt.Errorf("initialization failed (HTTP %d)", resp.StatusCode)
 	}
 	effective, err := strconv.ParseInt(resp.Header.Get("X-Pedit-Keep-Seconds"), 10, 64)
 	if err != nil || effective <= 0 || effective > seconds {
-		return 0, errors.New("invalid relay keep duration")
+		return 0, ErrInitializationUncertain
 	}
 	latest, err := h.currentCredentials()
 	if err != nil || latest.Generation != c.Generation {
