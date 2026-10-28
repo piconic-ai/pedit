@@ -1,19 +1,42 @@
 import { DurableLog, type LogCut, type LogLimits } from './durable-log.ts'
 import { KeptAdmission, type KeptCapabilities } from './kept-admission.ts'
+import { type KeepPolicy, KeptLifecycle } from './kept-lifecycle.ts'
 
 export class KeptTransport {
   private readonly admission: KeptAdmission
+  private readonly lifecycle: KeptLifecycle
 
   constructor(
     private readonly state: DurableObjectState,
     namespace: Pick<Env['ROOM'], 'idFromName'>,
     private readonly limits: LogLimits,
+    policy: KeepPolicy,
+    now: () => number = Date.now,
+    maintenanceClosed: () => boolean = () => false,
   ) {
     this.admission = new KeptAdmission(state, namespace)
+    this.lifecycle = new KeptLifecycle(state, namespace, policy, now, maintenanceClosed)
   }
 
   private log(): DurableLog {
-    return new DurableLog(this.state.storage, this.limits)
+    return new DurableLog(this.state.storage, this.limits, () => this.lifecycle.assertOpen())
+  }
+
+  private async active(): Promise<void> {
+    await this.lifecycle.observe()
+    this.lifecycle.assertOpen()
+  }
+
+  private async run<T>(action: () => Promise<T>): Promise<T> {
+    try {
+      await this.active()
+      const result = await action()
+      await this.active()
+      return result
+    } catch (error) {
+      await this.lifecycle.rememberObservation()
+      throw error
+    }
   }
 
   async initialize(
@@ -25,13 +48,14 @@ export class KeptTransport {
   ): Promise<void> {
     const input = ciphertext.slice(0)
     await this.admission.register(roomId, hostToken, capabilities)
-    await this.log().initialize(epoch, input)
+    await this.lifecycle.start(roomId, hostToken)
+    await this.run(() => this.log().initialize(epoch, input))
   }
 
   async append(token: string, epoch: string, ciphertext: ArrayBuffer): Promise<number> {
     const input = ciphertext.slice(0)
     if (!(await this.admission.canAppend(token))) throw new Error('append admission denied')
-    return this.log().append(epoch, input)
+    return this.run(() => this.log().append(epoch, input))
   }
 
   private async allowRead(token: string): Promise<void> {
@@ -40,17 +64,17 @@ export class KeptTransport {
 
   async beginRead(token: string) {
     await this.allowRead(token)
-    return this.log().beginRead()
+    return this.run(() => this.log().beginRead())
   }
 
   async readPage(token: string, session: string, cursor: string) {
     await this.allowRead(token)
-    return this.log().readPage(session, cursor)
+    return this.run(() => this.log().readPage(session, cursor))
   }
 
   async finishRead(token: string, session: string, cursor: string): Promise<void> {
     await this.allowRead(token)
-    await this.log().finishRead(session, cursor)
+    await this.run(() => this.log().finishRead(session, cursor))
   }
 
   async freeze(
@@ -60,12 +84,12 @@ export class KeptTransport {
     generation: number,
   ): Promise<LogCut> {
     await this.admission.authorizeHost(roomId, hostToken)
-    return this.log().freeze(epoch, generation)
+    return this.run(() => this.log().freeze(epoch, generation))
   }
 
   async pendingCut(roomId: string, hostToken: string): Promise<LogCut | undefined> {
     await this.admission.authorizeHost(roomId, hostToken)
-    return this.log().pendingCut()
+    return this.run(async () => this.log().pendingCut())
   }
 
   async commit(
@@ -78,12 +102,32 @@ export class KeptTransport {
     const expectedCut = { ...cut }
     const input = ciphertext.slice(0)
     await this.admission.authorizeHost(roomId, hostToken)
-    await this.log().commit(expectedCut, epoch, input)
+    await this.run(() => this.log().commit(expectedCut, epoch, input))
   }
 
   async abort(roomId: string, hostToken: string, cut: LogCut): Promise<void> {
     const expectedCut = { ...cut }
     await this.admission.authorizeHost(roomId, hostToken)
-    await this.log().abort(expectedCut)
+    await this.run(() => this.log().abort(expectedCut))
+  }
+  async status(roomId: string, hostToken: string) {
+    await this.admission.authorizeHost(roomId, hostToken)
+    return this.lifecycle.observe()
+  }
+
+  async leave(roomId: string, hostToken: string) {
+    return this.lifecycle.leave(roomId, hostToken)
+  }
+
+  async resume(roomId: string, hostToken: string) {
+    return this.lifecycle.resume(roomId, hostToken)
+  }
+
+  async close(roomId: string, hostToken: string) {
+    return this.lifecycle.close(roomId, hostToken)
+  }
+
+  async alarm() {
+    return this.lifecycle.observe()
   }
 }

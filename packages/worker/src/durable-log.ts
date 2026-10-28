@@ -54,6 +54,7 @@ export class DurableLog {
   constructor(
     private readonly storage: DurableObjectStorage,
     private readonly limits: LogLimits,
+    private readonly assertActive: () => void = () => {},
   ) {
     if (storage.kv.get(ADMISSION_KEY) === undefined) {
       throw new LogClosedError('durable log is closed')
@@ -105,12 +106,7 @@ export class DurableLog {
     const digest = await crypto.subtle.digest('SHA-256', ciphertext)
     const sequence = this.storage.transactionSync(() => {
       const sql = this.storage.sql
-      if (
-        this.storage.kv.get(ADMISSION_KEY) === undefined ||
-        sql.exec<{ closed: number }>('SELECT closed FROM durable_log_meta').one().closed
-      ) {
-        throw new LogClosedError('durable log is closed')
-      }
+      this.ensureOpen()
       const checkpoint = sql
         .exec<{ epoch: string; token: string | null }>(
           'SELECT epoch, token FROM durable_checkpoint WHERE singleton = 1',
@@ -149,12 +145,7 @@ export class DurableLog {
         .one().sequence
     })
     await this.storage.sync()
-    if (
-      this.storage.kv.get(ADMISSION_KEY) === undefined ||
-      this.storage.sql.exec<{ closed: number }>('SELECT closed FROM durable_log_meta').one().closed
-    ) {
-      throw new LogClosedError('durable log is closed')
-    }
+    this.ensureOpen()
     return sequence
   }
 
@@ -347,6 +338,7 @@ export class DurableLog {
     ) {
       throw new LogClosedError('durable log is closed')
     }
+    this.assertActive()
   }
 
   async initialize(epoch: string, ciphertext: ArrayBuffer): Promise<void> {

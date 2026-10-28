@@ -210,9 +210,12 @@ rooms; orphan cleanup must not delete their attachments.
 The public relay remains a service without an SLA. Self-hosted limits are
 configurable.
 
-The lifetime model is a standalone Worker primitive; it is not yet connected
-to room admission, alarms or client messages. It retains the requested duration
-and applies the current relay cap whenever the host leaves. With a finite room
+The internal transport persists its lifetime model and an alarm in a storage
+transaction. Its host-authenticated transitions cover leave, return and close;
+its log operations check the stored lifetime when writing and after syncing.
+The real Room does not yet invoke these transitions or its alarm, and the
+transport has no public route. The model retains the requested duration and
+applies the current relay cap whenever the host leaves. With a finite room
 limit, a departure extends the total deadline to at least the resulting keep
 deadline. A returning host keeps the extended total deadline. A later departure
 starts a new keep period, subject to the then-current cap. An unlimited total
@@ -223,6 +226,9 @@ deadline. The caller must persist every observation and transition before
 reporting or scheduling from it. It must also persist closed before deleting
 room data, and coordinate the alarm with that state. A backward clock is rejected
 until a valid time is available. Restored data must pass the lifetime parser.
+The internal prototype closes its durable log and admission on expiry, close or
+maintenance, but it does not remove R2 attachments. It must not be exposed
+until real socket lifecycle and attachment cleanup are integrated and tested.
 
 ## Verification before release
 

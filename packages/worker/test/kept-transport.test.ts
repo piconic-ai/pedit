@@ -25,7 +25,12 @@ async function room() {
   return { host, id, stub: env.ROOM.get(env.ROOM.idFromName(id)) }
 }
 const transport = (state: DurableObjectState) =>
-  new KeptTransport(state, env.ROOM, { bytes: 10, frames: 3 })
+  new KeptTransport(
+    state,
+    env.ROOM,
+    { bytes: 10, frames: 3 },
+    { requestedSeconds: 60, roomMaxSeconds: null, maxKeepSeconds: null, alarmSeconds: 60 },
+  )
 
 describe('kept transport', () => {
   it('authorizes initialization and append and catches up through a fixed tail', async () => {
@@ -163,7 +168,18 @@ describe('kept transport', () => {
     await runInDurableObject(r.stub, async (_: Room, state) => {
       const t = transport(state)
       await t.initialize(r.id, r.host, c, 'first', bytes(9))
-      const spy = vi.spyOn(state.storage, 'sync').mockRejectedValueOnce(new Error('sync failed'))
+      let failed = false
+      const sync = state.storage.sync.bind(state.storage)
+      const spy = vi.spyOn(state.storage, 'sync').mockImplementation(async () => {
+        const count = state.storage.sql
+          .exec<{ count: number }>('SELECT count(*) AS count FROM durable_log')
+          .one().count
+        if (count > 0 && !failed) {
+          failed = true
+          throw new Error('sync failed')
+        }
+        await sync()
+      })
       try {
         await expect(t.append(c.editor, 'first', bytes(1))).rejects.toThrow('sync failed')
       } finally {
@@ -190,9 +206,16 @@ describe('kept transport', () => {
         entered = resolve
       })
       const sync = state.storage.sync.bind(state.storage)
-      const spy = vi.spyOn(state.storage, 'sync').mockImplementationOnce(async () => {
-        entered()
-        await waiting
+      let stopped = false
+      const spy = vi.spyOn(state.storage, 'sync').mockImplementation(async () => {
+        const count = state.storage.sql
+          .exec<{ count: number }>('SELECT count(*) AS count FROM durable_log')
+          .one().count
+        if (count > 0 && !stopped) {
+          stopped = true
+          entered()
+          await waiting
+        }
         await sync()
       })
       let acknowledged = false
