@@ -12,6 +12,40 @@ async function run() {
   let a = await KeptOutbox.open(name)
   let b = await KeptOutbox.open(name)
   const sender = await a.createSender(link, keys.roomId)
+  const otherSender = await b.createSender(link, keys.roomId)
+  await b.enqueue(link, keys.roomId, otherSender, Uint8Array.of(8))
+  const swap = indexedDB.open(name)
+  const swapDb = await new Promise<IDBDatabase>((resolve, reject) => {
+    swap.onsuccess = () => resolve(swap.result)
+    swap.onerror = () => reject(swap.error)
+  })
+  await new Promise<void>((resolve, reject) => {
+    const tx = swapDb.transaction('senders', 'readwrite')
+    tx.oncomplete = () => resolve()
+    tx.onabort = () => reject(tx.error)
+    const store = tx.objectStore('senders')
+    const source = store.get(sender)
+    const target = store.get(otherSender)
+    target.onsuccess = () =>
+      store.put({
+        ...target.result,
+        seed: source.result.seed,
+        certificate: source.result.certificate,
+      })
+  })
+  swapDb.close()
+  let rejectedSenderSwap = false
+  try {
+    await b.prepare(
+      link,
+      { roomId: keys.roomId, epoch: new Uint8Array(32).fill(3), generation: 1 },
+      otherSender,
+      1,
+    )
+  } catch {
+    rejectedSenderSwap = true
+  }
+  if (!rejectedSenderSwap) throw new Error('accepted copied sender identity')
   const reader = parseKeptFragment(access.read)
   const commenter = parseKeptFragment(access.comment)
   if (!reader || !commenter) throw new Error('invalid fixture')

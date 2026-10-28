@@ -36,6 +36,56 @@ async function mutate(
 }
 
 describe('kept outbox', () => {
+  it('rejects a sender identity copied from another sender', async () => {
+    const name = dbName()
+    const a = await KeptOutbox.open(name)
+    const b = await KeptOutbox.open(name)
+    const [first, second] = await Promise.all([
+      a.createSender(edit, room),
+      b.createSender(edit, room),
+    ])
+    await Promise.all([
+      a.enqueue(edit, room, first, Uint8Array.of(1)),
+      b.enqueue(edit, room, second, Uint8Array.of(2)),
+    ])
+    const firstRecord = await a.prepare(edit, context(), first, 1)
+    const secondRecord = await b.prepare(edit, context(), second, 1)
+    const keys = await deriveKeptRoomKeys(reader, room)
+    const [firstPlain, secondPlain] = await Promise.all([
+      openKeptRecord(keys, context(), firstRecord.ciphertext),
+      openKeptRecord(keys, context(), secondRecord.ciphertext),
+    ])
+    expect(firstPlain.sender).not.toEqual(secondPlain.sender)
+
+    const third = await b.createSender(edit, room)
+    await b.enqueue(edit, room, third, Uint8Array.of(3))
+    const opening = indexedDB.open(name)
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      opening.onsuccess = () => resolve(opening.result)
+      opening.onerror = () => reject(opening.error)
+    })
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction('senders', 'readwrite')
+      tx.oncomplete = () => resolve()
+      tx.onabort = () => reject(tx.error)
+      const store = tx.objectStore('senders')
+      const source = store.get(first)
+      const target = store.get(third)
+      target.onsuccess = () =>
+        store.put({
+          ...target.result,
+          seed: source.result.seed,
+          certificate: source.result.certificate,
+        })
+    })
+    db.close()
+    await expect(b.prepare(edit, context(), third, 1)).rejects.toThrow()
+    await expect(b.enqueue(edit, room, third, Uint8Array.of(4))).rejects.toThrow()
+    await expect(b.operations(edit, room, third)).rejects.toThrow()
+    a.close()
+    b.close()
+  })
+
   it('characterizes rollback of one authentic unprepared row', async () => {
     const name = dbName()
     const outbox = await KeptOutbox.open(name)

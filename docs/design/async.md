@@ -122,8 +122,10 @@ remain necessary before enabling kept rooms.
 
 ## Browser outbox prototype
 
-The browser outbox wraps each sender seed with a key derived from its access
-link secret and the room-bound frame secret. It encrypts each local operation
+The browser outbox wraps each sender seed and binds it to its logical sender ID
+and certificate with a key derived from its access link secret and the
+room-bound frame secret. Sender rows from earlier prototypes without this
+binding fail closed. It encrypts each local operation
 under that tier key and binds its sender and sequence. The next sequence and
 the operation are saved in one IndexedDB transaction after a compare-and-swap
 on the authenticated counter. Ciphertext is saved before sending and reused

@@ -90,6 +90,23 @@ const same = (a: Uint8Array, b: Uint8Array) =>
 const counterBody = (id: string, sequence: number) => utf8.encode(`${id}:${sequence}`)
 const operationBody = (id: string, sequence: number, message: Uint8Array) =>
   concat(counterBody(id, sequence), Uint8Array.of(0), message)
+const senderPrefix = (id: string) => utf8.encode(`pedit/v6/outbox-sender\0${id}\0`)
+async function openSeed(auth: Credentials, id: string, row: Sender): Promise<Uint8Array> {
+  if (!(row.certificate instanceof Uint8Array)) throw new Error('invalid outbox sender')
+  const plain = await decrypt(auth.wrap, row.seed)
+  const prefix = senderPrefix(id)
+  if (
+    plain.length !== prefix.length + 32 + row.certificate.length ||
+    !same(plain.subarray(0, prefix.length), prefix) ||
+    !same(plain.subarray(prefix.length + 32), row.certificate)
+  ) {
+    plain.fill(0)
+    throw new Error('invalid outbox sender')
+  }
+  const seed = plain.slice(prefix.length, prefix.length + 32)
+  plain.fill(0)
+  return seed
+}
 function unpack(id: string, sequence: number, body: Uint8Array): Uint8Array {
   const prefix = concat(counterBody(id, sequence), Uint8Array.of(0))
   if (!same(body.subarray(0, prefix.length), prefix)) throw new Error('invalid outbox operation')
@@ -175,7 +192,7 @@ export class KeptOutbox {
   ): Promise<Sender> {
     if (!row || row.room !== auth.keys.roomId || row.access !== auth.access)
       throw new Error('invalid outbox sender')
-    const seed = await decrypt(auth.wrap, row.seed)
+    const seed = await openSeed(auth, sender, row)
     seed.fill(0)
     const counter = await decrypt(auth.wrap, row.counter)
     if (
@@ -196,16 +213,21 @@ export class KeptOutbox {
   async createSender(link: KeptLinkSecrets, room: string): Promise<string> {
     const auth = await credentials(link, room)
     const seed = crypto.getRandomValues(new Uint8Array(32))
+    const id = crypto.randomUUID()
     let wrapped: Uint8Array
     let certificate: Uint8Array
     try {
       const pair = await signingPair(seed)
       certificate = await createKeptSenderCertificate(auth.keys, pair.publicKey)
-      wrapped = await encrypt(auth.wrap, seed)
+      const plain = concat(senderPrefix(id), seed, certificate)
+      try {
+        wrapped = await encrypt(auth.wrap, plain)
+      } finally {
+        plain.fill(0)
+      }
     } finally {
       seed.fill(0)
     }
-    const id = crypto.randomUUID()
     const counter = await encrypt(auth.wrap, counterBody(id, 0))
     const tx = writable(this.db)
     const done = transactionDone(tx)
@@ -315,7 +337,8 @@ export class KeptOutbox {
           !found ||
           found.sequence !== identity.sequence ||
           !same(found.counter, identity.counter) ||
-          !same(found.seed, identity.seed)
+          !same(found.seed, identity.seed) ||
+          !same(found.certificate, identity.certificate)
         ) {
           stale = true
           tx.abort()
@@ -368,7 +391,7 @@ export class KeptOutbox {
     await verifyState(auth, op)
     if (op.ciphertext) return this.pending(auth, identity, op, c, epoch)
     const message = unpack(sender, sequence, await decrypt(auth.wrap, op.body))
-    const seed = await decrypt(auth.wrap, identity.seed)
+    const seed = await openSeed(auth, sender, identity)
     let sealed: Uint8Array
     try {
       const pair = await signingPair(seed)
@@ -454,7 +477,7 @@ export class KeptOutbox {
       throw new Error('outbox epoch changed')
     const plain = unpack(op.sender, op.sequence, await decrypt(auth.wrap, op.body))
     const record = await openKeptRecord(auth.keys, context, op.ciphertext)
-    const seed = await decrypt(auth.wrap, identity.seed)
+    const seed = await openSeed(auth, op.sender, identity)
     let publicKey: Uint8Array
     try {
       publicKey = (await signingPair(seed)).publicKey
