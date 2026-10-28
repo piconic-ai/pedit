@@ -45,7 +45,7 @@ it('initializes away through Room fetch and tracks the authenticated host socket
         body: new Uint8Array(MAX_FRAME_BYTES + 1),
       })
     ).status,
-  ).toBe(403)
+  ).toBe(413)
   await runInDurableObject(stub, async (_, state) => {
     expect(state.storage.kv.get('keptLifetime')).toBeUndefined()
   })

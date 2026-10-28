@@ -1,37 +1,18 @@
 import { MAX_FRAME_BYTES } from '@pedit/protocol/frame'
+import {
+  BodyChunkLimitError,
+  BodyReadTimeoutError,
+  BodyTooLargeError,
+  InvalidBodyLengthError,
+  readBoundedBody,
+} from './bounded-body.ts'
 import { KeptAdmission } from './kept-admission.ts'
 import { type KeepPolicy } from './kept-lifecycle.ts'
 import { effectiveKeepSeconds } from './kept-lifetime.ts'
 import { KEPT_POLICY_KEY, KeptTransport } from './kept-transport.ts'
 
-async function body(request: Request): Promise<ArrayBuffer> {
-  if (!request.body) throw new Error('checkpoint missing')
-  const reader = request.body.getReader()
-  const chunks: Uint8Array[] = []
-  let size = 0
-  try {
-    for (;;) {
-      const next = await reader.read()
-      if (next.done) break
-      size += next.value.byteLength
-      if (size > MAX_FRAME_BYTES) {
-        await reader.cancel()
-        throw new Error('checkpoint too large')
-      }
-      chunks.push(next.value)
-    }
-  } finally {
-    reader.releaseLock()
-  }
-  if (!size) throw new Error('checkpoint missing')
-  const result = new Uint8Array(size)
-  let offset = 0
-  for (const chunk of chunks) {
-    result.set(chunk, offset)
-    offset += chunk.length
-  }
-  return result.buffer
-}
+export type InitializeSlots = { active: number }
+const MAX_INITIALIZATIONS = 4
 
 export async function initializeKeptRoom(
   request: Request,
@@ -40,6 +21,7 @@ export async function initializeKeptRoom(
   roomId: string,
   roomMaxSeconds: number | null,
   maintenanceClosed: () => boolean,
+  slots: InitializeSlots = { active: 0 },
 ): Promise<Response> {
   if (request.method !== 'POST') return new Response(null, { status: 405 })
   const host = /^Host ([A-Za-z0-9_-]{43})$/.exec(request.headers.get('Authorization') ?? '')?.[1]
@@ -61,8 +43,15 @@ export async function initializeKeptRoom(
     return new Response(null, { status: 400 })
   const requestedBig = BigInt(requestedHeader)
   try {
-    const checkpoint = await body(request)
     await new KeptAdmission(state, env.ROOM).authenticateHost(roomId, host)
+  } catch {
+    return new Response(null, { status: 403, headers: { 'Cache-Control': 'no-store' } })
+  }
+  if (slots.active >= MAX_INITIALIZATIONS) return new Response(null, { status: 429 })
+  slots.active++
+  try {
+    const checkpoint = await readBoundedBody(request, MAX_FRAME_BYTES)
+    if (!checkpoint.byteLength) return new Response(null, { status: 400 })
     const saved = state.storage.kv.get<KeepPolicy>(KEPT_POLICY_KEY)
     const cap = saved ? saved.maxKeepSeconds : maxKeepSeconds
     const effective =
@@ -96,7 +85,13 @@ export async function initializeKeptRoom(
         ),
       },
     })
-  } catch {
+  } catch (error) {
+    if (error instanceof BodyReadTimeoutError) return new Response(null, { status: 408 })
+    if (error instanceof BodyTooLargeError) return new Response(null, { status: 413 })
+    if (error instanceof InvalidBodyLengthError || error instanceof BodyChunkLimitError)
+      return new Response(null, { status: 400 })
     return new Response(null, { status: 403, headers: { 'Cache-Control': 'no-store' } })
+  } finally {
+    slots.active--
   }
 }

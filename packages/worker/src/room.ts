@@ -226,6 +226,7 @@ export class Room extends DurableObject<Env> {
   // Host connections between the start of fetch and the accept or refusal.
   private hostHandshakes = 0
   private keptHostHandshakes = 0
+  private keptInitializations = { active: 0 }
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
@@ -248,6 +249,7 @@ export class Room extends DurableObject<Env> {
         keptInit[1],
         Number.isFinite(roomSeconds) ? roomSeconds : null,
         () => maintenance(this.env as { MAINTENANCE?: string }) !== 'none',
+        this.keptInitializations,
       )
     }
     const keptRead = /^\/internal\/kept\/([A-Za-z0-9_-]{22})\/read$/.exec(path)
