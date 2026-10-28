@@ -116,3 +116,44 @@ func TestKeptLedgerInvalidInputs(t *testing.T) {
 		t.Fatal("accepted modified plan")
 	}
 }
+
+func TestKeptLedgerConcurrentSendersRequireSerializedSave(t *testing.T) {
+	base, err := NewKeptLedger(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := KeptRecord{Access: AccessEdit, Sequence: 1, Message: []byte("first")}
+	second := KeptRecord{Access: AccessEdit, Sequence: 1, Message: []byte("second")}
+	first.Sender[0] = 1
+	second.Sender[0] = 2
+	firstPlan, err := base.Inspect(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondPlan, err := base.Inspect(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstResult, err := base.Commit(firstPlan, KeptApplied)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondResult, err := base.Commit(secondPlan, KeptApplied)
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingFirst, err := secondResult.Inspect(first)
+	if err != nil || missingFirst.Decision != KeptNext {
+		t.Fatal("independent snapshot unexpectedly retained first operation")
+	}
+	combined, err := firstResult.Commit(secondPlan, KeptApplied)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, op := range []KeptRecord{first, second} {
+		got, err := combined.Inspect(op)
+		if err != nil || got.Decision != KeptDuplicate {
+			t.Fatalf("serialized commit lost operation: %v", err)
+		}
+	}
+}

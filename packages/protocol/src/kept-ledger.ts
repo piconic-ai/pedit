@@ -25,7 +25,9 @@ const hex = (bytes: Uint8Array): string =>
   Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
 
 // The caller verifies signatures and epoch, enforces permissions, and saves the
-// returned ledger atomically with the corresponding document update.
+// returned ledger atomically with the corresponding document update. Reading,
+// committing, and saving the ledger must be serialized or use persistent CAS:
+// concurrent results from one snapshot diverge.
 export class KeptLedger {
   private constructor(
     private readonly limit: number,

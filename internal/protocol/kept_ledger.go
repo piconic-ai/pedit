@@ -43,6 +43,8 @@ type keptReceipt struct {
 
 // KeptLedger classifies records after signature and epoch verification. Callers
 // enforce permissions and persist the ledger atomically with document changes.
+// They must serialize reading, committing, and saving the ledger, or use a
+// persistent compare-and-swap: concurrent results from one snapshot diverge.
 type KeptLedger struct {
 	limit    int
 	receipts []keptReceipt

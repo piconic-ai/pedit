@@ -54,6 +54,24 @@ describe('kept ledger', () => {
     expect(() => next.commit(competing, 'applied')).toThrow()
     expect((await next.inspect(op)).decision).toBe('duplicate')
   })
+  it('requires serialized or compare-and-swap saves across senders', async () => {
+    const base = KeptLedger.empty(2)
+    const first = record(fixtures.vectors[1]!)
+    const second = {
+      ...first,
+      sender: new Uint8Array(32).fill(2),
+      message: new TextEncoder().encode('second'),
+    }
+    const firstPlan = await base.inspect(first)
+    const secondPlan = await base.inspect(second)
+    const firstResult = base.commit(firstPlan, 'applied')
+    const secondResult = base.commit(secondPlan, 'applied')
+    expect((await secondResult.inspect(first)).decision).toBe('next')
+    const combined = firstResult.commit(secondPlan, 'applied')
+    expect((await combined.inspect(first)).decision).toBe('duplicate')
+    expect((await combined.inspect(second)).decision).toBe('duplicate')
+  })
+
   it('snapshots mutable inputs before hashing', async () => {
     const ledger = KeptLedger.empty(1)
     const op = record(fixtures.vectors[1]!)
