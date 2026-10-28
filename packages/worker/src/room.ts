@@ -212,9 +212,9 @@ export class Room extends DurableObject<Env> {
   // Deleting the blobs of a session that just ended. A reconnecting host must
   // not start using blobs before it finishes.
   private cleaning: Promise<void> = Promise.resolve()
-  // Bumped by every cleanup, so an upload that spans one knows its quota
-  // reservation belonged to the session that ended. In memory only: nothing
-  // is in flight while the room hibernates.
+  // Detects a session ending while an upload runs in this instance. A shutdown
+  // can leave an R2 request in flight after memory is discarded; the persisted
+  // blob session prefix keeps that old request away from a new session's blobs.
   private generation = 0
   // Host connections between the start of fetch and the accept or refusal.
   private hostHandshakes = 0
