@@ -1,4 +1,4 @@
-import { runInDurableObject } from 'cloudflare:test'
+import { evictDurableObject, runInDurableObject } from 'cloudflare:test'
 import { env } from 'cloudflare:workers'
 import { expect, it } from 'vitest'
 import { KeptTransport } from '../src/kept-transport.ts'
@@ -63,6 +63,7 @@ it('reserves host, editor and commenter capacity against readers', async () => {
     f.sockets.push(host.webSocket!)
   } finally {
     for (const s of f.sockets) s.close()
+    await evictDurableObject(f.room, { webSockets: 'close' })
   }
 })
 it('respects configured reader and writer limits while reserving an editor', async () => {
@@ -78,6 +79,7 @@ it('respects configured reader and writer limits while reserving an editor', asy
     expect(await f.connect(f.caps.editor)).toBe(429)
   } finally {
     for (const s of f.sockets) s.close()
+    await evictDurableObject(f.room, { webSockets: 'close' })
   }
 })
 
@@ -98,6 +100,7 @@ it('reserves an editor and host against commenters', async () => {
     f.sockets.push(host.webSocket!)
   } finally {
     for (const s of f.sockets) s.close()
+    await evictDurableObject(f.room, { webSockets: 'close' })
   }
 })
 
@@ -109,5 +112,6 @@ it('reserves the only configured writer slot for an editor', async () => {
     expect(f.sockets[0]?.readyState).not.toBe(WebSocket.OPEN)
   } finally {
     for (const s of f.sockets) s.close()
+    await evictDurableObject(f.room, { webSockets: 'close' })
   }
 })

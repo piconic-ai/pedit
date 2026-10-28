@@ -1,4 +1,4 @@
-import { createExecutionContext, runInDurableObject } from 'cloudflare:test'
+import { createExecutionContext, evictDurableObject, runInDurableObject } from 'cloudflare:test'
 import { env } from 'cloudflare:workers'
 import { expect, it, vi } from 'vitest'
 import { signingPair } from '../../protocol/src/access-crypto.ts'
@@ -185,6 +185,7 @@ it('catches writes during a fixed read and missed notifications through a later 
   nextEvents.dispatchEvent(new Event('open'))
   await vi.waitFor(() => expect(resumed).toContain(3), { timeout: 5000 })
   reconnect.stop()
+  await evictDurableObject(room, { webSockets: 'close' })
 })
 
 it('uses each link tier for both socket and fixed reads when reader capacity is full', async () => {
@@ -309,4 +310,5 @@ it('uses each link tier for both socket and fixed reads when reader capacity is 
     ).toBe(204)
   }
   low.webSocket!.close()
+  await evictDurableObject(room, { webSockets: 'close' })
 }, 15000)
