@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"regexp"
 
 	"github.com/piconic-ai/pedit/internal/meta"
 	"github.com/piconic-ai/pedit/internal/protocol"
 	"github.com/reearth/ygo/crdt"
 	ysync "github.com/reearth/ygo/sync"
 )
+
+var keptAttachment = regexp.MustCompile(`assets/[0-9a-f]{32}\.(png|jpg|gif|webp)`)
 
 // startKeptRecovery builds an isolated candidate before creating a held,
 // disconnected session. The caller must authenticate the checkpoint, provide
@@ -42,7 +45,7 @@ func startKeptRecovery(ctx context.Context, opts Options, checkpoint recoveryChe
 	if err := crdt.ApplyUpdateV1(text, checkpoint.text, nil); err != nil {
 		return nil, err
 	}
-	if err := meta.CheckUpdate(comments, checkpoint.comments); err != nil {
+	if err := meta.CheckRecoveryUpdate(comments, checkpoint.comments); err != nil {
 		return nil, err
 	}
 	if err := crdt.ApplyUpdateV1(comments, checkpoint.comments, nil); err != nil {
@@ -50,6 +53,9 @@ func startKeptRecovery(ctx context.Context, opts Options, checkpoint recoveryChe
 	}
 	if p := text.PendingStats(); p.Items != 0 || p.DeleteRanges != 0 {
 		return nil, errors.New("incomplete checkpoint")
+	}
+	if keptAttachment.MatchString(text.GetText("content").ToString()) {
+		return nil, errors.New("recovery attachments unavailable")
 	}
 	var total int
 	for _, frame := range frames {
@@ -65,7 +71,16 @@ func startKeptRecovery(ctx context.Context, opts Options, checkpoint recoveryChe
 			return nil, err
 		}
 		plan, err := ledger.Inspect(record)
-		if err != nil || plan.Decision != protocol.KeptNext {
+		if err != nil {
+			return nil, errors.New("invalid recovery sequence")
+		}
+		if plan.Decision == protocol.KeptDuplicate {
+			if plan.Outcome != protocol.KeptApplied && plan.Outcome != protocol.KeptRejected {
+				return nil, errors.New("invalid recovery receipt")
+			}
+			continue
+		}
+		if plan.Decision != protocol.KeptNext {
 			return nil, errors.New("invalid recovery sequence")
 		}
 		messageType, payload, err := protocol.DecodeMessage(record.Message)
@@ -98,9 +113,11 @@ func startKeptRecovery(ctx context.Context, opts Options, checkpoint recoveryChe
 		}
 		if isComments {
 			doc = comments
-			if err := meta.CheckUpdate(doc, update); err != nil {
+			if err := meta.CheckRecoveryUpdate(doc, update); err != nil {
 				return nil, err
 			}
+		} else if err := protocol.CheckKeptTextUpdate(update); err != nil {
+			return nil, err
 		}
 		next, err := ledger.Commit(plan, protocol.KeptApplied)
 		if err != nil {
@@ -116,6 +133,9 @@ func startKeptRecovery(ctx context.Context, opts Options, checkpoint recoveryChe
 			state := crdt.EncodeStateAsUpdateV1(doc, nil)
 			if err := protocol.CheckKeptTextState(state); err != nil {
 				return nil, err
+			}
+			if keptAttachment.MatchString(text.GetText("content").ToString()) {
+				return nil, errors.New("recovery attachments unavailable")
 			}
 		}
 		ledger = next

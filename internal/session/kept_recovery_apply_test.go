@@ -196,6 +196,70 @@ func TestKeptRecoveryAppliesVerifiedTailInHeldSession(t *testing.T) {
 		t.Fatalf("disk changed after stop: %q", got)
 	}
 }
+func TestKeptRecoverySkipsRecordedDuplicates(t *testing.T) {
+	f := newRecoveryFixture(t)
+	frame := f.frame(t, f.keys, 1, 1, f.textUpdate)
+	s, err := startKeptRecovery(context.Background(), f.opts, f.checkpoint, f.ledger, f.keys, f.context, [][]byte{frame, frame})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Text.ToString(); got != "base guest" {
+		t.Fatalf("duplicate applied twice: %q", got)
+	}
+	if len(s.recovery.ledger.Snapshot()) != 1 {
+		t.Fatal("duplicate receipt added")
+	}
+	_ = s.Stop()
+
+	record, err := protocol.OpenKeptRecord(f.keys, f.context, frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := f.ledger.Inspect(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applied, err := f.ledger.Commit(plan, protocol.KeptApplied)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpointDoc := crdt.New()
+	if err := crdt.ApplyUpdateV1(checkpointDoc, f.checkpoint.text, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := crdt.ApplyUpdateV1(checkpointDoc, f.textUpdate, nil); err != nil {
+		t.Fatal(err)
+	}
+	alreadyApplied := f.checkpoint
+	alreadyApplied.text = crdt.EncodeStateAsUpdateV1(checkpointDoc, nil)
+	s, err = startKeptRecovery(context.Background(), f.opts, alreadyApplied, applied, f.keys, f.context, [][]byte{frame})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Text.ToString(); got != "base guest" {
+		t.Fatalf("applied duplicate: %q", got)
+	}
+	if rows := s.recovery.ledger.Snapshot(); len(rows) != 1 || rows[0].Outcome != protocol.KeptApplied {
+		t.Fatal("applied receipt changed")
+	}
+	_ = s.Stop()
+	rejected, err := f.ledger.Commit(plan, protocol.KeptRejected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err = startKeptRecovery(context.Background(), f.opts, f.checkpoint, rejected, f.keys, f.context, [][]byte{frame})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Text.ToString(); got != "base" {
+		t.Fatalf("rejected duplicate applied: %q", got)
+	}
+	if rows := s.recovery.ledger.Snapshot(); len(rows) != 1 || rows[0].Outcome != protocol.KeptRejected {
+		t.Fatal("rejected receipt changed")
+	}
+	_ = s.Stop()
+}
+
 func TestKeptRecoveryRejectsTailWithoutMutatingCheckpointLedgerOrDisk(t *testing.T) {
 	f := newRecoveryFixture(t)
 	first := f.frame(t, f.keys, 1, 1, f.textUpdate)
@@ -213,12 +277,29 @@ func TestKeptRecoveryRejectsTailWithoutMutatingCheckpointLedgerOrDisk(t *testing
 	}
 	tampered := bytes.Clone(first)
 	tampered[len(tampered)-1] ^= 1
+	assetDoc := crdt.New()
+	if err := crdt.ApplyUpdateV1(assetDoc, f.checkpoint.text, nil); err != nil {
+		t.Fatal(err)
+	}
+	var assetUpdate []byte
+	assetDoc.OnUpdate(func(u []byte, _ any) { assetUpdate = bytes.Clone(u) })
+	assetText := assetDoc.GetText("content")
+	assetDoc.Transact(func(tx *crdt.Transaction) {
+		assetText.Insert(tx, 4, " assets/0123456789abcdef0123456789abcdef.png", nil)
+	})
+	assetCheckpoint := f.checkpoint
+	assetCheckpoint.text = crdt.EncodeStateAsUpdateV1(assetDoc, nil)
+	if _, err := startKeptRecovery(context.Background(), f.opts, assetCheckpoint, f.ledger, f.keys, f.context, nil); err == nil {
+		t.Fatal("accepted checkpoint with attachment reference")
+	}
 	cases := map[string][][]byte{
-		"duplicate":                    {first, first},
 		"same sequence different body": {first, f.frame(t, f.keys, 1, 1, []byte{0, 0})},
 		"gap":                          {f.frame(t, f.keys, 2, 1, f.textUpdate)},
 		"commenter text":               {f.frame(t, f.commenter, 1, 1, f.textUpdate)},
 		"bad signature after valid":    {first, tampered},
+		"trailing text update":         {f.frame(t, f.keys, 1, 1, append(bytes.Clone(f.textUpdate), 0xff, 0xff))},
+		"trailing comments update":     {f.frame(t, f.commenter, 1, 2, append(bytes.Clone(f.commentsUpdate), 0xff, 0xff))},
+		"unavailable attachment":       {f.frame(t, f.keys, 1, 1, assetUpdate)},
 		"unsupported doc":              {f.frame(t, f.keys, 1, 3, f.textUpdate)},
 		"wrong metadata ID":            {wrongFrame},
 		"malformed update after valid": {first, f.frame(t, f.keys, 2, 1, []byte{255})},

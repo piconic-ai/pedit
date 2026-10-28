@@ -187,7 +187,9 @@ write. Extra files, canvas recovery, file watching and attachments are not
 enabled in this mode.
 
 The internal tail path verifies each encrypted record, checks its ledger
-sequence and access tier, and applies it to isolated candidate documents. A
+sequence and access tier, and applies it to isolated candidate documents.
+An exact duplicate is skipped according to its recorded applied or rejected
+outcome; a conflicting digest or a sequence gap fails the batch. A
 failure discards the candidates and leaves the caller's checkpoint and ledger
 unchanged. Only after all records pass does it construct the held session. The
 session does not create a relay room or connect to one. Text updates use the
@@ -200,6 +202,9 @@ the supplied tail is complete. It does not persist
 reconstructed data, compare local comments, safely release the hold, or commit
 the relay cut. The held state lives in memory and the relay data must remain
 available until a separately durable recovery is complete.
+The text check rejects known attachment references, but a string scan cannot
+prove that the attachment inventory is empty. Saving and cut acknowledgement
+remain unavailable until the caller verifies the complete inventory.
 The checkpoint text validator accepts only a complete Yjs V1 plain-text
 snapshot under the `content` root; other roots, embeds, formatting and garbage
 collection structs are rejected. This conservative subset does not validate

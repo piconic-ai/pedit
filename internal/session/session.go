@@ -155,6 +155,9 @@ func (s *Session) recoveryContents() (local, recovered string, differs bool, err
 			return
 		}
 		recovered = s.content.render()
+		if keptAttachment.MatchString(recovered) {
+			err = errors.New("recovery attachments unavailable")
+		}
 	})
 	if err != nil {
 		return "", "", false, err
@@ -196,6 +199,9 @@ func initialContent(doc *crdt.Doc, file, initial string, recovery *recoveryCheck
 		shared = &textContent{doc: doc, text: doc.GetText("content")}
 		if !utf8.ValidString(shared.render()) {
 			return nil, errors.New("invalid recovery text")
+		}
+		if keptAttachment.MatchString(shared.render()) {
+			return nil, errors.New("recovery attachments unavailable")
 		}
 	}
 	return shared, err
