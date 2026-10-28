@@ -34,7 +34,7 @@ export class KeptAdmission {
       !ADMISSION_PATTERN.test(editor) ||
       !ADMISSION_PATTERN.test(commenter) ||
       !ADMISSION_PATTERN.test(reader) ||
-      new Set([editor, commenter, reader]).size !== 3
+      new Set([hostToken, editor, commenter, reader]).size !== 4
     )
       throw new Error('invalid kept admission')
     const [e, c, r] = await Promise.all([digest(editor), digest(commenter), digest(reader)])

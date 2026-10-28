@@ -87,6 +87,25 @@ describe('kept admission', () => {
     }
   })
 
+  it('rejects any admission capability equal to the host token without storing partial state', async () => {
+    const r = await room()
+    await runInDurableObject(r.stub, async (_: Room, state) => {
+      const admission = new KeptAdmission(state, env.ROOM)
+      const caps = capabilities()
+      for (const tier of ['editor', 'commenter', 'reader'] as const) {
+        await expect(admission.register(r.id, r.host, { ...caps, [tier]: r.host })).rejects.toThrow(
+          'invalid kept admission',
+        )
+        expect(state.storage.kv.get(KEPT_ADMISSION_KEY)).toBeUndefined()
+        expect(state.storage.kv.get(ADMISSION_KEY)).toBeUndefined()
+      }
+      await admission.register(r.id, r.host, caps)
+      expect(await admission.role(caps.editor)).toBe('editor')
+      expect(await admission.role(caps.commenter)).toBe('commenter')
+      expect(await admission.role(caps.reader)).toBe('reader')
+    })
+  })
+
   it('atomically accepts only one of conflicting host registrations', async () => {
     const r = await room()
     await runInDurableObject(r.stub, async (_: Room, state) => {
