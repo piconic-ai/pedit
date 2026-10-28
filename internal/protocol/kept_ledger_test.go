@@ -146,6 +146,13 @@ func TestKeptLedgerConcurrentSendersRequireSerializedSave(t *testing.T) {
 	if err != nil || missingFirst.Decision != KeptNext {
 		t.Fatal("independent snapshot unexpectedly retained first operation")
 	}
+	if _, err := firstResult.Commit(secondPlan, KeptApplied); err == nil {
+		t.Fatal("accepted plan from an earlier state")
+	}
+	secondPlan, err = firstResult.Inspect(second)
+	if err != nil {
+		t.Fatal(err)
+	}
 	combined, err := firstResult.Commit(secondPlan, KeptApplied)
 	if err != nil {
 		t.Fatal(err)
@@ -155,5 +162,37 @@ func TestKeptLedgerConcurrentSendersRequireSerializedSave(t *testing.T) {
 		if err != nil || got.Decision != KeptDuplicate {
 			t.Fatalf("serialized commit lost operation: %v", err)
 		}
+	}
+}
+
+func TestKeptLedgerRejectsPlanFromAnotherHistory(t *testing.T) {
+	a, _ := NewKeptLedger(3)
+	b := a
+	first := KeptRecord{Access: AccessEdit, Sequence: 1, Message: []byte("first")}
+	other := first
+	other.Message = []byte("different")
+	ap, _ := a.Inspect(first)
+	a, _ = a.Commit(ap, KeptApplied)
+	bp, _ := b.Inspect(other)
+	b, _ = b.Commit(bp, KeptApplied)
+	next := first
+	next.Sequence = 2
+	plan, _ := a.Inspect(next)
+	if _, err := b.Commit(plan, KeptApplied); err == nil {
+		t.Fatal("accepted plan from a different history with equal floor")
+	}
+	clone, err := RestoreKeptLedger(3, a.Snapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := clone.Commit(plan, KeptApplied); err == nil {
+		t.Fatal("accepted plan from another ledger instance")
+	}
+	fresh, err := b.Inspect(next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Commit(fresh, KeptApplied); err != nil {
+		t.Fatalf("fresh plan rejected: %v", err)
 	}
 }

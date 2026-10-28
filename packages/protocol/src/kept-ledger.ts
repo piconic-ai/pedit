@@ -1,7 +1,7 @@
 import { buf, concat, utf8 } from './access-crypto.ts'
 import { type KeptRecord, MAX_KEPT_RECORD_PAYLOAD } from './kept-record.ts'
 
-const inspections = new WeakSet<object>()
+const inspections = new WeakMap<object, KeptLedger>()
 const DOMAIN = utf8.encode('pedit/v6/operation\0')
 type Outcome = 'applied' | 'rejected'
 type Decision = 'next' | 'duplicate' | 'conflict' | 'gap' | 'full'
@@ -110,13 +110,13 @@ export class KeptLedger {
       sender: senderId,
       sequence,
     })
-    inspections.add(plan)
+    inspections.set(plan, this)
     return plan
   }
 
   commit(plan: KeptInspection, outcome: Outcome): KeptLedger {
     if (
-      !inspections.has(plan) ||
+      inspections.get(plan) !== this ||
       plan.decision !== 'next' ||
       (outcome !== 'applied' && outcome !== 'rejected')
     )

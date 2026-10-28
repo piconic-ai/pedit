@@ -67,11 +67,27 @@ describe('kept ledger', () => {
     const firstResult = base.commit(firstPlan, 'applied')
     const secondResult = base.commit(secondPlan, 'applied')
     expect((await secondResult.inspect(first)).decision).toBe('next')
-    const combined = firstResult.commit(secondPlan, 'applied')
+    expect(() => firstResult.commit(secondPlan, 'applied')).toThrow()
+    const fresh = await firstResult.inspect(second)
+    const combined = firstResult.commit(fresh, 'applied')
     expect((await combined.inspect(first)).decision).toBe('duplicate')
     expect((await combined.inspect(second)).decision).toBe('duplicate')
   })
 
+  it('rejects plans from another history or restored ledger', async () => {
+    const first = record(fixtures.vectors[1]!)
+    const other = { ...first, message: new TextEncoder().encode('different') }
+    const emptyA = KeptLedger.empty(3)
+    const a = emptyA.commit(await emptyA.inspect(first), 'applied')
+    const b = emptyA.commit(await emptyA.inspect(other), 'applied')
+    const next = { ...first, sequence: 2 }
+    const plan = await a.inspect(next)
+    expect(() => b.commit(plan, 'applied')).toThrow()
+    expect(() => KeptLedger.restore(3, a.snapshot()).commit(plan, 'applied')).toThrow()
+    expect(() => b.commit(plan, 'rejected')).toThrow()
+    const fresh = await b.inspect(next)
+    expect(b.commit(fresh, 'applied').snapshot()).toHaveLength(2)
+  })
   it('snapshots mutable inputs before hashing', async () => {
     const ledger = KeptLedger.empty(1)
     const op = record(fixtures.vectors[1]!)

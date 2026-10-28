@@ -47,6 +47,7 @@ type keptReceipt struct {
 // persistent compare-and-swap: concurrent results from one snapshot diverge.
 type KeptLedger struct {
 	limit    int
+	identity *int
 	receipts []keptReceipt
 }
 
@@ -58,13 +59,14 @@ type KeptInspection struct {
 	receipt      keptReceipt
 	initialFloor uint64
 	committable  bool
+	identity     *int
 }
 
 func NewKeptLedger(limit int) (KeptLedger, error) {
 	if limit < 1 {
 		return KeptLedger{}, errors.New("invalid ledger limit")
 	}
-	return KeptLedger{limit: limit}, nil
+	return KeptLedger{limit: limit, identity: new(int)}, nil
 }
 
 // RestoreKeptLedger validates a snapshot from an authenticated checkpoint.
@@ -164,15 +166,16 @@ func (l KeptLedger) Inspect(record KeptRecord) (KeptInspection, error) {
 	} else {
 		result.Decision = KeptNext
 	}
+	result.identity = l.identity
 	result.initialFloor = result.Floor
 	result.committable = result.Decision == KeptNext
 	return result, nil
 }
 
-// Commit returns a new ledger only if the inspected sender floor has not
-// changed. The caller commits this together with the matching document update.
+// Commit returns a new ledger only for a plan inspected against this state.
+// The caller commits this together with the matching document update.
 func (l KeptLedger) Commit(plan KeptInspection, outcome KeptOutcome) (KeptLedger, error) {
-	if l.limit < 1 || !plan.committable || plan.Decision != KeptNext || plan.Floor != plan.initialFloor || (outcome != KeptApplied && outcome != KeptRejected) {
+	if l.limit < 1 || l.identity == nil || plan.identity != l.identity || !plan.committable || plan.Decision != KeptNext || plan.Floor != plan.initialFloor || (outcome != KeptApplied && outcome != KeptRejected) {
 		return l, errors.New("invalid ledger commit")
 	}
 	var floor uint64
@@ -186,7 +189,7 @@ func (l KeptLedger) Commit(plan KeptInspection, outcome KeptOutcome) (KeptLedger
 	}
 	receipt := plan.receipt
 	receipt.outcome = outcome
-	next := KeptLedger{limit: l.limit, receipts: make([]keptReceipt, len(l.receipts), len(l.receipts)+1)}
+	next := KeptLedger{limit: l.limit, identity: new(int), receipts: make([]keptReceipt, len(l.receipts), len(l.receipts)+1)}
 	copy(next.receipts, l.receipts)
 	next.receipts = append(next.receipts, receipt)
 	return next, nil
