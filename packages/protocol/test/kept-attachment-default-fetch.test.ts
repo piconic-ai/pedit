@@ -1,7 +1,7 @@
 import { expect, it, vi } from 'vitest'
+import fixture from '../../testdata/kept-access-vectors.json'
 import { deriveKeptRoomKeys, parseKeptFragment } from '../src/kept-access.ts'
 import { KeptAttachmentClient } from '../src/kept-attachment-client.ts'
-import fixture from '../../testdata/kept-access-vectors.json'
 
 it('calls the default fetch without a client receiver', async () => {
   let invoked = false
