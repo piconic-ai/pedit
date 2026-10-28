@@ -60,9 +60,9 @@ export class KeptLifecycle {
     if (now < this.lastObserved) throw new Error('clock moved backwards')
     this.lastObserved = now
     const observed = observeKeptLifetime(current, now)
-    if (observed.host === 'closed') throw new Error('kept room closed')
-    if (observed.observedAt !== current.observedAt)
+    if (observed.observedAt !== current.observedAt || observed.host === 'closed')
       this.state.storage.kv.put(LIFETIME_KEY, observed)
+    if (observed.host === 'closed') throw new Error('kept room closed')
   }
 
   async start(roomId: string, hostToken: string): Promise<void> {
@@ -123,32 +123,45 @@ export class KeptLifecycle {
     preserveObservation = false,
   ): Promise<KeptLifetime> {
     const storage = this.state.storage
-    const next = await storage.transaction(async () => {
-      const raw = storage.kv.get(LIFETIME_KEY)
-      const current = raw === undefined ? undefined : restoreKeptLifetime(raw)
-      if (storage.kv.get(ADMISSION_KEY) === undefined) {
-        if (current?.host === 'closed') return current
-        throw new Error('room admission closed')
-      }
-      const wallTime = this.now()
-      if (!preserveObservation && wallTime < this.lastObserved)
-        throw new Error('clock moved backwards')
-      const now = preserveObservation ? Math.max(wallTime, this.lastObserved) : wallTime
-      this.lastObserved = now
-      const state = this.maintenanceClosed()
-        ? closeKeptLifetime(this.required(current), now)
-        : change(current, now)
-      if (state.host === 'closed') {
-        DurableLog.clear(storage)
-        storage.kv.delete(ADMISSION_KEY)
-      } else {
-        const deadline = keptNextAlarm(state, this.policy.alarmSeconds)
-        const old = await storage.getAlarm()
-        if (old === null || deadline < old) await storage.setAlarm(deadline)
-      }
-      storage.kv.put(LIFETIME_KEY, state)
-      return state
-    })
+    const wallTime = this.now()
+    if (!preserveObservation && wallTime < this.lastObserved)
+      throw new Error('clock moved backwards')
+    const now = preserveObservation ? Math.max(wallTime, this.lastObserved) : wallTime
+    this.lastObserved = now
+    const rawBefore = storage.kv.get(LIFETIME_KEY)
+    if (rawBefore !== undefined && storage.kv.get(ADMISSION_KEY) !== undefined) {
+      const before = restoreKeptLifetime(rawBefore)
+      const observed = observeKeptLifetime(before, now)
+      if (observed.observedAt !== before.observedAt || observed.host === 'closed')
+        storage.kv.put(LIFETIME_KEY, observed)
+    }
+    let next: KeptLifetime
+    try {
+      next = await storage.transaction(async () => {
+        const raw = storage.kv.get(LIFETIME_KEY)
+        const current = raw === undefined ? undefined : restoreKeptLifetime(raw)
+        if (storage.kv.get(ADMISSION_KEY) === undefined) {
+          if (current?.host === 'closed') return current
+          throw new Error('room admission closed')
+        }
+        const state = this.maintenanceClosed()
+          ? closeKeptLifetime(this.required(current), now)
+          : change(current, now)
+        if (state.host === 'closed') {
+          DurableLog.clear(storage)
+          storage.kv.delete(ADMISSION_KEY)
+        } else {
+          const deadline = keptNextAlarm(state, this.policy.alarmSeconds)
+          const old = await storage.getAlarm()
+          if (old === null || deadline < old) await storage.setAlarm(deadline)
+        }
+        storage.kv.put(LIFETIME_KEY, state)
+        return state
+      })
+    } catch (error) {
+      await storage.sync()
+      throw error
+    }
     await storage.sync()
     const stored = storage.kv.get(LIFETIME_KEY)
     if (stored === undefined) throw new Error('kept lifetime changed')

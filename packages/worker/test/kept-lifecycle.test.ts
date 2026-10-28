@@ -1,6 +1,7 @@
 import { evictDurableObject, runInDurableObject } from 'cloudflare:test'
 import { env } from 'cloudflare:workers'
 import { describe, expect, it, vi } from 'vitest'
+import { DurableLog } from '../src/durable-log.ts'
 import { KeptTransport } from '../src/kept-transport.ts'
 import type { Room } from '../src/room.ts'
 import { roomIdFor } from '../src/room-identity.ts'
@@ -432,6 +433,94 @@ describe('kept lifecycle integration', () => {
     })
   })
 
+  it('keeps a failed departure observation visible to other instances', async () => {
+    const r = await room(),
+      c = capabilities()
+    const initial = Date.now() + 300_000
+    let now = initial
+    await runInDurableObject(r.stub, async (_: Room, state) => {
+      const a = new KeptTransport(state, env.ROOM, { bytes: 100, frames: 10 }, policy, () => now)
+      const b = new KeptTransport(state, env.ROOM, { bytes: 100, frames: 10 }, policy, () => now)
+      await a.initialize(r.id, r.host, c, 'one', bytes(0))
+      await a.leave(r.id, r.host)
+      now = initial + 10_000
+      await expect(a.leave(r.id, r.host)).rejects.toThrow('host is already away')
+      now = initial + 5_000
+      await expect(b.resume(r.id, r.host)).rejects.toThrow('clock moved backwards')
+      now = initial + 10_000
+      expect((await b.resume(r.id, r.host)).host).toBe('connected')
+    })
+  })
+
+  it('blocks another instance while a failed departure observation is syncing', async () => {
+    const r = await room(),
+      c = capabilities()
+    const initial = Date.now() + 300_000
+    let now = initial
+    await runInDurableObject(r.stub, async (_: Room, state) => {
+      const a = new KeptTransport(state, env.ROOM, { bytes: 100, frames: 10 }, policy, () => now)
+      const b = new KeptTransport(state, env.ROOM, { bytes: 100, frames: 10 }, policy, () => now)
+      await a.initialize(r.id, r.host, c, 'one', bytes(0))
+      await a.leave(r.id, r.host)
+      let resume!: () => void, entered!: () => void
+      const wait = new Promise<void>((resolve) => {
+        resume = resolve
+      })
+      const syncing = new Promise<void>((resolve) => {
+        entered = resolve
+      })
+      const sync = state.storage.sync.bind(state.storage)
+      let stopped = false
+      const spy = vi.spyOn(state.storage, 'sync').mockImplementation(async () => {
+        if (!stopped) {
+          stopped = true
+          entered()
+          await wait
+        }
+        await sync()
+      })
+      try {
+        now = initial + 10_000
+        const pending = a.leave(r.id, r.host)
+        await syncing
+        now = initial + 5_000
+        await expect(b.resume(r.id, r.host)).rejects.toThrow('clock moved backwards')
+        resume()
+        await expect(pending).rejects.toThrow('host is already away')
+      } finally {
+        resume()
+        spy.mockRestore()
+      }
+    })
+  })
+
+  it('keeps the closed tombstone when log cleanup fails and retries on alarm', async () => {
+    const r = await room(),
+      c = capabilities()
+    let now = Date.now() + 300_000
+    await runInDurableObject(r.stub, async (_: Room, state) => {
+      const t = new KeptTransport(state, env.ROOM, { bytes: 100, frames: 10 }, policy, () => now)
+      await t.initialize(r.id, r.host, c, 'one', bytes(0))
+      await t.append(c.editor, 'one', bytes(1))
+      const left = await t.leave(r.id, r.host)
+      if (left.host !== 'away') throw new Error('expected away')
+      now = left.keepUntil
+      const spy = vi.spyOn(DurableLog, 'clear').mockImplementationOnce(() => {
+        throw new Error('cleanup failed')
+      })
+      try {
+        await expect(t.alarm()).rejects.toThrow('cleanup failed')
+      } finally {
+        spy.mockRestore()
+      }
+      expect(state.storage.kv.get<{ host: string }>('keptLifetime')?.host).toBe('closed')
+      expect(state.storage.sql.exec('SELECT * FROM durable_log').toArray()).toHaveLength(1)
+      expect((await t.alarm()).host).toBe('closed')
+      expect(state.storage.sql.exec('SELECT * FROM durable_log').toArray()).toHaveLength(0)
+      expect(state.storage.kv.get(ADMISSION_KEY)).toBeUndefined()
+    })
+  })
+
   it('rolls back lifetime and alarm when scheduling fails', async () => {
     const r = await room(),
       c = capabilities()
@@ -476,5 +565,78 @@ describe('kept lifecycle integration', () => {
       maintenance = false
       await expect(t.initialize(r.id, r.host, c, 'one', bytes(0))).rejects.toThrow()
     })
+  })
+})
+
+it('does not allow another transport to observe a regressed clock while preserving a failed append observation', async () => {
+  const r = await room(),
+    c = capabilities(),
+    initial = Date.now() + 300_000
+  let now = initial
+  await runInDurableObject(r.stub, async (_: Room, state) => {
+    const a = new KeptTransport(state, env.ROOM, { bytes: 100, frames: 1 }, policy, () => now)
+    const b = new KeptTransport(state, env.ROOM, { bytes: 100, frames: 1 }, policy, () => now)
+    await a.initialize(r.id, r.host, c, 'one', bytes(0))
+    await a.append(c.editor, 'one', bytes(1))
+    let resumeHash!: () => void,
+      hashEntered!: () => void,
+      resumeRemember!: () => void,
+      rememberEntered!: () => void
+    const hashWait = new Promise<void>((r) => {
+        resumeHash = r
+      }),
+      hashing = new Promise<void>((r) => {
+        hashEntered = r
+      })
+    const rememberWait = new Promise<void>((r) => {
+        resumeRemember = r
+      }),
+      remembering = new Promise<void>((r) => {
+        rememberEntered = r
+      })
+    const hash = crypto.subtle.digest.bind(crypto.subtle)
+    const hashSpy = vi
+      .spyOn(crypto.subtle, 'digest')
+      .mockImplementation(async (algorithm, input) => {
+        const view =
+          input instanceof ArrayBuffer
+            ? new Uint8Array(input)
+            : new Uint8Array(input.buffer, input.byteOffset, input.byteLength)
+        if (view.length === 1 && view[0] === 7) {
+          hashEntered()
+          await hashWait
+        }
+        return hash(algorithm, input)
+      })
+    const transaction = state.storage.transaction.bind(state.storage)
+    let pauseNext = false
+    const transactionSpy = vi
+      .spyOn(state.storage, 'transaction')
+      .mockImplementation(async (callback) => {
+        if (pauseNext) {
+          pauseNext = false
+          rememberEntered()
+          await rememberWait
+        }
+        return transaction(callback)
+      })
+    try {
+      const pending = a.append(c.editor, 'one', bytes(7))
+      await hashing
+      now = initial + 10_000
+      pauseNext = true
+      resumeHash()
+      await remembering
+      now = initial + 5_000
+      await expect(b.leave(r.id, r.host)).rejects.toThrow('clock moved backwards')
+      expect(state.storage.kv.get<{ host: string }>('keptLifetime')?.host).toBe('connected')
+      resumeRemember()
+      await expect(pending).rejects.toThrow()
+    } finally {
+      resumeHash()
+      resumeRemember()
+      hashSpy.mockRestore()
+      transactionSpy.mockRestore()
+    }
   })
 })

@@ -225,7 +225,16 @@ the last observed time and returns the updated state, closing it at the
 deadline. The caller must persist every observation and transition before
 reporting or scheduling from it. It must also persist closed before deleting
 room data, and coordinate the alarm with that state. A backward clock is rejected
-until a valid time is available. Restored data must pass the lifetime parser.
+until a valid time is available, including for an explicit host close. Restored
+data must pass the lifetime parser. A failed log transaction preserves its
+clock observation in an outer transaction and synchronizes it before returning
+the error. If expiry is observed before cleanup, a closed state can remain with
+the log still present; a subsequent alarm retries cleanup. The runtime's output
+gate must hold network responses until pending storage writes are durable. On
+restart the saved observation is the lower bound for accepting the clock. A
+crash before synchronization can lose an unacknowledged observation, so it
+cannot be recovered or used to detect a rollback. Clients must not treat a
+missing response as confirmation.
 The internal prototype closes its durable log and admission on expiry, close or
 maintenance, but it does not remove R2 attachments. It must not be exposed
 until real socket lifecycle and attachment cleanup are integrated and tested.

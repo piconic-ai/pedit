@@ -51,6 +51,8 @@ export type LogCut = {
 }
 
 export class DurableLog {
+  private suppressActiveGuard = false
+
   constructor(
     private readonly storage: DurableObjectStorage,
     private readonly limits: LogLimits,
@@ -93,6 +95,24 @@ export class DurableLog {
     )`)
   }
 
+  private async guardedTransaction<T>(work: () => T): Promise<T> {
+    const outcome = this.storage.transactionSync(() => {
+      try {
+        this.ensureOpen()
+        this.suppressActiveGuard = true
+        return { ok: true as const, value: this.storage.transactionSync(work) }
+      } catch (error) {
+        return { ok: false as const, error }
+      } finally {
+        this.suppressActiveGuard = false
+      }
+    })
+    await this.storage.sync()
+    if (!outcome.ok) throw outcome.error
+    this.ensureOpen()
+    return outcome.value
+  }
+
   async append(epoch: string, ciphertext: ArrayBuffer): Promise<number> {
     if (
       !epoch ||
@@ -104,7 +124,7 @@ export class DurableLog {
     }
     ciphertext = ciphertext.slice(0)
     const digest = await crypto.subtle.digest('SHA-256', ciphertext)
-    const sequence = this.storage.transactionSync(() => {
+    const sequence = await this.guardedTransaction(() => {
       const sql = this.storage.sql
       this.ensureOpen()
       const checkpoint = sql
@@ -144,8 +164,6 @@ export class DurableLog {
         )
         .one().sequence
     })
-    await this.storage.sync()
-    this.ensureOpen()
     return sequence
   }
 
@@ -170,7 +188,7 @@ export class DurableLog {
   async beginRead(): Promise<Checkpoint & { session: string; cursor: string; tail: number }> {
     const session = crypto.randomUUID()
     const cursor = crypto.randomUUID()
-    const snapshot = this.storage.transactionSync(() => {
+    const snapshot = await this.guardedTransaction(() => {
       this.ensureOpen()
       const current = this.checkpoint()
       if (!current) throw new StaleCheckpointError('checkpoint is missing')
@@ -203,7 +221,6 @@ export class DurableLog {
       )
       return { ...current, tail: through }
     })
-    await this.storage.sync()
     this.readSession(session)
     return { ...snapshot, session, cursor }
   }
@@ -270,7 +287,7 @@ export class DurableLog {
     ) {
       throw new StaleCheckpointError('invalid read cursor')
     }
-    const page = this.storage.transactionSync(() => {
+    const page = await this.guardedTransaction(() => {
       const row = this.readSession(session)
       const sql = this.storage.sql
       if (cursor === row.previous) {
@@ -298,7 +315,6 @@ export class DurableLog {
       )
       return { entries, next }
     })
-    await this.storage.sync()
     this.readSession(session)
     return page
   }
@@ -312,7 +328,7 @@ export class DurableLog {
     ) {
       throw new StaleCheckpointError('invalid read cursor')
     }
-    this.storage.transactionSync(() => {
+    await this.guardedTransaction(() => {
       this.ensureOpen()
       const sql = this.storage.sql
       const row = sql
@@ -327,8 +343,6 @@ export class DurableLog {
       }
       sql.exec('DELETE FROM durable_reads WHERE id = ?', session)
     })
-    await this.storage.sync()
-    this.ensureOpen()
   }
 
   private ensureOpen(): void {
@@ -338,7 +352,7 @@ export class DurableLog {
     ) {
       throw new LogClosedError('durable log is closed')
     }
-    this.assertActive()
+    if (!this.suppressActiveGuard) this.assertActive()
   }
 
   async initialize(epoch: string, ciphertext: ArrayBuffer): Promise<void> {
@@ -351,7 +365,7 @@ export class DurableLog {
       throw new Error('invalid checkpoint')
     }
     ciphertext = ciphertext.slice(0)
-    this.storage.transactionSync(() => {
+    await this.guardedTransaction(() => {
       this.ensureOpen()
       const current = this.storage.sql
         .exec<{ epoch: string; generation: number; same: number }>(
@@ -374,8 +388,6 @@ export class DurableLog {
         ciphertext,
       )
     })
-    await this.storage.sync()
-    this.ensureOpen()
     const current = this.storage.sql
       .exec<{ epoch: string; generation: number; same: number }>(
         'SELECT epoch, generation, ciphertext = ? AS same FROM durable_checkpoint WHERE singleton = 1',
@@ -389,7 +401,7 @@ export class DurableLog {
 
   async freeze(epoch: string, generation: number): Promise<LogCut> {
     const token = crypto.randomUUID()
-    const cutoff = this.storage.transactionSync(() => {
+    const cutoff = await this.guardedTransaction(() => {
       this.ensureOpen()
       const current = this.storage.sql
         .exec<{ epoch: string; generation: number; cutoff: number; token: string | null }>(
@@ -410,8 +422,6 @@ export class DurableLog {
       )
       return cutoff
     })
-    await this.storage.sync()
-    this.ensureOpen()
     const frozen = this.storage.sql
       .exec<{ token: string | null }>('SELECT token FROM durable_checkpoint WHERE singleton = 1')
       .toArray()[0]
@@ -430,7 +440,7 @@ export class DurableLog {
       throw new Error('invalid checkpoint')
     }
     ciphertext = ciphertext.slice(0)
-    this.storage.transactionSync(() => {
+    await this.guardedTransaction(() => {
       this.ensureOpen()
       const current = this.storage.sql
         .exec<{
@@ -493,12 +503,10 @@ export class DurableLog {
         ciphertext,
       )
     })
-    await this.storage.sync()
-    this.ensureOpen()
   }
 
   async abort(cut: LogCut): Promise<void> {
-    this.storage.transactionSync(() => {
+    await this.guardedTransaction(() => {
       this.ensureOpen()
       const rows = this.storage.sql.exec(
         'UPDATE durable_checkpoint SET aborted_token = token, aborted_epoch = epoch, aborted_generation = generation, aborted_cut = frozen_cut, token = NULL, frozen_cut = NULL WHERE singleton = 1 AND epoch = ? AND generation = ? AND token = ? AND frozen_cut = ?',
@@ -520,8 +528,6 @@ export class DurableLog {
         if (!previous.length) throw new StaleCheckpointError('stale checkpoint cut')
       }
     })
-    await this.storage.sync()
-    this.ensureOpen()
   }
 
   static clear(storage: DurableObjectStorage): void {
