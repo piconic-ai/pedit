@@ -101,11 +101,68 @@ it('reserves host read capacity when a reader exhausts their allocation', async 
   const attempts = await Promise.all(
     Array.from({ length: 60 }, () => begin(`Bearer ${caps.reader}`)),
   )
-  expect(attempts.filter((response) => response.status === 200)).toHaveLength(56)
-  expect(attempts.filter((response) => response.status === 403)).toHaveLength(4)
+  expect(attempts.filter((response) => response.status === 200)).toHaveLength(40)
+  expect(attempts.filter((response) => response.status === 403)).toHaveLength(20)
   const hosts = await Promise.all(Array.from({ length: 9 }, () => begin(`Host ${host}`)))
   expect(hosts.filter((response) => response.status === 200)).toHaveLength(9)
   expect(hosts.filter((response) => response.status === 403)).toHaveLength(0)
+})
+
+it('protects commenter, editor and host reads from lower-tier exhaustion', async () => {
+  const host = token(),
+    id = await roomIdFor(host)
+  const room = env.ROOM.get(env.ROOM.idFromName(id))
+  const caps = { editor: token(), commenter: token(), reader: token() }
+  await runInDurableObject(room, async (_, state) => {
+    const t = new KeptTransport(
+      state,
+      env.ROOM,
+      { bytes: 100, frames: 10 },
+      { requestedSeconds: 60, roomMaxSeconds: null, maxKeepSeconds: null, alarmSeconds: 60 },
+    )
+    await t.initialize(id, host, caps, 'epoch', bytes(1))
+  })
+  const url = `https://room/internal/kept/${id}/read`
+  const begin = (authorization: string) =>
+    room.fetch(url, { method: 'POST', headers: { Authorization: authorization } })
+  const start = (authorization: string, count: number) =>
+    Promise.all(Array.from({ length: count }, () => begin(authorization)))
+
+  expect((await start(`Bearer ${caps.reader}`, 40)).every((r) => r.status === 200)).toBe(true)
+  expect((await begin(`Bearer ${caps.reader}`)).status).toBe(403)
+  const comments = await start(`Bearer ${caps.commenter}`, 8)
+  expect(comments.every((r) => r.status === 200)).toBe(true)
+  const editors = await start(`Bearer ${caps.editor}`, 8)
+  expect(editors.every((r) => r.status === 200)).toBe(true)
+  const hosts = await start(`Host ${host}`, 8)
+  expect(hosts.every((r) => r.status === 200)).toBe(true)
+
+  expect((await begin(`Bearer ${caps.commenter}`)).status).toBe(200)
+  expect((await begin(`Bearer ${caps.editor}`)).status).toBe(200)
+  expect((await begin(`Host ${host}`)).status).toBe(200)
+  expect((await begin(`Bearer ${caps.reader}`)).status).toBe(403)
+  for (const [auth, lower, response] of [
+    [`Bearer ${caps.commenter}`, `Bearer ${caps.reader}`, comments[0]],
+    [`Bearer ${caps.editor}`, `Bearer ${caps.commenter}`, editors[0]],
+    [`Host ${host}`, `Bearer ${caps.editor}`, hosts[0]],
+  ] as const) {
+    const snapshot = await response!.json<{ session: string; cursor: string }>()
+    const lowerHeaders = {
+      Authorization: lower,
+      'X-Pedit-Read-Session': snapshot.session,
+      'X-Pedit-Read-Cursor': snapshot.cursor,
+    }
+    expect((await room.fetch(url, { headers: lowerHeaders })).status).toBe(403)
+    expect((await room.fetch(url, { method: 'DELETE', headers: lowerHeaders })).status).toBe(403)
+    const page = await room.fetch(url, {
+      headers: {
+        Authorization: auth,
+        'X-Pedit-Read-Session': snapshot.session,
+        'X-Pedit-Read-Cursor': snapshot.cursor,
+      },
+    })
+    expect(page.status).toBe(200)
+  }
 })
 
 it('upgrades a full legacy session table and lets the host preempt a reader', async () => {
@@ -149,5 +206,48 @@ it('upgrades a full legacy session table and lets the host preempt a reader', as
         .exec<{ n: number }>('SELECT count(*) AS n FROM durable_reads WHERE host = 1')
         .one().n,
     ).toBe(1)
+  })
+})
+
+it('preserves host reservations when upgrading a table without tier priorities', async () => {
+  const host = token(),
+    id = await roomIdFor(host)
+  const room = env.ROOM.get(env.ROOM.idFromName(id))
+  const caps = { editor: token(), commenter: token(), reader: token() }
+  await runInDurableObject(room, async (_, state) => {
+    const t = new KeptTransport(
+      state,
+      env.ROOM,
+      { bytes: 100, frames: 10 },
+      { requestedSeconds: 60, roomMaxSeconds: null, maxKeepSeconds: null, alarmSeconds: 60 },
+    )
+    await t.initialize(id, host, caps, 'epoch', bytes(1))
+    const sql = state.storage.sql
+    sql.exec('ALTER TABLE durable_reads DROP COLUMN priority')
+    for (let i = 0; i < 64; i++) {
+      sql.exec(
+        'INSERT INTO durable_reads (id, epoch, generation, tail, expires, cursor, after_seq, host) VALUES (?, ?, 1, 0, ?, ?, 0, ?)',
+        crypto.randomUUID(),
+        'epoch',
+        Date.now() + 300000,
+        crypto.randomUUID(),
+        i === 63 ? 0 : 1,
+      )
+    }
+    await state.storage.sync()
+  })
+  const url = `https://room/internal/kept/${id}/read`
+  expect(
+    (await room.fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${caps.editor}` } }))
+      .status,
+  ).toBe(200)
+  await runInDurableObject(room, (_, state) => {
+    const sql = state.storage.sql
+    expect(
+      sql.exec<{ n: number }>('SELECT count(*) AS n FROM durable_reads WHERE priority = 3').one().n,
+    ).toBe(63)
+    expect(
+      sql.exec<{ n: number }>('SELECT count(*) AS n FROM durable_reads WHERE priority = 0').one().n,
+    ).toBe(0)
   })
 })

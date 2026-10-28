@@ -18,11 +18,14 @@ export class StaleCheckpointError extends Error {}
 export class ReadSessionFullError extends Error {}
 
 const READ_SESSION_LIMIT = 64
-const READ_HOST_RESERVED = 8
+const READ_RESERVED_PER_TIER = 8
+export type ReadTier = 'reader' | 'commenter' | 'editor' | 'host'
+const READ_PRIORITY: Record<ReadTier, number> = { reader: 0, commenter: 1, editor: 2, host: 3 }
 const READ_SESSION_MS = 5 * 60_000
 const READ_PAGE_SIZE = 16
 
 type ReadSession = {
+  priority: number
   epoch: string
   generation: number
   tail: number
@@ -97,6 +100,10 @@ export class DurableLog {
     const columns = storage.sql.exec<{ name: string }>('PRAGMA table_info(durable_reads)').toArray()
     if (!columns.some((column) => column.name === 'host'))
       storage.sql.exec('ALTER TABLE durable_reads ADD COLUMN host INTEGER NOT NULL DEFAULT 0')
+    if (!columns.some((column) => column.name === 'priority')) {
+      storage.sql.exec('ALTER TABLE durable_reads ADD COLUMN priority INTEGER NOT NULL DEFAULT 0')
+      storage.sql.exec('UPDATE durable_reads SET priority = 3 WHERE host = 1')
+    }
   }
 
   private async guardedTransaction<T>(work: () => T): Promise<T> {
@@ -190,7 +197,7 @@ export class DurableLog {
   }
 
   async beginRead(
-    host = false,
+    tier: ReadTier = 'reader',
   ): Promise<Checkpoint & { session: string; cursor: string; tail: number }> {
     const session = crypto.randomUUID()
     const cursor = crypto.randomUUID()
@@ -205,32 +212,32 @@ export class DurableLog {
         current.epoch,
         current.generation,
       )
-      if (
-        sql.exec<{ count: number }>('SELECT count(*) AS count FROM durable_reads').one().count >=
-        READ_SESSION_LIMIT
-      ) {
-        if (!host) throw new ReadSessionFullError('too many read sessions')
+      const priority = READ_PRIORITY[tier]
+      const total = sql
+        .exec<{ count: number }>('SELECT count(*) AS count FROM durable_reads')
+        .one().count
+      const lowerOrEqual = sql
+        .exec<{ count: number }>(
+          'SELECT count(*) AS count FROM durable_reads WHERE priority <= ?',
+          priority,
+        )
+        .one().count
+      const capacity = READ_SESSION_LIMIT - (3 - priority) * READ_RESERVED_PER_TIER
+      if (total >= READ_SESSION_LIMIT || lowerOrEqual >= capacity) {
         const evicted = sql
           .exec(
-            'DELETE FROM durable_reads WHERE id = (SELECT id FROM durable_reads WHERE host = 0 ORDER BY expires, id LIMIT 1) RETURNING id',
+            'DELETE FROM durable_reads WHERE id = (SELECT id FROM durable_reads WHERE priority < ? ORDER BY priority, expires, id LIMIT 1) RETURNING id',
+            priority,
           )
           .toArray()
         if (evicted.length === 0) throw new ReadSessionFullError('too many read sessions')
       }
-      if (
-        !host &&
-        sql
-          .exec<{ count: number }>('SELECT count(*) AS count FROM durable_reads WHERE host = 0')
-          .one().count >=
-          READ_SESSION_LIMIT - READ_HOST_RESERVED
-      )
-        throw new ReadSessionFullError('too many reader sessions')
       const tail = sql
         .exec<{ tail: number }>('SELECT coalesce(max(sequence), 0) AS tail FROM durable_log')
         .one().tail
       const through = Math.max(current.cutoff, tail)
       sql.exec(
-        'INSERT INTO durable_reads (id, epoch, generation, tail, expires, cursor, after_seq, host) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO durable_reads (id, epoch, generation, tail, expires, cursor, after_seq, host, priority) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
         session,
         current.epoch,
         current.generation,
@@ -238,7 +245,8 @@ export class DurableLog {
         Date.now() + READ_SESSION_MS,
         cursor,
         current.cutoff,
-        host ? 1 : 0,
+        tier === 'host' ? 1 : 0,
+        priority,
       )
       return { ...current, tail: through }
     })
@@ -246,11 +254,11 @@ export class DurableLog {
     return { ...snapshot, session, cursor }
   }
 
-  private readSession(id: string): ReadSession {
+  private readSession(id: string, tier: ReadTier = 'host'): ReadSession {
     this.ensureOpen()
     const row = this.storage.sql
       .exec<ReadSession>(
-        `SELECT epoch, generation, tail, expires, cursor, after_seq AS after,
+        `SELECT priority, epoch, generation, tail, expires, cursor, after_seq AS after,
       previous, previous_after AS previousAfter, previous_end AS previousEnd, next FROM durable_reads WHERE id = ?`,
         id,
       )
@@ -258,6 +266,7 @@ export class DurableLog {
     const current = this.checkpoint()
     if (
       !row ||
+      row.priority > READ_PRIORITY[tier] ||
       row.expires <= Date.now() ||
       !current ||
       current.epoch !== row.epoch ||
@@ -299,7 +308,7 @@ export class DurableLog {
       .toArray()
   }
 
-  async readPage(session: string, cursor: string): Promise<ReadPage> {
+  async readPage(session: string, cursor: string, tier: ReadTier = 'reader'): Promise<ReadPage> {
     if (
       typeof session !== 'string' ||
       typeof cursor !== 'string' ||
@@ -309,7 +318,7 @@ export class DurableLog {
       throw new StaleCheckpointError('invalid read cursor')
     }
     const page = await this.guardedTransaction(() => {
-      const row = this.readSession(session)
+      const row = this.readSession(session, tier)
       const sql = this.storage.sql
       if (cursor === row.previous) {
         const entries = sql
@@ -336,11 +345,11 @@ export class DurableLog {
       )
       return { entries, next }
     })
-    this.readSession(session)
+    this.readSession(session, tier)
     return page
   }
 
-  async finishRead(session: string, cursor: string): Promise<void> {
+  async finishRead(session: string, cursor: string, tier: ReadTier = 'reader'): Promise<void> {
     if (
       typeof session !== 'string' ||
       typeof cursor !== 'string' ||
@@ -353,12 +362,13 @@ export class DurableLog {
       this.ensureOpen()
       const sql = this.storage.sql
       const row = sql
-        .exec<{ cursor: string | null; previous: string | null }>(
-          'SELECT cursor, previous FROM durable_reads WHERE id = ?',
+        .exec<{ cursor: string | null; previous: string | null; priority: number }>(
+          'SELECT cursor, previous, priority FROM durable_reads WHERE id = ?',
           session,
         )
         .toArray()[0]
       if (!row) return
+      if (row.priority > READ_PRIORITY[tier]) throw new StaleCheckpointError('invalid read session')
       if (row.cursor !== null || row.previous !== cursor) {
         throw new StaleCheckpointError('read session is not complete')
       }

@@ -58,38 +58,40 @@ export class KeptTransport {
     return this.run(() => this.log().append(epoch, input))
   }
 
-  private async allowRead(token: string): Promise<void> {
-    if (!(await this.admission.role(token))) throw new Error('read admission denied')
+  private async allowRead(token: string) {
+    const role = await this.admission.role(token)
+    if (!role) throw new Error('read admission denied')
+    return role
   }
 
   async beginRead(token: string) {
-    await this.allowRead(token)
-    return this.run(() => this.log().beginRead())
+    const role = await this.allowRead(token)
+    return this.run(() => this.log().beginRead(role))
   }
 
   async beginHostRead(roomId: string, hostToken: string) {
     await this.admission.authorizeHost(roomId, hostToken)
-    return this.run(() => this.log().beginRead(true))
+    return this.run(() => this.log().beginRead('host'))
   }
 
   async readHostPage(roomId: string, hostToken: string, session: string, cursor: string) {
     await this.admission.authorizeHost(roomId, hostToken)
-    return this.run(() => this.log().readPage(session, cursor))
+    return this.run(() => this.log().readPage(session, cursor, 'host'))
   }
 
   async finishHostRead(roomId: string, hostToken: string, session: string, cursor: string) {
     await this.admission.authorizeHost(roomId, hostToken)
-    await this.run(() => this.log().finishRead(session, cursor))
+    await this.run(() => this.log().finishRead(session, cursor, 'host'))
   }
 
   async readPage(token: string, session: string, cursor: string) {
-    await this.allowRead(token)
-    return this.run(() => this.log().readPage(session, cursor))
+    const role = await this.allowRead(token)
+    return this.run(() => this.log().readPage(session, cursor, role))
   }
 
   async finishRead(token: string, session: string, cursor: string): Promise<void> {
-    await this.allowRead(token)
-    await this.run(() => this.log().finishRead(session, cursor))
+    const role = await this.allowRead(token)
+    await this.run(() => this.log().finishRead(session, cursor, role))
   }
 
   async freeze(

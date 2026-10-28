@@ -319,8 +319,9 @@ host saves the results and the covered log is removed.
   their ordering against disconnects, compaction and external file changes
   before implementing the protocol.
 
-Read sessions reserve eight of the 64 slots for host-authenticated recovery.
-When the table is full, a host can also preempt the oldest non-host session;
-preempted readers must restart. Existing sessions from before this distinction
-are treated as non-host sessions on migration. A host can still exhaust the
-limit with its own unfinished sessions; they expire after five minutes.
+Read sessions reserve eight of the 64 slots for each higher tier: commenter,
+editor and host. A higher tier can preempt the oldest session of the lowest
+lower tier when its capacity is full; preempted participants must restart.
+Existing host sessions retain host priority during migration. Older non-host
+sessions are treated as reader sessions. A tier can still exhaust its own
+capacity with unfinished sessions; they expire after five minutes.
