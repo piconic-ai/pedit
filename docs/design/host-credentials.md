@@ -28,3 +28,22 @@ record without detection. A backup containing the directory contains secrets.
 The store is an internal API and is not wired into the CLI, room creation, or
 resume. It must not be taken as evidence that the host can yet recover a room
 or acknowledge guest operations safely.
+
+## Internal host transport
+
+The internal Go host client loads saved credentials and validates the initial
+checkpoint signature and supported text payload before calling the Room's
+internal initialize route. It returns the relay's effective keep duration and
+uses the host socket to signal presence. A fixed read verifies the checkpoint
+and records, but does not apply them or acknowledge a cut. The client is not
+connected to the CLI or to a production forwarding route.
+
+The caller must durably save a consistent initial checkpoint and baseline before
+initialization, and must validate attachment inventory. The credential store
+alone does not establish those conditions. A socket disconnect starts an away
+transition at the Room; the Go client has no durable departure confirmation and
+must not report retention as complete on that basis. Close uses a host-authorized
+internal route. A lost close response is ambiguous: the room may already be
+closed, and the current route cannot authenticate a retry after admission is
+removed. Public close, reconnect UX, applying recovered records, durable local
+save, and acknowledgement remain unimplemented.

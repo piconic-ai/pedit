@@ -1,0 +1,8 @@
+{
+  "name": "pedit-host-recovery-local-test",
+  "main": "worker.ts",
+  "vars": { "KEEP_MAX_SECONDS": "3600" },
+  "compatibility_date": "2026-08-01",
+  "durable_objects": { "bindings": [{ "name": "ROOM", "class_name": "Room" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }]
+}
