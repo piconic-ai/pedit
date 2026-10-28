@@ -130,6 +130,16 @@ export class KeptTransport {
     return this.run(() => this.log().readPage(session, cursor, 'host'))
   }
 
+  async cancelHostRead(roomId: string, hostToken: string, session: string) {
+    await this.admission.authorizeHost(roomId, hostToken)
+    await this.run(() => this.log().cancelRead(session, 'host'))
+  }
+
+  async cancelRead(token: string, session: string) {
+    const role = await this.allowRead(token)
+    await this.run(() => this.log().cancelRead(session, role))
+  }
+
   async finishHostRead(roomId: string, hostToken: string, session: string, cursor: string) {
     await this.admission.authorizeHost(roomId, hostToken)
     await this.run(() => this.log().finishRead(session, cursor, 'host'))

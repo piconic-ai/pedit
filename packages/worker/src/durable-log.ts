@@ -349,6 +349,21 @@ export class DurableLog {
     return page
   }
 
+  async cancelRead(session: string, tier: ReadTier = 'reader'): Promise<void> {
+    if (typeof session !== 'string' || session.length !== 36)
+      throw new StaleCheckpointError('invalid read session')
+    await this.guardedTransaction(() => {
+      this.ensureOpen()
+      const sql = this.storage.sql
+      const row = sql
+        .exec<{ priority: number }>('SELECT priority FROM durable_reads WHERE id = ?', session)
+        .toArray()[0]
+      if (row && row.priority > READ_PRIORITY[tier])
+        throw new StaleCheckpointError('invalid read session')
+      if (row) sql.exec('DELETE FROM durable_reads WHERE id = ?', session)
+    })
+  }
+
   async finishRead(session: string, cursor: string, tier: ReadTier = 'reader'): Promise<void> {
     if (
       typeof session !== 'string' ||

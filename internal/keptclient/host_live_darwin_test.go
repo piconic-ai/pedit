@@ -118,6 +118,11 @@ func TestLiveHostLifecycle(t *testing.T) {
 		t.Fatalf("room did not become %s", want)
 	}
 	state("away")
+	for i := 0; i < 70; i++ {
+		if _, err := host.Inspect(ctx, &protocol.KeptReadAnchor{}); err == nil {
+			t.Fatal("mismatched read anchor accepted")
+		}
+	}
 	inspection, err := host.Inspect(ctx, nil)
 	if err != nil || inspection.Snapshot.Generation != 1 || len(inspection.Records) != 0 {
 		t.Fatalf("read: %#v %v", inspection, err)

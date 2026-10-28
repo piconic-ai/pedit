@@ -38,6 +38,10 @@ uses the host socket to signal presence. A fixed read verifies the checkpoint
 and records, but does not apply them or acknowledge a cut. The client is not
 connected to the CLI or to a production forwarding route.
 
+A read that fails after receiving a session ID makes a bounded best-effort
+cancellation. The Room accepts cancellation only from the same or a higher
+read tier; an unreachable Room falls back to session expiry.
+
 The caller must durably save a consistent initial checkpoint and baseline before
 initialization, and must validate attachment inventory. The credential store
 alone does not establish those conditions. A socket disconnect starts an away
