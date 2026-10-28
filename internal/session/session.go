@@ -143,7 +143,20 @@ func (s *Session) recoveryContents() (local, recovered string, differs bool, err
 	if !ok || !utf8.ValidString(local) {
 		return "", "", false, errors.New("cannot read local recovery file")
 	}
-	s.Client.Do(func() { recovered = s.content.render() })
+	s.Client.Do(func() {
+		if err = protocol.CheckKeptTextState(crdt.EncodeStateAsUpdateV1(s.Doc, nil)); err != nil {
+			return
+		}
+		pending := s.Doc.PendingStats()
+		if pending.Items != 0 || pending.DeleteRanges != 0 {
+			err = errors.New("incomplete recovery text")
+			return
+		}
+		recovered = s.content.render()
+	})
+	if err != nil {
+		return "", "", false, err
+	}
 	return local, recovered, local != recovered, nil
 }
 
@@ -207,6 +220,9 @@ func start(ctx context.Context, opts Options, recovery *recoveryCheckpoint) (*Se
 	} else {
 		if isCanvas(opts.File) || len(recovery.text) == 0 || len(recovery.text) > protocol.MaxFrameBytes || len(recovery.comments) == 0 || len(recovery.comments) > protocol.MaxFrameBytes {
 			return nil, errors.New("invalid recovery checkpoint")
+		}
+		if err = protocol.CheckKeptTextState(recovery.text); err != nil {
+			return nil, err
 		}
 		if err = applyRecoveryText(doc, recovery.text); err != nil {
 			return nil, err
@@ -347,26 +363,28 @@ func start(ctx context.Context, opts Options, recovery *recoveryCheckpoint) (*Se
 	}
 	s.client = s.Client
 	s.sendCanvas = s.Client.SendCanvas
-	s.attachments = attach.New(attach.Options{
-		File:            opts.File,
-		Root:            bound.Dir(),
-		InitialDocument: initial,
-		Server:          server,
-		Room:            room.ID,
-		// Without the host token: blobs are for everyone in the room.
-		Header:     opts.Header,
-		HTTPClient: opts.HTTPClient,
-		Keys:       blobKeys,
-		Send:       s.Client.SendAttachment,
-		OnSaved: func(path string) {
-			s.notices.imageSaved()
-			if opts.OnSaved != nil {
-				opts.OnSaved(path)
-			}
-		},
-		OnSaveError: s.notices.imageError,
-		OnError:     onError,
-	})
+	if recovery == nil {
+		s.attachments = attach.New(attach.Options{
+			File:            opts.File,
+			Root:            bound.Dir(),
+			InitialDocument: initial,
+			Server:          server,
+			Room:            room.ID,
+			// Without the host token: blobs are for everyone in the room.
+			Header:     opts.Header,
+			HTTPClient: opts.HTTPClient,
+			Keys:       blobKeys,
+			Send:       s.Client.SendAttachment,
+			OnSaved: func(path string) {
+				s.notices.imageSaved()
+				if opts.OnSaved != nil {
+					opts.OnSaved(path)
+				}
+			},
+			OnSaveError: s.notices.imageError,
+			OnError:     onError,
+		})
+	}
 
 	doc.OnUpdate(func(_ []byte, origin any) {
 		// Both come in under the client's lock, so the doc can be read here.

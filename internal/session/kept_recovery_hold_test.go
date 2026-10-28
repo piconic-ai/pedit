@@ -7,11 +7,100 @@ import (
 	"github.com/piconic-ai/pedit/internal/filewriter"
 	"github.com/piconic-ai/pedit/internal/meta"
 	"github.com/reearth/ygo/crdt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime/pprof"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestRecoveryRejectsUnknownRootBeforeRoomCreation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "notes.md")
+	if err := os.WriteFile(path, []byte("local"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write([]byte(`{"id":"AAAAAAAAAAAAAAAAAAAAAA","hostToken":"host-token"}`))
+	}))
+	defer server.Close()
+	text := crdt.New()
+	content, hidden := text.GetText("content"), text.GetText("unknown")
+	text.Transact(func(tx *crdt.Transaction) {
+		content.Insert(tx, 0, "visible", nil)
+		hidden.Insert(tx, 0, "hidden", nil)
+	})
+	empty := crdt.EncodeStateAsUpdateV1(crdt.New(), nil)
+	_, err := start(context.Background(), Options{File: path, Project: dir, Server: server.URL}, &recoveryCheckpoint{text: crdt.EncodeStateAsUpdateV1(text, nil), comments: empty})
+	if err == nil || !strings.Contains(err.Error(), "unsupported recovery text state") {
+		t.Fatalf("start: %v", err)
+	}
+	if requests.Load() != 0 {
+		t.Fatal("contacted relay before rejecting checkpoint")
+	}
+	if got := readFile(t, path); got != "local" {
+		t.Fatalf("changed local file: %q", got)
+	}
+}
+
+func TestRecoveryContentsRejectsUnknownRootAddedAfterStart(t *testing.T) {
+	text := crdt.New()
+	value := text.GetText("content")
+	text.Transact(func(tx *crdt.Transaction) { value.Insert(tx, 0, "guest", nil) })
+	cp := &recoveryCheckpoint{text: crdt.EncodeStateAsUpdateV1(text, nil), comments: crdt.EncodeStateAsUpdateV1(crdt.New(), nil)}
+	f := setup(t, "local", setupOpts{project: true, recovery: cp})
+	f.session.Client.Do(func() {
+		hidden := f.session.Doc.GetText("unknown")
+		f.session.Doc.Transact(func(tx *crdt.Transaction) { hidden.Insert(tx, 0, "hidden", nil) })
+	})
+	if _, _, _, err := f.session.recoveryContents(); err == nil {
+		t.Fatal("accepted unsupported live state")
+	}
+	if got := readFile(t, f.file); got != "local" {
+		t.Fatalf("changed file: %q", got)
+	}
+}
+
+func TestRecoveryMetadataFailureDoesNotStartAttachmentWorker(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "notes.md")
+	metaPath := filepath.Join(dir, ".pedit", "meta", "notes.md.json")
+	if err := os.MkdirAll(filepath.Dir(metaPath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("local"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(metaPath, []byte("invalid metadata"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"id":"AAAAAAAAAAAAAAAAAAAAAA","hostToken":"host-token"}`))
+	}))
+	defer server.Close()
+	count := func() int {
+		var out bytes.Buffer
+		_ = pprof.Lookup("goroutine").WriteTo(&out, 2)
+		return strings.Count(out.String(), "internal/attach.(*Attachments).run(")
+	}
+	before := count()
+	empty := crdt.EncodeStateAsUpdateV1(crdt.New(), nil)
+	for range 3 {
+		_, err := start(context.Background(), Options{File: path, Project: dir, Server: server.URL}, &recoveryCheckpoint{text: empty, comments: empty})
+		if err == nil || !strings.Contains(err.Error(), "cannot open recovery comments") {
+			t.Fatalf("start: %v", err)
+		}
+	}
+	if after := count(); after != before {
+		t.Fatalf("attachment workers before=%d after=%d", before, after)
+	}
+}
 
 func TestRecoveryStartAndStopHoldTextAndComments(t *testing.T) {
 	base := crdt.New()
@@ -27,6 +116,9 @@ func TestRecoveryStartAndStopHoldTextAndComments(t *testing.T) {
 	cp := &recoveryCheckpoint{text: crdt.EncodeStateAsUpdateV1(base, nil), comments: crdt.EncodeStateAsUpdateV1(comments, nil)}
 	diskMeta := `{"version":1,"path":"notes.md","comments":{},"unknown":{"keep":1}}`
 	f := setup(t, "external edit", setupOpts{project: true, meta: diskMeta, watch: true, recovery: cp})
+	if f.session.attachments != nil {
+		t.Fatal("recovery started an attachment worker")
+	}
 	if got := f.session.Text.ToString(); got != "base guest" {
 		t.Fatalf("recovered text %q", got)
 	}
@@ -115,8 +207,12 @@ func TestRecoveryRejectsInvalidCheckpointBeforeRoomCreation(t *testing.T) {
 		t.Fatal(err)
 	}
 	empty := crdt.EncodeStateAsUpdateV1(crdt.New(), nil)
+	unknown := crdt.New()
+	hidden := unknown.GetText("unknown")
+	unknown.Transact(func(tx *crdt.Transaction) { hidden.Insert(tx, 0, "hidden", nil) })
 	for _, cp := range []*recoveryCheckpoint{
 		{text: []byte{255}, comments: empty},
+		{text: crdt.EncodeStateAsUpdateV1(unknown, nil), comments: empty},
 		{text: empty, comments: []byte{255}},
 	} {
 		if s, err := start(context.Background(), Options{File: path, Project: dir}, cp); err == nil {

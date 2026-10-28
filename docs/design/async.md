@@ -192,6 +192,11 @@ checkpoint and tail and apply the tail before calling it. It does not persist
 reconstructed data, compare local comments, safely release the hold, or commit
 the relay cut. The held state lives in memory and the relay data must remain
 available until a separately durable recovery is complete.
+The checkpoint text validator accepts only a complete Yjs V1 plain-text
+snapshot under the `content` root; other roots, embeds, formatting and garbage
+collection structs are rejected. This conservative subset does not validate
+subsequent live updates. A complete schema and validated update path are
+required before the held state can be saved or a cut acknowledged.
 
 The host restores the prior Yjs state, validates the checkpoint and log, and
 merges changes made to the local files while it was away. Before writing any
