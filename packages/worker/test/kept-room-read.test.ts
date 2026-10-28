@@ -80,3 +80,74 @@ it('serves an authorized fixed checkpoint and tail through Room fetch', async ()
   expect((await begin(`Bearer ${caps.reader}`)).status).toBe(403)
   expect((await begin(`Host ${host}`)).status).toBe(403)
 })
+
+it('reserves host read capacity when a reader exhausts their allocation', async () => {
+  const host = token(),
+    id = await roomIdFor(host)
+  const room = env.ROOM.get(env.ROOM.idFromName(id))
+  const caps = { editor: token(), commenter: token(), reader: token() }
+  await runInDurableObject(room, async (_, state) => {
+    const t = new KeptTransport(
+      state,
+      env.ROOM,
+      { bytes: 100, frames: 10 },
+      { requestedSeconds: 60, roomMaxSeconds: null, maxKeepSeconds: null, alarmSeconds: 60 },
+    )
+    await t.initialize(id, host, caps, 'epoch', bytes(1))
+  })
+  const url = `https://room/internal/kept/${id}/read`
+  const begin = (auth: string) =>
+    room.fetch(url, { method: 'POST', headers: { Authorization: auth } })
+  const attempts = await Promise.all(
+    Array.from({ length: 60 }, () => begin(`Bearer ${caps.reader}`)),
+  )
+  expect(attempts.filter((response) => response.status === 200)).toHaveLength(56)
+  expect(attempts.filter((response) => response.status === 403)).toHaveLength(4)
+  const hosts = await Promise.all(Array.from({ length: 9 }, () => begin(`Host ${host}`)))
+  expect(hosts.filter((response) => response.status === 200)).toHaveLength(9)
+  expect(hosts.filter((response) => response.status === 403)).toHaveLength(0)
+})
+
+it('upgrades a full legacy session table and lets the host preempt a reader', async () => {
+  const host = token(),
+    id = await roomIdFor(host)
+  const room = env.ROOM.get(env.ROOM.idFromName(id))
+  const caps = { editor: token(), commenter: token(), reader: token() }
+  await runInDurableObject(room, async (_, state) => {
+    const t = new KeptTransport(
+      state,
+      env.ROOM,
+      { bytes: 100, frames: 10 },
+      { requestedSeconds: 60, roomMaxSeconds: null, maxKeepSeconds: null, alarmSeconds: 60 },
+    )
+    await t.initialize(id, host, caps, 'epoch', bytes(1))
+    const sql = state.storage.sql
+    sql.exec('ALTER TABLE durable_reads DROP COLUMN host')
+    for (let i = 0; i < 64; i++) {
+      sql.exec(
+        'INSERT INTO durable_reads (id, epoch, generation, tail, expires, cursor, after_seq) VALUES (?, ?, 1, 0, ?, ?, 0)',
+        crypto.randomUUID(),
+        'epoch',
+        Date.now() + 300000,
+        crypto.randomUUID(),
+      )
+    }
+    await state.storage.sync()
+  })
+  const url = `https://room/internal/kept/${id}/read`
+  const response = await room.fetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Host ${host}` },
+  })
+  expect(response.status).toBe(200)
+  await runInDurableObject(room, async (_, state) => {
+    expect(
+      state.storage.sql.exec<{ n: number }>('SELECT count(*) AS n FROM durable_reads').one().n,
+    ).toBe(64)
+    expect(
+      state.storage.sql
+        .exec<{ n: number }>('SELECT count(*) AS n FROM durable_reads WHERE host = 1')
+        .one().n,
+    ).toBe(1)
+  })
+})

@@ -69,7 +69,7 @@ export class KeptTransport {
 
   async beginHostRead(roomId: string, hostToken: string) {
     await this.admission.authorizeHost(roomId, hostToken)
-    return this.run(() => this.log().beginRead())
+    return this.run(() => this.log().beginRead(true))
   }
 
   async readHostPage(roomId: string, hostToken: string, session: string, cursor: string) {

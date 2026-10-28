@@ -18,6 +18,7 @@ export class StaleCheckpointError extends Error {}
 export class ReadSessionFullError extends Error {}
 
 const READ_SESSION_LIMIT = 64
+const READ_HOST_RESERVED = 8
 const READ_SESSION_MS = 5 * 60_000
 const READ_PAGE_SIZE = 16
 
@@ -93,6 +94,9 @@ export class DurableLog {
       tail INTEGER NOT NULL, expires INTEGER NOT NULL, cursor TEXT, after_seq INTEGER NOT NULL,
       previous TEXT, previous_after INTEGER, previous_end INTEGER, next TEXT
     )`)
+    const columns = storage.sql.exec<{ name: string }>('PRAGMA table_info(durable_reads)').toArray()
+    if (!columns.some((column) => column.name === 'host'))
+      storage.sql.exec('ALTER TABLE durable_reads ADD COLUMN host INTEGER NOT NULL DEFAULT 0')
   }
 
   private async guardedTransaction<T>(work: () => T): Promise<T> {
@@ -185,7 +189,9 @@ export class DurableLog {
       .toArray()[0]
   }
 
-  async beginRead(): Promise<Checkpoint & { session: string; cursor: string; tail: number }> {
+  async beginRead(
+    host = false,
+  ): Promise<Checkpoint & { session: string; cursor: string; tail: number }> {
     const session = crypto.randomUUID()
     const cursor = crypto.randomUUID()
     const snapshot = await this.guardedTransaction(() => {
@@ -203,14 +209,28 @@ export class DurableLog {
         sql.exec<{ count: number }>('SELECT count(*) AS count FROM durable_reads').one().count >=
         READ_SESSION_LIMIT
       ) {
-        throw new ReadSessionFullError('too many read sessions')
+        if (!host) throw new ReadSessionFullError('too many read sessions')
+        const evicted = sql
+          .exec(
+            'DELETE FROM durable_reads WHERE id = (SELECT id FROM durable_reads WHERE host = 0 ORDER BY expires, id LIMIT 1) RETURNING id',
+          )
+          .toArray()
+        if (evicted.length === 0) throw new ReadSessionFullError('too many read sessions')
       }
+      if (
+        !host &&
+        sql
+          .exec<{ count: number }>('SELECT count(*) AS count FROM durable_reads WHERE host = 0')
+          .one().count >=
+          READ_SESSION_LIMIT - READ_HOST_RESERVED
+      )
+        throw new ReadSessionFullError('too many reader sessions')
       const tail = sql
         .exec<{ tail: number }>('SELECT coalesce(max(sequence), 0) AS tail FROM durable_log')
         .one().tail
       const through = Math.max(current.cutoff, tail)
       sql.exec(
-        'INSERT INTO durable_reads (id, epoch, generation, tail, expires, cursor, after_seq) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO durable_reads (id, epoch, generation, tail, expires, cursor, after_seq, host) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
         session,
         current.epoch,
         current.generation,
@@ -218,6 +238,7 @@ export class DurableLog {
         Date.now() + READ_SESSION_MS,
         cursor,
         current.cutoff,
+        host ? 1 : 0,
       )
       return { ...current, tail: through }
     })

@@ -318,3 +318,9 @@ host saves the results and the covered log is removed.
   close commands, chunking, limits, and the exact transaction and recovery steps. Prove
   their ordering against disconnects, compaction and external file changes
   before implementing the protocol.
+
+Read sessions reserve eight of the 64 slots for host-authenticated recovery.
+When the table is full, a host can also preempt the oldest non-host session;
+preempted readers must restart. Existing sessions from before this distinction
+are treated as non-host sessions on migration. A host can still exhaust the
+limit with its own unfinished sessions; they expire after five minutes.
