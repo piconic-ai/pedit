@@ -25,10 +25,12 @@
     "./kept-ledger": "./src/kept-ledger.ts",
     "./kept-ledger-encoding": "./src/kept-ledger-encoding.ts",
     "./kept-record": "./src/kept-record.ts",
+    "./kept-outbox": "./src/kept-outbox.ts",
     "./pace": "./src/pace.ts",
     "./testing": "./src/testing.ts"
   },
   "devDependencies": {
-    "@types/node": "^22.20.4"
+    "@types/node": "^22.20.4",
+    "fake-indexeddb": "^6.2.6"
   }
 }

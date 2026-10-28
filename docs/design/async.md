@@ -120,6 +120,26 @@ read boundary, not a delivery guarantee. Per-client limits, checkpoint
 freshness, verified message permissions, durable outbox and feature gating
 remain necessary before enabling kept rooms.
 
+## Browser outbox prototype
+
+The browser outbox wraps each sender seed with a key derived from its access
+link secret and the room-bound frame secret. It encrypts each local operation
+under that tier key and binds its sender and sequence. The next sequence and
+the operation are saved in one IndexedDB transaction after a compare-and-swap
+on the authenticated counter. Ciphertext is saved before sending and reused
+for a retry in the same epoch. An authenticated local marker records an ACK
+only when the caller supplies the matching epoch and ciphertext.
+
+This primitive is not connected to the editor or transport. The caller must
+wait for persistence before reporting local durability, replay operations into
+Yjs when restoring, and authenticate the relay response before recording an
+ACK. It cannot change epochs until a verified checkpoint establishes which
+operations were applied. Until safe retirement is implemented, the outbox
+accepts at most 64 senders per browser database and 1,024 operations of at most
+64 KiB per sender. It fails instead of deleting accepted history at the limit. The strict IndexedDB durability option is a browser
+hint, not a guarantee against device failure, site-data deletion, eviction,
+or rollback of browser storage. Storage loss must not be reported as saved.
+
 ## Ledger snapshot encoding
 
 The ledger snapshot uses `pedit/v6/ledger\0`, a big-endian 32-bit receipt
