@@ -312,6 +312,7 @@ describe('rooms', () => {
     const stub = env.ROOM.get(env.ROOM.idFromName(room.id))
     await runInDurableObject(stub, async (_: RoomObject, state) => {
       const log = new DurableLog(state.storage, { bytes: 100, frames: 10 })
+      await log.initialize('epoch', new Uint8Array([0]).buffer)
       await log.append('epoch', new Uint8Array([1, 2]).buffer)
     })
     h.ws.close(HOST_LEFT, 'bye')
@@ -963,10 +964,9 @@ describe('maintenance', () => {
     // As if Cloudflare kept the room running when the var changed.
     const stub = env.ROOM.get(env.ROOM.idFromName(room.id))
     await runInDurableObject(stub, async (_: RoomObject, state) => {
-      await new DurableLog(state.storage, { bytes: 100, frames: 10 }).append(
-        'epoch',
-        new Uint8Array([1]).buffer,
-      )
+      const log = new DurableLog(state.storage, { bytes: 100, frames: 10 })
+      await log.initialize('epoch', new Uint8Array([0]).buffer)
+      await log.append('epoch', new Uint8Array([1]).buffer)
     })
     await runInDurableObject(stub, (instance: RoomObject) => {
       instance['env'] = { ...instance['env'], MAINTENANCE: 'closed' } as Env
@@ -1017,10 +1017,9 @@ describe('room lifetime', () => {
     const h = await host(room)
     const stub = stubOf(room)
     await runInDurableObject(stub, async (_: RoomObject, state) => {
-      await new DurableLog(state.storage, { bytes: 100, frames: 10 }).append(
-        'epoch',
-        new Uint8Array([1]).buffer,
-      )
+      const log = new DurableLog(state.storage, { bytes: 100, frames: 10 })
+      await log.initialize('epoch', new Uint8Array([0]).buffer)
+      await log.append('epoch', new Uint8Array([1]).buffer)
       state.storage.kv.put('openedAt', Date.now() - LIFETIME_MS - 1)
     })
     expect(await runDurableObjectAlarm(stub)).toBe(true)

@@ -64,6 +64,22 @@ atomic in the Durable Object. A reader interrupted by compaction
 restarts from a consistent checkpoint and log. Epoch changes must not discard
 unacknowledged edits; their safe retry protocol remains to be designed.
 
+The storage prototype freezes appends before a host constructs the next
+checkpoint. The freeze returns a token and cutoff; it survives eviction and
+can be queried or aborted by the host. A commit checks that token and cutoff,
+then replaces the checkpoint, switches epoch and removes covered frames in one
+transaction. Used epochs cannot be reused. A repeated commit or abort is
+recognized only while its receipt is the most recent one of that kind. After
+that, the caller must inspect the current generation and pending cut instead
+of treating a stale response as success. The host must authorize every freeze,
+inspection, abort and commit before those operations are exposed.
+
+The prototype reads a checkpoint and a log tail together. Each page checks
+the epoch and generation, but relies on its caller to retain the tail returned
+by the initial read. The public protocol must bind that tail to the read
+session or otherwise enforce the same boundary; the current storage API alone
+does not prevent a caller from substituting a later tail.
+
 ## Host recovery
 
 The host restores the prior Yjs state, validates the checkpoint and log, and
