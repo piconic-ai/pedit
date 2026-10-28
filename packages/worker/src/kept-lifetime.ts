@@ -154,7 +154,8 @@ export function hostReturns(state: KeptLifetime, now: number): KeptLifetime {
 
 export function keptNextAlarm(state: KeptLifetime, intervalSeconds: number): number {
   if (state.host === 'closed') throw new Error('room is not open')
-  const check = deadline(state.observedAt, intervalSeconds)
+  if (!validDuration(intervalSeconds)) throw new Error('invalid lifetime')
   const until = keptDeadline(state)
-  return until === null ? check : Math.min(until, check)
+  if (until !== null && intervalSeconds >= (until - state.observedAt) / 1000) return until
+  return deadline(state.observedAt, intervalSeconds)
 }

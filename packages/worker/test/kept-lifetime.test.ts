@@ -85,6 +85,15 @@ describe('kept room lifetime', () => {
     expect(observeKeptLifetime(next, 91_000)).toEqual({ host: 'closed', observedAt: 91_000 })
   })
 
+  it('schedules a finite deadline even when the heartbeat would overflow', () => {
+    const start = Number.MAX_SAFE_INTEGER - 1000
+    const finite = startKeptLifetime(start, 1, 1)
+    expect(keptNextAlarm(finite, 60)).toBe(Number.MAX_SAFE_INTEGER)
+    expect(keptNextAlarm(finite, 1)).toBe(Number.MAX_SAFE_INTEGER)
+    expect(() => keptNextAlarm(startKeptLifetime(start, null, 1), 60)).toThrow()
+    expect(() => keptNextAlarm(finite, 0)).toThrow()
+  })
+
   it('rejects clock rollback on every operation, including after restore and close', () => {
     const left = hostLeaves(startKeptLifetime(100_000, 100, 60), 101_000, null)
     expect(() => hostReturns(left, 1000)).toThrow('clock moved backwards')
