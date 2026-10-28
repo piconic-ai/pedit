@@ -157,6 +157,8 @@ export function maintenance(env: { MAINTENANCE?: string }): Maintenance {
   return level === 'no-new-rooms' || level === 'closed' ? level : 'none'
 }
 
+const BLOB_SESSION_KEY = 'blobSession'
+
 const HOST_TAG = 'host'
 // A guest admitted with the reader token: a comment-only or read-only link.
 const READER_TAG = 'reader'
@@ -346,6 +348,7 @@ export class Room extends DurableObject<Env> {
     const expected = kv.get<ArrayBuffer>(ADMISSION_KEY)
     if (expected) return crypto.subtle.timingSafeEqual(expected, digest) ? 'editor' : null
     kv.put(ADMISSION_KEY, digest)
+    kv.put(BLOB_SESSION_KEY, crypto.randomUUID())
     if (readDigest) kv.put(READ_ADMISSION_KEY, readDigest)
     return 'editor'
   }
@@ -612,13 +615,16 @@ export class Room extends DurableObject<Env> {
       if (peer !== except) safeClose(peer, code, reason)
     }
     // End the session at once: its quota and uploads no longer count.
+    const prefix = this.blobPrefix()
+    const legacy = this.ctx.storage.kv.get(BLOB_SESSION_KEY) === undefined
     this.generation++
+    this.ctx.storage.kv.delete(BLOB_SESSION_KEY)
     this.ctx.storage.kv.delete(USAGE_KEY)
     this.ctx.storage.kv.delete(ADMISSION_KEY)
     this.ctx.storage.kv.delete(READ_ADMISSION_KEY)
     this.ctx.storage.kv.delete(AWAY_KEY)
     DurableLog.clear(this.ctx.storage)
-    this.cleaning = this.cleaning.then(() => this.deleteBlobs())
+    this.cleaning = this.cleaning.then(() => this.deleteBlobs(prefix, legacy))
     await this.cleaning
   }
 
@@ -727,13 +733,15 @@ export class Room extends DurableObject<Env> {
   }
 
   // Deletion failures are left to the bucket's lifecycle rule.
-  private async deleteBlobs(): Promise<void> {
-    const prefix = this.blobPrefix()
+  private async deleteBlobs(prefix: string, legacy: boolean): Promise<void> {
     try {
       let cursor: string | undefined
       do {
         const page = await this.env.BLOBS.list({ prefix, cursor })
-        if (page.objects.length > 0) await this.env.BLOBS.delete(page.objects.map((o) => o.key))
+        const keys = page.objects
+          .map((object) => object.key)
+          .filter((key) => !legacy || /^[A-Za-z0-9_-]{22}$/.test(key.slice(prefix.length)))
+        if (keys.length > 0) await this.env.BLOBS.delete(keys)
         cursor = page.truncated ? page.cursor : undefined
       } while (cursor)
     } catch (error) {
@@ -743,7 +751,9 @@ export class Room extends DurableObject<Env> {
 
   // The Durable Object id is derived from the room id, and only this room knows it.
   private blobPrefix(): string {
-    return `rooms/${this.ctx.id.toString()}/`
+    const base = `rooms/${this.ctx.id.toString()}/`
+    const session = this.ctx.storage.kv.get<string>(BLOB_SESSION_KEY)
+    return session === undefined ? base : `${base}sessions/${session}/`
   }
 
   private usage(): Usage {

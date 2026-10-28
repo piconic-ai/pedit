@@ -787,6 +787,73 @@ describe('blobs', () => {
     expect((await putBlob(room, blobId(MAX_UPLOADS), new Uint8Array(4))).status).toBe(201)
   })
 
+  it('keeps a new session attachment when an old upload finishes late', async () => {
+    const room = await createRoom()
+    const first = await host(room)
+    const oldUpload = slowPut(room, blobId(1), 4)
+    await oldUpload.started()
+    first.ws.close(HOST_LEFT, 'bye')
+    await first.closed
+    await host(room)
+    const content = new Uint8Array([9, 8, 7])
+    expect((await putBlob(room, blobId(1), content)).status).toBe(201)
+    expect((await oldUpload.finish()).status).toBe(410)
+    const result = await getBlob(room, blobId(1))
+    expect(result.status).toBe(200)
+    expect(new Uint8Array(await result.arrayBuffer())).toEqual(content)
+  })
+
+  it('keeps attachments across a host reconnect after object eviction', async () => {
+    const room = await createRoom()
+    await host(room)
+    const content = new Uint8Array([5, 6])
+    expect((await putBlob(room, blobId(1), content)).status).toBe(201)
+    const stub = env.ROOM.get(env.ROOM.idFromName(room.id))
+    await evictDurableObject(stub, { webSockets: 'close' })
+    await host(room)
+    const result = await getBlob(room, blobId(1))
+    expect(result.status).toBe(200)
+    expect(new Uint8Array(await result.arrayBuffer())).toEqual(content)
+  })
+
+  it('keeps current attachments when a stale prefix is cleaned again', async () => {
+    const room = await createRoom()
+    const first = await host(room)
+    const stub = env.ROOM.get(env.ROOM.idFromName(room.id))
+    const oldPrefix = await runInDurableObject(stub, (instance: RoomObject) =>
+      instance['blobPrefix'](),
+    )
+    first.ws.close(HOST_LEFT, 'bye')
+    await first.closed
+    await host(room)
+    expect((await putBlob(room, blobId(1), new Uint8Array([7]))).status).toBe(201)
+    await env.BLOBS.put(`${oldPrefix}${blobId(1)}`, new Uint8Array([3]))
+    await runInDurableObject(stub, (instance: RoomObject) =>
+      instance['deleteBlobs'](oldPrefix, false),
+    )
+    const result = await getBlob(room, blobId(1))
+    expect(new Uint8Array(await result.arrayBuffer())).toEqual(new Uint8Array([7]))
+    expect(await env.BLOBS.head(`${oldPrefix}${blobId(1)}`)).toBeNull()
+  })
+
+  it('keeps a legacy session accessible and deletes only its direct blob keys', async () => {
+    const room = await createRoom()
+    const h = await host(room)
+    const stub = env.ROOM.get(env.ROOM.idFromName(room.id))
+    const prefix = `rooms/${env.ROOM.idFromName(room.id).toString()}/`
+    await runInDurableObject(stub, (_, state) => state.storage.kv.delete('blobSession'))
+    await env.BLOBS.put(`${prefix}${blobId(1)}`, new Uint8Array([3]))
+    await env.BLOBS.put(`${prefix}sessions/other/${blobId(1)}`, new Uint8Array([4]))
+    const result = await getBlob(room, blobId(1))
+    expect(new Uint8Array(await result.arrayBuffer())).toEqual(new Uint8Array([3]))
+    h.ws.close(HOST_LEFT, 'bye')
+    await h.closed
+    await vi.waitFor(async () => expect(await env.BLOBS.head(`${prefix}${blobId(1)}`)).toBeNull())
+    expect(await env.BLOBS.head(`${prefix}sessions/other/${blobId(1)}`)).not.toBeNull()
+    await host(room)
+    expect((await getBlob(room, blobId(1))).status).toBe(404)
+  })
+
   it('waits out every cleanup before serving a new session', async () => {
     const room = await createRoom()
     const first = await host(room)
@@ -1149,7 +1216,10 @@ describe('room lifetime', () => {
     await runInDurableObject(stubOf(room), (_: RoomObject, st) => {
       st.storage.kv.put('blobUsage', { bytes: 1, count: 1 })
     })
-    await env.BLOBS.put(`rooms/${env.ROOM.idFromName(room.id).toString()}/${blobId(2)}`, 'x')
+    const prefix = await runInDurableObject(stubOf(room), (instance: RoomObject) =>
+      instance['blobPrefix'](),
+    )
+    await env.BLOBS.put(`${prefix}${blobId(2)}`, 'x')
     await ranAlarm(room)
     const s = await state(room)
     expect([s.admission, s.usage]).toEqual([undefined, undefined])
