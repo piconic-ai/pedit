@@ -446,3 +446,13 @@ The registry binding and cron are configured only by tests; the internal upload
 path fails closed without the binding. Enabling kept rooms requires a production
 binding, migration, schedule, capacity monitoring, and an operational policy for
 uncertain PUTs. No age-based R2 lifecycle is applied to live kept attachments.
+
+The separate v6 `KeptAttachmentClient` derives the blob ID from plaintext,
+keeps one encrypted body for a network retry, and uses the editor capability to
+upload. On a 409 it reads with the reader capability, decrypts the existing
+ciphertext, checks the expected content hash, and compares the complete bytes
+before reporting reuse. A missing, oversized, corrupt, or different object is an
+error. The client does not announce the image, edit a document, or make the
+internal Worker route public. Callers must provide a deadline via AbortSignal
+and retain the local attachment until their document state is durable. Cleanup
+and independent orphan scheduling remain separate prerequisites.
