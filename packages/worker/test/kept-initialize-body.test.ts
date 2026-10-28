@@ -85,3 +85,92 @@ it('rejects an excessive number of chunks before initializing the room', async (
     expect(state.storage.kv.get('keptLifetime')).toBeUndefined()
   })
 })
+
+it('review: simultaneous identical initialization requests converge once', async () => {
+  const host = token(),
+    id = await roomIdFor(host)
+  const caps = { editor: token(), commenter: token(), reader: token() }
+  const stub = env.ROOM.get(env.ROOM.idFromName(id))
+  const url = `https://room/internal/kept/${id}/initialize`
+  const headers = {
+    Authorization: `Host ${host}`,
+    'X-Pedit-Editor': caps.editor,
+    'X-Pedit-Commenter': caps.commenter,
+    'X-Pedit-Reader': caps.reader,
+    'X-Pedit-Epoch': 'one',
+    'X-Pedit-Keep-Seconds': '60',
+  }
+  const replies = await Promise.all(
+    Array.from({ length: 4 }, () =>
+      stub.fetch(url, { method: 'POST', headers, body: Uint8Array.of(9) }),
+    ),
+  )
+  expect(replies.map((r) => r.status)).toEqual([204, 204, 204, 204])
+  await runInDurableObject(stub, (_, state) => {
+    expect(state.storage.sql.exec('SELECT * FROM durable_checkpoint').toArray()).toHaveLength(1)
+  })
+})
+
+it('review: conflicting simultaneous initialization requests cannot overwrite winner', async () => {
+  const host = token(),
+    id = await roomIdFor(host)
+  const caps = { editor: token(), commenter: token(), reader: token() }
+  const stub = env.ROOM.get(env.ROOM.idFromName(id))
+  const url = `https://room/internal/kept/${id}/initialize`
+  const headers = {
+    Authorization: `Host ${host}`,
+    'X-Pedit-Editor': caps.editor,
+    'X-Pedit-Commenter': caps.commenter,
+    'X-Pedit-Reader': caps.reader,
+    'X-Pedit-Epoch': 'one',
+    'X-Pedit-Keep-Seconds': '60',
+  }
+  const replies = await Promise.all(
+    Array.from({ length: 4 }, (_, i) =>
+      stub.fetch(url, { method: 'POST', headers, body: Uint8Array.of(i + 1) }),
+    ),
+  )
+  expect(replies.filter((r) => r.status === 204)).toHaveLength(1)
+  expect(replies.filter((r) => r.status === 403)).toHaveLength(3)
+  await runInDurableObject(stub, (_, state) => {
+    expect(state.storage.sql.exec('SELECT * FROM durable_checkpoint').toArray()).toHaveLength(1)
+  })
+})
+
+it('review: unauthorized requests cannot consume body or initialization slots', async () => {
+  const host = token(),
+    id = await roomIdFor(host)
+  const caps = { editor: token(), commenter: token(), reader: token() }
+  const stub = env.ROOM.get(env.ROOM.idFromName(id))
+  const url = `https://room/internal/kept/${id}/initialize`
+  const headers = {
+    Authorization: `Host ${host}`,
+    'X-Pedit-Editor': caps.editor,
+    'X-Pedit-Commenter': caps.commenter,
+    'X-Pedit-Reader': caps.reader,
+    'X-Pedit-Epoch': 'one',
+    'X-Pedit-Keep-Seconds': '60',
+  }
+  await runInDurableObject(stub, async (room) => {
+    const bad = Array.from(
+      { length: 12 },
+      () =>
+        new Request(url, {
+          method: 'POST',
+          headers: { ...headers, Authorization: `Host ${token()}` },
+          body: Uint8Array.of(7),
+        }),
+    )
+    const response = await Promise.all(bad.map((request) => room.fetch(request)))
+    expect(response.every((r) => r.status === 403)).toBe(true)
+    expect(
+      await Promise.all(
+        bad.map(async (request) => [...new Uint8Array(await request.arrayBuffer())]),
+      ),
+    ).toEqual(Array.from({ length: 12 }, () => [7]))
+    const valid = await room.fetch(
+      new Request(url, { method: 'POST', headers, body: Uint8Array.of(9) }),
+    )
+    expect(valid.status).toBe(204)
+  })
+})
