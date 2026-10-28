@@ -170,6 +170,9 @@ const BLOB_SESSION_KEY = 'blobSession'
 
 const HOST_TAG = 'host'
 const KEPT_HOST_TAG = 'kept-host'
+const KEPT_GUEST_TAG = 'kept-guest'
+const KEPT_GUEST_PROTOCOL = 'pedit-v6'
+const KEPT_ADMISSION_PREFIX = 'pedit-admission.'
 // A guest admitted with the reader token: a comment-only or read-only link.
 const READER_TAG = 'reader'
 const BLOB_PATH = /\/blobs\/([A-Za-z0-9_-]{22})$/
@@ -262,7 +265,10 @@ export class Room extends DurableObject<Env> {
         keptWrite[1],
         this.keptAppendRate,
         () => maintenance(this.env as { MAINTENANCE?: string }) === 'closed',
+        () => this.notifyKeptGuests(),
       )
+    const guest = /^\/internal\/kept\/([A-Za-z0-9_-]{22})\/guest$/.exec(path)
+    if (guest?.[1]) return this.keptGuestSocket(request, guest[1])
     const keptClose = /^\/internal\/kept\/([A-Za-z0-9_-]{22})\/close$/.exec(path)
     if (keptClose?.[1]) return this.closeKeptRoom(request, keptClose[1])
     const keptSocket = /^\/internal\/kept\/([A-Za-z0-9_-]{22})\/host$/.exec(path)
@@ -544,7 +550,10 @@ export class Room extends DurableObject<Env> {
         ? await lifecycle.observe()
         : await lifecycle.reconcileHost(() => this.ctx.getWebSockets(KEPT_HOST_TAG).length > 0)
       if (current.host === 'closed') {
-        for (const socket of this.ctx.getWebSockets(KEPT_HOST_TAG))
+        for (const socket of [
+          ...this.ctx.getWebSockets(KEPT_HOST_TAG),
+          ...this.ctx.getWebSockets(KEPT_GUEST_TAG),
+        ])
           safeClose(socket, ROOM_CLOSED, 'room closed')
         await this.sweepKeptBlobs()
       }
@@ -595,7 +604,10 @@ export class Room extends DurableObject<Env> {
   }
 
   override async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
-    if (this.ctx.getTags(ws).includes(KEPT_HOST_TAG)) {
+    if (
+      this.ctx.getTags(ws).includes(KEPT_GUEST_TAG) ||
+      this.ctx.getTags(ws).includes(KEPT_HOST_TAG)
+    ) {
       safeClose(ws, 1003, 'unsupported')
       return
     }
@@ -643,6 +655,7 @@ export class Room extends DurableObject<Env> {
     wasClean: boolean,
   ): Promise<void> {
     safeClose(ws, code, reason)
+    if (this.ctx.getTags(ws).includes(KEPT_GUEST_TAG)) return
     if (this.ctx.getTags(ws).includes(KEPT_HOST_TAG)) {
       const policy = this.ctx.storage.kv.get<KeepPolicy>(KEPT_POLICY_KEY)
       if (policy)
@@ -658,6 +671,7 @@ export class Room extends DurableObject<Env> {
 
   override async webSocketError(ws: WebSocket): Promise<void> {
     safeClose(ws, 1011, 'error')
+    if (this.ctx.getTags(ws).includes(KEPT_GUEST_TAG)) return
     if (this.ctx.getTags(ws).includes(KEPT_HOST_TAG)) {
       const policy = this.ctx.storage.kv.get<KeepPolicy>(KEPT_POLICY_KEY)
       if (policy)
@@ -680,6 +694,49 @@ export class Room extends DurableObject<Env> {
     )
   }
 
+  private notifyKeptGuests(): void {
+    for (const socket of this.ctx.getWebSockets(KEPT_GUEST_TAG)) {
+      try {
+        socket.send('changed')
+      } catch {
+        safeClose(socket, 1011, 'notification failed')
+      }
+    }
+  }
+
+  private async keptGuestSocket(request: Request, roomId: string): Promise<Response> {
+    if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket')
+      return new Response(null, { status: 426 })
+    if (this.env.ROOM.idFromName(roomId).toString() !== this.ctx.id.toString())
+      return new Response(null, { status: 404 })
+    const protocols = (request.headers.get('Sec-WebSocket-Protocol') ?? '')
+      .split(',')
+      .map((p) => p.trim())
+    const admissions = protocols.filter((p) => p.startsWith(KEPT_ADMISSION_PREFIX))
+    const token = admissions[0]?.slice(KEPT_ADMISSION_PREFIX.length)
+    if (!protocols.includes(KEPT_GUEST_PROTOCOL) || admissions.length !== 1 || !token)
+      return new Response(null, { status: 403 })
+    try {
+      const role = await new KeptAdmission(this.ctx, this.env.ROOM).role(token)
+      const policy = this.ctx.storage.kv.get<KeepPolicy>(KEPT_POLICY_KEY)
+      if (!role || !policy) return new Response(null, { status: 403 })
+      const lifetime = await this.keptLifecycle(policy).observe()
+      if (lifetime.host === 'closed' || this.ctx.storage.kv.get(ADMISSION_KEY) === undefined)
+        return new Response(null, { status: 403 })
+      if (this.ctx.getWebSockets(KEPT_GUEST_TAG).length >= MAX_PEERS - 1)
+        return new Response(null, { status: 429 })
+      const pair = new WebSocketPair()
+      this.ctx.acceptWebSocket(pair[1], [KEPT_GUEST_TAG])
+      return new Response(null, {
+        status: 101,
+        webSocket: pair[0],
+        headers: { 'Sec-WebSocket-Protocol': KEPT_GUEST_PROTOCOL },
+      })
+    } catch {
+      return new Response(null, { status: 403 })
+    }
+  }
+
   private async closeKeptRoom(request: Request, roomId: string): Promise<Response> {
     if (request.method !== 'POST') return new Response(null, { status: 405 })
     const host = /^Host ([A-Za-z0-9_-]{43})$/.exec(request.headers.get('Authorization') ?? '')?.[1]
@@ -689,7 +746,10 @@ export class Room extends DurableObject<Env> {
       if (!policy) return new Response(null, { status: 403 })
       const state = await this.keptLifecycle(policy).close(roomId, host)
       if (state.host !== 'closed') return new Response(null, { status: 403 })
-      for (const socket of this.ctx.getWebSockets(KEPT_HOST_TAG))
+      for (const socket of [
+        ...this.ctx.getWebSockets(KEPT_HOST_TAG),
+        ...this.ctx.getWebSockets(KEPT_GUEST_TAG),
+      ])
         safeClose(socket, ROOM_CLOSED, 'room closed')
       await this.sweepKeptBlobs()
       return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } })

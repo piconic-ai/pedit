@@ -61,6 +61,7 @@ export async function keptAppend(
   roomId: string,
   rate: KeptAppendRate,
   maintenanceClosed: () => boolean,
+  notify: () => void = () => {},
 ): Promise<Response> {
   const response = (status: number) =>
     new Response(null, { status, headers: { 'Cache-Control': 'no-store' } })
@@ -85,6 +86,7 @@ export async function keptAppend(
       maintenanceClosed,
     )
     const sequence = await transport.append(token, epoch, body)
+    notify()
     return Response.json({ sequence }, { headers: { 'Cache-Control': 'no-store' } })
   } catch (error) {
     if (error instanceof BodyReadTimeoutError) return response(408)

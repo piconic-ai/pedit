@@ -467,3 +467,14 @@ client retries the same ciphertext with a delay until the overall deadline. It o
 reports reuse after reading, decrypting, and checking the existing plaintext.
 Timeout leaves the result unresolved and never implies a
 successful upload.
+
+The internal v6 guest socket is an invalidation channel: after a durable
+append it sends only a constant `changed` message, never plaintext, tokens or
+ciphertext. The client subscribes before beginning its fixed read and repeats
+that read if a notification arrives during it. A periodic fixed read also
+covers a commit whose notification is lost, and a reconnect starts a new read.
+A disconnect invalidates the live reader; its caller must create a new one.
+Browser timer throttling and offline periods can delay catch-up, and a relay can
+still omit an unseen tail. Inspections remain non-applicable and do not ACK,
+cut, or write files. Neither this socket nor the client is publicly routed or
+connected to the editor.
