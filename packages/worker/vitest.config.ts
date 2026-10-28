@@ -7,6 +7,7 @@ export default defineConfig({
       wrangler: { configPath: './wrangler.jsonc' },
       // Small limits, so the tests can reach them.
       miniflare: {
+        durableObjects: { KEPT_SWEEP: { className: 'KeptSweepShard', useSQLite: true } },
         bindings: {
           ROOM_GUESTS: '3',
           BLOB_MAX_BYTES: '95',

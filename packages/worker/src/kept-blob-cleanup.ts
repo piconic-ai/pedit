@@ -48,7 +48,11 @@ export class KeptBlobCleanup {
     )
   }
 
-  async put(id: string, content: Uint8Array): Promise<void> {
+  async put(
+    id: string,
+    content: Uint8Array,
+    register: () => Promise<void> = async () => {},
+  ): Promise<void> {
     if (!BLOB_ID.test(id) || content.length === 0 || content.length > this.limits.blobBytes)
       throw new Error('invalid kept blob')
     const data = Uint8Array.from(content)
@@ -70,7 +74,7 @@ export class KeptBlobCleanup {
       if (usage.count >= this.limits.count || usage.bytes + data.length > this.limits.quotaBytes)
         throw new Error('kept blob capacity reached')
       this.storage.sql.exec(
-        'INSERT INTO kept_blob_puts (id, completed, bytes) VALUES (?, 0, ?)',
+        'INSERT INTO kept_blob_puts (id, completed, bytes) VALUES (?, -1, ?)',
         id,
         data.length,
       )
@@ -91,15 +95,42 @@ export class KeptBlobCleanup {
       return
     }
     await this.storage.sync()
+    try {
+      await register()
+    } catch (error) {
+      this.storage.sql.exec('DELETE FROM kept_blob_puts WHERE id = ? AND completed = -1', id)
+      await this.storage.sync()
+      throw error
+    }
     if (this.closed()) {
-      this.storage.sql.exec('DELETE FROM kept_blob_puts WHERE id = ?', id)
+      this.storage.sql.exec('DELETE FROM kept_blob_puts WHERE id = ? AND completed = -1', id)
       await this.storage.sync()
       throw new Error('kept room is closed')
     }
     try {
       this.assertActive()
     } catch (error) {
-      this.storage.sql.exec('DELETE FROM kept_blob_puts WHERE id = ?', id)
+      this.storage.sql.exec('DELETE FROM kept_blob_puts WHERE id = ? AND completed = -1', id)
+      await this.storage.sync()
+      throw error
+    }
+    const sending = this.storage.sql
+      .exec(
+        'UPDATE kept_blob_puts SET completed = 0 WHERE id = ? AND completed = -1 RETURNING id',
+        id,
+      )
+      .toArray()
+    if (!sending.length) throw new Error('kept upload no longer reserved')
+    await this.storage.sync()
+    if (this.closed()) {
+      this.storage.sql.exec('DELETE FROM kept_blob_puts WHERE id = ? AND completed = 0', id)
+      await this.storage.sync()
+      throw new Error('kept room is closed')
+    }
+    try {
+      this.assertActive()
+    } catch (error) {
+      this.storage.sql.exec('DELETE FROM kept_blob_puts WHERE id = ? AND completed = 0', id)
       await this.storage.sync()
       throw error
     }
@@ -162,6 +193,7 @@ export class KeptBlobCleanup {
     }
     if (!empty) return false
     const complete = await this.storage.transaction(async () => {
+      this.storage.sql.exec('DELETE FROM kept_blob_puts WHERE completed = -1')
       for (const row of finished)
         this.storage.sql.exec('DELETE FROM kept_blob_puts WHERE id = ? AND completed = 1', row.id)
       const count = this.storage.sql

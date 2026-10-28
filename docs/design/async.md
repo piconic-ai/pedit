@@ -409,3 +409,33 @@ The Go and browser tests share `kept-schema-mutations.json` and
 `kept-schema-generated-mutations.json`. Regenerate the latter from the repository
 root with `go run ./packages/testdata/cmd/kept-schema-mutations`; both test
 suites check the same results, alongside the Go and browser payload fixtures.
+
+### Experimental independent attachment sweep
+
+An experimental test-only sweep registry registers a room before its R2 PUT.
+The Room first persists an unsent reservation, then registers its Durable
+Object ID, then persists the transition to a possibly in-flight PUT before
+calling R2. A closed room may discard an unsent reservation, including one
+whose pending registry RPC later returns: that PUT checks the reservation again
+and never starts. A PUT that may have reached R2 remains unresolved until its
+completion is known; an empty listing does not prove such a PUT has stopped.
+
+Each registry shard keeps at most 100,000 room IDs. Registration fails closed
+when full; it does not start a new PUT. The scheduled worker visits at most 16
+rooms per shard per invocation, and advances its persistent cursor even if a
+room fails. A closed room is retired only after its R2 prefix is empty and all
+possibly in-flight reservations have resolved. Retirement is conditional on a
+monotonic registration generation, so an old sweep cannot erase a concurrent
+new registration. Uncertain PUTs can remain registered forever and eventually
+exhaust capacity; this implementation does not claim a bounded deletion time.
+Retry delay depends on the number of registered rooms and scheduled invocations.
+A delivery timeout does not cancel a Durable Object RPC. The Room coalesces
+concurrent sweep calls so a stalled operation is not repeatedly started by the
+same Room instance. A stalled registration also leaves its RPC in flight;
+after its timeout, the Room fails subsequent registration attempts closed until
+that RPC settles or the Room instance is evicted. No further PUT is started.
+
+The registry binding and cron are configured only by tests; the internal upload
+path fails closed without the binding. Enabling kept rooms requires a production
+binding, migration, schedule, capacity monitoring, and an operational policy for
+uncertain PUTs. No age-based R2 lifecycle is applied to live kept attachments.

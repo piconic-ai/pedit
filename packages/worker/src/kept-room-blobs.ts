@@ -2,9 +2,45 @@ import { readBoundedBody } from './bounded-body.ts'
 import { KeptAdmission } from './kept-admission.ts'
 import { KeptBlobCleanup, KeptBlobConflictError, type KeptBlobLimits } from './kept-blob-cleanup.ts'
 import { KeptLifecycle } from './kept-lifecycle.ts'
+import { type KeptSweepShard, keptShardName } from './kept-sweep-shard.ts'
 
 const MAX_UPLOADS = 4
 const MAX_GUEST_UPLOADS = MAX_UPLOADS - 1
+const REGISTRATION_TIMEOUT_MS = 1000
+export type SweepRegistration = { pending?: Promise<void>; timedOut?: boolean }
+
+async function registerSweep(
+  registry: DurableObjectNamespace<KeptSweepShard>,
+  roomId: string,
+  gate: SweepRegistration,
+): Promise<void> {
+  if (gate.timedOut) throw new Error('sweep registration unavailable')
+  if (!gate.pending) {
+    const pending = registry.getByName(keptShardName(roomId)).register(roomId)
+    gate.pending = pending
+    const clear = () => {
+      if (gate.pending === pending) {
+        gate.pending = undefined
+        gate.timedOut = false
+      }
+    }
+    void pending.then(clear, clear)
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      gate.pending,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          gate.timedOut = true
+          reject(new Error('sweep registration timed out'))
+        }, REGISTRATION_TIMEOUT_MS)
+      }),
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 async function getBlob(
   bucket: R2Bucket,
@@ -40,6 +76,7 @@ export async function keptRoomBlob(
   limits: KeptBlobLimits,
   uploading: Map<string, 'host' | 'editor'>,
   maintenanceClosed: () => boolean,
+  registration: SweepRegistration,
 ): Promise<Response> {
   if (env.ROOM.idFromName(room).toString() !== state.id.toString())
     return new Response(null, { status: 404 })
@@ -82,7 +119,11 @@ export async function keptRoomBlob(
       if (!data.length) throw new Error('missing blob')
       await active()
       const cleanup = new KeptBlobCleanup(state, env.BLOBS, limits, () => life.assertOpen())
-      await cleanup.put(id, data)
+      const registry = (env as Env & { KEPT_SWEEP?: DurableObjectNamespace<KeptSweepShard> })
+        .KEPT_SWEEP
+      if (!registry) throw new Error('kept sweep registry unavailable')
+      const roomId = state.id.toString()
+      await cleanup.put(id, data, () => registerSweep(registry, roomId, registration))
       await active()
       return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } })
     } finally {

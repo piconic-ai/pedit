@@ -232,6 +232,8 @@ export class Room extends DurableObject<Env> {
   private keptHostHandshakes = 0
   private keptInitializations = { active: 0 }
   private readonly keptAppendRate = new KeptAppendRate()
+  private keptSweep: Promise<boolean> | undefined
+  private keptRegistration = {}
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
@@ -298,6 +300,7 @@ export class Room extends DurableObject<Env> {
         this.keptBlobLimits(),
         this.keptUploading,
         () => maintenance(this.env as { MAINTENANCE?: string }) === 'closed',
+        this.keptRegistration,
       )
     if (this.ctx.storage.kv.get(KEPT_ADMISSION_KEY) !== undefined)
       return new Response('room protocol unavailable', { status: 403 })
@@ -561,6 +564,32 @@ export class Room extends DurableObject<Env> {
         .toArray().length
     )
       await new KeptBlobCleanup(this.ctx, this.env.BLOBS, this.keptBlobLimits()).sweep()
+  }
+
+  async sweepKeptAttachments(): Promise<boolean> {
+    if (this.keptSweep) return this.keptSweep
+    const operation = this.sweepKeptAttachmentsOnce()
+    this.keptSweep = operation
+    try {
+      return await operation
+    } finally {
+      if (this.keptSweep === operation) this.keptSweep = undefined
+    }
+  }
+
+  private async sweepKeptAttachmentsOnce(): Promise<boolean> {
+    if (this.ctx.storage.kv.get(KEPT_ADMISSION_KEY) === undefined) return false
+    await this.keptAlarm()
+    const exists =
+      this.ctx.storage.sql
+        .exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'kept_blob_state'")
+        .toArray().length > 0
+    if (!exists) return false
+    const state = this.ctx.storage.sql
+      .exec<{ closed: number }>('SELECT closed FROM kept_blob_state WHERE singleton = 1')
+      .one()
+    if (!state.closed) return false
+    return new KeptBlobCleanup(this.ctx, this.env.BLOBS, this.keptBlobLimits()).sweep()
   }
 
   override async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
