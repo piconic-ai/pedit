@@ -36,6 +36,27 @@ async function mutate(
 }
 
 describe('kept outbox', () => {
+  it('characterizes rollback of one authentic unprepared row', async () => {
+    const name = dbName()
+    const outbox = await KeptOutbox.open(name)
+    const sender = await outbox.createSender(edit, room)
+    await outbox.enqueue(edit, room, sender, Uint8Array.of(1))
+    let original: Record<string, unknown> = {}
+    await mutate(name, sender, 1, (row) => {
+      original = structuredClone(row)
+      return row
+    })
+    const first = await outbox.prepare(edit, context(), sender, 1)
+    await outbox.acknowledge(edit, room, first)
+    await mutate(name, sender, 1, () => original)
+    const later = { ...context(), epoch: new Uint8Array(32).fill(4), generation: 2 }
+    const restored = await outbox.prepare(edit, later, sender, 1)
+    expect(restored.epoch).not.toBe(first.epoch)
+    expect(restored.generation).toBe(2)
+    expect(restored.acknowledged).toBe(false)
+    outbox.close()
+  })
+
   it('rejects selective removal of the prepared state after reopening', async () => {
     const name = dbName()
     const outbox = await KeptOutbox.open(name)

@@ -132,9 +132,11 @@ only when the caller supplies the matching epoch and ciphertext.
 The prepared or unprepared state, epoch, generation and exact ciphertext are
 authenticated with the tier wrapping key. Rows from earlier outbox prototypes
 without this binding fail closed; they cannot be migrated safely without a
-trusted copy of their prepared state. Whole-storage rollback remains
-undetectable without an external trusted anchor, including rollback of the
-binding and ACK together.
+trusted copy of their prepared state. A rollback to an earlier authentic state
+remains undetectable without an external trusted anchor. This includes restoring
+one previously unprepared operation row after it was prepared: the restored row
+can be prepared again in another epoch even if the other rows are unchanged.
+Rollback can also remove a previously recorded ACK.
 
 This primitive is not connected to the editor or transport. The caller must
 wait for persistence before reporting local durability, replay operations into
