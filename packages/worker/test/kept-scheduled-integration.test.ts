@@ -301,3 +301,97 @@ it('releases the upload slot if registry RPC never finishes', async () => {
     expect((await instance.fetch(request())).status).toBe(204)
   })
 }, 5000)
+
+it('stops a shard after a next RPC times out on each scheduled invocation', async () => {
+  const { scheduledKeptSweep } = await import('../src/kept-scheduled.ts')
+  let calls = 0
+  const shardName = 'a'
+  const namespace = new Proxy(registry, {
+    get(target, property) {
+      if (property === 'getByName')
+        return (name: string) =>
+          name === shardName
+            ? {
+                next: () => {
+                  calls++
+                  return new Promise(() => {})
+                },
+              }
+            : target.getByName(name)
+      const value = Reflect.get(target, property, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+  await scheduledKeptSweep({ ...env, KEPT_SWEEP: namespace })
+  expect(calls).toBe(1)
+  await scheduledKeptSweep({ ...env, KEPT_SWEEP: namespace })
+  expect(calls).toBe(2)
+}, 5000)
+
+it('coalesces a stalled storage next and fails closed until it resolves', async () => {
+  const shard = registry.getByName(`review-${crypto.randomUUID()}`)
+  await runInDurableObject(shard, async (instance) => {
+    let calls = 0,
+      release!: () => void
+    const pending = new Promise<null>((resolve) => {
+      release = () => resolve(null)
+    })
+    Object.defineProperty(instance, 'registry', {
+      value: {
+        next: () => {
+          calls++
+          return pending
+        },
+      },
+    })
+    const first = instance.next()
+    const second = instance.next()
+    const result = await Promise.allSettled([first, second])
+    expect(result.every((r) => r.status === 'rejected')).toBe(true)
+    expect(calls).toBe(1)
+    await expect(instance.next()).rejects.toThrow('registry unavailable')
+    expect(calls).toBe(1)
+    release()
+    await pending
+    expect(await instance.next()).toBeNull()
+    expect(calls).toBe(2)
+  })
+}, 5000)
+
+it('stops a shard when retirement RPC times out', async () => {
+  const { scheduledKeptSweep } = await import('../src/kept-scheduled.ts')
+  const id = env.ROOM.idFromName(crypto.randomUUID()).toString(),
+    name = keptShardName(id)
+  let nextCalls = 0,
+    retireCalls = 0
+  const namespace = new Proxy(registry, {
+    get(target, property) {
+      if (property === 'getByName')
+        return (value: string) =>
+          value === name
+            ? {
+                next: async () => {
+                  nextCalls++
+                  return { id, generation: 1 }
+                },
+                retire: () => {
+                  retireCalls++
+                  return new Promise<void>(() => {})
+                },
+              }
+            : target.getByName(value)
+      const result = Reflect.get(target, property, target)
+      return typeof result === 'function' ? result.bind(target) : result
+    },
+  })
+  const rooms = new Proxy(env.ROOM, {
+    get(target, property) {
+      if (property === 'get') return () => ({ sweepKeptAttachments: async () => true })
+      const result = Reflect.get(target, property, target)
+      return typeof result === 'function' ? result.bind(target) : result
+    },
+  })
+  await scheduledKeptSweep({ ...env, KEPT_SWEEP: namespace, ROOM: rooms })
+  expect(nextCalls).toBe(1)
+  expect(retireCalls).toBe(1)
+}, 5000)

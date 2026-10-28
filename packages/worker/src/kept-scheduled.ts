@@ -27,15 +27,30 @@ export async function scheduledKeptSweep(env: SweepEnv): Promise<void> {
       const shard = namespace.getByName(name)
       const seen = new Set<string>()
       for (let i = 0; i < BUDGET_PER_SHARD; i++) {
+        let entry: Awaited<ReturnType<KeptSweepShard['next']>>
         try {
-          const entry = await bounded(shard.next())
-          if (entry === null || seen.has(entry.id)) return
-          seen.add(entry.id)
+          entry = await bounded(shard.next())
+        } catch {
+          console.error('kept sweep registry failed', name)
+          return
+        }
+        if (entry === null || seen.has(entry.id)) return
+        seen.add(entry.id)
+        let complete: boolean
+        try {
           const room = env.ROOM.get(env.ROOM.idFromString(entry.id))
-          if (await bounded(room.sweepKeptAttachments()))
-            await bounded(shard.retire(entry.id, entry.generation))
+          complete = await bounded(room.sweepKeptAttachments())
         } catch {
           console.error('kept sweep failed', name)
+          continue
+        }
+        if (complete) {
+          try {
+            await bounded(shard.retire(entry.id, entry.generation))
+          } catch {
+            console.error('kept sweep registry failed', name)
+            return
+          }
         }
       }
     }),

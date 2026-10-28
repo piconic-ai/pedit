@@ -434,6 +434,11 @@ concurrent sweep calls so a stalled operation is not repeatedly started by the
 same Room instance. A stalled registration also leaves its RPC in flight;
 after its timeout, the Room fails subsequent registration attempts closed until
 that RPC settles or the Room instance is evicted. No further PUT is started.
+Each scheduled invocation stops a shard after a failed or timed-out registry
+read. A shard accepts only one outstanding read and fails later reads closed
+while its storage operation is unresolved. A transport that stalls before the
+RPC reaches the shard is limited to one attempt per invocation, but cannot be
+coalesced across different scheduled invocations by this design.
 
 The registry binding and cron are configured only by tests; the internal upload
 path fails closed without the binding. Enabling kept rooms requires a production
