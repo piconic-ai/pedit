@@ -10,7 +10,7 @@ const BINDING_DOMAIN = utf8.encode('pedit/v6/room-binding\0')
 const CERT_BODY = CERT_DOMAIN.length + 22 + 32 + 1 + 32
 const CERT_SIZE = CERT_BODY + 64
 const HEADER_SIZE = RECORD_DOMAIN.length + CERT_SIZE + 32 + 8 + 8 + 4
-const MAX_PAYLOAD = MAX_FRAME_BYTES - HEADER_SIZE - 64 - 28
+export const MAX_KEPT_RECORD_PAYLOAD = MAX_FRAME_BYTES - HEADER_SIZE - 64 - 28
 
 export interface KeptRecordContext {
   roomId: string
@@ -120,7 +120,7 @@ export async function sealKeptRecord(
     !Number.isSafeInteger(sequence) ||
     sequence < 1 ||
     payload.length < 1 ||
-    payload.length > MAX_PAYLOAD
+    payload.length > MAX_KEPT_RECORD_PAYLOAD
   )
     throw new Error('invalid durable record')
   const identity = await openCertificate(keys, cert)

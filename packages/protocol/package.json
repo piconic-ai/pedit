@@ -22,6 +22,7 @@
     "./frame": "./src/frame.ts",
     "./kept-access": "./src/kept-access.ts",
     "./kept-checkpoint": "./src/kept-checkpoint.ts",
+    "./kept-ledger": "./src/kept-ledger.ts",
     "./kept-record": "./src/kept-record.ts",
     "./pace": "./src/pace.ts",
     "./testing": "./src/testing.ts"

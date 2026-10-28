@@ -1,0 +1,86 @@
+{
+  "limit": 4,
+  "vectors": [
+    {
+      "access": "edit",
+      "sender": "0101010101010101010101010101010101010101010101010101010101010101",
+      "sequence": 2,
+      "message": "one",
+      "decision": "gap",
+      "commit": null,
+      "digest": "6e6ce53a9e3d277516635e827e3dcc7e0ec8cd7a1dfa3c074f0ed23610092fbf"
+    },
+    {
+      "access": "edit",
+      "sender": "0101010101010101010101010101010101010101010101010101010101010101",
+      "sequence": 1,
+      "message": "one",
+      "decision": "next",
+      "commit": "applied",
+      "digest": "22a8de348973fdc4517fbd9aaff10a6155233fa381677055235a9be2cc80abb8"
+    },
+    {
+      "access": "edit",
+      "sender": "0101010101010101010101010101010101010101010101010101010101010101",
+      "sequence": 1,
+      "message": "one",
+      "decision": "duplicate",
+      "commit": null,
+      "digest": "22a8de348973fdc4517fbd9aaff10a6155233fa381677055235a9be2cc80abb8"
+    },
+    {
+      "access": "edit",
+      "sender": "0101010101010101010101010101010101010101010101010101010101010101",
+      "sequence": 1,
+      "message": "other",
+      "decision": "conflict",
+      "commit": null,
+      "digest": "dc9b8260eb07c064dd8769baabe7f80c1747d30f1dd97b9f5309b1772e0e1ae9"
+    },
+    {
+      "access": "edit",
+      "sender": "0101010101010101010101010101010101010101010101010101010101010101",
+      "sequence": 2,
+      "message": "two",
+      "decision": "next",
+      "commit": "rejected",
+      "digest": "a827351c498ae1d5d5e21b627931f8b31899b70f9a00e39398326814b610dcec"
+    },
+    {
+      "access": "comment",
+      "sender": "0101010101010101010101010101010101010101010101010101010101010101",
+      "sequence": 1,
+      "message": "three",
+      "decision": "next",
+      "commit": "applied",
+      "digest": "04189b1e13d64760a9ec2d38e9125ee88d60b323835249938f788f84f96b6bb5"
+    },
+    {
+      "access": "edit",
+      "sender": "0202020202020202020202020202020202020202020202020202020202020202",
+      "sequence": 1,
+      "message": "four",
+      "decision": "next",
+      "commit": "applied",
+      "digest": "cd8910c909e263ee565f8c72e39603619190e6079db32f2548a387abe85907a2"
+    },
+    {
+      "access": "edit",
+      "sender": "0202020202020202020202020202020202020202020202020202020202020202",
+      "sequence": 2,
+      "message": "five",
+      "decision": "full",
+      "commit": null,
+      "digest": "3cde3e7894c3dc4d317b37ab7bff9413a73f75962a02a7359c2c72158359c394"
+    },
+    {
+      "access": "edit",
+      "sender": "0101010101010101010101010101010101010101010101010101010101010101",
+      "sequence": 2,
+      "message": "two",
+      "decision": "duplicate",
+      "commit": null,
+      "digest": "a827351c498ae1d5d5e21b627931f8b31899b70f9a00e39398326814b610dcec"
+    }
+  ]
+}

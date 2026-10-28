@@ -49,3 +49,6 @@ Its key and IV are fixed for the test; production encryption uses random IVs.
 
 `kept-record-vectors.json` is generated independently with Node's OpenSSL
 implementation by `node packages/testdata/generate-kept-record.mjs`.
+
+`kept-ledger-vectors.json` is generated with Node's SHA-256 implementation by
+`node packages/testdata/generate-kept-ledger.mjs`.
