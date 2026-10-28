@@ -75,11 +75,15 @@ it('reuses the first ciphertext after checking a separately encrypted copy', asy
   expect(retried.disposition).toBe('stored')
   expect(sent).toHaveLength(2)
   expect(sent[0]).toEqual(sent[1])
-  const unavailable: typeof fetch = async (_input, init) =>
-    new Response(null, { status: init?.method === 'PUT' ? 409 : 404 })
+  let unavailablePuts = 0
+  const unavailable: typeof fetch = async (_input, init) => {
+    if (init?.method === 'PUT') unavailablePuts++
+    return new Response(null, { status: init?.method === 'PUT' ? 409 : 404 })
+  }
   await expect(
     new KeptAttachmentClient({ url: 'https://room', keys, fetch: unavailable }).upload(plain),
   ).rejects.toThrow('unavailable')
+  expect(unavailablePuts).toBe(12)
   const oversized: typeof fetch = async (_input, init) =>
     init?.method === 'PUT'
       ? new Response(null, { status: 409 })
@@ -98,4 +102,133 @@ it('reuses the first ciphertext after checking a separately encrypted copy', asy
   await expect(client.upload(plain)).rejects.toThrow()
   expect(calls.slice(-2)).toEqual(['PUT:409', 'GET:200'])
   expect(await contentHash(plain)).toBe(a.hash)
+})
+
+it('retries a simultaneous upload until the first stored ciphertext can be verified', async () => {
+  const host = token(),
+    id = await roomIdFor(host)
+  const keys = await deriveKeptRoomKeys(parseKeptFragment(access.edit)!, id)
+  const room = env.ROOM.get(env.ROOM.idFromName(id))
+  await runInDurableObject(room, async (_, state) => {
+    const t = new KeptTransport(
+      state,
+      env.ROOM,
+      { bytes: 100, frames: 10 },
+      { requestedSeconds: 60, roomMaxSeconds: null, maxKeepSeconds: null, alarmSeconds: 60 },
+    )
+    await t.initialize(
+      id,
+      host,
+      {
+        editor: keys.editAdmission!,
+        commenter: keys.commentAdmission!,
+        reader: keys.readAdmission,
+      },
+      'epoch',
+      Uint8Array.of(1).buffer,
+    )
+  })
+  const plain = new TextEncoder().encode('same image')
+  const blobKeys = await deriveBlobKeys(keys.frameSecret, keys.editAdmission!)
+  const idForImage = await blobIdFor(blobKeys, await contentHash(plain))
+  const encrypted = await encryptBlob(blobKeys, plain)
+  let release!: () => void, entered!: () => void
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const waiting = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  const body = new ReadableStream<Uint8Array>({
+    async pull(c) {
+      entered()
+      await gate
+      c.enqueue(encrypted)
+      c.close()
+    },
+  })
+  const first = room.fetch(`https://room/internal/kept/${id}/blobs/${idForImage}`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${keys.editAdmission}` },
+    body,
+  })
+  await waiting
+  const calls: string[] = []
+  const fetcher: typeof fetch = async (input, init) => {
+    const req = new Request(input, init),
+      response = await room.fetch(req)
+    calls.push(`${req.method}:${response.status}`)
+    if (req.method === 'GET' && response.status === 404) release()
+    return response
+  }
+  try {
+    const result = await new KeptAttachmentClient({
+      url: 'https://room',
+      keys,
+      fetch: fetcher,
+    }).upload(plain)
+    expect(result.disposition).toBe('reused')
+    expect(calls.slice(0, 2)).toEqual(['PUT:409', 'GET:404'])
+    expect(calls.slice(-2)).toEqual(['PUT:409', 'GET:200'])
+    expect((await first).status).toBe(204)
+  } finally {
+    release()
+  }
+})
+
+it('bounds PUT, GET, and response body waiting even when abort is ignored', async () => {
+  const keys = await deriveKeptRoomKeys(parseKeptFragment(access.edit)!, access.roomId)
+  for (const stall of ['put', 'get', 'body'] as const) {
+    let calls = 0
+    const fetcher: typeof fetch = async (_input, init) => {
+      calls++
+      if (
+        (stall === 'put' && init?.method === 'PUT') ||
+        (stall === 'get' && init?.method !== 'PUT')
+      )
+        return new Promise<Response>(() => {})
+      if (init?.method === 'PUT') return new Response(null, { status: 409 })
+      return new Response(
+        new ReadableStream({
+          pull() {
+            return new Promise<void>(() => {})
+          },
+          cancel() {
+            return new Promise<void>(() => {})
+          },
+        }),
+      )
+    }
+    const client = new KeptAttachmentClient({
+      url: 'https://room',
+      keys,
+      fetch: fetcher,
+      timeoutMs: 50,
+    })
+    await expect(client.upload(Uint8Array.of(1))).rejects.toThrow('interrupted')
+    expect(calls).toBe(stall === 'put' ? 1 : 2)
+  }
+})
+
+it('does not continue after a timed-out GET resolves late', async () => {
+  const keys = await deriveKeptRoomKeys(parseKeptFragment(access.edit)!, access.roomId)
+  let calls = 0,
+    release!: (response: Response) => void
+  const fetcher: typeof fetch = async (_input, init) => {
+    calls++
+    if (init?.method === 'PUT') return new Response(null, { status: 409 })
+    return new Promise<Response>((resolve) => {
+      release = resolve
+    })
+  }
+  const client = new KeptAttachmentClient({
+    url: 'https://room',
+    keys,
+    fetch: fetcher,
+    timeoutMs: 50,
+  })
+  await expect(client.upload(Uint8Array.of(1))).rejects.toThrow('interrupted')
+  release(new Response(null, { status: 404 }))
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  expect(calls).toBe(2)
 })

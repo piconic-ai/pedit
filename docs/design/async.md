@@ -453,6 +453,14 @@ upload. On a 409 it reads with the reader capability, decrypts the existing
 ciphertext, checks the expected content hash, and compares the complete bytes
 before reporting reuse. A missing, oversized, corrupt, or different object is an
 error. The client does not announce the image, edit a document, or make the
-internal Worker route public. Callers must provide a deadline via AbortSignal
-and retain the local attachment until their document state is durable. Cleanup
+internal Worker route public. Each upload has a 30-second overall deadline, which callers may shorten or
+cancel. Callers must retain the local attachment until their document state is
+durable. A timeout cannot guarantee an already submitted PUT stopped. Cleanup
 and independent orphan scheduling remain separate prerequisites.
+
+
+When an upload conflicts but the existing blob is not yet visible, the v6
+client retries the same ciphertext with a bounded count and delay. It only
+reports reuse after reading, decrypting, and checking the existing plaintext.
+Timeout or exhausted retries leave the result unresolved and never imply a
+successful upload.
