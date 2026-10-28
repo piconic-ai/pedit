@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto'
 import { describe, expect, it, vi } from 'vitest'
 import access from '../../testdata/kept-access-vectors.json'
-import { decrypt } from '../src/cipher.ts'
+import { decrypt, encrypt } from '../src/cipher.ts'
 import { deriveKeptRoomKeys, parseKeptFragment } from '../src/kept-access.ts'
 import { KeptOutbox } from '../src/kept-outbox.ts'
 import { openKeptRecord } from '../src/kept-record.ts'
@@ -36,6 +36,59 @@ async function mutate(
 }
 
 describe('kept outbox', () => {
+  it('rejects selective removal of the prepared state after reopening', async () => {
+    const name = dbName()
+    const outbox = await KeptOutbox.open(name)
+    const sender = await outbox.createSender(edit, room)
+    await outbox.enqueue(edit, room, sender, Uint8Array.of(1))
+    const original = await outbox.prepare(edit, context(), sender, 1)
+    outbox.close()
+    await mutate(name, sender, 1, (row) => ({
+      ...row,
+      epoch: null,
+      generation: null,
+      ciphertext: null,
+    }))
+    const reopened = await KeptOutbox.open(name)
+    await expect(
+      reopened.prepare(edit, { ...context(), generation: 2 }, sender, 1),
+    ).rejects.toThrow()
+    await expect(reopened.operations(edit, room, sender)).rejects.toThrow()
+    await expect(reopened.acknowledge(edit, room, original)).rejects.toThrow()
+    reopened.close()
+  })
+
+  it('rejects reader re-encryption of a prepared frame', async () => {
+    const name = dbName()
+    const outbox = await KeptOutbox.open(name)
+    const sender = await outbox.createSender(edit, room)
+    await outbox.enqueue(edit, room, sender, Uint8Array.of(1))
+    const original = await outbox.prepare(edit, context(), sender, 1)
+    const keys = await deriveKeptRoomKeys(reader, room)
+    const replacement = await encrypt(
+      keys.frameKey,
+      await decrypt(keys.frameKey, original.ciphertext),
+    )
+    await mutate(name, sender, 1, (row) => ({ ...row, ciphertext: replacement }))
+    await expect(outbox.prepare(edit, context(), sender, 1)).rejects.toThrow()
+    await expect(outbox.acknowledge(edit, room, original)).rejects.toThrow()
+    outbox.close()
+  })
+
+  it('rejects older rows without a prepared-state binding', async () => {
+    const name = dbName()
+    const outbox = await KeptOutbox.open(name)
+    const sender = await outbox.createSender(edit, room)
+    await outbox.enqueue(edit, room, sender, Uint8Array.of(1))
+    await mutate(name, sender, 1, (row) => {
+      delete row.binding
+      return row
+    })
+    await expect(outbox.prepare(edit, context(), sender, 1)).rejects.toThrow()
+    await expect(outbox.operations(edit, room, sender)).rejects.toThrow()
+    outbox.close()
+  })
+
   it('closes an existing outbox connection when another tab upgrades', async () => {
     const name = dbName()
     const outbox = await KeptOutbox.open(name)

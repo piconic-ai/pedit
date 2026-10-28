@@ -29,6 +29,7 @@ type Operation = {
   epoch: string | null
   generation: number | null
   ciphertext: Uint8Array | null
+  binding: Uint8Array
   ack: Uint8Array | null
 }
 export type PendingOperation = {
@@ -93,6 +94,37 @@ function unpack(id: string, sequence: number, body: Uint8Array): Uint8Array {
   const prefix = concat(counterBody(id, sequence), Uint8Array.of(0))
   if (!same(body.subarray(0, prefix.length), prefix)) throw new Error('invalid outbox operation')
   return body.slice(prefix.length)
+}
+
+async function stateProof(op: Operation): Promise<Uint8Array> {
+  const empty = op.epoch === null && op.generation === null && op.ciphertext === null
+  const prepared =
+    typeof op.epoch === 'string' &&
+    /^[0-9a-f]{64}$/.test(op.epoch) &&
+    Number.isSafeInteger(op.generation) &&
+    op.generation !== null &&
+    op.generation > 0 &&
+    op.ciphertext instanceof Uint8Array &&
+    op.ciphertext.length > 0
+  if (!empty && !prepared) throw new Error('invalid outbox prepared state')
+  return new Uint8Array(
+    await crypto.subtle.digest(
+      'SHA-256',
+      buf(
+        concat(
+          utf8.encode('pedit/v6/outbox-state\0'),
+          utf8.encode(JSON.stringify([op.sender, op.sequence, op.epoch, op.generation])),
+          op.ciphertext ?? new Uint8Array(),
+        ),
+      ),
+    ),
+  )
+}
+
+async function verifyState(auth: Credentials, op: Operation): Promise<void> {
+  if (!(op.binding instanceof Uint8Array)) throw new Error('invalid outbox prepared state')
+  const proof = await decrypt(auth.wrap, op.binding)
+  if (!same(proof, await stateProof(op))) throw new Error('invalid outbox prepared state')
 }
 
 export class KeptOutbox {
@@ -226,11 +258,14 @@ export class KeptOutbox {
     )
       throw new Error('outbox operations missing')
     return Promise.all(
-      rows.map(async (row) => ({
-        sequence: row.sequence,
-        message: unpack(sender, row.sequence, await decrypt(auth.wrap, row.body)),
-        acknowledged: await this.acknowledged(auth, row),
-      })),
+      rows.map(async (row) => {
+        await verifyState(auth, row)
+        return {
+          sequence: row.sequence,
+          message: unpack(sender, row.sequence, await decrypt(auth.wrap, row.body)),
+          acknowledged: await this.acknowledged(auth, row),
+        }
+      }),
     )
   }
 
@@ -258,6 +293,17 @@ export class KeptOutbox {
       const sequence = identity.sequence + 1
       const body = await encrypt(auth.wrap, operationBody(sender, sequence, input))
       const counter = await encrypt(auth.wrap, counterBody(sender, sequence))
+      const operation: Operation = {
+        sender,
+        sequence,
+        body,
+        epoch: null,
+        generation: null,
+        ciphertext: null,
+        binding: new Uint8Array(),
+        ack: null,
+      }
+      operation.binding = await encrypt(auth.wrap, await stateProof(operation))
       const tx = writable(this.db)
       const done = transactionDone(tx)
       let stale = false
@@ -289,15 +335,7 @@ export class KeptOutbox {
             return
           }
           store.put({ ...found, sequence, counter })
-          operations.add({
-            sender,
-            sequence,
-            body,
-            epoch: null,
-            generation: null,
-            ciphertext: null,
-            ack: null,
-          } satisfies Operation)
+          operations.add(operation)
         }
       }
       try {
@@ -327,6 +365,7 @@ export class KeptOutbox {
       tx.objectStore('operations').get([sender, sequence]),
     )
     if (!op) throw new Error('unknown outbox operation')
+    await verifyState(auth, op)
     if (op.ciphertext) return this.pending(auth, identity, op, c, epoch)
     const message = unpack(sender, sequence, await decrypt(auth.wrap, op.body))
     const seed = await decrypt(auth.wrap, identity.seed)
@@ -344,6 +383,8 @@ export class KeptOutbox {
     } finally {
       seed.fill(0)
     }
+    const prepared = { ...op, epoch, generation: c.generation, ciphertext: sealed }
+    prepared.binding = await encrypt(auth.wrap, await stateProof(prepared))
     const write = writable(this.db)
     const done = transactionDone(write)
     const store = write.objectStore('operations')
@@ -351,15 +392,24 @@ export class KeptOutbox {
     let saved: Operation | undefined
     existing.onsuccess = () => {
       const current: Operation | undefined = existing.result
-      if (!current || !same(current.body, op.body)) {
+      if (!current || !same(current.body, op.body) || !(current.binding instanceof Uint8Array)) {
         write.abort()
         return
       }
-      if (current.ciphertext) {
+      if (!same(current.binding, op.binding)) {
         saved = current
         return
       }
-      saved = { ...current, epoch, generation: c.generation, ciphertext: sealed }
+      if (
+        current.epoch !== null ||
+        current.generation !== null ||
+        current.ciphertext !== null ||
+        current.ack !== null
+      ) {
+        write.abort()
+        return
+      }
+      saved = prepared
       store.put(saved)
     }
     await done
@@ -399,6 +449,7 @@ export class KeptOutbox {
     context: KeptRecordContext,
     epoch: string,
   ): Promise<PendingOperation> {
+    await verifyState(auth, op)
     if (!op.ciphertext || op.epoch !== epoch || op.generation !== context.generation)
       throw new Error('outbox epoch changed')
     const plain = unpack(op.sender, op.sequence, await decrypt(auth.wrap, op.body))
@@ -441,6 +492,7 @@ export class KeptOutbox {
       generation: snapshot.generation,
     }
     const current = await this.pending(auth, identity, op, context, epochId(context.epoch))
+    const opReadBinding = op.binding
     if (
       current.epoch !== snapshot.epoch ||
       current.generation !== snapshot.generation ||
@@ -454,6 +506,7 @@ export class KeptOutbox {
       generation: snapshot.generation,
       ciphertext: snapshot.ciphertext,
       body: new Uint8Array(),
+      binding: new Uint8Array(),
       ack: null,
     })
     const marker = await encrypt(auth.wrap, proof)
@@ -467,7 +520,9 @@ export class KeptOutbox {
         !op?.ciphertext ||
         op.epoch !== snapshot.epoch ||
         op.generation !== snapshot.generation ||
-        !same(op.ciphertext, snapshot.ciphertext)
+        !same(op.ciphertext, snapshot.ciphertext) ||
+        !(op.binding instanceof Uint8Array) ||
+        !same(op.binding, opReadBinding)
       ) {
         tx.abort()
         return

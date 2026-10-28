@@ -1,5 +1,5 @@
 import access from '../../testdata/kept-access-vectors.json'
-import { decrypt } from '../src/cipher.ts'
+import { decrypt, encrypt } from '../src/cipher.ts'
 import { deriveKeptRoomKeys, parseKeptFragment } from '../src/kept-access.ts'
 import { KeptOutbox } from '../src/kept-outbox.ts'
 import { openKeptRecord } from '../src/kept-record.ts'
@@ -120,6 +120,49 @@ async function run() {
   if (checked.message[0] !== 1) throw new Error('wrong signed message')
   if (one.ciphertext.toString() !== two.ciphertext.toString())
     throw new Error('retry ciphertext changed')
+  const alter = async (change: (row: Record<string, unknown>) => Record<string, unknown>) => {
+    const opening = indexedDB.open(name)
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      opening.onsuccess = () => resolve(opening.result)
+      opening.onerror = () => reject(opening.error)
+    })
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction('operations', 'readwrite')
+      tx.oncomplete = () => resolve()
+      tx.onabort = () => reject(tx.error)
+      const store = tx.objectStore('operations')
+      const get = store.get([sender, 1])
+      get.onsuccess = () => store.put(change(get.result))
+    })
+    db.close()
+  }
+  await alter((row) => ({ ...row, epoch: null, generation: null, ciphertext: null }))
+  let rejectedClearing = false
+  try {
+    await a.prepare(link, { ...c, generation: 2 }, sender, 1)
+  } catch {
+    rejectedClearing = true
+  }
+  if (!rejectedClearing) throw new Error('accepted cleared prepared state')
+  await alter((row) => ({
+    ...row,
+    epoch: one.epoch,
+    generation: one.generation,
+    ciphertext: one.ciphertext,
+  }))
+  const replacement = await encrypt(
+    readKeys.frameKey,
+    await decrypt(readKeys.frameKey, one.ciphertext),
+  )
+  await alter((row) => ({ ...row, ciphertext: replacement }))
+  let rejectedReplacement = false
+  try {
+    await b.prepare(link, c, sender, 1)
+  } catch {
+    rejectedReplacement = true
+  }
+  if (!rejectedReplacement) throw new Error('accepted re-encrypted prepared state')
+  await alter((row) => ({ ...row, ciphertext: one.ciphertext }))
   const o = indexedDB.open(name)
   const db = await new Promise<IDBDatabase>((resolve, reject) => {
     o.onsuccess = () => resolve(o.result)
