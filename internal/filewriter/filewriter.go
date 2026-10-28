@@ -63,11 +63,14 @@ type Writer struct {
 
 	io          sync.Mutex // serializes disk access; guards lastWritten
 	lastWritten string
+	held        bool
 }
 
 type Options struct {
 	Bound *BoundFile
 	Delay time.Duration
+	// Hold prevents all writes for the lifetime of this writer.
+	Hold bool
 	// RetryDelay is how long content whose write failed waits before it is
 	// written again; five times Delay by default, so a failing disk is not
 	// tried in a tight loop.
@@ -92,6 +95,7 @@ func New(path, initial string, opts Options) *Writer {
 		onWritten:        opts.OnWritten,
 		onExternalChange: opts.OnExternalChange,
 		lastWritten:      initial,
+		held:             opts.Hold,
 	}
 	if w.delay == 0 {
 		w.delay = time.Second
@@ -116,7 +120,7 @@ func (w *Writer) Schedule(content string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.pending = &content
-	if w.timer == nil {
+	if !w.held && w.timer == nil {
 		w.arm(w.delay)
 	}
 }
@@ -133,6 +137,9 @@ func (w *Writer) arm(delay time.Duration) {
 // so the write was skipped to avoid clobbering it.
 var ErrExternalChange = errors.New("file changed outside pedit")
 
+// ErrRecoveryHeld means recovery has not authorized saving the file.
+var ErrRecoveryHeld = errors.New("recovery file is held")
+
 // Flush writes any pending content now and returns once it is written. A
 // write that fails is up to the caller: Flush leaves no retry behind.
 func (w *Writer) Flush() error { return w.flush(false) }
@@ -146,6 +153,9 @@ func (w *Writer) flush(retry bool) error {
 	// content was scheduled.
 	w.io.Lock()
 	defer w.io.Unlock()
+	if w.held {
+		return ErrRecoveryHeld
+	}
 
 	w.mu.Lock()
 	if w.timer != nil {

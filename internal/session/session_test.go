@@ -71,6 +71,7 @@ type fixture struct {
 }
 
 type setupOpts struct {
+	recovery   *recoveryCheckpoint
 	watch      bool
 	writeDelay time.Duration
 	// wrap wraps the host's connections.
@@ -138,7 +139,7 @@ func setup(t *testing.T, content string, o setupOpts) *fixture {
 	if o.writeDelay == 0 {
 		o.writeDelay = 20 * time.Millisecond
 	}
-	s, err := Start(context.Background(), Options{
+	s, err := start(context.Background(), Options{
 		File:       f.file,
 		Project:    project,
 		Server:     f.server.URL + "/",
@@ -154,7 +155,7 @@ func setup(t *testing.T, content string, o setupOpts) *fixture {
 			}
 			return c, err
 		},
-	})
+	}, o.recovery)
 	if err != nil {
 		t.Fatal(err)
 	}

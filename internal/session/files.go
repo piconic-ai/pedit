@@ -83,6 +83,9 @@ func sharedPath(root, file string) string {
 // room can add one. It fails, changing nothing, when the file cannot be
 // shared, or is already.
 func (s *Session) AddFile(file string) (protocol.FileEntry, error) {
+	if s.recovery != nil {
+		return protocol.FileEntry{}, errors.New("adding files during recovery is unavailable")
+	}
 	file, err := filepath.Abs(file)
 	if err != nil {
 		return protocol.FileEntry{}, err

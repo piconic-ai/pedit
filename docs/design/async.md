@@ -178,6 +178,21 @@ payload, persist Yjs state, or connect checkpoint transport.
 
 ## Host recovery
 
+The internal session start path can build a text document and its comments
+from caller-verified Yjs checkpoint states instead of reconstructing them from
+the local files. In this mode the filewriter is held from creation, comments
+saving is held, and stopping reports the hold. It exposes the current local
+and recovered text for comparison without treating a match as permission to
+write. Extra files, canvas recovery, file watching and attachments are not
+enabled in this mode.
+
+This is an internal construction seam, tested with the existing v5 test relay;
+it is not a v6 recovery or reconnect path. The caller must authenticate the
+checkpoint and tail and apply the tail before calling it. It does not persist
+reconstructed data, compare local comments, safely release the hold, or commit
+the relay cut. The held state lives in memory and the relay data must remain
+available until a separately durable recovery is complete.
+
 The host restores the prior Yjs state, validates the checkpoint and log, and
 merges changes made to the local files while it was away. Before writing any
 output, it durably records a recovery journal containing the resulting state,

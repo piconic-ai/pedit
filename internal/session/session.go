@@ -21,6 +21,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/piconic-ai/pedit/internal/attach"
 	"github.com/piconic-ai/pedit/internal/filewriter"
+	"github.com/piconic-ai/pedit/internal/meta"
 	"github.com/piconic-ai/pedit/internal/protocol"
 	"github.com/reearth/ygo/awareness"
 	"github.com/reearth/ygo/crdt"
@@ -107,6 +108,7 @@ type Session struct {
 
 	stopOnce sync.Once
 	stopErr  error
+	recovery *recoveryCheckpoint
 
 	// Test seams, called during Stop.
 	beforeDestroy    func()
@@ -129,7 +131,41 @@ const (
 	renewInterval   = outdatedTimeout / 2
 )
 
+type recoveryCheckpoint struct {
+	text, comments []byte
+}
+
+func (s *Session) recoveryContents() (local, recovered string, differs bool, err error) {
+	if s.recovery == nil {
+		return "", "", false, errors.New("session is not recovering")
+	}
+	local, ok := s.bound.Read()
+	if !ok || !utf8.ValidString(local) {
+		return "", "", false, errors.New("cannot read local recovery file")
+	}
+	s.Client.Do(func() { recovered = s.content.render() })
+	return local, recovered, local != recovered, nil
+}
+
+func applyRecoveryText(doc *crdt.Doc, update []byte) (err error) {
+	defer func() {
+		if recover() != nil {
+			err = errors.New("invalid recovery text")
+		}
+	}()
+	return crdt.ApplyUpdateV1(doc, update, nil)
+}
+
 func Start(ctx context.Context, opts Options) (*Session, error) {
+	return start(ctx, opts, nil)
+}
+
+// start accepts a checkpoint only from an internal caller that has verified it.
+// Recovery starts with writes held and is not connected to the v6 transport.
+func start(ctx context.Context, opts Options, recovery *recoveryCheckpoint) (*Session, error) {
+	if recovery != nil {
+		recovery = &recoveryCheckpoint{text: bytes.Clone(recovery.text), comments: bytes.Clone(recovery.comments)}
+	}
 	onError := opts.OnError
 	if onError == nil {
 		onError = func(error) {}
@@ -148,6 +184,9 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 			_ = project.Close()
 		}
 	}()
+	if recovery != nil && project == nil {
+		return nil, errors.New("recovery requires a project for comments")
+	}
 	if keepsComments(project, opts.File) {
 		return nil, errKeepsComments
 	}
@@ -162,7 +201,28 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 	}()
 	// Before creating a room, so a canvas that is not valid fails right away.
 	doc := crdt.New()
-	shared, err := newContent(doc, opts.File, initial)
+	var shared content
+	if recovery == nil {
+		shared, err = newContent(doc, opts.File, initial)
+	} else {
+		if isCanvas(opts.File) || len(recovery.text) == 0 || len(recovery.text) > protocol.MaxFrameBytes || len(recovery.comments) == 0 || len(recovery.comments) > protocol.MaxFrameBytes {
+			return nil, errors.New("invalid recovery checkpoint")
+		}
+		if err = applyRecoveryText(doc, recovery.text); err != nil {
+			return nil, err
+		}
+		if pending := doc.PendingStats(); pending.Items != 0 || pending.DeleteRanges != 0 {
+			return nil, errors.New("incomplete recovery checkpoint")
+		}
+		comments := crdt.New()
+		if err = meta.CheckUpdate(comments, recovery.comments); err != nil {
+			return nil, err
+		}
+		shared = &textContent{doc: doc, text: doc.GetText("content")}
+		if !utf8.ValidString(shared.render()) {
+			return nil, errors.New("invalid recovery text")
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -207,6 +267,9 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 		// Browsers let people paste images only when the host says it saves them.
 		"attachments": map[string]any{"dir": attach.Dir, "maxBytes": attach.MaxBytes},
 	}
+	if recovery != nil {
+		delete(state, "attachments")
+	}
 	if _, ok := shared.(*canvasContent); ok {
 		state["format"] = formatCanvas
 	}
@@ -239,10 +302,12 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 		roomID:    room.ID,
 		blobKeys:  blobKeys,
 		nextID:    1,
+		recovery:  recovery,
 	}
 	s.opts.OnError = onError
 	s.Writer = filewriter.New(opts.File, initial, filewriter.Options{
 		Bound:            bound,
+		Hold:             recovery != nil,
 		Delay:            opts.WriteDelay,
 		OnError:          s.notices.saveError,
 		OnWritten:        s.notices.written,
@@ -267,7 +332,11 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 		OnStatus:  opts.OnStatus,
 		OnError:   onError,
 		// Set below, before the client connects.
-		OnAttachment:     func(m protocol.Attachment) { s.attachments.Handle(m) },
+		OnAttachment: func(m protocol.Attachment) {
+			if recovery == nil {
+				s.attachments.Handle(m)
+			}
+		},
 		OnCanvas:         func(m protocol.CanvasMessage) { s.handleCanvas(m) },
 		OnFileAttachment: s.handleFileAttachment,
 		OnFileCanvas:     s.handleFileCanvas,
@@ -309,9 +378,16 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 	s.stopAlive = keepAlive(aw)
 	s.notices.start()
 	s.startMeta()
+	if recovery != nil && s.meta == nil {
+		s.notices.stop()
+		s.stopAlive()
+		s.Client.Destroy()
+		aw.Destroy()
+		return nil, errors.New("cannot open recovery comments")
+	}
 	s.Client.Connect()
 
-	if opts.Watch {
+	if opts.Watch && recovery == nil {
 		if err := s.watch(); err != nil {
 			_ = s.Stop()
 			return nil, err
@@ -561,7 +637,9 @@ func (s *Session) Stop() error {
 		// and save right away: leaving can take a while, and a second Ctrl+C
 		// exits.
 		for _, f := range files {
-			f.syncFromDisk()
+			if s.recovery == nil {
+				f.syncFromDisk()
+			}
 			f.Writer.Schedule(f.render())
 			_ = f.Writer.Flush()
 			if f.meta != nil {
