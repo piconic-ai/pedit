@@ -135,6 +135,51 @@ describe('durable read sessions', () => {
     })
   })
 
+  it('releases completed sessions without breaking a lost last page or finish response', async () => {
+    const stub = room()
+    await runInDurableObject(stub, async (_: Room, state) => {
+      state.storage.kv.put(ADMISSION_KEY, bytes(1))
+      const log = new DurableLog(state.storage, limits)
+      await log.initialize('one', bytes(0))
+      for (let i = 0; i < 65; i++) {
+        const read = await log.beginRead()
+        await expect(log.finishRead(read.session, read.cursor)).rejects.toBeInstanceOf(
+          StaleCheckpointError,
+        )
+        const page = await log.readPage(read.session, read.cursor)
+        expect(page.next).toBeNull()
+        expect(await log.readPage(read.session, read.cursor)).toEqual(page)
+        await expect(log.finishRead(read.session, crypto.randomUUID())).rejects.toBeInstanceOf(
+          StaleCheckpointError,
+        )
+        await log.finishRead(read.session, read.cursor)
+        await log.finishRead(read.session, read.cursor)
+        await expect(log.readPage(read.session, read.cursor)).rejects.toBeInstanceOf(
+          StaleCheckpointError,
+        )
+      }
+      expect(state.storage.sql.exec('SELECT * FROM durable_reads').toArray()).toHaveLength(0)
+    })
+  })
+
+  it('retries completion after sync fails', async () => {
+    const stub = room()
+    await runInDurableObject(stub, async (_: Room, state) => {
+      state.storage.kv.put(ADMISSION_KEY, bytes(1))
+      const log = new DurableLog(state.storage, limits)
+      await log.initialize('one', bytes(0))
+      const read = await log.beginRead()
+      await log.readPage(read.session, read.cursor)
+      const spy = vi.spyOn(state.storage, 'sync').mockRejectedValueOnce(new Error('sync failed'))
+      try {
+        await expect(log.finishRead(read.session, read.cursor)).rejects.toThrow('sync failed')
+      } finally {
+        spy.mockRestore()
+      }
+      await expect(log.finishRead(read.session, read.cursor)).resolves.toBeUndefined()
+    })
+  })
+
   it('bounds sessions and reclaims expired entries', async () => {
     const stub = room()
     await runInDurableObject(stub, async (_: Room, state) => {

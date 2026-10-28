@@ -289,6 +289,34 @@ export class DurableLog {
     return page
   }
 
+  async finishRead(session: string, cursor: string): Promise<void> {
+    if (
+      typeof session !== 'string' ||
+      typeof cursor !== 'string' ||
+      session.length !== 36 ||
+      cursor.length !== 36
+    ) {
+      throw new StaleCheckpointError('invalid read cursor')
+    }
+    this.storage.transactionSync(() => {
+      this.ensureOpen()
+      const sql = this.storage.sql
+      const row = sql
+        .exec<{ cursor: string | null; previous: string | null }>(
+          'SELECT cursor, previous FROM durable_reads WHERE id = ?',
+          session,
+        )
+        .toArray()[0]
+      if (!row) return
+      if (row.cursor !== null || row.previous !== cursor) {
+        throw new StaleCheckpointError('read session is not complete')
+      }
+      sql.exec('DELETE FROM durable_reads WHERE id = ?', session)
+    })
+    await this.storage.sync()
+    this.ensureOpen()
+  }
+
   private ensureOpen(): void {
     if (
       this.storage.kv.get(ADMISSION_KEY) === undefined ||

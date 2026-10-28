@@ -92,9 +92,12 @@ inspection, abort and commit before those operations are exposed.
 The storage prototype captures a checkpoint and log tail together in a bounded,
 expiring read session. Each page uses a server-issued cursor and the stored
 tail; it rejects a changed epoch or generation. The last cursor can be retried
-after a lost response, including after eviction. A later append cannot extend
-the captured tail. The session does not authorize its caller; the public
-protocol must check admission and connect the fixed tail to live delivery.
+after a lost response, including after eviction. After receiving the last page,
+the caller releases the session with its final cursor; release can be retried.
+A later append cannot extend the captured tail. The session does not authorize
+its caller; the public protocol must check admission and connect the fixed tail
+to live delivery. A page can contain 16 maximum-sized frames; the public
+transport must impose a byte limit before exposing it.
 
 ## Ledger snapshot encoding
 
