@@ -186,9 +186,17 @@ and recovered text for comparison without treating a match as permission to
 write. Extra files, canvas recovery, file watching and attachments are not
 enabled in this mode.
 
-This is an internal construction seam, tested with the existing v5 test relay;
-it is not a v6 recovery or reconnect path. The caller must authenticate the
-checkpoint and tail and apply the tail before calling it. It does not persist
+The internal tail path verifies each encrypted record, checks its ledger
+sequence and access tier, and applies it to isolated candidate documents. A
+failure discards the candidates and leaves the caller's checkpoint and ledger
+unchanged. Only after all records pass does it construct the held session. The
+session does not create a relay room or connect to one. Text updates use the
+existing Sync message, and comments updates use Files with the metadata ID
+from the authenticated single-file manifest.
+
+This is an internal construction seam, not a v6 recovery or reconnect path.
+The caller must authenticate the checkpoint and its ledger and establish that
+the supplied tail is complete. It does not persist
 reconstructed data, compare local comments, safely release the hold, or commit
 the relay cut. The held state lives in memory and the relay data must remain
 available until a separately durable recovery is complete.

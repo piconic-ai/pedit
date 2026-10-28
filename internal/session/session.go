@@ -133,6 +133,8 @@ const (
 
 type recoveryCheckpoint struct {
 	text, comments []byte
+	ledger         protocol.KeptLedger
+	metaID         uint64
 }
 
 func (s *Session) recoveryContents() (local, recovered string, differs bool, err error) {
@@ -264,7 +266,9 @@ func (s *Session) startRuntime(opts Options, recovery *recoveryCheckpoint) error
 		s.awareness.Destroy()
 		return errors.New("cannot open recovery comments")
 	}
-	s.Client.Connect()
+	if recovery == nil {
+		s.Client.Connect()
+	}
 
 	if opts.Watch && recovery == nil {
 		if err := s.watch(); err != nil {
@@ -283,7 +287,10 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 // Recovery starts with writes held and is not connected to the v6 transport.
 func start(ctx context.Context, opts Options, recovery *recoveryCheckpoint) (*Session, error) {
 	if recovery != nil {
-		recovery = &recoveryCheckpoint{text: bytes.Clone(recovery.text), comments: bytes.Clone(recovery.comments)}
+		recovery = &recoveryCheckpoint{text: bytes.Clone(recovery.text), comments: bytes.Clone(recovery.comments), ledger: recovery.ledger, metaID: recovery.metaID}
+		opts.Dial = func(context.Context, string, http.Header) (protocol.Conn, error) {
+			return nil, errors.New("recovery session is disconnected")
+		}
 	}
 	onError := opts.OnError
 	if onError == nil {
@@ -333,9 +340,12 @@ func start(ctx context.Context, opts Options, recovery *recoveryCheckpoint) (*Se
 	}
 
 	server := strings.TrimRight(opts.Server, "/")
-	room, err := createRoom(ctx, opts.HTTPClient, server, opts.Header)
-	if err != nil {
-		return nil, err
+	room := &room{ID: "AAAAAAAAAAAAAAAAAAAAAA"}
+	if recovery == nil {
+		room, err = createRoom(ctx, opts.HTTPClient, server, opts.Header)
+		if err != nil {
+			return nil, err
+		}
 	}
 	key := protocol.GenerateEditSecret()
 	rawKey, err := protocol.DecodeKey(key)
@@ -378,6 +388,12 @@ func start(ctx context.Context, opts Options, recovery *recoveryCheckpoint) (*Se
 		blobKeys:  blobKeys,
 		nextID:    1,
 		recovery:  recovery,
+	}
+	if recovery != nil {
+		s.URL = ""
+		if recovery.metaID != 0 {
+			s.nextID = recovery.metaID
+		}
 	}
 	s.opts.OnError = onError
 	s.Writer = filewriter.New(opts.File, initial, filewriter.Options{
@@ -434,7 +450,6 @@ func start(ctx context.Context, opts Options, recovery *recoveryCheckpoint) (*Se
 	if err = s.startRuntime(opts, recovery); err != nil {
 		return nil, err
 	}
-
 	// Session owns the directory handles from here.
 	bound, project = nil, nil
 	return s, nil

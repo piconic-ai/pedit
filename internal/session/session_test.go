@@ -162,7 +162,9 @@ func setup(t *testing.T, content string, o setupOpts) *fixture {
 	t.Cleanup(func() { _ = s.Stop() })
 	f.session = s
 	// Guests are turned away until the host is in the room.
-	prototest.WaitFor(t, wait, func() bool { return s.Client.Status() == protocol.StatusConnected }, "host connected")
+	if o.recovery == nil {
+		prototest.WaitFor(t, wait, func() bool { return s.Client.Status() == protocol.StatusConnected }, "host connected")
+	}
 	return f
 }
 
