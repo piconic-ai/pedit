@@ -1,4 +1,9 @@
-import { createExecutionContext, evictDurableObject, runInDurableObject } from 'cloudflare:test'
+import {
+  createExecutionContext,
+  evictDurableObject,
+  runDurableObjectAlarm,
+  runInDurableObject,
+} from 'cloudflare:test'
 import { env } from 'cloudflare:workers'
 import { expect, it, vi } from 'vitest'
 import { decrypt, encrypt } from '../../protocol/src/cipher.ts'
@@ -401,4 +406,28 @@ it('rejects fragmented upload bodies and releases the upload slot', async () => 
         .status,
     ).toBe(204)
   })
+})
+
+it('stops the retry alarm once the closed room has no unresolved uploads', async () => {
+  const { host, id, caps, room, transport, url } = await setup()
+  expect(
+    (
+      await room.fetch(`${url}/${blob(1)}`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${caps.editor}` },
+        body: Uint8Array.of(1),
+      })
+    ).status,
+  ).toBe(204)
+  await runInDurableObject(room, async (_, state) => {
+    await transport(state).close(id, host)
+  })
+  expect(await runDurableObjectAlarm(room)).toBe(true)
+  expect(await runInDurableObject(room, (_, state) => state.storage.getAlarm())).toBeNull()
+  expect(await runDurableObjectAlarm(room)).toBe(false)
+  expect(
+    (await room.fetch(`${url}/${blob(1)}`, { headers: { Authorization: `Bearer ${caps.reader}` } }))
+      .status,
+  ).toBe(403)
+  expect(await runInDurableObject(room, (_, state) => state.storage.getAlarm())).toBeNull()
 })

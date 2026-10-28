@@ -115,7 +115,12 @@ export class KeptBlobCleanup {
         .exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'kept_blob_state'")
         .toArray().length > 0
     if (!exists) return false
-    storage.sql.exec('UPDATE kept_blob_state SET closed = 1 WHERE singleton = 1')
+    const changed = storage.sql
+      .exec(
+        'UPDATE kept_blob_state SET closed = 1 WHERE singleton = 1 AND closed = 0 RETURNING singleton',
+      )
+      .toArray()
+    if (!changed.length) return true
     const next = Date.now() + RETRY_MS
     const old = await storage.getAlarm()
     if (old === null || next < old) await storage.setAlarm(next)
@@ -156,12 +161,13 @@ export class KeptBlobCleanup {
       await this.bucket.delete(page.objects.map((object) => object.key))
     }
     if (!empty) return false
-    const complete = this.storage.transactionSync(() => {
+    const complete = await this.storage.transaction(async () => {
       for (const row of finished)
         this.storage.sql.exec('DELETE FROM kept_blob_puts WHERE id = ? AND completed = 1', row.id)
       const count = this.storage.sql
         .exec<{ n: number }>('SELECT count(*) AS n FROM kept_blob_puts')
         .one().n
+      if (count === 0) await this.storage.deleteAlarm()
       return count === 0
     })
     await this.storage.sync()

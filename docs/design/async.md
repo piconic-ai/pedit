@@ -358,7 +358,9 @@ the Worker and does not enable kept rooms for users.
 An ambiguous or late R2 PUT remains reserved and must be swept again. This
 prototype has no independent registry or cron: alarms have finite automatic
 retry and may cease to run after repeated failures. Consequently it does not
-ensure eventual deletion or bound orphan retention. The configured lifecycle
+ensure eventual deletion or bound orphan retention. Cleanup stops its retry alarm
+only after an empty listing and removal of all completed reservations; any
+unresolved reservation keeps the alarm armed. The configured lifecycle
 must not expire active kept data, especially for unlimited self-hosted rooms;
 no deployment or R2 lifecycle change is made here. R2 operation deadlines, rate
 limits, independent scheduling, and full cross-operation recovery must be

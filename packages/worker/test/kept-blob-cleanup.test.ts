@@ -80,11 +80,13 @@ describe('kept attachment cleanup primitive', () => {
       await delayed.entered
       await x.close()
       expect(await x.sweep()).toBe(false)
+      expect(await state.storage.getAlarm()).not.toBeNull()
       expect(state.storage.sql.exec('SELECT * FROM kept_blob_puts').toArray()).toHaveLength(1)
       delayed.release()
       await expect(upload).rejects.toThrow('closed')
       expect(await env.BLOBS.head(prefix(state) + id(1))).not.toBeNull()
       expect(await x.sweep()).toBe(true)
+      expect(await state.storage.getAlarm()).toBeNull()
       expect(await env.BLOBS.head(prefix(state) + id(1))).toBeNull()
     })
   })
@@ -272,5 +274,26 @@ it('does not report a duplicate as durable if storage sync fails', async () => {
       spy.mockRestore()
     }
     await expect(x.put(id(1), Uint8Array.of(1))).resolves.toBeUndefined()
+  })
+})
+
+it('retains reservations and retry alarm if stopping the alarm fails', async () => {
+  const stub = room()
+  await runInDurableObject(stub, async (_: Room, state) => {
+    const cleanup = new KeptBlobCleanup(state, env.BLOBS, limits)
+    await cleanup.put(id(1), Uint8Array.of(1))
+    await cleanup.close()
+    const spy = vi
+      .spyOn(state.storage, 'deleteAlarm')
+      .mockRejectedValueOnce(new Error('delete alarm failed'))
+    try {
+      await expect(cleanup.sweep()).rejects.toThrow('delete alarm failed')
+      expect(await state.storage.getAlarm()).not.toBeNull()
+      expect(state.storage.sql.exec('SELECT * FROM kept_blob_puts').toArray()).toHaveLength(1)
+    } finally {
+      spy.mockRestore()
+    }
+    expect(await cleanup.sweep()).toBe(true)
+    expect(await state.storage.getAlarm()).toBeNull()
   })
 })
