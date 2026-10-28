@@ -46,3 +46,6 @@ The generator's fixed keys are for tests only.
 The Go and TypeScript tests verify it. Regenerate it with `node
 packages/testdata/generate-kept-checkpoint.mjs > packages/testdata/kept-checkpoint-vectors.json`.
 Its key and IV are fixed for the test; production encryption uses random IVs.
+
+`kept-record-vectors.json` is generated independently with Node's OpenSSL
+implementation by `node packages/testdata/generate-kept-record.mjs`.

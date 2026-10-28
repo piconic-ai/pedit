@@ -24,18 +24,20 @@ type KeptLinkSecrets struct {
 }
 
 type KeptRoomKeys struct {
-	roomID        string
-	hostBinding   [32]byte
-	frameBinding  [32]byte
-	Access        Access
-	FrameKey      []byte
-	EditKey       ed25519.PublicKey
-	CommentKey    ed25519.PublicKey
-	HostKey       ed25519.PublicKey
-	Signer        *KeptSigner
-	ReadAdmission string
-	EditAdmission string
-	Fragments     map[Access]string
+	roomID         string
+	hostBinding    [32]byte
+	frameBinding   [32]byte
+	editBinding    [32]byte
+	commentBinding [32]byte
+	Access         Access
+	FrameKey       []byte
+	EditKey        ed25519.PublicKey
+	CommentKey     ed25519.PublicKey
+	HostKey        ed25519.PublicKey
+	Signer         *KeptSigner
+	ReadAdmission  string
+	EditAdmission  string
+	Fragments      map[Access]string
 }
 
 type KeptSigner struct {
@@ -153,6 +155,8 @@ func DeriveKeptRoomKeys(link KeptLinkSecrets, roomID string) (*KeptRoomKeys, err
 	k.FrameKey = derive(read, string(info))
 	copy(k.hostBinding[:], k.HostKey)
 	copy(k.frameBinding[:], k.FrameKey)
+	copy(k.editBinding[:], k.EditKey)
+	copy(k.commentBinding[:], k.CommentKey)
 	k.ReadAdmission = enc(derive(k.FrameKey, labelReadAdmission))
 	return k, nil
 }
