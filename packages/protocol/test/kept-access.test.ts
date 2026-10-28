@@ -158,6 +158,13 @@ describe('kept room links', () => {
     }
   })
 
+  it('rejects fragments with missing or extra encoded bytes at every tier', () => {
+    for (const fragment of [vector.edit, vector.comment, vector.read]) {
+      expect(parseKeptFragment(fragment.slice(0, -1))).toBeNull()
+      expect(parseKeptFragment(`${fragment}A`)).toBeNull()
+    }
+  })
+
   it('rejects non-canonical and non-prime-order public keys at every tier', async () => {
     for (const invalidKey of vector.invalidPublicKeys) {
       for (const offset of [32, 64, 96]) {

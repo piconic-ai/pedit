@@ -40,10 +40,8 @@ export function parseKeptFragment(fragment: string): KeptLinkSecrets | null {
     if (match[1] === 'r' && !validKeptPublicKey(raw.slice(64, 96))) return null
     switch (match[1]) {
       case 'e':
-        if (raw.length !== 64) return null
         return { access: 'edit', secret: raw.slice(0, 32), hostKey: raw.slice(32) }
       case 'c':
-        if (raw.length !== 96) return null
         return {
           access: 'comment',
           secret: raw.slice(0, 32),
@@ -51,7 +49,6 @@ export function parseKeptFragment(fragment: string): KeptLinkSecrets | null {
           hostKey: raw.slice(64),
         }
       case 'r':
-        if (raw.length !== 128) return null
         return {
           access: 'read',
           secret: raw.slice(0, 32),
