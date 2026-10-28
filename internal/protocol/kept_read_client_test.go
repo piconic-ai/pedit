@@ -141,7 +141,7 @@ func TestReadKeptHostRetriesCursorAndKeepsFixedTail(t *testing.T) {
 	}))
 	defer server.Close()
 	client := *server.Client()
-	got, err := ReadKeptHost(context.Background(), &client, server.URL, v.RoomID, v.HostToken, keys, nil)
+	got, err := ReadKeptHost(context.Background(), &client, server.URL, v.RoomID, v.HostToken, keys, 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +224,7 @@ func TestReadKeptHostRejectsDeniedInvalidAndRollback(t *testing.T) {
 				t.Errorf("unexpected method %s", r.Method)
 			}))
 			defer server.Close()
-			result, err := ReadKeptHost(context.Background(), server.Client(), server.URL, v.RoomID, v.HostToken, keys, anchor)
+			result, err := ReadKeptHost(context.Background(), server.Client(), server.URL, v.RoomID, v.HostToken, keys, 0, anchor)
 			if err == nil {
 				t.Fatal("accepted invalid response")
 			}
@@ -255,7 +255,7 @@ func TestReadKeptHostDoesNotReturnCandidateWhenFinishFails(t *testing.T) {
 		w.Write(b)
 	}))
 	defer server.Close()
-	got, err := ReadKeptHost(context.Background(), server.Client(), server.URL, v.RoomID, v.HostToken, keys, nil)
+	got, err := ReadKeptHost(context.Background(), server.Client(), server.URL, v.RoomID, v.HostToken, keys, 0, nil)
 	if err == nil || len(got.Frames) != 0 {
 		t.Fatal("returned a read after finish failed")
 	}
@@ -296,7 +296,7 @@ func TestReadKeptHostCancelsFailedSessions(t *testing.T) {
 			if mode == "anchor-mismatch" {
 				anchor = &KeptReadAnchor{Epoch: snapshot.Epoch, Generation: snapshot.Generation + 1, Cutoff: snapshot.Cutoff, Ciphertext: snapshot.Ciphertext}
 			}
-			if _, err := ReadKeptHost(ctx, server.Client(), server.URL, v.RoomID, v.HostToken, keys, anchor); err == nil {
+			if _, err := ReadKeptHost(ctx, server.Client(), server.URL, v.RoomID, v.HostToken, keys, 0, anchor); err == nil {
 				t.Fatal("invalid read accepted")
 			}
 			if calls != 1 {
@@ -319,7 +319,7 @@ func TestReadKeptHostCancellationIsBounded(t *testing.T) {
 	defer server.Close()
 	anchor := KeptReadAnchor{Epoch: snapshot.Epoch, Generation: snapshot.Generation + 1, Cutoff: snapshot.Cutoff, Ciphertext: snapshot.Ciphertext}
 	start := time.Now()
-	if _, err := ReadKeptHost(context.Background(), server.Client(), server.URL, v.RoomID, v.HostToken, keys, &anchor); err == nil {
+	if _, err := ReadKeptHost(context.Background(), server.Client(), server.URL, v.RoomID, v.HostToken, keys, 0, &anchor); err == nil {
 		t.Fatal("anchor accepted")
 	}
 	if time.Since(start) > 3*time.Second {
@@ -358,7 +358,7 @@ func TestReadKeptHostBoundsFinishAndCancels(t *testing.T) {
 	}))
 	defer server.Close()
 	start := time.Now()
-	if _, err := ReadKeptHost(context.Background(), server.Client(), server.URL, v.RoomID, v.HostToken, keys, nil); err == nil {
+	if _, err := ReadKeptHost(context.Background(), server.Client(), server.URL, v.RoomID, v.HostToken, keys, 0, nil); err == nil {
 		t.Fatal("stalled finish accepted")
 	}
 	if !cancelled.Load() {

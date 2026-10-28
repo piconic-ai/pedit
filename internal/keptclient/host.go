@@ -18,6 +18,7 @@ import (
 
 type Host struct {
 	credentials hoststate.Credentials
+	store       *hoststate.Store
 	http        *http.Client
 }
 
@@ -36,7 +37,7 @@ func Open(store *hoststate.Store, room string, client *http.Client) (*Host, erro
 	}
 	copyClient := *client
 	copyClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &Host{credentials: c, http: &copyClient}, nil
+	return &Host{credentials: c, store: store, http: &copyClient}, nil
 }
 func (h *Host) endpoint(action string) string {
 	return h.credentials.Origin + "/internal/kept/" + h.credentials.RoomID + "/" + action
@@ -58,10 +59,14 @@ func (h *Host) request(ctx context.Context, action string, body []byte, headers 
 // Initialize publishes an already durably saved, authenticated initial snapshot.
 // It initializes away, and does not claim that the host socket is connected.
 func (h *Host) Initialize(ctx context.Context, epoch [32]byte, checkpoint []byte, keep time.Duration) (time.Duration, error) {
-	if keep <= 0 || keep%time.Second != 0 || h.credentials.Generation != 1 {
+	if keep <= 0 || keep%time.Second != 0 {
 		return 0, errors.New("invalid initialization")
 	}
-	keys, _, err := h.credentials.Keys()
+	c, err := h.currentCredentials()
+	if err != nil || c.Generation != 1 {
+		return 0, errors.New("invalid initialization")
+	}
+	keys, _, err := c.Keys()
 	if err != nil {
 		return 0, err
 	}
@@ -127,9 +132,43 @@ func (h *Host) CloseRoom(ctx context.Context) error {
 // Inspect reads and verifies one fixed checkpoint and tail. It does not apply,
 // acknowledge or cut records, and cannot prove an unseen tail is complete.
 func (h *Host) Inspect(ctx context.Context, anchor *protocol.KeptReadAnchor) (protocol.KeptReadInspection, error) {
-	keys, _, err := h.credentials.Keys()
+	c, err := h.currentCredentials()
 	if err != nil {
 		return protocol.KeptReadInspection{}, err
 	}
-	return protocol.ReadKeptHost(ctx, h.http, h.credentials.Origin, h.credentials.RoomID, h.credentials.HostToken, keys, anchor)
+	keys, _, err := c.Keys()
+	if err != nil {
+		return protocol.KeptReadInspection{}, err
+	}
+	result, err := protocol.ReadKeptHost(ctx, h.http, c.Origin, c.RoomID, c.HostToken, keys, c.Generation, anchor)
+	if err != nil {
+		return protocol.KeptReadInspection{}, err
+	}
+	latest, err := h.currentCredentials()
+	if err != nil {
+		return protocol.KeptReadInspection{}, err
+	}
+	if result.Snapshot.Generation < latest.Generation {
+		return protocol.KeptReadInspection{}, errors.New("checkpoint generation predates saved credentials")
+	}
+	return result, nil
+}
+
+func (h *Host) currentCredentials() (hoststate.Credentials, error) {
+	if h.store == nil {
+		return hoststate.Credentials{}, hoststate.ErrUnavailable
+	}
+	c, err := h.store.Load(h.credentials.RoomID)
+	if err != nil {
+		return hoststate.Credentials{}, err
+	}
+	original := h.credentials
+	if c.Generation < original.Generation {
+		return hoststate.Credentials{}, hoststate.ErrInvalid
+	}
+	original.Generation = c.Generation
+	if c != original {
+		return hoststate.Credentials{}, hoststate.ErrInvalid
+	}
+	return c, nil
 }

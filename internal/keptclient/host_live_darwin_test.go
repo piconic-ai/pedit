@@ -7,11 +7,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -126,6 +128,95 @@ func TestLiveHostLifecycle(t *testing.T) {
 	inspection, err := host.Inspect(ctx, nil)
 	if err != nil || inspection.Snapshot.Generation != 1 || len(inspection.Records) != 0 {
 		t.Fatalf("read: %#v %v", inspection, err)
+	}
+	oldAnchor := &protocol.KeptReadAnchor{
+		Epoch: inspection.Snapshot.Epoch, Generation: inspection.Snapshot.Generation,
+		Cutoff: inspection.Snapshot.Cutoff, Tail: inspection.Snapshot.Tail,
+		Ciphertext: inspection.Snapshot.Ciphertext,
+	}
+	c.Generation = 2
+	var saveErr error
+	racingClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		response, err := (testForward{target, room}).RoundTrip(r)
+		if err == nil && r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/read") {
+			saveErr = store.Save(c)
+		}
+		return response, err
+	})}
+	racingHost, err := Open(store, room, racingClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := racingHost.Inspect(ctx, nil); err == nil {
+		t.Fatal("accepted generation advanced during read")
+	}
+	if saveErr != nil {
+		t.Fatal(saveErr)
+	}
+	if _, err := host.Initialize(ctx, epoch, cp, time.Hour); err == nil {
+		t.Fatal("existing host initialized below advanced saved generation")
+	}
+	newHost, err := Open(store, room, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 70; i++ {
+		var anchor *protocol.KeptReadAnchor
+		if i%2 == 1 {
+			anchor = oldAnchor
+		}
+		if _, err := newHost.Inspect(ctx, anchor); err == nil {
+			t.Fatal("accepted older signed checkpoint")
+		}
+	}
+	// An accepted generation 1 read after the failures also proves the
+	// generation checks released their fixed read sessions.
+	if _, err := protocol.ReadKeptHost(ctx, client, c.Origin, room, token, keys, 1, oldAnchor); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := host.Inspect(ctx, oldAnchor); err == nil {
+		t.Fatal("existing host ignored advanced saved generation")
+	}
+	var nextEpoch [32]byte
+	for i := range nextEpoch {
+		nextEpoch[i] = 6
+	}
+	next, err := protocol.SealKeptCheckpoint(keys, private, protocol.KeptCheckpointContext{
+		RoomID: room, Epoch: nextEpoch, Generation: 2,
+	}, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, live+"/__test/advance", bytes.NewReader(next))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Test-Room", room)
+	req.Header.Set("X-Test-Host", token)
+	req.Header.Set("X-Test-Epoch", hex.EncodeToString(epoch[:]))
+	req.Header.Set("X-Test-Next-Epoch", hex.EncodeToString(nextEpoch[:]))
+	response, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("advance: %d", response.StatusCode)
+	}
+	current, err := newHost.Inspect(ctx, nil)
+	if err != nil || current.Snapshot.Generation != 2 {
+		t.Fatalf("generation 2: %#v %v", current, err)
+	}
+	if _, err := protocol.ReadKeptHost(ctx, client, c.Origin, room, token, keys, 1, nil); err != nil {
+		t.Fatalf("newer checkpoint above minimum: %v", err)
+	}
+	if _, err := newHost.Inspect(ctx, oldAnchor); err == nil {
+		t.Fatal("accepted old full anchor")
+	}
+	currentAnchor := &protocol.KeptReadAnchor{Epoch: current.Snapshot.Epoch, Generation: current.Snapshot.Generation,
+		Cutoff: current.Snapshot.Cutoff, Tail: current.Snapshot.Tail, Ciphertext: current.Snapshot.Ciphertext}
+	if _, err := newHost.Inspect(ctx, currentAnchor); err != nil {
+		t.Fatalf("generation 2 anchor: %v", err)
 	}
 	socket, err := host.Connect(ctx)
 	if err != nil {

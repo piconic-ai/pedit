@@ -51,3 +51,10 @@ internal route. A lost close response is ambiguous: the room may already be
 closed, and the current route cannot authenticate a retry after admission is
 removed. Public close, reconnect UX, applying recovered records, durable local
 save, and acknowledgement remain unimplemented.
+
+The host read rejects a checkpoint below the saved credential generation, even
+without a full anchor. An anchor also checks epoch, cutoff, ciphertext and tail.
+The store is read before and after inspection, so an advancement observed during
+the read rejects an older result. Callers must serialize saving credentials with
+using an inspection: the final check alone cannot prevent a concurrent save
+immediately after it. A generation bound does not establish tail completeness.

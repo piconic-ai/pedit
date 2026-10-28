@@ -34,8 +34,10 @@ type KeptReadInspection struct {
 
 // ReadKeptHost fetches one fixed session from the internal Room endpoint. An
 // optional anchor is a previously trusted host observation. It cannot prove
-// what arrived while the host was away. No document or ledger is persisted.
-func ReadKeptHost(ctx context.Context, client *http.Client, endpoint, roomID, hostToken string, keys *KeptRoomKeys, anchor *KeptReadAnchor) (KeptReadInspection, error) {
+// what arrived while the host was away. The minimum generation is a
+// previously saved lower bound, even when no full anchor is available.
+// No document or ledger is persisted.
+func ReadKeptHost(ctx context.Context, client *http.Client, endpoint, roomID, hostToken string, keys *KeptRoomKeys, minimumGeneration uint64, anchor *KeptReadAnchor) (KeptReadInspection, error) {
 	var result KeptReadInspection
 	if client == nil || keys == nil || !keptHostToken.MatchString(hostToken) {
 		return result, errors.New("invalid read configuration")
@@ -80,6 +82,9 @@ func ReadKeptHost(ctx context.Context, client *http.Client, endpoint, roomID, ho
 	snapshot, err := ParseKeptReadSnapshot(raw)
 	if err != nil {
 		return result, err
+	}
+	if snapshot.Generation < minimumGeneration {
+		return result, errors.New("checkpoint generation predates saved credentials")
 	}
 	if anchor != nil {
 		if _, err = CheckKeptReadAnchor(snapshot, *anchor); err != nil {
