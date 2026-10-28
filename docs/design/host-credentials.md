@@ -60,8 +60,9 @@ using an inspection: the final check alone cannot prevent a concurrent save
 immediately after it. A generation bound does not establish tail completeness.
 
 Initialization also rereads credentials after the relay response. If they
-changed or cannot be read, the response is lost, or a success response is
-invalid, it reports an uncertain outcome: the relay may already have
-initialized the room. The caller must reconcile the room and
+changed or cannot be read, the response is lost, or the response is not a
+valid success, it reports an uncertain outcome: the relay may already have
+initialized the room. This includes 4xx and 5xx responses because an
+intermediary may have replaced a response after the relay committed. The caller must reconcile the room and
 must not infer that it is closed. The caller must serialize credential changes
 with use of the result, because a save can occur after the final check.

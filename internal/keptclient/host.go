@@ -95,10 +95,7 @@ func (h *Host) Initialize(ctx context.Context, epoch [32]byte, checkpoint []byte
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			return 0, ErrInitializationUncertain
-		}
-		return 0, fmt.Errorf("initialization failed (HTTP %d)", resp.StatusCode)
+		return 0, fmt.Errorf("%w (HTTP %d)", ErrInitializationUncertain, resp.StatusCode)
 	}
 	effective, err := strconv.ParseInt(resp.Header.Get("X-Pedit-Keep-Seconds"), 10, 64)
 	if err != nil || effective <= 0 || effective > seconds {

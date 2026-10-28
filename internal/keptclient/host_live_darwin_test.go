@@ -252,7 +252,7 @@ func TestLiveHostInitializationRace(t *testing.T) {
 		mode  string
 		token byte
 	}{
-		{"changed", 10}, {"missing", 11}, {"invalid", 12}, {"lost", 13}, {"other_success", 14},
+		{"changed", 10}, {"missing", 11}, {"invalid", 12}, {"lost", 13}, {"other_success", 14}, {"server_error", 15}, {"client_error", 16}, {"redirect", 17},
 	} {
 		t.Run(scenario.mode, func(t *testing.T) {
 			target, err := url.Parse(live)
@@ -320,6 +320,12 @@ func TestLiveHostInitializationRace(t *testing.T) {
 						return nil, errors.New("response lost")
 					case "other_success":
 						response.StatusCode = http.StatusOK
+					case "server_error":
+						response.StatusCode = http.StatusInternalServerError
+					case "client_error":
+						response.StatusCode = http.StatusForbidden
+					case "redirect":
+						response.StatusCode = http.StatusFound
 					}
 				}
 				return response, err
