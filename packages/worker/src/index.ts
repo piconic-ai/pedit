@@ -3,9 +3,10 @@ import { RELAY_BUSY, RELAY_MAINTENANCE } from '@pedit/protocol/close'
 import { Hono } from 'hono'
 import { embedSourcesFor, mediaSourcesFrom, scriptHashes, servePage } from './page.ts'
 import { HOST_HEADER, maintenance, refuse } from './room.ts'
+import { roomIdFor } from './room-identity.ts'
 
 export { maintenance, Room } from './room.ts'
-export { embedSourcesFor, mediaSourcesFrom, scriptHashes, servePage }
+export { embedSourcesFor, mediaSourcesFrom, roomIdFor, scriptHashes, servePage }
 
 // Room ids are 128+ bits, base64url without padding.
 const ROOM_ID = /^[A-Za-z0-9_-]{22}$/
@@ -17,16 +18,6 @@ function base64url(bytes: Uint8Array): string {
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/=+$/, '')
-}
-
-/**
- * A room id is derived from its host token, so the Worker can tell the host
- * apart without storing anything: only whoever created the room knows a token
- * that hashes to its id.
- */
-export async function roomIdFor(hostToken: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(hostToken))
-  return base64url(new Uint8Array(digest)).slice(0, 22)
 }
 
 /**

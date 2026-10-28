@@ -42,8 +42,11 @@ capability from the comment secret. Its v6 HKDF context binds the room ID,
 editor and commenter verification keys, and host verification key. The read
 link cannot derive it. This capability is not yet registered or enforced by
 the relay; later transport must distinguish it from reader admission before it
-allows an append. V6 room transport and signed durable records are not yet
-wired together.
+allows an append. The Worker has an internal registration primitive that checks
+the host token against the room ID, stores all three admission verifiers in one
+transaction, and rejects v5 access to a registered v6 room. It is not exposed
+as an API and does not enforce room lifetime or handle append operations. V6
+room transport and signed durable records are not yet wired together.
 
 Signatures cannot make an untrusted relay available or prove that it delivered
 every frame. A first-time guest with no independent fresh reference cannot

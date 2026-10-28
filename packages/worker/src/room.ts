@@ -25,6 +25,7 @@ import {
 import { MAX_FRAME_BYTES } from '@pedit/protocol/frame'
 import { RELAY_BYTE_RATE, RELAY_MESSAGE_RATE } from '@pedit/protocol/pace'
 import { DurableLog } from './durable-log.ts'
+import { KEPT_ADMISSION_KEY } from './kept-admission.ts'
 import { ADMISSION_KEY } from './room-storage.ts'
 
 // Shared browser code brings DOM's SubtleCrypto into this program. Augment it
@@ -228,6 +229,8 @@ export class Room extends DurableObject<Env> {
 
   override async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname
+    if (this.ctx.storage.kv.get(KEPT_ADMISSION_KEY) !== undefined)
+      return new Response('room protocol unavailable', { status: 403 })
     const blob = BLOB_PATH.exec(path)?.[1]
     if (blob) return this.blob(request, blob)
     // Only a connection goes on: a blob path the pattern missed is not one.
@@ -267,6 +270,8 @@ export class Room extends DurableObject<Env> {
   private async admit(token: string, isHost: boolean, read: string | null): Promise<Response> {
     const digest = await sha256(token)
     const readDigest = read === null ? null : await sha256(read)
+    if (this.ctx.storage.kv.get(KEPT_ADMISSION_KEY) !== undefined)
+      return new Response('room protocol unavailable', { status: 403 })
     // Deploys can drop every socket without a close callback. Only a guest
     // with this session's editor admission may start its missing host grace
     // period: the reader token goes to anyone a link was passed on to.
@@ -279,6 +284,8 @@ export class Room extends DurableObject<Env> {
     ) {
       await this.waitForHost()
     }
+    if (this.ctx.storage.kv.get(KEPT_ADMISSION_KEY) !== undefined)
+      return new Response('room protocol unavailable', { status: 403 })
     // Nothing below awaits before the socket is accepted, so an alarm cannot
     // expire the room between these checks and the accept. An expired room
     // refuses everyone before admission, so it never registers a verifier again.
