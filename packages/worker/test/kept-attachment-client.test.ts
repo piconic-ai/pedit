@@ -81,9 +81,14 @@ it('reuses the first ciphertext after checking a separately encrypted copy', asy
     return new Response(null, { status: init?.method === 'PUT' ? 409 : 404 })
   }
   await expect(
-    new KeptAttachmentClient({ url: 'https://room', keys, fetch: unavailable }).upload(plain),
-  ).rejects.toThrow('unavailable')
-  expect(unavailablePuts).toBe(12)
+    new KeptAttachmentClient({
+      url: 'https://room',
+      keys,
+      fetch: unavailable,
+      timeoutMs: 650,
+    }).upload(plain),
+  ).rejects.toThrow('interrupted')
+  expect(unavailablePuts).toBeGreaterThan(1)
   const oversized: typeof fetch = async (_input, init) =>
     init?.method === 'PUT'
       ? new Response(null, { status: 409 })

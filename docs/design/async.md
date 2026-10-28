@@ -460,7 +460,7 @@ and independent orphan scheduling remain separate prerequisites.
 
 
 When an upload conflicts but the existing blob is not yet visible, the v6
-client retries the same ciphertext with a bounded count and delay. It only
+client retries the same ciphertext with a delay until the overall deadline. It only
 reports reuse after reading, decrypting, and checking the existing plaintext.
-Timeout or exhausted retries leave the result unresolved and never imply a
+Timeout leaves the result unresolved and never implies a
 successful upload.

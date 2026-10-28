@@ -5,7 +5,6 @@ const MAX_BLOB_BYTES = 10 * 1024 * 1024
 const ENCRYPTION_OVERHEAD = 28
 const DEADLINE_MS = 30_000
 const RETRY_MS = 250
-const MAX_ATTEMPTS = 12
 
 export type KeptAttachmentResult = { hash: string; disposition: 'stored' | 'reused' }
 export type KeptAttachmentOptions = {
@@ -115,7 +114,7 @@ export class KeptAttachmentClient {
       const id = await blobIdFor(keys, hash)
       const ciphertext = await encryptBlob(keys, input)
       const url = this.base + id
-      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      for (;;) {
         assertActive()
         let response: Response
         try {
@@ -127,9 +126,8 @@ export class KeptAttachmentClient {
             redirect: 'manual',
             cache: 'no-store',
           })
-        } catch (error) {
+        } catch {
           assertActive()
-          if (attempt + 1 === MAX_ATTEMPTS) throw error
           await delay()
           continue
         }
@@ -150,7 +148,7 @@ export class KeptAttachmentClient {
           void existing.body?.cancel().catch(() => {})
           assertActive()
         }
-        if (existing.status === 404 && attempt + 1 < MAX_ATTEMPTS) {
+        if (existing.status === 404) {
           void existing.body?.cancel().catch(() => {})
           await delay()
           continue
@@ -165,7 +163,6 @@ export class KeptAttachmentClient {
           throw new Error('attachment does not match')
         return { hash, disposition: 'reused' }
       }
-      throw new Error('existing attachment unavailable')
     }
     try {
       return await Promise.race([work(), deadline])
