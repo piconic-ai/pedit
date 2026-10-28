@@ -24,6 +24,8 @@ import {
 } from '@pedit/protocol/close'
 import { MAX_FRAME_BYTES } from '@pedit/protocol/frame'
 import { RELAY_BYTE_RATE, RELAY_MESSAGE_RATE } from '@pedit/protocol/pace'
+import { DurableLog } from './durable-log.ts'
+import { ADMISSION_KEY } from './room-storage.ts'
 
 // Shared browser code brings DOM's SubtleCrypto into this program. Augment it
 // with the documented Workers extension also present in our generated types.
@@ -161,7 +163,6 @@ const READER_TAG = 'reader'
 const BLOB_PATH = /\/blobs\/([A-Za-z0-9_-]{22})$/
 const USAGE_KEY = 'blobUsage'
 // The digests of the editor and reader admission tokens (access.ts).
-const ADMISSION_KEY = 'admissionHash'
 const READ_ADMISSION_KEY = 'readAdmissionHash'
 // When the host first connected, in ms since the epoch. Never deleted: once
 // the room is over it is the tombstone that stops its ID being used again.
@@ -463,9 +464,7 @@ export class Room extends DurableObject<Env> {
     // awareness renewal every 15 s, closes it.
     if (maintenance(this.env as { MAINTENANCE?: string }) === 'closed') {
       this.log('closed for maintenance')
-      for (const peer of this.ctx.getWebSockets()) {
-        safeClose(peer, RELAY_MAINTENANCE, 'closed for maintenance')
-      }
+      await this.endSession(RELAY_MAINTENANCE, 'closed for maintenance')
       return
     }
     if (!this.allow(ws, message.byteLength)) {
@@ -618,6 +617,7 @@ export class Room extends DurableObject<Env> {
     this.ctx.storage.kv.delete(ADMISSION_KEY)
     this.ctx.storage.kv.delete(READ_ADMISSION_KEY)
     this.ctx.storage.kv.delete(AWAY_KEY)
+    DurableLog.clear(this.ctx.storage)
     this.cleaning = this.cleaning.then(() => this.deleteBlobs())
     await this.cleaning
   }

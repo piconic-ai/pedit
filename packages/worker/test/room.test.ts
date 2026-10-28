@@ -13,6 +13,7 @@ import {
 import { expiredReason } from '@pedit/protocol/close'
 import { MAX_FRAME_BYTES } from '@pedit/protocol/frame'
 import { describe, expect, it, vi } from 'vitest'
+import { DurableLog, LogClosedError } from '../src/durable-log.ts'
 import app, { clientKey, maintenance, overLimit, roomIdFor } from '../src/index.ts'
 import {
   ALARM_INTERVAL_MS,
@@ -302,6 +303,41 @@ describe('rooms', () => {
     expect((await b.closed).code).toBe(ROOM_CLOSED)
     const late = await connect(room.id)
     expect((await late.closed).code).toBe(ROOM_CLOSED)
+  })
+
+  it('deletes durable frames when the host closes the room', async () => {
+    const room = await createRoom()
+    const h = await host(room)
+    const guest = await connect(room.id)
+    const stub = env.ROOM.get(env.ROOM.idFromName(room.id))
+    await runInDurableObject(stub, async (_: RoomObject, state) => {
+      const log = new DurableLog(state.storage, { bytes: 100, frames: 10 })
+      await log.append('epoch', new Uint8Array([1, 2]).buffer)
+    })
+    h.ws.close(HOST_LEFT, 'bye')
+    expect((await guest.closed).code).toBe(ROOM_CLOSED)
+    await runInDurableObject(stub, (_: RoomObject, state) => {
+      expect(state.storage.sql.exec('SELECT sequence FROM durable_log').toArray()).toHaveLength(0)
+    })
+  })
+
+  it('rejects the first durable frame after the host closes the room', async () => {
+    const room = await createRoom()
+    const h = await host(room)
+    const guest = await connect(room.id)
+    h.ws.close(HOST_LEFT, 'bye')
+    expect((await guest.closed).code).toBe(ROOM_CLOSED)
+    const stub = env.ROOM.get(env.ROOM.idFromName(room.id))
+    await runInDurableObject(stub, (_: RoomObject, state) => {
+      expect(() => new DurableLog(state.storage, { bytes: 100, frames: 10 })).toThrow(
+        LogClosedError,
+      )
+      expect(
+        state.storage.sql
+          .exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'durable_log'")
+          .toArray(),
+      ).toHaveLength(0)
+    })
   })
 
   it('logs why a session ended, without the room ID of the link or its secrets', async () => {
@@ -926,6 +962,12 @@ describe('maintenance', () => {
     const guest = await connect(room.id)
     // As if Cloudflare kept the room running when the var changed.
     const stub = env.ROOM.get(env.ROOM.idFromName(room.id))
+    await runInDurableObject(stub, async (_: RoomObject, state) => {
+      await new DurableLog(state.storage, { bytes: 100, frames: 10 }).append(
+        'epoch',
+        new Uint8Array([1]).buffer,
+      )
+    })
     await runInDurableObject(stub, (instance: RoomObject) => {
       instance['env'] = { ...instance['env'], MAINTENANCE: 'closed' } as Env
     })
@@ -933,6 +975,9 @@ describe('maintenance', () => {
     expect((await guest.closed).code).toBe(RELAY_MAINTENANCE)
     expect((await h.closed).code).toBe(RELAY_MAINTENANCE)
     expect(h.received).toHaveLength(0)
+    await runInDurableObject(stub, (_: RoomObject, state) => {
+      expect(state.storage.sql.exec('SELECT sequence FROM durable_log').toArray()).toHaveLength(0)
+    })
   })
 
   it('closes everything when closed', async () => {
@@ -966,6 +1011,24 @@ describe('maintenance', () => {
 
 describe('room lifetime', () => {
   const stubOf = (room: Room) => env.ROOM.get(env.ROOM.idFromName(room.id))
+
+  it('deletes durable frames on expiry', async () => {
+    const room = await createRoom()
+    const h = await host(room)
+    const stub = stubOf(room)
+    await runInDurableObject(stub, async (_: RoomObject, state) => {
+      await new DurableLog(state.storage, { bytes: 100, frames: 10 }).append(
+        'epoch',
+        new Uint8Array([1]).buffer,
+      )
+      state.storage.kv.put('openedAt', Date.now() - LIFETIME_MS - 1)
+    })
+    expect(await runDurableObjectAlarm(stub)).toBe(true)
+    expect((await h.closed).code).toBe(ROOM_EXPIRED)
+    await runInDurableObject(stub, (_: RoomObject, state) => {
+      expect(state.storage.sql.exec('SELECT sequence FROM durable_log').toArray()).toHaveLength(0)
+    })
+  })
 
   // As if the host had first connected `ms` ago.
   const backdate = (room: Room, ms = LIFETIME_MS + 1) =>
