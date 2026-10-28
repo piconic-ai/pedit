@@ -239,6 +239,37 @@ export class DurableLog {
     return row
   }
 
+  private boundedEntries(row: ReadSession): LogEntry[] {
+    const sql = this.storage.sql
+    const sizes = sql
+      .exec<{ sequence: number; size: number }>(
+        'SELECT sequence, length(ciphertext) AS size FROM durable_log WHERE epoch = ? AND sequence > ? AND sequence <= ? ORDER BY sequence LIMIT ?',
+        row.epoch,
+        row.after,
+        row.tail,
+        READ_PAGE_SIZE,
+      )
+      .toArray()
+    let end = row.after
+    let total = 0
+    for (const item of sizes) {
+      if (item.size < 1 || item.size > MAX_FRAME_BYTES)
+        throw new Error('invalid durable frame size')
+      if (total + item.size > MAX_FRAME_BYTES) break
+      total += item.size
+      end = item.sequence
+    }
+    if (end === row.after) return []
+    return sql
+      .exec<LogEntry>(
+        'SELECT sequence, ciphertext FROM durable_log WHERE epoch = ? AND sequence > ? AND sequence <= ? ORDER BY sequence',
+        row.epoch,
+        row.after,
+        end,
+      )
+      .toArray()
+  }
+
   async readPage(session: string, cursor: string): Promise<ReadPage> {
     if (
       typeof session !== 'string' ||
@@ -263,15 +294,7 @@ export class DurableLog {
         return { entries, next: row.next }
       }
       if (cursor !== row.cursor) throw new StaleCheckpointError('invalid read cursor')
-      const entries = sql
-        .exec<LogEntry>(
-          'SELECT sequence, ciphertext FROM durable_log WHERE epoch = ? AND sequence > ? AND sequence <= ? ORDER BY sequence LIMIT ?',
-          row.epoch,
-          row.after,
-          row.tail,
-          READ_PAGE_SIZE,
-        )
-        .toArray()
+      const entries = this.boundedEntries(row)
       const end = entries.at(-1)?.sequence ?? row.after
       const next = end < row.tail && entries.length > 0 ? crypto.randomUUID() : null
       sql.exec(

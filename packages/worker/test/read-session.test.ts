@@ -1,5 +1,6 @@
 import { evictDurableObject, runInDurableObject } from 'cloudflare:test'
 import { env } from 'cloudflare:workers'
+import { MAX_FRAME_BYTES } from '@pedit/protocol/frame'
 import { describe, expect, it, vi } from 'vitest'
 import {
   DurableLog,
@@ -45,6 +46,40 @@ describe('durable read sessions', () => {
       await expect(log.readPage(session.session, session.cursor)).rejects.toBeInstanceOf(
         StaleCheckpointError,
       )
+    })
+  })
+
+  it('bounds each page by ciphertext bytes and retries the exact page after eviction', async () => {
+    const stub = room()
+    const snapshot = await runInDurableObject(stub, async (_: Room, state) => {
+      state.storage.kv.put(ADMISSION_KEY, bytes(1))
+      const log = new DurableLog(state.storage, { bytes: MAX_FRAME_BYTES * 4, frames: 10 })
+      await log.initialize('one', bytes(0))
+      await log.append('one', new Uint8Array(MAX_FRAME_BYTES / 2 + 1).fill(1).buffer)
+      await log.append('one', new Uint8Array(MAX_FRAME_BYTES / 2).fill(2).buffer)
+      await log.append('one', new Uint8Array(MAX_FRAME_BYTES / 2).fill(3).buffer)
+      await log.append('one', new Uint8Array(MAX_FRAME_BYTES).fill(4).buffer)
+      const read = await log.beginRead()
+      const first = await log.readPage(read.session, read.cursor)
+      expect(first.entries.map((entry) => entry.sequence)).toEqual([1])
+      expect(first.next).not.toBeNull()
+      return { ...read, first, next: first.next! }
+    })
+    await evictDurableObject(stub)
+    await runInDurableObject(stub, async (_: Room, state) => {
+      const log = new DurableLog(state.storage, { bytes: MAX_FRAME_BYTES * 4, frames: 10 })
+      expect(await log.readPage(snapshot.session, snapshot.cursor)).toEqual(snapshot.first)
+      const second = await log.readPage(snapshot.session, snapshot.next)
+      expect(second.entries.map((entry) => entry.sequence)).toEqual([2, 3])
+      expect(second.entries.reduce((total, entry) => total + entry.ciphertext.byteLength, 0)).toBe(
+        MAX_FRAME_BYTES,
+      )
+      expect(second.next).not.toBeNull()
+      const third = await log.readPage(snapshot.session, second.next!)
+      expect(third.entries.map((entry) => entry.sequence)).toEqual([4])
+      expect(third.entries[0]?.ciphertext.byteLength).toBe(MAX_FRAME_BYTES)
+      expect(third.next).toBeNull()
+      expect(await log.readPage(snapshot.session, second.next!)).toEqual(third)
     })
   })
 
