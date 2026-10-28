@@ -195,3 +195,70 @@ it('bounds retained senders, operations and operation size without deleting them
   expect(await outbox.senders(edit, room)).toHaveLength(64)
   outbox.close()
 }, 30000)
+
+it('rejects a missing sequence hidden by an out-of-range row', async () => {
+  for (const extra of [0, 100, 'unexpected', [1]]) {
+    const name = dbName()
+    const outbox = await KeptOutbox.open(name)
+    const sender = await outbox.createSender(edit, room)
+    await outbox.enqueue(edit, room, sender, Uint8Array.of(1))
+    await outbox.enqueue(edit, room, sender, Uint8Array.of(2))
+    const opening = indexedDB.open(name)
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      opening.onsuccess = () => resolve(opening.result)
+      opening.onerror = () => reject(opening.error)
+    })
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction('operations', 'readwrite')
+      tx.oncomplete = () => resolve()
+      tx.onabort = () => reject(tx.error)
+      const store = tx.objectStore('operations')
+      const get = store.get([sender, 2])
+      get.onsuccess = () => {
+        store.delete([sender, 1])
+        store.add({ ...get.result, sequence: extra })
+      }
+    })
+    db.close()
+    await expect(outbox.enqueue(edit, room, sender, Uint8Array.of(3))).rejects.toThrow()
+    await expect(outbox.operations(edit, room, sender)).rejects.toThrow()
+    outbox.close()
+  }
+})
+
+it('reads a consistent snapshot while another connection enqueues', async () => {
+  const name = dbName()
+  const a = await KeptOutbox.open(name)
+  const b = await KeptOutbox.open(name)
+  const sender = await a.createSender(edit, room)
+  for (let i = 1; i <= 30; i++) {
+    const [sequence, snapshot] = await Promise.all([
+      a.enqueue(edit, room, sender, Uint8Array.of(i)),
+      b.operations(edit, room, sender),
+    ])
+    expect(sequence).toBe(i)
+    expect(snapshot.length === i || snapshot.length === i - 1).toBe(true)
+  }
+  expect(await b.operations(edit, room, sender)).toHaveLength(30)
+  a.close()
+  b.close()
+})
+
+it('upgrades an existing v1 outbox before accepting operations', async () => {
+  const name = dbName()
+  const opening = indexedDB.open(name, 1)
+  opening.onupgradeneeded = () => {
+    opening.result.createObjectStore('senders', { keyPath: 'id' })
+    opening.result.createObjectStore('operations', { keyPath: ['sender', 'sequence'] })
+  }
+  const old = await new Promise<IDBDatabase>((resolve, reject) => {
+    opening.onsuccess = () => resolve(opening.result)
+    opening.onerror = () => reject(opening.error)
+  })
+  old.close()
+  const outbox = await KeptOutbox.open(name)
+  const sender = await outbox.createSender(edit, room)
+  expect(await outbox.enqueue(edit, room, sender, Uint8Array.of(1))).toBe(1)
+  expect(await outbox.operations(edit, room, sender)).toHaveLength(1)
+  outbox.close()
+})

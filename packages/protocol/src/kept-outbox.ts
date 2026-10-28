@@ -99,10 +99,15 @@ export class KeptOutbox {
   private constructor(private readonly db: IDBDatabase) {}
 
   static async open(name = 'pedit-v6-outbox'): Promise<KeptOutbox> {
-    const opening = indexedDB.open(name, 1)
-    opening.onupgradeneeded = () => {
-      opening.result.createObjectStore('senders', { keyPath: 'id' })
-      opening.result.createObjectStore('operations', { keyPath: ['sender', 'sequence'] })
+    const opening = indexedDB.open(name, 2)
+    opening.onupgradeneeded = (event) => {
+      if (event.oldVersion < 1) {
+        opening.result.createObjectStore('senders', { keyPath: 'id' })
+        opening.result.createObjectStore('operations', { keyPath: ['sender', 'sequence'] })
+      }
+      if (event.oldVersion < 2) {
+        opening.transaction!.objectStore('operations').createIndex('sender', 'sender')
+      }
     }
     return new KeptOutbox(await request(opening))
   }
@@ -190,9 +195,7 @@ export class KeptOutbox {
     const tx = this.db.transaction(['senders', 'operations'], 'readonly')
     const identity = request<Sender | undefined>(tx.objectStore('senders').get(sender))
     const operations = request<Operation[]>(
-      tx
-        .objectStore('operations')
-        .getAll(IDBKeyRange.bound([sender, 1], [sender, Number.MAX_SAFE_INTEGER])),
+      tx.objectStore('operations').index('sender').getAll(IDBKeyRange.only(sender)),
     )
     const [row, rows] = await Promise.all([identity, operations])
     const checked = await this.checkIdentity(auth, sender, row)
@@ -252,11 +255,15 @@ export class KeptOutbox {
           return
         }
         const operations = tx.objectStore('operations')
-        const count = operations.count(
-          IDBKeyRange.bound([sender, 1], [sender, Number.MAX_SAFE_INTEGER]),
-        )
-        count.onsuccess = () => {
-          if (count.result !== identity.sequence) {
+        const keys = operations.index('sender').getAllKeys(IDBKeyRange.only(sender))
+        keys.onsuccess = () => {
+          if (
+            keys.result.length !== identity.sequence ||
+            keys.result.some(
+              (key, i) =>
+                !Array.isArray(key) || key.length !== 2 || key[0] !== sender || key[1] !== i + 1,
+            )
+          ) {
             tx.abort()
             return
           }
