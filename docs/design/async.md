@@ -262,6 +262,17 @@ a reservation and periodic cleanup forever; the service needs an operational
 policy for those retained markers and for alarm failures. The prototype cannot
 prove a PUT with an ambiguous outcome has stopped.
 
+An internal Room fetch path exposes a fixed checkpoint and tail to an
+authenticated host or tier capability. It is not routed by the public Worker.
+The response contains base64 ciphertext, with no key or plaintext; clients
+must request a new fixed read after the tail to catch up. The read path does
+not provide durable client cursors or live delivery. Initialization can still
+stop after admission registration and before the lifetime and alarm are
+recorded, so it needs recovery before any public route is enabled.
+Likewise, initialization can record a connected host before any socket is
+accepted; with no total room limit this state can persist indefinitely. Host
+presence must be reconciled from real sockets before enabling the feature.
+
 ## Verification before release
 
 Tests must cover cross-language encoding, signature and access validation,

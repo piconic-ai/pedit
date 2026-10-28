@@ -27,6 +27,7 @@ import { RELAY_BYTE_RATE, RELAY_MESSAGE_RATE } from '@pedit/protocol/pace'
 import { DurableLog } from './durable-log.ts'
 import { KEPT_ADMISSION_KEY } from './kept-admission.ts'
 import { KeptLifecycle } from './kept-lifecycle.ts'
+import { keptRoomRead } from './kept-room-read.ts'
 import { ADMISSION_KEY } from './room-storage.ts'
 
 // Shared browser code brings DOM's SubtleCrypto into this program. Augment it
@@ -230,6 +231,15 @@ export class Room extends DurableObject<Env> {
 
   override async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname
+    const keptRead = /^\/internal\/kept\/([A-Za-z0-9_-]{22})\/read$/.exec(path)
+    if (keptRead?.[1])
+      return keptRoomRead(
+        request,
+        this.ctx,
+        this.env,
+        keptRead[1],
+        () => maintenance(this.env as { MAINTENANCE?: string }) === 'closed',
+      )
     if (this.ctx.storage.kv.get(KEPT_ADMISSION_KEY) !== undefined)
       return new Response('room protocol unavailable', { status: 403 })
     const blob = BLOB_PATH.exec(path)?.[1]

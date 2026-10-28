@@ -67,6 +67,21 @@ export class KeptTransport {
     return this.run(() => this.log().beginRead())
   }
 
+  async beginHostRead(roomId: string, hostToken: string) {
+    await this.admission.authorizeHost(roomId, hostToken)
+    return this.run(() => this.log().beginRead())
+  }
+
+  async readHostPage(roomId: string, hostToken: string, session: string, cursor: string) {
+    await this.admission.authorizeHost(roomId, hostToken)
+    return this.run(() => this.log().readPage(session, cursor))
+  }
+
+  async finishHostRead(roomId: string, hostToken: string, session: string, cursor: string) {
+    await this.admission.authorizeHost(roomId, hostToken)
+    await this.run(() => this.log().finishRead(session, cursor))
+  }
+
   async readPage(token: string, session: string, cursor: string) {
     await this.allowRead(token)
     return this.run(() => this.log().readPage(session, cursor))
