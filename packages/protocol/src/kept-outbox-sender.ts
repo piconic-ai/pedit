@@ -83,20 +83,18 @@ export class KeptOutboxSender {
     return this.options.outbox.enqueue(this.link, this.context.roomId, this.options.sender, message)
   }
   async sendNext(signal?: AbortSignal): Promise<KeptSendResult> {
-    const operations = await this.options.outbox.operations(
-      this.link,
-      this.context.roomId,
-      this.options.sender,
-    )
-    const next = operations.find((op) => !op.acknowledged)
-    if (!next) return { status: 'idle' }
-    const item = await this.options.outbox.prepare(
-      this.link,
-      this.context,
-      this.options.sender,
-      next.sequence,
-    )
-    if (item.acknowledged) return { status: 'idle' }
+    let item: Awaited<ReturnType<KeptOutbox['prepare']>>
+    for (;;) {
+      const operations = await this.options.outbox.operations(
+        this.link, this.context.roomId, this.options.sender,
+      )
+      const next = operations.find((op) => !op.acknowledged)
+      if (!next) return { status: 'idle' }
+      item = await this.options.outbox.prepare(
+        this.link, this.context, this.options.sender, next.sequence,
+      )
+      if (!item.acknowledged) break
+    }
     const keys = await deriveKeptRoomKeys(this.link, this.context.roomId)
     const token = this.link.access === 'edit' ? keys.editAdmission : keys.commentAdmission
     if (!token) throw new Error('writer admission unavailable')

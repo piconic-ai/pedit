@@ -7,6 +7,7 @@ import { KeptOutbox } from './kept-outbox.ts'
 import { KeptOutboxSender } from './kept-outbox-sender.ts'
 import type { KeptRecordContext } from './kept-record.ts'
 import { decodeMessage, encodeMessage, MessageType } from './message.ts'
+import { checkKeptTextState } from './kept-text-schema.ts'
 
 export type KeptEditStatus = 'idle' | 'pending' | 'relay-accepted' | 'failed'
 export type KeptEditOptions = {
@@ -22,14 +23,17 @@ export type KeptEditOptions = {
 
 // Relay acceptance is not a host save or proof of a complete relay tail.
 export class KeptEditController {
-  readonly doc: Y.Doc
+  readonly #doc: Y.Doc
   private readonly sender: KeptOutboxSender
   private readonly queued: Uint8Array[] = []
-  private running = false
+  private running: Promise<void> | undefined
+  private closeAttempt: Promise<void> | undefined
+  private closing = false
   private stopped = false
+  private invalid = false
   private readonly abort = new AbortController()
   private constructor(private readonly options: KeptEditOptions, doc: Y.Doc) {
-    this.doc = doc
+    this.#doc = doc
     this.sender = new KeptOutboxSender(options)
     doc.on('update', this.onUpdate)
   }
@@ -48,29 +52,69 @@ export class KeptEditController {
         if (d.pos !== msg.payload.length) throw new Error('invalid outbox sync')
         Y.applyUpdate(doc, update)
       }
-      if (doc.store.pendingStructs || doc.store.pendingDs) throw new Error('missing Yjs dependencies')
+      if (doc.store.pendingStructs || doc.store.pendingDs || !checkKeptTextState(Y.encodeStateAsUpdate(doc)))
+        throw new Error('invalid or incomplete kept text')
       const controller = new KeptEditController(options, doc)
       options.onStatus(rows.some(row => !row.acknowledged) ? 'pending' : 'idle')
       if (rows.some(row => !row.acknowledged)) void controller.retry()
       return controller
     } catch (error) { doc.destroy(); throw error }
   }
-  private readonly onUpdate = (update: Uint8Array): void => {
-    if (this.stopped) return
+  text(): string { return this.#doc.getText('content').toString() }
+  // Apply one editor replacement as bounded Yjs transactions, preserving UTF-16
+  // pairs and the user's replacement order. No update bytes are split.
+  replace(from: number, to: number, value: string): void {
+    const text = this.#doc.getText('content')
+    if (this.stopped || this.closing || this.invalid || !Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < from || to > text.length)
+      throw new Error('invalid kept edit')
+    if (to > from) text.delete(from, to - from)
+    let offset = 0
+    while (offset < value.length) {
+      let end = Math.min(offset + 8192, value.length)
+      if (end < value.length && /[\uD800-\uDBFF]/.test(value.charAt(end - 1)) && /[\uDC00-\uDFFF]/.test(value.charAt(end))) end--
+      const part = value.slice(offset, end)
+      text.insert(from + offset, part)
+      offset = end
+    }
+  }
+  applyRemote(update: Uint8Array): void {
+    if (this.stopped || this.closing || this.invalid) throw new Error('kept editor closed')
+    const probe = new Y.Doc()
+    try {
+      Y.applyUpdate(probe, Y.encodeStateAsUpdate(this.#doc))
+      const decoder = decoding.createDecoder(update)
+      Y.readUpdate(decoder, probe)
+      if (decoder.pos !== update.length || probe.store.pendingStructs || probe.store.pendingDs || !checkKeptTextState(Y.encodeStateAsUpdate(probe)))
+        throw new Error('invalid remote text state')
+      Y.applyUpdate(this.#doc, update, this)
+    } finally { probe.destroy() }
+  }
+  private readonly onUpdate = (update: Uint8Array, _origin: unknown, _doc: Y.Doc, transaction: Y.Transaction): void => {
+    if (this.stopped || !transaction.local) return
+    if (this.invalid || !checkKeptTextState(Y.encodeStateAsUpdate(this.#doc))) {
+      this.invalid = true
+      this.options.onStatus('failed')
+      return
+    }
     const encoder = encoding.createEncoder()
     sync.writeUpdate(encoder, update)
     this.queued.push(encodeMessage(MessageType.Sync, encoding.toUint8Array(encoder)))
     this.options.onStatus('pending')
-    void this.retry()
+    if (!this.closing) void this.retry()
   }
-  async retry(): Promise<void> {
-    if (this.running || this.stopped) return
-    this.running = true
-    let sentAny = false
-    let failed = false
+  retry(): Promise<void> {
+    if (this.running) return this.running
+    if (this.stopped || this.closing || this.invalid) return Promise.resolve()
     this.options.onStatus('pending')
+    const work = this.pump()
+    this.running = work
+    void work.finally(() => { this.running = undefined })
+    return work
+  }
+  private async pump(): Promise<void> {
+    let sentAny = false
     try {
-      while (!this.stopped) {
+      while (!this.closing && !this.stopped && !this.invalid) {
         const first = this.queued[0]
         if (first) {
           await this.sender.enqueue(first)
@@ -81,21 +125,42 @@ export class KeptEditController {
         if (sent.status === 'idle') {
           if (this.queued.length) continue
           this.options.onStatus(sentAny ? 'relay-accepted' : 'idle')
+          if (this.queued.length) continue
           break
         }
         sentAny = true
       }
     } catch {
-      failed = true
-      if (!this.stopped) this.options.onStatus('failed')
-    } finally {
-      this.running = false
-      if (!failed && !this.stopped && this.queued.length) void this.retry()
+      if (!this.closing && !this.stopped) this.options.onStatus('failed')
     }
   }
-  close(): void {
-    this.stopped = true
+  // The caller stops its editor before closing. On error the listener and
+  // unsaved queue remain available for another close attempt.
+  close(): Promise<void> {
+    if (this.stopped) return Promise.resolve()
+    if (this.closeAttempt) return this.closeAttempt
+    const attempt = this.drain()
+    this.closeAttempt = attempt
+    void attempt.then(() => { this.closeAttempt = undefined }, () => { this.closeAttempt = undefined })
+    return attempt
+  }
+  private async drain(): Promise<void> {
+    this.closing = true
     this.abort.abort()
-    this.doc.off('update', this.onUpdate)
+    if (this.running) await this.running
+    if (this.invalid) throw new Error('invalid kept text state')
+    try {
+      while (this.queued.length) {
+        const first = this.queued[0]
+        if (!first) break
+        await this.sender.enqueue(first)
+        this.queued.shift()
+      }
+    } catch (error) {
+      this.options.onStatus('failed')
+      throw error
+    }
+    this.stopped = true
+    this.#doc.off('update', this.onUpdate)
   }
 }
