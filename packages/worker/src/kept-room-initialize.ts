@@ -1,5 +1,5 @@
 import { MAX_FRAME_BYTES } from '@pedit/protocol/frame'
-import { PUBLIC_KEEP_MAX_SECONDS } from './kept-lifetime.ts'
+import { effectiveKeepSeconds } from './kept-lifetime.ts'
 import { KeptTransport } from './kept-transport.ts'
 
 async function body(request: Request): Promise<ArrayBuffer> {
@@ -34,7 +34,7 @@ async function body(request: Request): Promise<ArrayBuffer> {
 export async function initializeKeptRoom(
   request: Request,
   state: DurableObjectState,
-  env: Env,
+  env: Env & { KEEP_MAX_SECONDS?: string },
   roomId: string,
   roomMaxSeconds: number | null,
   maintenanceClosed: () => boolean,
@@ -45,7 +45,26 @@ export async function initializeKeptRoom(
   const commenter = request.headers.get('X-Pedit-Commenter')
   const reader = request.headers.get('X-Pedit-Reader')
   const epoch = request.headers.get('X-Pedit-Epoch')
-  const requested = Number(request.headers.get('X-Pedit-Keep-Seconds'))
+  const requestedHeader = request.headers.get('X-Pedit-Keep-Seconds')
+  const configured = env.KEEP_MAX_SECONDS
+  if (
+    configured !== undefined &&
+    (!/^[1-9][0-9]{0,15}$/.test(configured) || !Number.isSafeInteger(Number(configured)))
+  )
+    return new Response(null, { status: 503, headers: { 'Cache-Control': 'no-store' } })
+  const maxKeepSeconds = configured === undefined ? null : Number(configured)
+  if (!requestedHeader || !/^[1-9][0-9]{0,31}$/.test(requestedHeader))
+    return new Response(null, { status: 400 })
+  const requestedBig = BigInt(requestedHeader)
+  const effectiveBig =
+    maxKeepSeconds === null
+      ? requestedBig
+      : requestedBig < BigInt(maxKeepSeconds)
+        ? requestedBig
+        : BigInt(maxKeepSeconds)
+  if (effectiveBig > BigInt(Math.floor((Number.MAX_SAFE_INTEGER - Date.now()) / 1000)))
+    return new Response(null, { status: 400 })
+  const requested = Number(effectiveBig)
   if (
     !host ||
     !editor ||
@@ -53,8 +72,7 @@ export async function initializeKeptRoom(
     !reader ||
     !epoch ||
     !Number.isSafeInteger(requested) ||
-    requested < 1 ||
-    requested > PUBLIC_KEEP_MAX_SECONDS
+    requested < 1
   )
     return new Response(null, { status: 400 })
   try {
@@ -66,14 +84,20 @@ export async function initializeKeptRoom(
       {
         requestedSeconds: requested,
         roomMaxSeconds,
-        maxKeepSeconds: PUBLIC_KEEP_MAX_SECONDS,
+        maxKeepSeconds,
         alarmSeconds: 3600,
       },
       Date.now,
       maintenanceClosed,
     )
     await transport.initializeAway(roomId, host, { editor, commenter, reader }, epoch, checkpoint)
-    return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } })
+    return new Response(null, {
+      status: 204,
+      headers: {
+        'Cache-Control': 'no-store',
+        'X-Pedit-Keep-Seconds': String(effectiveKeepSeconds(requested, maxKeepSeconds)),
+      },
+    })
   } catch {
     return new Response(null, { status: 403, headers: { 'Cache-Control': 'no-store' } })
   }

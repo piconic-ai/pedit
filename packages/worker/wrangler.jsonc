@@ -52,7 +52,8 @@
     "ROOM_GUESTS": "4",
     "BLOB_MAX_BYTES": "5242880",
     "BLOB_QUOTA_BYTES": "52428800",
-    "ROOM_MAX_SECONDS": "86400"
+    "ROOM_MAX_SECONDS": "86400",
+    "KEEP_MAX_SECONDS": "604800"
   },
   // Per client IP (an IPv6 /64) and Cloudflare location; see docs/self-hosting.md.
   "ratelimits": [
@@ -80,7 +81,8 @@
       "ROOM_GUESTS": "4",
       "BLOB_MAX_BYTES": "5242880",
       "BLOB_QUOTA_BYTES": "52428800",
-      "ROOM_MAX_SECONDS": "86400"
+      "ROOM_MAX_SECONDS": "86400",
+      "KEEP_MAX_SECONDS": "604800"
     },
     "ratelimits": [
       {

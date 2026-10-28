@@ -325,3 +325,11 @@ lower tier when its capacity is full; preempted participants must restart.
 Existing host sessions retain host priority during migration. Older non-host
 sessions are treated as reader sessions. A tier can still exhaust its own
 capacity with unfinished sessions; they expire after five minutes.
+The internal initialization path reads `KEEP_MAX_SECONDS`. Production and
+preview configuration set it to 604800 seconds; an unset value is unlimited
+for self-hosting. A configured value must be a positive safe integer; invalid
+configuration refuses initialization. The requested duration is clamped to
+the configured limit and `X-Pedit-Keep-Seconds` in the successful response
+reports the applied value. Durations that cannot produce a safe timestamp are
+rejected. The selected policy is persisted with the room; a later configuration
+change does not silently change it. This internal path is not public yet.
