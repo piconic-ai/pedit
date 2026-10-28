@@ -3,6 +3,7 @@ import {
   type KeptReadInspection,
   KeptRoomClient,
   type KeptRoomClientOptions,
+  keptReadAdmission,
 } from './kept-room-client.ts'
 
 // Notifications are hints. A fixed read is the source of each candidate; the
@@ -37,7 +38,7 @@ export class KeptLiveReader {
     url.pathname = `${url.pathname.replace(/\/$/, '')}/internal/kept/${this.opts.keys.roomId}/guest`
     const socket = this.connect(url.toString(), [
       'pedit-v6',
-      `pedit-admission.${this.opts.keys.readAdmission}`,
+      `pedit-admission.${keptReadAdmission(this.opts.keys)}`,
     ])
     this.socket = socket
     socket.addEventListener('open', () => {

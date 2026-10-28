@@ -123,6 +123,17 @@ function applyRecord(
   return target === text ? 'text' : 'comments'
 }
 
+export function keptReadAdmission(keys: KeptRoomKeys): string {
+  const token =
+    keys.access === 'edit'
+      ? keys.editAdmission
+      : keys.access === 'comment'
+        ? keys.commentAdmission
+        : keys.readAdmission
+  if (!token) throw new Error('missing kept admission')
+  return token
+}
+
 // KeptRoomClient only inspects a fixed read. It never changes the editor,
 // acknowledges a log, or asserts that the relay supplied the complete tail.
 export class KeptRoomClient {
@@ -147,7 +158,7 @@ export class KeptRoomClient {
     this.fetcher = opts.fetch ?? ((...args) => fetch(...args))
   }
   async inspect(signal?: AbortSignal): Promise<KeptReadInspection> {
-    const auth = { Authorization: `Bearer ${this.opts.keys.readAdmission}` }
+    const auth = { Authorization: `Bearer ${keptReadAdmission(this.opts.keys)}` }
     const get = async (method: string, session?: string, cursor?: string) => {
       const headers = new Headers(auth)
       if (session && cursor) {

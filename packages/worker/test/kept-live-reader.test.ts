@@ -5,6 +5,7 @@ import { signingPair } from '../../protocol/src/access-crypto.ts'
 import { deriveKeptRoomKeys, parseKeptFragment } from '../../protocol/src/kept-access.ts'
 import { KeptLiveReader } from '../../protocol/src/kept-live-reader.ts'
 import { createKeptSenderCertificate, sealKeptRecord } from '../../protocol/src/kept-record.ts'
+import { KeptRoomClient } from '../../protocol/src/kept-room-client.ts'
 import fixture from '../../testdata/kept-read-interop.json'
 import shared from '../../testdata/kept-recovery-wire.json'
 import app from '../src/index.ts'
@@ -185,3 +186,127 @@ it('catches writes during a fixed read and missed notifications through a later 
   await vi.waitFor(() => expect(resumed).toContain(3), { timeout: 5000 })
   reconnect.stop()
 })
+
+it('uses each link tier for both socket and fixed reads when reader capacity is full', async () => {
+  const edit = await deriveKeptRoomKeys(parseKeptFragment(fixture.fragment)!, fixture.roomId)
+  const comment = await deriveKeptRoomKeys(
+    parseKeptFragment(edit.fragments.comment!)!,
+    fixture.roomId,
+  )
+  const room = env.ROOM.get(env.ROOM.idFromName(fixture.roomId))
+  const base = `https://room/internal/kept/${fixture.roomId}`
+  await runInDurableObject(room, async (instance) => {
+    instance['env'] = { ...instance['env'], ROOM_GUESTS: '3', ROOM_READERS: '1' } as unknown as Env
+  })
+  expect(
+    (
+      await room.fetch(`${base}/initialize`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Host ${fixture.hostToken}`,
+          'X-Pedit-Editor': fixture.editor,
+          'X-Pedit-Commenter': fixture.commenter,
+          'X-Pedit-Reader': fixture.reader,
+          'X-Pedit-Epoch': fixture.epoch,
+          'X-Pedit-Keep-Seconds': '60',
+        },
+        body: bytes(fixture.checkpoint),
+      })
+    ).status,
+  ).toBe(204)
+  const low = await room.fetch(`${base}/guest`, {
+    headers: {
+      Upgrade: 'websocket',
+      'Sec-WebSocket-Protocol': `pedit-v6, pedit-admission.${fixture.reader}`,
+    },
+  })
+  expect(low.status).toBe(101)
+  low.webSocket!.accept()
+  let expectedTail = -1
+  const readSessions: string[] = []
+  for (let i = 0; i < 40; i++) {
+    const response = await room.fetch(`${base}/read`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${fixture.reader}`,
+      },
+    })
+    expect(response.status).toBe(200)
+    const snapshot = await response.json<{ tail: number; session: string }>()
+    expectedTail = snapshot.tail
+    readSessions.push(snapshot.session)
+  }
+  expect(
+    (
+      await room.fetch(`${base}/read`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${fixture.reader}`,
+        },
+      })
+    ).status,
+  ).toBe(403)
+  const fetcher: typeof fetch = (input, init) => room.fetch(new Request(input, init))
+  for (const keys of [comment, edit]) {
+    await new KeptRoomClient({
+      url: 'https://room',
+      keys,
+      fetch: fetcher,
+      attachmentInventory: async () => 'none',
+    }).inspect()
+    const eventTarget = new EventTarget()
+    let real: WebSocket | undefined
+    const proxy = Object.assign(eventTarget, { close: () => real?.close() }) as unknown as WebSocket
+    let result: number | undefined, failure: Error | undefined
+    const live = new KeptLiveReader(
+      { url: 'https://room', keys, fetch: fetcher, attachmentInventory: async () => 'none' },
+      (candidate) => {
+        result = candidate.tail
+      },
+      (error) => {
+        failure = error
+      },
+      (_url, protocols) => {
+        void room
+          .fetch(`${base}/guest`, {
+            headers: { Upgrade: 'websocket', 'Sec-WebSocket-Protocol': protocols.join(', ') },
+          })
+          .then((response) => {
+            if (!response.webSocket) {
+              eventTarget.dispatchEvent(new Event('error'))
+              return
+            }
+            real = response.webSocket
+            real.accept()
+            eventTarget.dispatchEvent(new Event('open'))
+          })
+        return proxy
+      },
+      1000,
+    )
+    live.start()
+    await vi.waitFor(
+      () => {
+        if (failure) throw failure
+        expect(result).toBe(expectedTail)
+      },
+      { timeout: 3000 },
+    )
+    expect(failure).toBeUndefined()
+    live.stop()
+  }
+  for (const session of readSessions) {
+    expect(
+      (
+        await room.fetch(`${base}/read`, {
+          method: 'DELETE',
+          headers: {
+            Authorization: `Bearer ${fixture.reader}`,
+            'X-Pedit-Read-Session': session,
+          },
+        })
+      ).status,
+    ).toBe(204)
+  }
+  low.webSocket!.close()
+}, 15000)

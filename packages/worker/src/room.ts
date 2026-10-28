@@ -171,6 +171,9 @@ const BLOB_SESSION_KEY = 'blobSession'
 const HOST_TAG = 'host'
 const KEPT_HOST_TAG = 'kept-host'
 const KEPT_GUEST_TAG = 'kept-guest'
+const KEPT_READER_TAG = 'kept-reader'
+const KEPT_COMMENTER_TAG = 'kept-commenter'
+const KEPT_EDITOR_TAG = 'kept-editor'
 const KEPT_GUEST_PROTOCOL = 'pedit-v6'
 const KEPT_ADMISSION_PREFIX = 'pedit-admission.'
 // A guest admitted with the reader token: a comment-only or read-only link.
@@ -704,6 +707,34 @@ export class Room extends DurableObject<Env> {
     }
   }
 
+  private keptGuestFull(role: 'reader' | 'commenter' | 'editor'): boolean {
+    const { guests, readers } = limits(this.env)
+    const open = (tag: string) =>
+      this.ctx.getWebSockets(tag).filter((socket) => socket.readyState === WebSocket.OPEN)
+    const readerSockets = open(KEPT_READER_TAG)
+    const commenters = open(KEPT_COMMENTER_TAG)
+    const editing = open(KEPT_EDITOR_TAG).length
+    const writers = commenters.length + editing
+    const occupied = readerSockets.length + writers
+    const available = MAX_PEERS - Math.max(1, open(KEPT_HOST_TAG).length)
+    if (role === 'reader') return readerSockets.length >= readers || occupied >= available
+    if (role === 'commenter' && writers >= guests) return true
+    const displaced =
+      role === 'editor' && writers >= guests
+        ? commenters[0]
+        : occupied >= available
+          ? (readerSockets[0] ?? (role === 'editor' ? commenters[0] : undefined))
+          : undefined
+    if (!displaced) return writers >= guests || occupied >= available
+    if (occupied - 1 >= available) return true
+    try {
+      displaced.close(1013, 'higher tier slot needed')
+    } catch {
+      return true
+    }
+    return displaced.readyState === WebSocket.OPEN
+  }
+
   private async keptGuestSocket(request: Request, roomId: string): Promise<Response> {
     if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket')
       return new Response(null, { status: 426 })
@@ -723,10 +754,15 @@ export class Room extends DurableObject<Env> {
       const lifetime = await this.keptLifecycle(policy).observe()
       if (lifetime.host === 'closed' || this.ctx.storage.kv.get(ADMISSION_KEY) === undefined)
         return new Response(null, { status: 403 })
-      if (this.ctx.getWebSockets(KEPT_GUEST_TAG).length >= MAX_PEERS - 1)
-        return new Response(null, { status: 429 })
+      if (this.keptGuestFull(role)) return new Response(null, { status: 429 })
       const pair = new WebSocketPair()
-      this.ctx.acceptWebSocket(pair[1], [KEPT_GUEST_TAG])
+      const tier =
+        role === 'reader'
+          ? KEPT_READER_TAG
+          : role === 'commenter'
+            ? KEPT_COMMENTER_TAG
+            : KEPT_EDITOR_TAG
+      this.ctx.acceptWebSocket(pair[1], [KEPT_GUEST_TAG, tier])
       return new Response(null, {
         status: 101,
         webSocket: pair[0],
@@ -768,7 +804,11 @@ export class Room extends DurableObject<Env> {
       await new KeptAdmission(this.ctx, this.env.ROOM).authorizeHost(roomId, host)
       const policy = this.ctx.storage.kv.get<KeepPolicy>(KEPT_POLICY_KEY)
       if (!policy) return new Response(null, { status: 403 })
-      if (this.full(true, 'editor')) return new Response('room is full', { status: 429 })
+      if (
+        this.ctx.getWebSockets().filter((socket) => socket.readyState === WebSocket.OPEN).length >=
+        MAX_PEERS
+      )
+        return new Response('room is full', { status: 429 })
       const pair = new WebSocketPair()
       this.ctx.acceptWebSocket(pair[1], [KEPT_HOST_TAG])
       try {

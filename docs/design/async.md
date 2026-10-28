@@ -478,3 +478,11 @@ Browser timer throttling and offline periods can delay catch-up, and a relay can
 still omit an unseen tail. Inspections remain non-applicable and do not ACK,
 cut, or write files. Neither this socket nor the client is publicly routed or
 connected to the editor.
+
+For internal guest sockets, `ROOM_READERS` limits reader sockets and
+`ROOM_GUESTS` limits editor plus commenter sockets. Within the 32 socket
+ceiling the Room reserves a slot for the host. An arriving commenter can
+disconnect a reader when the socket limit is full, and an arriving editor can
+disconnect a reader or commenter. When the configured writer limit is full,
+an editor can disconnect a commenter to make room. Read and socket requests
+use the highest admission tier available in the link.
