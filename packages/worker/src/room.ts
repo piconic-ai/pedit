@@ -26,6 +26,7 @@ import { MAX_FRAME_BYTES } from '@pedit/protocol/frame'
 import { RELAY_BYTE_RATE, RELAY_MESSAGE_RATE } from '@pedit/protocol/pace'
 import { DurableLog } from './durable-log.ts'
 import { KEPT_ADMISSION_KEY, KeptAdmission } from './kept-admission.ts'
+import { KeptAppendRate, keptAppend } from './kept-append.ts'
 import type { KeepPolicy } from './kept-lifecycle.ts'
 import { KeptLifecycle } from './kept-lifecycle.ts'
 import { initializeKeptRoom } from './kept-room-initialize.ts'
@@ -227,6 +228,7 @@ export class Room extends DurableObject<Env> {
   private hostHandshakes = 0
   private keptHostHandshakes = 0
   private keptInitializations = { active: 0 }
+  private readonly keptAppendRate = new KeptAppendRate()
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
@@ -237,6 +239,16 @@ export class Room extends DurableObject<Env> {
 
   override async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname
+    const keptWrite = /^\/internal\/kept\/([A-Za-z0-9_-]{22})\/append$/.exec(path)
+    if (keptWrite?.[1])
+      return keptAppend(
+        request,
+        this.ctx,
+        this.env,
+        keptWrite[1],
+        this.keptAppendRate,
+        () => maintenance(this.env as { MAINTENANCE?: string }) === 'closed',
+      )
     const keptSocket = /^\/internal\/kept\/([A-Za-z0-9_-]{22})\/host$/.exec(path)
     if (keptSocket?.[1]) return this.keptHostSocket(request, keptSocket[1])
     const keptInit = /^\/internal\/kept\/([A-Za-z0-9_-]{22})\/initialize$/.exec(path)

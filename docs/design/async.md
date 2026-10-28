@@ -273,6 +273,15 @@ not provide durable client cursors or live delivery. The older internal
 transport initialize method still commits admission separately from lifetime
 and checkpoint; it must not be used for public initialization.
 
+An internal Room append endpoint accepts editor or commenter capabilities and
+stores bounded opaque ciphertext at the current epoch. Exact retransmissions
+return the same sequence. Each capability tier has a shared in-memory rate
+allowance and at most eight simultaneous bodies; the allowance resets on
+Durable Object eviction. Body reads have a 30-second timeout and reject more
+than 16,384 stream chunks, including empty chunks. This may reject a valid body
+delivered in unusually small fragments. Recipients must still verify signatures
+and operation permissions. The public Worker does not expose this endpoint.
+
 ## Verification before release
 
 Tests must cover cross-language encoding, signature and access validation,
