@@ -239,6 +239,25 @@ The internal prototype closes its durable log and admission on expiry, close or
 maintenance, but it does not remove R2 attachments. It must not be exposed
 until real socket lifecycle and attachment cleanup are integrated and tested.
 
+The separate kept attachment cleanup primitive uses `kept/<object-id>/`, so
+the existing `rooms/` age rule does not apply to it. Every PUT reserves a
+bounded count and byte quota in Durable Object storage and syncs it before
+calling R2. A failed or interrupted PUT remains uncertain. After close, each
+sweep schedules another alarm before reading or deleting R2 objects. It removes
+a confirmed reservation only if the PUT completed before the sweep took its
+reservation snapshot.
+An uncertain reservation remains indefinitely and prevents a completed result;
+later sweeps delete any object it produces. This depends on R2's strong
+read-after-write and list consistency.
+
+This primitive is not connected to the room or its lifecycle. The room must
+atomically mark attachments closed with room expiry, route alarms to the sweep,
+authorize every PUT, and enforce its own policy before using it. Its deployment
+must check that no lifecycle rule covers `kept/`. An interrupted PUT can leave
+a reservation and periodic cleanup forever; the service needs an operational
+policy for those retained markers and for alarm failures. The prototype cannot
+prove a PUT with an ambiguous outcome has stopped.
+
 ## Verification before release
 
 Tests must cover cross-language encoding, signature and access validation,
