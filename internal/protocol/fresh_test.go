@@ -211,7 +211,7 @@ func TestSignersShowTheyAreLiveOnEveryConnection(t *testing.T) {
 	nonce := p.Nonce()
 	relay.DropAll()
 	prototest.WaitFor(t, wait, func() bool { return p.Status() == protocol.StatusConnected && p.Nonce() != nonce }, "reconnected")
-	write(kept, c(protocol.Sender{1}, 4, answer(p.Client)), c(protocol.Sender{1}, 5, edit("after")))
+	write(kept, c(protocol.Sender{1}, 4, answer(p.Client)), kept, c(protocol.Sender{1}, 5, edit("after")))
 	prototest.WaitFor(t, wait, func() bool { mu.Lock(); defer mu.Unlock(); return len(edits) == 2 }, "the edit after")
 	mu.Lock()
 	defer mu.Unlock()
