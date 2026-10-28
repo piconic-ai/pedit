@@ -23,13 +23,7 @@ export class KeptAdmission {
 
   async register(roomId: string, hostToken: string, capabilities: KeptCapabilities): Promise<void> {
     const { editor, commenter, reader } = capabilities
-    if (
-      !/^[A-Za-z0-9_-]{22}$/.test(roomId) ||
-      !ADMISSION_PATTERN.test(hostToken) ||
-      this.namespace.idFromName(roomId).toString() !== this.state.id.toString() ||
-      (await roomIdFor(hostToken)) !== roomId
-    )
-      throw new Error('invalid host credentials')
+    await this.authenticateHost(roomId, hostToken)
     if (
       !ADMISSION_PATTERN.test(editor) ||
       !ADMISSION_PATTERN.test(commenter) ||
@@ -71,6 +65,25 @@ export class KeptAdmission {
       !equal(current.reader, r)
     )
       throw new Error('kept admission no longer active')
+  }
+
+  async authenticateHost(roomId: string, hostToken: string): Promise<void> {
+    if (
+      !/^[A-Za-z0-9_-]{22}$/.test(roomId) ||
+      !ADMISSION_PATTERN.test(hostToken) ||
+      this.namespace.idFromName(roomId).toString() !== this.state.id.toString() ||
+      (await roomIdFor(hostToken)) !== roomId
+    )
+      throw new Error('invalid host credentials')
+  }
+
+  async authorizeHost(roomId: string, hostToken: string): Promise<void> {
+    await this.authenticateHost(roomId, hostToken)
+    const kv = this.state.storage.kv
+    const verifiers = kv.get<Verifiers>(KEPT_ADMISSION_KEY)
+    const active = kv.get<ArrayBuffer>(ADMISSION_KEY)
+    if (!verifiers || !active || !equal(active, verifiers.editor))
+      throw new Error('room admission closed')
   }
 
   async role(token: string): Promise<KeptRole | null> {

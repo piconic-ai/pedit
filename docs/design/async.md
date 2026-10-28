@@ -102,6 +102,24 @@ its caller; the public protocol must check admission and connect the fixed tail
 to live delivery. A page can contain 16 maximum-sized frames; the public
 transport must impose a byte limit before exposing it.
 
+## Transport prototype
+
+The internal transport checks host credentials before initialization and cut
+operations. Editors and commenters may append, while readers may only read.
+It acknowledges an append only after storage sync. Callers must supply ciphertext;
+the relay cannot check that an opaque payload is encrypted. It has no public
+route. Its read sessions fix the checkpoint and log tail;
+a subsequent poll starts a new session and returns a new checkpoint plus its
+whole tail. Clients must authenticate checkpoint contents and each record,
+apply their own durable operation ledger, and persist their progress together
+with document state. A completed relay read does not prove those steps occurred.
+
+The prototype has no live subscription, incremental catch-up, deadline or
+maintenance checks, or public endpoint. Polling is a functional test of the
+read boundary, not a delivery guarantee. Per-client limits, checkpoint
+freshness, verified message permissions, durable outbox and feature gating
+remain necessary before enabling kept rooms.
+
 ## Ledger snapshot encoding
 
 The ledger snapshot uses `pedit/v6/ledger\0`, a big-endian 32-bit receipt
