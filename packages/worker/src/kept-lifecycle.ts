@@ -41,6 +41,20 @@ function sameTransition(expected: KeptLifetime, current: KeptLifetime): boolean 
 export class KeptLifecycle {
   private readonly admission: KeptAdmission
   private lastObserved = 0
+  static async observeAlarm(
+    state: DurableObjectState,
+    namespace: Pick<Env['ROOM'], 'idFromName'>,
+    alarmSeconds: number,
+    maintenanceClosed: () => boolean,
+  ): Promise<KeptLifetime> {
+    return new KeptLifecycle(
+      state,
+      namespace,
+      { requestedSeconds: 1, roomMaxSeconds: null, maxKeepSeconds: null, alarmSeconds },
+      Date.now,
+      maintenanceClosed,
+    ).observe()
+  }
   constructor(
     private readonly state: DurableObjectState,
     namespace: Pick<Env['ROOM'], 'idFromName'>,

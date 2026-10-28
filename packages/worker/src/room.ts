@@ -26,6 +26,7 @@ import { MAX_FRAME_BYTES } from '@pedit/protocol/frame'
 import { RELAY_BYTE_RATE, RELAY_MESSAGE_RATE } from '@pedit/protocol/pace'
 import { DurableLog } from './durable-log.ts'
 import { KEPT_ADMISSION_KEY } from './kept-admission.ts'
+import { KeptLifecycle } from './kept-lifecycle.ts'
 import { ADMISSION_KEY } from './room-storage.ts'
 
 // Shared browser code brings DOM's SubtleCrypto into this program. Augment it
@@ -423,6 +424,15 @@ export class Room extends DurableObject<Env> {
    * still needed and can run twice.
    */
   override async alarm(): Promise<void> {
+    if (this.ctx.storage.kv.get(KEPT_ADMISSION_KEY) !== undefined) {
+      await KeptLifecycle.observeAlarm(
+        this.ctx,
+        this.env.ROOM,
+        ALARM_INTERVAL_MS / 1000,
+        () => maintenance(this.env as { MAINTENANCE?: string }) === 'closed',
+      )
+      return
+    }
     if (this.expired()) {
       await this.expire()
       return

@@ -238,6 +238,10 @@ missing response as confirmation.
 The internal prototype closes its durable log and admission on expiry, close or
 maintenance, but it does not remove R2 attachments. It must not be exposed
 until real socket lifecycle and attachment cleanup are integrated and tested.
+The Room alarm dispatches kept admission to the internal lifetime observer,
+including after eviction, so a hostless kept room does not enter v5 cleanup.
+An incomplete kept initialization fails closed. Socket lifecycle, attachment
+cleanup, independent retry discovery and public routes remain unconnected.
 
 The separate kept attachment cleanup primitive uses `kept/<object-id>/`, so
 the existing `rooms/` age rule does not apply to it. Every PUT reserves a
