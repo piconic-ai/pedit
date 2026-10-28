@@ -8,9 +8,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -40,11 +43,18 @@ func loadReadFixture(t *testing.T) (readFixture, KeptReadSnapshot, KeptReadPage,
 	if err = json.Unmarshal(raw, &capture); err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := ParseKeptReadSnapshot(capture.Snapshot)
+	var snapshotWire, pageWire bytes.Buffer
+	if err := json.Compact(&snapshotWire, capture.Snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Compact(&pageWire, capture.Page); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := ParseKeptReadSnapshot(snapshotWire.Bytes())
 	if err != nil {
 		t.Fatal(err)
 	}
-	page, err := ParseKeptReadPage(capture.Page, 0, 1)
+	page, err := ParseKeptReadPage(pageWire.Bytes(), 0, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -356,5 +366,25 @@ func TestReadKeptHostBoundsFinishAndCancels(t *testing.T) {
 	}
 	if time.Since(start) > 3*time.Second {
 		t.Fatal("finish stalled recovery")
+	}
+}
+
+type readRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f readRoundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestFetchKeptReadDoesNotRetryRefusal(t *testing.T) {
+	calls := 0
+	client := &http.Client{Transport: readRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		return &http.Response{StatusCode: http.StatusForbidden, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header)}, nil
+	})}
+	base, err := url.Parse("https://example.test/read")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = fetchKeptRead(client, base, "token", context.Background(), http.MethodGet, "session", "cursor", true)
+	if err == nil || calls != 1 {
+		t.Fatalf("refusal: error %v, calls %d", err, calls)
 	}
 }

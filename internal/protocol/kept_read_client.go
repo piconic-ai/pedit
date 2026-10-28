@@ -51,56 +51,8 @@ func ReadKeptHost(ctx context.Context, client *http.Client, endpoint, roomID, ho
 	}
 	safeClient := *client
 	safeClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	fetch := func(requestCtx context.Context, method, session, cursor string, retry bool) ([]byte, error) {
-		attempts := 1
-		if retry {
-			attempts = 2
-		}
-		for i := 0; i < attempts; i++ {
-			req, e := http.NewRequestWithContext(requestCtx, method, base.String(), nil)
-			if e != nil {
-				return nil, errors.New("invalid read request")
-			}
-			req.Header.Set("Authorization", "Host "+hostToken)
-			if session != "" {
-				req.Header.Set("X-Pedit-Read-Session", session)
-				if cursor != "" {
-					req.Header.Set("X-Pedit-Read-Cursor", cursor)
-				}
-			}
-			resp, e := safeClient.Do(req)
-			if e != nil {
-				if requestCtx.Err() != nil {
-					return nil, requestCtx.Err()
-				}
-				if i+1 < attempts {
-					continue
-				}
-				return nil, errors.New("read request failed")
-			}
-			if resp.StatusCode != http.StatusOK && !(method == http.MethodDelete && resp.StatusCode == http.StatusNoContent) {
-				resp.Body.Close()
-				return nil, errors.New("read request refused")
-			}
-			data, e := io.ReadAll(io.LimitReader(resp.Body, 2*MaxFrameBytes+1))
-			resp.Body.Close()
-			if e != nil {
-				if requestCtx.Err() != nil {
-					return nil, requestCtx.Err()
-				}
-				if i+1 < attempts {
-					continue
-				}
-				return nil, errors.New("read response interrupted")
-			}
-			if len(data) > 2*MaxFrameBytes {
-				return nil, errors.New("read response too large")
-			}
-			return data, nil
-		}
-		return nil, errors.New("read request failed")
-	}
-	raw, err := fetch(ctx, http.MethodPost, "", "", false)
+
+	raw, err := fetchKeptRead(&safeClient, base, hostToken, ctx, http.MethodPost, "", "", false)
 	if err != nil {
 		return result, err
 	}
@@ -152,6 +104,22 @@ func ReadKeptHost(ctx context.Context, client *http.Client, endpoint, roomID, ho
 	if err != nil {
 		return result, errors.New("unsupported checkpoint payload")
 	}
+	records, frames, cursor, err := readKeptPages(ctx, &safeClient, base, hostToken, roomID, keys, snapshot, payload, epoch)
+	if err != nil {
+		return KeptReadInspection{}, err
+	}
+
+	finishCtx, cancelFinish := context.WithTimeout(ctx, time.Second)
+	_, err = fetchKeptRead(&safeClient, base, hostToken, finishCtx, http.MethodDelete, snapshot.Session, cursor, true)
+	cancelFinish()
+	if err != nil {
+		return KeptReadInspection{}, err
+	}
+	finished = true
+	return KeptReadInspection{Snapshot: snapshot, Records: records, Checkpoint: payload, Frames: frames, Completeness: "tail-unverified"}, nil
+}
+
+func readKeptPages(ctx context.Context, safeClient *http.Client, base *url.URL, hostToken, roomID string, keys *KeptRoomKeys, snapshot KeptReadSnapshot, payload KeptTextPayload, epoch [32]byte) ([]KeptRecord, [][]byte, string, error) {
 	// The provisional ledger tracks sequence ordering only. It must never be
 	// persisted or reported as having applied these operations.
 	ledger := payload.Ledger
@@ -159,41 +127,21 @@ func ReadKeptHost(ctx context.Context, client *http.Client, endpoint, roomID, ho
 	records := []KeptRecord{}
 	frames := [][]byte{}
 	for {
-		raw, err = fetch(ctx, http.MethodGet, snapshot.Session, cursor, true)
+		raw, err := fetchKeptRead(safeClient, base, hostToken, ctx, http.MethodGet, snapshot.Session, cursor, true)
 		if err != nil {
-			return KeptReadInspection{}, err
+			return nil, nil, "", err
 		}
 		page, e := ParseKeptReadPage(raw, after, snapshot.Tail)
 		if e != nil {
-			return KeptReadInspection{}, e
+			return nil, nil, "", e
 		}
 		for _, entry := range page.Entries {
-			sealed, e := base64.StdEncoding.Strict().DecodeString(entry.Ciphertext)
+			sealed, record, nextLedger, e := readKeptEntry(entry, keys, roomID, epoch, snapshot.Generation, ledger, len(records), total)
 			if e != nil {
-				return KeptReadInspection{}, e
+				return nil, nil, "", e
 			}
 			total += len(sealed)
-			if len(records) >= maxKeptReadRecords || total > maxKeptReadBytes {
-				return KeptReadInspection{}, errors.New("read capacity exceeded")
-			}
-			record, e := OpenKeptRecord(keys, KeptRecordContext{RoomID: roomID, Epoch: epoch, Generation: snapshot.Generation}, sealed)
-			if e != nil {
-				return KeptReadInspection{}, e
-			}
-			plan, e := ledger.Inspect(record)
-			if e != nil {
-				return KeptReadInspection{}, e
-			}
-			switch plan.Decision {
-			case KeptNext:
-				ledger, e = ledger.Commit(plan, KeptApplied)
-				if e != nil {
-					return KeptReadInspection{}, e
-				}
-			case KeptDuplicate:
-			default:
-				return KeptReadInspection{}, errors.New("invalid ledger sequence")
-			}
+			ledger = nextLedger
 			records = append(records, record)
 			frames = append(frames, sealed)
 			after = entry.Sequence
@@ -202,18 +150,91 @@ func ReadKeptHost(ctx context.Context, client *http.Client, endpoint, roomID, ho
 			break
 		}
 		if *page.Next == cursor {
-			return KeptReadInspection{}, errors.New("repeated read cursor")
+			return nil, nil, "", errors.New("repeated read cursor")
 		}
 		cursor = *page.Next
 	}
-	finishCtx, cancelFinish := context.WithTimeout(ctx, time.Second)
-	_, err = fetch(finishCtx, http.MethodDelete, snapshot.Session, cursor, true)
-	cancelFinish()
+	return records, frames, cursor, nil
+}
+
+func readKeptEntry(entry KeptReadEntry, keys *KeptRoomKeys, roomID string, epoch [32]byte, generation uint64, ledger KeptLedger, count, total int) ([]byte, KeptRecord, KeptLedger, error) {
+	var empty KeptRecord
+	sealed, err := base64.StdEncoding.Strict().DecodeString(entry.Ciphertext)
 	if err != nil {
-		return KeptReadInspection{}, err
+		return nil, empty, ledger, err
 	}
-	finished = true
-	return KeptReadInspection{Snapshot: snapshot, Records: records, Checkpoint: payload, Frames: frames, Completeness: "tail-unverified"}, nil
+	if count >= maxKeptReadRecords || total+len(sealed) > maxKeptReadBytes {
+		return nil, empty, ledger, errors.New("read capacity exceeded")
+	}
+	record, err := OpenKeptRecord(keys, KeptRecordContext{RoomID: roomID, Epoch: epoch, Generation: generation}, sealed)
+	if err != nil {
+		return nil, empty, ledger, err
+	}
+	plan, err := ledger.Inspect(record)
+	if err != nil {
+		return nil, empty, ledger, err
+	}
+	switch plan.Decision {
+	case KeptNext:
+		ledger, err = ledger.Commit(plan, KeptApplied)
+		if err != nil {
+			return nil, empty, ledger, err
+		}
+	case KeptDuplicate:
+	default:
+		return nil, empty, ledger, errors.New("invalid ledger sequence")
+	}
+	return sealed, record, ledger, nil
+}
+
+func fetchKeptRead(safeClient *http.Client, base *url.URL, hostToken string, requestCtx context.Context, method, session, cursor string, retry bool) ([]byte, error) {
+	attempts := 1
+	if retry {
+		attempts = 2
+	}
+	for i := 0; i < attempts; i++ {
+		data, retryable, err := fetchKeptReadOnce(safeClient, base, hostToken, requestCtx, method, session, cursor)
+		if !retryable || i+1 == attempts {
+			return data, err
+		}
+	}
+	return nil, errors.New("read request failed")
+}
+
+func fetchKeptReadOnce(client *http.Client, base *url.URL, hostToken string, ctx context.Context, method, session, cursor string) ([]byte, bool, error) {
+	req, err := http.NewRequestWithContext(ctx, method, base.String(), nil)
+	if err != nil {
+		return nil, false, errors.New("invalid read request")
+	}
+	req.Header.Set("Authorization", "Host "+hostToken)
+	if session != "" {
+		req.Header.Set("X-Pedit-Read-Session", session)
+		if cursor != "" {
+			req.Header.Set("X-Pedit-Read-Cursor", cursor)
+		}
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, false, ctx.Err()
+		}
+		return nil, true, errors.New("read request failed")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && !(method == http.MethodDelete && resp.StatusCode == http.StatusNoContent) {
+		return nil, false, errors.New("read request refused")
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 2*MaxFrameBytes+1))
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, false, ctx.Err()
+		}
+		return nil, true, errors.New("read response interrupted")
+	}
+	if len(data) > 2*MaxFrameBytes {
+		return nil, false, errors.New("read response too large")
+	}
+	return data, false, nil
 }
 
 // readSessionID extracts only an unambiguous session from a syntactically

@@ -125,27 +125,27 @@ func Open(path string) (*Store, error) {
 		return fail()
 	}
 	s.lock = lock
-	if made {
-		if err := s.syncDir(); err != nil {
-			s.Close()
-			return nil, ErrUnavailable
-		}
-		parent, err := os.Open(filepath.Dir(path))
-		if err != nil {
-			s.Close()
-			return nil, ErrUnavailable
-		}
-		err = parent.Sync()
-		if err == nil {
-			_, err = unix.FcntlInt(parent.Fd(), unix.F_FULLFSYNC, 0)
-		}
-		parent.Close()
-		if err != nil {
-			s.Close()
-			return nil, ErrUnavailable
-		}
+	if made && s.syncCreatedDirectory(path) != nil {
+		s.Close()
+		return nil, ErrUnavailable
 	}
 	return s, nil
+}
+
+func (s *Store) syncCreatedDirectory(path string) error {
+	if err := s.syncDir(); err != nil {
+		return err
+	}
+	parent, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	err = parent.Sync()
+	if err == nil {
+		_, err = unix.FcntlInt(parent.Fd(), unix.F_FULLFSYNC, 0)
+	}
+	return err
 }
 
 func (s *Store) identity() error {
@@ -244,6 +244,34 @@ func (s *Store) load(room string) (Credentials, error) {
 	return c, nil
 }
 
+func (s *Store) writePending(f *os.File, b []byte) error {
+	var err error
+	if err = setEmptyACL(int(f.Fd())); err != nil {
+		return ErrUnavailable
+	}
+	if _, err = checked(int(f.Fd()), false); err != nil {
+		return ErrUnavailable
+	}
+	if err = s.identity(); err != nil {
+		return err
+	}
+	if _, err = f.Write(b); err != nil {
+		return ErrUnavailable
+	}
+	if s.syncFileHook != nil {
+		if err = s.syncFileHook(f); err != nil {
+			return ErrUnavailable
+		}
+	}
+	if err = f.Sync(); err != nil {
+		return ErrUnavailable
+	}
+	if _, err = unix.FcntlInt(f.Fd(), unix.F_FULLFSYNC, 0); err != nil {
+		return ErrUnavailable
+	}
+	return nil
+}
+
 func (s *Store) Save(c Credentials) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -276,28 +304,8 @@ func (s *Store) Save(c Credentials) error {
 	}
 	f := os.NewFile(uintptr(fd), name)
 	defer func() { f.Close(); unix.Unlinkat(int(s.dir.Fd()), name, 0) }()
-	if err = setEmptyACL(int(f.Fd())); err != nil {
-		return ErrUnavailable
-	}
-	if _, err = checked(int(f.Fd()), false); err != nil {
-		return ErrUnavailable
-	}
-	if err = s.identity(); err != nil {
+	if err = s.writePending(f, b); err != nil {
 		return err
-	}
-	if _, err = f.Write(b); err != nil {
-		return ErrUnavailable
-	}
-	if s.syncFileHook != nil {
-		if err = s.syncFileHook(f); err != nil {
-			return ErrUnavailable
-		}
-	}
-	if err = f.Sync(); err != nil {
-		return ErrUnavailable
-	}
-	if _, err = unix.FcntlInt(f.Fd(), unix.F_FULLFSYNC, 0); err != nil {
-		return ErrUnavailable
 	}
 	if err = s.identity(); err != nil {
 		return err

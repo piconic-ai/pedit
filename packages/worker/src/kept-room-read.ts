@@ -21,6 +21,19 @@ async function cancelRead(
   return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } })
 }
 
+async function finishRead(
+  transport: KeptTransport,
+  kind: string,
+  token: string,
+  roomId: string,
+  session: string,
+  cursor: string,
+): Promise<Response> {
+  if (kind === 'Host') await transport.finishHostRead(roomId, token, session, cursor)
+  else await transport.finishRead(token, session, cursor)
+  return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } })
+}
+
 export async function keptRoomRead(
   request: Request,
   state: DurableObjectState,
@@ -79,11 +92,8 @@ export async function keptRoomRead(
         { headers: { 'Cache-Control': 'no-store' } },
       )
     }
-    if (request.method === 'DELETE') {
-      if (kind === 'Host') await transport.finishHostRead(roomId, token, session, cursor)
-      else await transport.finishRead(token, session, cursor)
-      return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } })
-    }
+    if (request.method === 'DELETE')
+      return await finishRead(transport, kind, token, roomId, session, cursor)
     return new Response(null, { status: 405 })
   } catch {
     return new Response(null, { status: 403, headers: { 'Cache-Control': 'no-store' } })
