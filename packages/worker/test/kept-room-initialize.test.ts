@@ -292,5 +292,20 @@ it('retries with the persisted policy after configuration changes', async () => 
     )
     expect(changed.status).toBe(403)
     expect(state.storage.kv.get('keptPolicy')).toEqual(original)
+    const changedDuration = await initializeKeptRoom(
+      new Request(url, {
+        method: 'POST',
+        headers: { ...headers, 'X-Pedit-Keep-Seconds': '30' },
+        body: new Uint8Array([1]),
+      }),
+      state,
+      { ...env, KEEP_MAX_SECONDS: '300' },
+      id,
+      null,
+      () => false,
+    )
+    expect(changedDuration.status).toBe(403)
+    expect(changedDuration.headers.get('Cache-Control')).toBe('no-store')
+    expect(state.storage.kv.get('keptPolicy')).toEqual(original)
   })
 })

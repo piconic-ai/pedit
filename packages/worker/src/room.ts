@@ -456,23 +456,7 @@ export class Room extends DurableObject<Env> {
    */
   override async alarm(): Promise<void> {
     if (this.ctx.storage.kv.get(KEPT_ADMISSION_KEY) !== undefined) {
-      const policy = this.ctx.storage.kv.get<KeepPolicy>(KEPT_POLICY_KEY)
-      if (policy) {
-        const lifecycle = this.keptLifecycle(policy)
-        const current = this.keptHostHandshakes
-          ? await lifecycle.observe()
-          : await lifecycle.reconcileHost(() => this.ctx.getWebSockets(KEPT_HOST_TAG).length > 0)
-        if (current.host === 'closed')
-          for (const socket of this.ctx.getWebSockets(KEPT_HOST_TAG))
-            safeClose(socket, ROOM_CLOSED, 'room closed')
-        return
-      }
-      await KeptLifecycle.observeAlarm(
-        this.ctx,
-        this.env.ROOM,
-        ALARM_INTERVAL_MS / 1000,
-        () => maintenance(this.env as { MAINTENANCE?: string }) === 'closed',
-      )
+      await this.keptAlarm()
       return
     }
     if (this.expired()) {
@@ -503,6 +487,26 @@ export class Room extends DurableObject<Env> {
       return
     }
     await this.ctx.storage.setAlarm(this.nextAlarm())
+  }
+
+  private async keptAlarm(): Promise<void> {
+    const policy = this.ctx.storage.kv.get<KeepPolicy>(KEPT_POLICY_KEY)
+    if (policy) {
+      const lifecycle = this.keptLifecycle(policy)
+      const current = this.keptHostHandshakes
+        ? await lifecycle.observe()
+        : await lifecycle.reconcileHost(() => this.ctx.getWebSockets(KEPT_HOST_TAG).length > 0)
+      if (current.host === 'closed')
+        for (const socket of this.ctx.getWebSockets(KEPT_HOST_TAG))
+          safeClose(socket, ROOM_CLOSED, 'room closed')
+      return
+    }
+    await KeptLifecycle.observeAlarm(
+      this.ctx,
+      this.env.ROOM,
+      ALARM_INTERVAL_MS / 1000,
+      () => maintenance(this.env as { MAINTENANCE?: string }) === 'closed',
+    )
   }
 
   override async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {

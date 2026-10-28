@@ -14,6 +14,33 @@ import { KEPT_POLICY_KEY, KeptTransport } from './kept-transport.ts'
 export type InitializeSlots = { active: number }
 const MAX_INITIALIZATIONS = 4
 
+function initializationPolicy(
+  saved: KeepPolicy | undefined,
+  requestedBig: bigint,
+  roomMaxSeconds: number | null,
+  maxKeepSeconds: number | null,
+): KeepPolicy | Response {
+  const cap = saved ? saved.maxKeepSeconds : maxKeepSeconds
+  const effective =
+    cap === null ? requestedBig : requestedBig < BigInt(cap) ? requestedBig : BigInt(cap)
+  if (effective > BigInt(Number.MAX_SAFE_INTEGER)) return new Response(null, { status: 400 })
+  const requested = Number(effective)
+  if (!saved && effective > BigInt(Math.floor((Number.MAX_SAFE_INTEGER - Date.now()) / 1000)))
+    return new Response(null, { status: 400 })
+  if (saved && requested !== saved.requestedSeconds) throw new Error('kept duration changed')
+  return (
+    saved ?? { requestedSeconds: requested, roomMaxSeconds, maxKeepSeconds, alarmSeconds: 3600 }
+  )
+}
+
+function initializationFailure(error: unknown): Response {
+  if (error instanceof BodyReadTimeoutError) return new Response(null, { status: 408 })
+  if (error instanceof BodyTooLargeError) return new Response(null, { status: 413 })
+  if (error instanceof InvalidBodyLengthError || error instanceof BodyChunkLimitError)
+    return new Response(null, { status: 400 })
+  return new Response(null, { status: 403, headers: { 'Cache-Control': 'no-store' } })
+}
+
 export async function initializeKeptRoom(
   request: Request,
   state: DurableObjectState,
@@ -53,20 +80,8 @@ export async function initializeKeptRoom(
     const checkpoint = await readBoundedBody(request, MAX_FRAME_BYTES)
     if (!checkpoint.byteLength) return new Response(null, { status: 400 })
     const saved = state.storage.kv.get<KeepPolicy>(KEPT_POLICY_KEY)
-    const cap = saved ? saved.maxKeepSeconds : maxKeepSeconds
-    const effective =
-      cap === null ? requestedBig : requestedBig < BigInt(cap) ? requestedBig : BigInt(cap)
-    if (effective > BigInt(Number.MAX_SAFE_INTEGER)) return new Response(null, { status: 400 })
-    const requested = Number(effective)
-    if (!saved && effective > BigInt(Math.floor((Number.MAX_SAFE_INTEGER - Date.now()) / 1000)))
-      return new Response(null, { status: 400 })
-    if (saved && requested !== saved.requestedSeconds) throw new Error('kept duration changed')
-    const policy: KeepPolicy = saved ?? {
-      requestedSeconds: requested,
-      roomMaxSeconds,
-      maxKeepSeconds,
-      alarmSeconds: 3600,
-    }
+    const policy = initializationPolicy(saved, requestedBig, roomMaxSeconds, maxKeepSeconds)
+    if (policy instanceof Response) return policy
     const transport = new KeptTransport(
       state,
       env.ROOM,
@@ -86,11 +101,7 @@ export async function initializeKeptRoom(
       },
     })
   } catch (error) {
-    if (error instanceof BodyReadTimeoutError) return new Response(null, { status: 408 })
-    if (error instanceof BodyTooLargeError) return new Response(null, { status: 413 })
-    if (error instanceof InvalidBodyLengthError || error instanceof BodyChunkLimitError)
-      return new Response(null, { status: 400 })
-    return new Response(null, { status: 403, headers: { 'Cache-Control': 'no-store' } })
+    return initializationFailure(error)
   } finally {
     slots.active--
   }
