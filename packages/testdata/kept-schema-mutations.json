@@ -1,0 +1,212 @@
+[
+  {
+    "name": "empty text",
+    "kind": "text",
+    "hex": "0000",
+    "valid": true
+  },
+  {
+    "name": "plain text",
+    "kind": "text",
+    "hex": "01010100040107636f6e74656e74016100",
+    "valid": true
+  },
+  {
+    "name": "text trailing",
+    "kind": "text",
+    "hex": "01010100040107636f6e74656e7401610000",
+    "valid": false
+  },
+  {
+    "name": "unknown text root",
+    "kind": "text",
+    "hex": "01010100040107756e6b6e6f776e016100",
+    "valid": false
+  },
+  {
+    "name": "overlong count",
+    "kind": "text",
+    "hex": "8100010100040107636f6e74656e74016100",
+    "valid": false
+  },
+  {
+    "name": "invalid text utf8",
+    "kind": "text",
+    "hex": "01010100040107636f6e74656e7401ff00",
+    "valid": false
+  },
+  {
+    "name": "text gc unsupported",
+    "kind": "text",
+    "hex": "01010100000100",
+    "valid": false
+  },
+  {
+    "name": "signed one",
+    "kind": "comments",
+    "hex": "01010100280108636f6d6d656e7473016b017d0100",
+    "valid": true
+  },
+  {
+    "name": "overlong signed",
+    "kind": "comments",
+    "hex": "01010100280108636f6d6d656e7473016b017d810000",
+    "valid": false
+  },
+  {
+    "name": "negative zero",
+    "kind": "comments",
+    "hex": "01010100280108636f6d6d656e7473016b017d4000",
+    "valid": false
+  },
+  {
+    "name": "max safe",
+    "kind": "comments",
+    "hex": "01010100280108636f6d6d656e7473016b017dbfffffffffffff1f00",
+    "valid": true
+  },
+  {
+    "name": "unsafe",
+    "kind": "comments",
+    "hex": "01010100280108636f6d6d656e7473016b017d818080808080802000",
+    "valid": false
+  },
+  {
+    "name": "relative bytes",
+    "kind": "comments",
+    "hex": "01010100280108636f6d6d656e7473016b017402010200",
+    "valid": true
+  },
+  {
+    "name": "overlong length",
+    "kind": "comments",
+    "hex": "01010100280108636f6d6d656e7473016b017781007800",
+    "valid": false
+  },
+  {
+    "name": "unknown tag",
+    "kind": "comments",
+    "hex": "01010100280108636f6d6d656e7473016b017300",
+    "valid": false
+  },
+  {
+    "name": "comments unknown root",
+    "kind": "comments",
+    "hex": "010101002801086f746865725f5f5f016b0177017800",
+    "valid": false
+  },
+  {
+    "name": "comments invalid utf8",
+    "kind": "comments",
+    "hex": "01010100280108636f6d6d656e7473016b017701ff00",
+    "valid": false
+  },
+  {
+    "name": "comments trailing",
+    "kind": "comments",
+    "hex": "01010100280108636f6d6d656e7473016b017701780000",
+    "valid": false
+  },
+  {
+    "name": "comments gc",
+    "kind": "comments",
+    "hex": "01010100000100",
+    "valid": true
+  },
+  {
+    "name": "maximum client ID",
+    "kind": "text",
+    "hex": "0101ffffffffffffff0f00040107636f6e74656e74016100",
+    "valid": true
+  },
+  {
+    "name": "unsafe client ID",
+    "kind": "text",
+    "hex": "0101808080808080801000040107636f6e74656e74016100",
+    "valid": false
+  },
+  {
+    "name": "undefined",
+    "kind": "comments",
+    "hex": "01010100280108636f6d6d656e7473016b017f00",
+    "valid": false
+  },
+  {
+    "name": "bigint",
+    "kind": "comments",
+    "hex": "01010100280108636f6d6d656e7473016b017a000000000000000000",
+    "valid": false
+  },
+  {
+    "name": "proto object",
+    "kind": "comments",
+    "hex": "01010100280108636f6d6d656e7473016b017601095f5f70726f746f5f5f760101787d0100",
+    "valid": false
+  },
+  {
+    "name": "float64 finite",
+    "kind": "comments",
+    "hex": "01010100280108636f6d6d656e7473016b017b3ff800000000000000",
+    "valid": true
+  },
+  {
+    "name": "float32 finite",
+    "kind": "comments",
+    "hex": "01010100280108636f6d6d656e7473016b017c3fc0000000",
+    "valid": true
+  },
+  {
+    "name": "float64 infinity",
+    "kind": "comments",
+    "hex": "01010100280108636f6d6d656e7473016b017b7ff000000000000000",
+    "valid": false
+  },
+  {
+    "name": "float32 infinity",
+    "kind": "comments",
+    "hex": "01010100280108636f6d6d656e7473016b017c7f80000000",
+    "valid": false
+  },
+  {
+    "name": "float64 nan",
+    "kind": "comments",
+    "hex": "01010100280108636f6d6d656e7473016b017b7ff800000000000000",
+    "valid": false
+  },
+  {
+    "name": "float32 nan",
+    "kind": "comments",
+    "hex": "01010100280108636f6d6d656e7473016b017c7fc0000000",
+    "valid": false
+  },
+  {
+    "name": "float64 negative zero",
+    "kind": "comments",
+    "hex": "01010100280108636f6d6d656e7473016b017b800000000000000000",
+    "valid": false
+  },
+  {
+    "name": "float32 negative zero",
+    "kind": "comments",
+    "hex": "01010100280108636f6d6d656e7473016b017c8000000000",
+    "valid": false
+  },
+  {
+    "name": "GC clocks 1024",
+    "kind": "comments",
+    "hex": "0101010000800800",
+    "valid": true
+  },
+  {
+    "name": "GC clocks 1025",
+    "kind": "comments",
+    "hex": "0101010000810800",
+    "valid": false
+  },
+  {
+    "name": "GC clocks 65537",
+    "kind": "comments",
+    "hex": "010101000081800400",
+    "valid": false
+  }
+]

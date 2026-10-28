@@ -379,3 +379,33 @@ so the same plaintext can produce different ciphertext under the same hash ID.
 A future v6 uploader must retain its ciphertext for retry, or fetch the existing
 object, decrypt it, and check the expected plaintext hash before reusing it.
 The relay cannot establish plaintext equality from ciphertext alone.
+
+### Restricted text checkpoint payload
+
+The Go and browser checkpoint codecs accept one plain-text document and its
+separate comments document, with a matching two-entry manifest and a ledger.
+They reject additional files, canvas content, and payloads marked with present
+or unverified attachments. Encoders require the caller to attest that the
+attachment inventory is complete and empty. A text scan rejects known local
+asset references, but it cannot prove that all attachment formats or sources
+are absent; callers must establish that independently before recovery or ACK.
+
+Both codecs structurally validate complete Yjs V1 snapshots before applying
+them. Text accepts only the supported plain-text root and rejects standalone
+GC structures whose root cannot be established. Comments accept the supported
+map-only form and bounded values. Comment snapshots conservatively cap total
+Yjs clocks at 1024 and apply an encoded-size budget that includes per-clock
+and per-client overhead. They reject undefined, bigint, non-finite floats,
+negative zero, and `__proto__` keys in Any objects, whose meaning or JSON
+representation can differ between Go and JavaScript. Both codecs reject unknown
+roots, incomplete updates, trailing bytes, noncanonical integers, unsafe
+JavaScript integers, and malformed UTF-8. This is structural validation, not semantic validation
+of every comment or proof that the ledger and documents were captured
+atomically. Callers must authenticate the enclosing checkpoint and enforce
+comment semantics and resource limits before accepting it. The codec is not
+connected to a public route or an active recovery flow.
+
+The Go and browser tests share `kept-schema-mutations.json` and
+`kept-schema-generated-mutations.json`. Regenerate the latter from the repository
+root with `go run ./packages/testdata/cmd/kept-schema-mutations`; both test
+suites check the same results, alongside the Go and browser payload fixtures.

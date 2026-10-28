@@ -1,0 +1,3746 @@
+[
+  {
+    "name": "text original",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": true
+  },
+  {
+    "name": "text byte 0 xor 01",
+    "kind": "text",
+    "hex": "0001e90700040107636f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 0 xor 40",
+    "kind": "text",
+    "hex": "4101e90700040107636f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 0 xor 80",
+    "kind": "text",
+    "hex": "8101e90700040107636f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 0 xor ff",
+    "kind": "text",
+    "hex": "fe01e90700040107636f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text truncate 0",
+    "kind": "text",
+    "hex": "",
+    "valid": false
+  },
+  {
+    "name": "text byte 1 xor 01",
+    "kind": "text",
+    "hex": "0100e90700040107636f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 1 xor 40",
+    "kind": "text",
+    "hex": "0141e90700040107636f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 1 xor 80",
+    "kind": "text",
+    "hex": "0181e90700040107636f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 1 xor ff",
+    "kind": "text",
+    "hex": "01fee90700040107636f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text truncate 1",
+    "kind": "text",
+    "hex": "01",
+    "valid": false
+  },
+  {
+    "name": "text byte 2 xor 01",
+    "kind": "text",
+    "hex": "0101e80700040107636f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": true
+  },
+  {
+    "name": "text byte 2 xor 40",
+    "kind": "text",
+    "hex": "0101a90700040107636f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": true
+  },
+  {
+    "name": "text byte 2 xor 80",
+    "kind": "text",
+    "hex": "0101690700040107636f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 2 xor ff",
+    "kind": "text",
+    "hex": "0101160700040107636f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text truncate 2",
+    "kind": "text",
+    "hex": "0101",
+    "valid": false
+  },
+  {
+    "name": "text byte 3 xor 01",
+    "kind": "text",
+    "hex": "0101e90600040107636f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": true
+  },
+  {
+    "name": "text byte 3 xor 40",
+    "kind": "text",
+    "hex": "0101e94700040107636f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": true
+  },
+  {
+    "name": "text byte 3 xor 80",
+    "kind": "text",
+    "hex": "0101e98700040107636f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 3 xor ff",
+    "kind": "text",
+    "hex": "0101e9f800040107636f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text truncate 3",
+    "kind": "text",
+    "hex": "0101e9",
+    "valid": false
+  },
+  {
+    "name": "text byte 4 xor 01",
+    "kind": "text",
+    "hex": "0101e90701040107636f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 4 xor 40",
+    "kind": "text",
+    "hex": "0101e90740040107636f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 4 xor 80",
+    "kind": "text",
+    "hex": "0101e90780040107636f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 4 xor ff",
+    "kind": "text",
+    "hex": "0101e907ff040107636f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text truncate 4",
+    "kind": "text",
+    "hex": "0101e907",
+    "valid": false
+  },
+  {
+    "name": "text byte 5 xor 01",
+    "kind": "text",
+    "hex": "0101e90700050107636f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 5 xor 40",
+    "kind": "text",
+    "hex": "0101e90700440107636f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 5 xor 80",
+    "kind": "text",
+    "hex": "0101e90700840107636f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 5 xor ff",
+    "kind": "text",
+    "hex": "0101e90700fb0107636f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text truncate 5",
+    "kind": "text",
+    "hex": "0101e90700",
+    "valid": false
+  },
+  {
+    "name": "text byte 6 xor 01",
+    "kind": "text",
+    "hex": "0101e90700040007636f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 6 xor 40",
+    "kind": "text",
+    "hex": "0101e90700044107636f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 6 xor 80",
+    "kind": "text",
+    "hex": "0101e90700048107636f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 6 xor ff",
+    "kind": "text",
+    "hex": "0101e9070004fe07636f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text truncate 6",
+    "kind": "text",
+    "hex": "0101e9070004",
+    "valid": false
+  },
+  {
+    "name": "text byte 7 xor 01",
+    "kind": "text",
+    "hex": "0101e90700040106636f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 7 xor 40",
+    "kind": "text",
+    "hex": "0101e90700040147636f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 7 xor 80",
+    "kind": "text",
+    "hex": "0101e90700040187636f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 7 xor ff",
+    "kind": "text",
+    "hex": "0101e907000401f8636f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text truncate 7",
+    "kind": "text",
+    "hex": "0101e907000401",
+    "valid": false
+  },
+  {
+    "name": "text byte 8 xor 01",
+    "kind": "text",
+    "hex": "0101e90700040107626f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 8 xor 40",
+    "kind": "text",
+    "hex": "0101e90700040107236f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 8 xor 80",
+    "kind": "text",
+    "hex": "0101e90700040107e36f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 8 xor ff",
+    "kind": "text",
+    "hex": "0101e907000401079c6f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text truncate 8",
+    "kind": "text",
+    "hex": "0101e90700040107",
+    "valid": false
+  },
+  {
+    "name": "text byte 9 xor 01",
+    "kind": "text",
+    "hex": "0101e90700040107636e6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 9 xor 40",
+    "kind": "text",
+    "hex": "0101e90700040107632f6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 9 xor 80",
+    "kind": "text",
+    "hex": "0101e9070004010763ef6e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 9 xor ff",
+    "kind": "text",
+    "hex": "0101e9070004010763906e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text truncate 9",
+    "kind": "text",
+    "hex": "0101e9070004010763",
+    "valid": false
+  },
+  {
+    "name": "text byte 10 xor 01",
+    "kind": "text",
+    "hex": "0101e90700040107636f6f74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 10 xor 40",
+    "kind": "text",
+    "hex": "0101e90700040107636f2e74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 10 xor 80",
+    "kind": "text",
+    "hex": "0101e90700040107636fee74656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 10 xor ff",
+    "kind": "text",
+    "hex": "0101e90700040107636f9174656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text truncate 10",
+    "kind": "text",
+    "hex": "0101e90700040107636f",
+    "valid": false
+  },
+  {
+    "name": "text byte 11 xor 01",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e75656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 11 xor 40",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e34656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 11 xor 80",
+    "kind": "text",
+    "hex": "0101e90700040107636f6ef4656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 11 xor ff",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e8b656e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text truncate 11",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e",
+    "valid": false
+  },
+  {
+    "name": "text byte 12 xor 01",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74646e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 12 xor 40",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74256e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 12 xor 80",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74e56e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 12 xor ff",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e749a6e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text truncate 12",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74",
+    "valid": false
+  },
+  {
+    "name": "text byte 13 xor 01",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656f740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 13 xor 40",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74652e740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 13 xor 80",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e7465ee740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 13 xor ff",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e746591740b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text truncate 13",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e7465",
+    "valid": false
+  },
+  {
+    "name": "text byte 14 xor 01",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e750b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 14 xor 40",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e340b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 14 xor 80",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656ef40b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 14 xor ff",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e8b0b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text truncate 14",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e",
+    "valid": false
+  },
+  {
+    "name": "text byte 15 xor 01",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740a68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 15 xor 40",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e744b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 15 xor 80",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e748b68656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 15 xor ff",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e74f468656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text truncate 15",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e74",
+    "valid": false
+  },
+  {
+    "name": "text byte 16 xor 01",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b69656c6c6f20776f726c6400",
+    "valid": true
+  },
+  {
+    "name": "text byte 16 xor 40",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b28656c6c6f20776f726c6400",
+    "valid": true
+  },
+  {
+    "name": "text byte 16 xor 80",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740be8656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 16 xor ff",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b97656c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text truncate 16",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b",
+    "valid": false
+  },
+  {
+    "name": "text byte 17 xor 01",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68646c6c6f20776f726c6400",
+    "valid": true
+  },
+  {
+    "name": "text byte 17 xor 40",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68256c6c6f20776f726c6400",
+    "valid": true
+  },
+  {
+    "name": "text byte 17 xor 80",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68e56c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 17 xor ff",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b689a6c6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text truncate 17",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68",
+    "valid": false
+  },
+  {
+    "name": "text byte 18 xor 01",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656d6c6f20776f726c6400",
+    "valid": true
+  },
+  {
+    "name": "text byte 18 xor 40",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68652c6c6f20776f726c6400",
+    "valid": true
+  },
+  {
+    "name": "text byte 18 xor 80",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b6865ec6c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 18 xor ff",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b6865936c6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text truncate 18",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b6865",
+    "valid": false
+  },
+  {
+    "name": "text byte 19 xor 01",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6d6f20776f726c6400",
+    "valid": true
+  },
+  {
+    "name": "text byte 19 xor 40",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c2c6f20776f726c6400",
+    "valid": true
+  },
+  {
+    "name": "text byte 19 xor 80",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656cec6f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 19 xor ff",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c936f20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text truncate 19",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c",
+    "valid": false
+  },
+  {
+    "name": "text byte 20 xor 01",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6e20776f726c6400",
+    "valid": true
+  },
+  {
+    "name": "text byte 20 xor 40",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c2f20776f726c6400",
+    "valid": true
+  },
+  {
+    "name": "text byte 20 xor 80",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6cef20776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 20 xor ff",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c9020776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text truncate 20",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c",
+    "valid": false
+  },
+  {
+    "name": "text byte 21 xor 01",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f21776f726c6400",
+    "valid": true
+  },
+  {
+    "name": "text byte 21 xor 40",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f60776f726c6400",
+    "valid": true
+  },
+  {
+    "name": "text byte 21 xor 80",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6fa0776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 21 xor ff",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6fdf776f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text truncate 21",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f",
+    "valid": false
+  },
+  {
+    "name": "text byte 22 xor 01",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f20766f726c6400",
+    "valid": true
+  },
+  {
+    "name": "text byte 22 xor 40",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f20376f726c6400",
+    "valid": true
+  },
+  {
+    "name": "text byte 22 xor 80",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f20f76f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 22 xor ff",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f20886f726c6400",
+    "valid": false
+  },
+  {
+    "name": "text truncate 22",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f20",
+    "valid": false
+  },
+  {
+    "name": "text byte 23 xor 01",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f20776e726c6400",
+    "valid": true
+  },
+  {
+    "name": "text byte 23 xor 40",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f20772f726c6400",
+    "valid": true
+  },
+  {
+    "name": "text byte 23 xor 80",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f2077ef726c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 23 xor ff",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f207790726c6400",
+    "valid": false
+  },
+  {
+    "name": "text truncate 23",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f2077",
+    "valid": false
+  },
+  {
+    "name": "text byte 24 xor 01",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f20776f736c6400",
+    "valid": true
+  },
+  {
+    "name": "text byte 24 xor 40",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f20776f326c6400",
+    "valid": true
+  },
+  {
+    "name": "text byte 24 xor 80",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f20776ff26c6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 24 xor ff",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f20776f8d6c6400",
+    "valid": false
+  },
+  {
+    "name": "text truncate 24",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f20776f",
+    "valid": false
+  },
+  {
+    "name": "text byte 25 xor 01",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f20776f726d6400",
+    "valid": true
+  },
+  {
+    "name": "text byte 25 xor 40",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f20776f722c6400",
+    "valid": true
+  },
+  {
+    "name": "text byte 25 xor 80",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f20776f72ec6400",
+    "valid": false
+  },
+  {
+    "name": "text byte 25 xor ff",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f20776f72936400",
+    "valid": false
+  },
+  {
+    "name": "text truncate 25",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f20776f72",
+    "valid": false
+  },
+  {
+    "name": "text byte 26 xor 01",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f20776f726c6500",
+    "valid": true
+  },
+  {
+    "name": "text byte 26 xor 40",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f20776f726c2400",
+    "valid": true
+  },
+  {
+    "name": "text byte 26 xor 80",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f20776f726ce400",
+    "valid": false
+  },
+  {
+    "name": "text byte 26 xor ff",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f20776f726c9b00",
+    "valid": false
+  },
+  {
+    "name": "text truncate 26",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f20776f726c",
+    "valid": false
+  },
+  {
+    "name": "text byte 27 xor 01",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f20776f726c6401",
+    "valid": false
+  },
+  {
+    "name": "text byte 27 xor 40",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f20776f726c6440",
+    "valid": false
+  },
+  {
+    "name": "text byte 27 xor 80",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f20776f726c6480",
+    "valid": false
+  },
+  {
+    "name": "text byte 27 xor ff",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f20776f726c64ff",
+    "valid": false
+  },
+  {
+    "name": "text truncate 27",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f20776f726c64",
+    "valid": false
+  },
+  {
+    "name": "text trailing zero",
+    "kind": "text",
+    "hex": "0101e90700040107636f6e74656e740b68656c6c6f20776f726c640000",
+    "valid": false
+  },
+  {
+    "name": "comments original",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 0 xor 01",
+    "kind": "comments",
+    "hex": "0003ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 0 xor 40",
+    "kind": "comments",
+    "hex": "4103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 0 xor 80",
+    "kind": "comments",
+    "hex": "8103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 0 xor ff",
+    "kind": "comments",
+    "hex": "fe03ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 0",
+    "kind": "comments",
+    "hex": "",
+    "valid": false
+  },
+  {
+    "name": "comments byte 1 xor 01",
+    "kind": "comments",
+    "hex": "0102ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 1 xor 40",
+    "kind": "comments",
+    "hex": "0143ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 1 xor 80",
+    "kind": "comments",
+    "hex": "0183ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 1 xor ff",
+    "kind": "comments",
+    "hex": "01fcea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 1",
+    "kind": "comments",
+    "hex": "01",
+    "valid": false
+  },
+  {
+    "name": "comments byte 2 xor 01",
+    "kind": "comments",
+    "hex": "0103eb0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 2 xor 40",
+    "kind": "comments",
+    "hex": "0103aa0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 2 xor 80",
+    "kind": "comments",
+    "hex": "01036a0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 2 xor ff",
+    "kind": "comments",
+    "hex": "0103150700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 2",
+    "kind": "comments",
+    "hex": "0103",
+    "valid": false
+  },
+  {
+    "name": "comments byte 3 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0600270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 3 xor 40",
+    "kind": "comments",
+    "hex": "0103ea4700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 3 xor 80",
+    "kind": "comments",
+    "hex": "0103ea8700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 3 xor ff",
+    "kind": "comments",
+    "hex": "0103eaf800270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 3",
+    "kind": "comments",
+    "hex": "0103ea",
+    "valid": false
+  },
+  {
+    "name": "comments byte 4 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0701270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 4 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0740270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 4 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0780270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 4 xor ff",
+    "kind": "comments",
+    "hex": "0103ea07ff270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 4",
+    "kind": "comments",
+    "hex": "0103ea07",
+    "valid": false
+  },
+  {
+    "name": "comments byte 5 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700260108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 5 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700670108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 5 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700a70108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 5 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700d80108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 5",
+    "kind": "comments",
+    "hex": "0103ea0700",
+    "valid": false
+  },
+  {
+    "name": "comments byte 6 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270008636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 6 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700274108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 6 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700278108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 6 xor ff",
+    "kind": "comments",
+    "hex": "0103ea070027fe08636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 6",
+    "kind": "comments",
+    "hex": "0103ea070027",
+    "valid": false
+  },
+  {
+    "name": "comments byte 7 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270109636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 7 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270148636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 7 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270188636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 7 xor ff",
+    "kind": "comments",
+    "hex": "0103ea07002701f7636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 7",
+    "kind": "comments",
+    "hex": "0103ea07002701",
+    "valid": false
+  },
+  {
+    "name": "comments byte 8 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108626f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 8 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108236f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 8 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108e36f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 8 xor ff",
+    "kind": "comments",
+    "hex": "0103ea07002701089c6f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 8",
+    "kind": "comments",
+    "hex": "0103ea0700270108",
+    "valid": false
+  },
+  {
+    "name": "comments byte 9 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636e6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 9 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108632f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 9 xor 80",
+    "kind": "comments",
+    "hex": "0103ea070027010863ef6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 9 xor ff",
+    "kind": "comments",
+    "hex": "0103ea070027010863906d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 9",
+    "kind": "comments",
+    "hex": "0103ea070027010863",
+    "valid": false
+  },
+  {
+    "name": "comments byte 10 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6c6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 10 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f2d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 10 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636fed6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 10 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f926d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 10",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f",
+    "valid": false
+  },
+  {
+    "name": "comments byte 11 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6c656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 11 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d2d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 11 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6ded656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 11 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d92656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 11",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d",
+    "valid": false
+  },
+  {
+    "name": "comments byte 12 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d646e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 12 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d256e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 12 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6de56e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 12 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d9a6e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 12",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d",
+    "valid": false
+  },
+  {
+    "name": "comments byte 13 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656f7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 13 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d652e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 13 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d65ee7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 13 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d65917473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 13",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d65",
+    "valid": false
+  },
+  {
+    "name": "comments byte 14 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7573026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 14 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e3473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 14 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656ef473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 14 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e8b73026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 14",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e",
+    "valid": false
+  },
+  {
+    "name": "comments byte 15 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7472026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 15 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7433026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 15 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e74f3026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 15 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e748c026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 15",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e74",
+    "valid": false
+  },
+  {
+    "name": "comments byte 16 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473036331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 16 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473426331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 16 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473826331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 16 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473fd6331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 16",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473",
+    "valid": false
+  },
+  {
+    "name": "comments byte 17 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026231012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 17 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473022331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 17 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e747302e331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 17 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473029c31012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 17",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e747302",
+    "valid": false
+  },
+  {
+    "name": "comments byte 18 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026330012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 18 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026371012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 18 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e74730263b1012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 18 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e74730263ce012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 18",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e74730263",
+    "valid": false
+  },
+  {
+    "name": "comments byte 19 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331002800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 19 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331412800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 19 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331812800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 19 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331fe2800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 19",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331",
+    "valid": false
+  },
+  {
+    "name": "comments byte 20 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012900ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 20 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331016800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 20 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e747302633101a800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 20 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e747302633101d700ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 20",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e747302633101",
+    "valid": false
+  },
+  {
+    "name": "comments byte 21 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012801ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 21 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012840ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 21 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012880ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 21 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e74730263310128ffea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 21",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e74730263310128",
+    "valid": false
+  },
+  {
+    "name": "comments byte 22 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800eb070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 22 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800aa070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 22 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e74730263310128006a070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 22 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e747302633101280015070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 22",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800",
+    "valid": false
+  },
+  {
+    "name": "comments byte 23 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea060006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 23 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea470006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 23 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea870006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 23 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800eaf80006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 23",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea",
+    "valid": false
+  },
+  {
+    "name": "comments byte 24 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070106616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 24 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea074006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 24 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea078006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 24 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea07ff06616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 24",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea07",
+    "valid": false
+  },
+  {
+    "name": "comments byte 25 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070007616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 25 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070046616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 25 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070086616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 25 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea0700f9616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 25",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea0700",
+    "valid": false
+  },
+  {
+    "name": "comments byte 26 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006606e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 26 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006216e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 26 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006e16e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 26 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea0700069e6e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 26",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006",
+    "valid": false
+  },
+  {
+    "name": "comments byte 27 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616f63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 27 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006612e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 27 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea07000661ee63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 27 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006619163686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 27",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea07000661",
+    "valid": false
+  },
+  {
+    "name": "comments byte 28 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e62686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 28 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e23686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 28 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616ee3686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 28 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e9c686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 28",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e",
+    "valid": false
+  },
+  {
+    "name": "comments byte 29 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63696f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 29 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63286f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 29 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63e86f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 29 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63976f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 29",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63",
+    "valid": false
+  },
+  {
+    "name": "comments byte 30 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686e7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 30 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63682f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 30 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e6368ef7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 30 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e6368907201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 30",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e6368",
+    "valid": false
+  },
+  {
+    "name": "comments byte 31 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7301760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 31 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f3201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 31 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686ff201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 31 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f8d01760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 31",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f",
+    "valid": false
+  },
+  {
+    "name": "comments byte 32 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7200760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 32 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7241760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 32 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7281760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 32 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f72fe760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 32",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f72",
+    "valid": false
+  },
+  {
+    "name": "comments byte 33 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201770304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 33 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201360304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 33 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201f60304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 33 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201890304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 33",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201",
+    "valid": false
+  },
+  {
+    "name": "comments byte 34 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760204747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 34 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201764304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 34 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201768304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 34 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f720176fc04747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 34",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f720176",
+    "valid": false
+  },
+  {
+    "name": "comments byte 35 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760305747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 35 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760344747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 35 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760384747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 35 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f72017603fb747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 35",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f72017603",
+    "valid": false
+  },
+  {
+    "name": "comments byte 36 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304757970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 36 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304347970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 36 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304f47970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 36 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f72017603048b7970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 36",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304",
+    "valid": false
+  },
+  {
+    "name": "comments byte 37 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747870657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 37 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304743970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 37 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f720176030474f970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 37 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304748670657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 37",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f720176030474",
+    "valid": false
+  },
+  {
+    "name": "comments byte 38 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747971657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 38 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747930657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 38 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f72017603047479f0657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 38 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f720176030474798f657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 38",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f72017603047479",
+    "valid": false
+  },
+  {
+    "name": "comments byte 39 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970647704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 39 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970257704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 39 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970e57704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 39 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f72017603047479709a7704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 39",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970",
+    "valid": false
+  },
+  {
+    "name": "comments byte 40 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657604746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 40 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970653704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 40 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f720176030474797065f704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 40 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970658804746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f720176030474797065",
+    "valid": false
+  },
+  {
+    "name": "comments byte 41 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657705746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 41 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657744746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 41 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657784746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 41 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f72017603047479706577fb746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 41",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f72017603047479706577",
+    "valid": false
+  },
+  {
+    "name": "comments byte 42 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704756578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 42 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704346578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 42 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704f46578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 42 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f72017603047479706577048b6578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 42",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704",
+    "valid": false
+  },
+  {
+    "name": "comments byte 43 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746478740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 43 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704742578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 43 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f720176030474797065770474e578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 43 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704749a78740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 43",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f720176030474797065770474",
+    "valid": false
+  },
+  {
+    "name": "comments byte 44 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746579740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 44 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746538740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 44 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f72017603047479706577047465f8740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 44 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746587740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 44",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f72017603047479706577047465",
+    "valid": false
+  },
+  {
+    "name": "comments byte 45 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578750573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 45 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578340573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 45 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578f40573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 45 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f72017603047479706577047465788b0573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 45",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578",
+    "valid": false
+  },
+  {
+    "name": "comments byte 46 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740473746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 46 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578744573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 46 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578748573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 46 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f720176030474797065770474657874fa73746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 46",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f720176030474797065770474657874",
+    "valid": false
+  },
+  {
+    "name": "comments byte 47 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740572746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 47 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740533746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 47 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f72017603047479706577047465787405f3746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 47 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f720176030474797065770474657874058c746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 47",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f72017603047479706577047465787405",
+    "valid": false
+  },
+  {
+    "name": "comments byte 48 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573756172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 48 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573346172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 48 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573f46172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 48 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f72017603047479706577047465787405738b6172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 48",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573",
+    "valid": false
+  },
+  {
+    "name": "comments byte 49 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746072747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 49 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573742172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 49 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f720176030474797065770474657874057374e172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 49 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573749e72747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 49",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f720176030474797065770474657874057374",
+    "valid": false
+  },
+  {
+    "name": "comments byte 50 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746173747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 50 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746132747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 50 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f72017603047479706577047465787405737461f2747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 50 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f720176030474797065770474657874057374618d747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 50",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f72017603047479706577047465787405737461",
+    "valid": false
+  },
+  {
+    "name": "comments byte 51 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172757708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 51 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172347708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 51 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172f47708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 51 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f72017603047479706577047465787405737461728b7708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 51",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172",
+    "valid": false
+  },
+  {
+    "name": "comments byte 52 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747608414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 52 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172743708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 52 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f720176030474797065770474657874057374617274f708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 52 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172748808414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 52",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f720176030474797065770474657874057374617274",
+    "valid": false
+  },
+  {
+    "name": "comments byte 53 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747709414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 53 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747748414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 53 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747788414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 53 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f72017603047479706577047465787405737461727477f7414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 53",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f72017603047479706577047465787405737461727477",
+    "valid": false
+  },
+  {
+    "name": "comments byte 54 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708404f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 54 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708014f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 54 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708c14f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 54 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708be4f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 54",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708",
+    "valid": false
+  },
+  {
+    "name": "comments byte 55 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414e6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 55 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708410f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 55 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f720176030474797065770474657874057374617274770841cf6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 55 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f720176030474797065770474657874057374617274770841b06b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 55",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f720176030474797065770474657874057374617274770841",
+    "valid": false
+  },
+  {
+    "name": "comments byte 56 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6a484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 56 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f2b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 56 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414feb484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 56 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f94484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 56",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f",
+    "valid": false
+  },
+  {
+    "name": "comments byte 57 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b494141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 57 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b084141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 57 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6bc84141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 57 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6bb74141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 57",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b",
+    "valid": false
+  },
+  {
+    "name": "comments byte 58 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484041413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 58 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b480141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 58 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b48c141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 58 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b48be41413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 58",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b48",
+    "valid": false
+  },
+  {
+    "name": "comments byte 59 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484140413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 59 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484101413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 59 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b4841c1413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 59 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b4841be413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 59",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b4841",
+    "valid": false
+  },
+  {
+    "name": "comments byte 60 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141403d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 60 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141013d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 60 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141c13d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 60 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141be3d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 60",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141",
+    "valid": false
+  },
+  {
+    "name": "comments byte 61 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413c03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 61 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141417d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 61 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b48414141bd03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 61 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b48414141c203656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 61",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b48414141",
+    "valid": false
+  },
+  {
+    "name": "comments byte 62 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d02656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 62 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d43656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 62 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d83656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 62 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413dfc656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 62",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d",
+    "valid": false
+  },
+  {
+    "name": "comments byte 63 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03646e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 63 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03256e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 63 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03e56e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 63 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d039a6e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 63",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03",
+    "valid": false
+  },
+  {
+    "name": "comments byte 64 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656f647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 64 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03652e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 64 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d0365ee647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 64 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d036591647708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 64",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d0365",
+    "valid": false
+  },
+  {
+    "name": "comments byte 65 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e657708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 65 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e247708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 65 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656ee47708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 65 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e9b7708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 65",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e",
+    "valid": false
+  },
+  {
+    "name": "comments byte 66 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647608414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 66 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e643708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 66 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e64f708414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 66 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e648808414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 66",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e64",
+    "valid": false
+  },
+  {
+    "name": "comments byte 67 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647709414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 67 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647748414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 67 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647788414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 67 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e6477f7414f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 67",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e6477",
+    "valid": false
+  },
+  {
+    "name": "comments byte 68 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708404f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 68 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708014f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 68 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708c14f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 68 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708be4f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 68",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708",
+    "valid": false
+  },
+  {
+    "name": "comments byte 69 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414e6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 69 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708410f6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 69 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e64770841cf6b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 69 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e64770841b06b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 69",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e64770841",
+    "valid": false
+  },
+  {
+    "name": "comments byte 70 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6a484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 70 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f2b484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 70 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414feb484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 70 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f94484245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 70",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f",
+    "valid": false
+  },
+  {
+    "name": "comments byte 71 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b494245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 71 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b084245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 71 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6bc84245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 71 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6bb74245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 71",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b",
+    "valid": false
+  },
+  {
+    "name": "comments byte 72 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484345453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 72 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b480245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 72 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b48c245453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 72 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b48bd45453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 72",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b48",
+    "valid": false
+  },
+  {
+    "name": "comments byte 73 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484244453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 73 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484205453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 73 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b4842c5453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 73 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b4842ba453d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 73",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b4842",
+    "valid": false
+  },
+  {
+    "name": "comments byte 74 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245443d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 74 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245053d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 74 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245c53d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 74 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245ba3d2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 74",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245",
+    "valid": false
+  },
+  {
+    "name": "comments byte 75 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453c2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 75 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245457d2800ea07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 75 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b48424545bd2800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 75 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b48424545c22800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 75",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b48424545",
+    "valid": false
+  },
+  {
+    "name": "comments byte 76 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2900ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 76 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d6800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 76 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453da800ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 76 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453dd700ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 76",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d",
+    "valid": false
+  },
+  {
+    "name": "comments byte 77 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2801ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 77 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2840ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 77 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2880ea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 77 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d28ffea07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 77",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d28",
+    "valid": false
+  },
+  {
+    "name": "comments byte 78 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800eb07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 78 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800aa07000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 78 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d28006a07000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 78 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d28001507000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 78",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800",
+    "valid": false
+  },
+  {
+    "name": "comments byte 79 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea06000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 79 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea47000571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 79 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea87000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 79 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800eaf8000571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 79",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea",
+    "valid": false
+  },
+  {
+    "name": "comments byte 80 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07010571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 80 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07400571756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 80 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07800571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 80 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07ff0571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07",
+    "valid": false
+  },
+  {
+    "name": "comments byte 81 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000471756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 81 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07004571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 81 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07008571756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 81 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea0700fa71756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 81",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea0700",
+    "valid": false
+  },
+  {
+    "name": "comments byte 82 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000570756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 82 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000531756f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 82 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea070005f1756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 82 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea0700058e756f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 82",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea070005",
+    "valid": false
+  },
+  {
+    "name": "comments byte 83 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571746f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 83 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571356f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 83 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571f56f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 83 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea070005718a6f746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 83",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571",
+    "valid": false
+  },
+  {
+    "name": "comments byte 84 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756e746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 84 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571752f746501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 84 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea0700057175ef746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 84 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea070005717590746501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 84",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea0700057175",
+    "valid": false
+  },
+  {
+    "name": "comments byte 85 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f756501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 85 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f346501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 85 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756ff46501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 85 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f8b6501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 85",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f",
+    "valid": false
+  },
+  {
+    "name": "comments byte 86 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746401770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 86 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f742501770568656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 86 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f74e501770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 86 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f749a01770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 86",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f74",
+    "valid": false
+  },
+  {
+    "name": "comments byte 87 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746500770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 87 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746541770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 87 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746581770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 87 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f7465fe770568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 87",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f7465",
+    "valid": false
+  },
+  {
+    "name": "comments byte 88 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501760568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 88 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501370568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 88 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501f70568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 88 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501880568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 88",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501",
+    "valid": false
+  },
+  {
+    "name": "comments byte 89 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770468656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 89 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501774568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 89 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501778568656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 89 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f74650177fa68656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 89",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f74650177",
+    "valid": false
+  },
+  {
+    "name": "comments byte 90 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770569656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 90 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770528656c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 90 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f7465017705e8656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 90 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770597656c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 90",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f7465017705",
+    "valid": false
+  },
+  {
+    "name": "comments byte 91 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568646c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 91 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568256c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 91 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568e56c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 91 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f7465017705689a6c6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 91",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568",
+    "valid": false
+  },
+  {
+    "name": "comments byte 92 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656d6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 92 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568652c6c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 92 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f74650177056865ec6c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 92 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f74650177056865936c6f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 92",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f74650177056865",
+    "valid": false
+  },
+  {
+    "name": "comments byte 93 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6d6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 93 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c2c6f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 93 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656cec6f00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 93 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c936f00",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 93",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c",
+    "valid": false
+  },
+  {
+    "name": "comments byte 94 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6e00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 94 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c2f00",
+    "valid": true
+  },
+  {
+    "name": "comments byte 94 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6cef00",
+    "valid": false
+  },
+  {
+    "name": "comments byte 94 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c9000",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 94",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c",
+    "valid": false
+  },
+  {
+    "name": "comments byte 95 xor 01",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f01",
+    "valid": false
+  },
+  {
+    "name": "comments byte 95 xor 40",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f40",
+    "valid": false
+  },
+  {
+    "name": "comments byte 95 xor 80",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f80",
+    "valid": false
+  },
+  {
+    "name": "comments byte 95 xor ff",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6fff",
+    "valid": false
+  },
+  {
+    "name": "comments truncate 95",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f",
+    "valid": false
+  },
+  {
+    "name": "comments trailing zero",
+    "kind": "comments",
+    "hex": "0103ea0700270108636f6d6d656e7473026331012800ea070006616e63686f7201760304747970657704746578740573746172747708414f6b484141413d03656e647708414f6b484245453d2800ea07000571756f746501770568656c6c6f0000",
+    "valid": false
+  }
+]

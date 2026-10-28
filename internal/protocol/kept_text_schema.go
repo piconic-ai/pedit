@@ -1,0 +1,49 @@
+package protocol
+
+// CheckKeptTextState accepts only the plain-text subset of a complete Yjs V1 snapshot.
+func CheckKeptTextState(state []byte) error { return checkKeptSchema(state, keptTextItem, false) }
+func keptTextItem(r *keptSchemaReader) error {
+	info, err := r.d.ReadUint8()
+	if err != nil || info&0x20 != 0 || (info&31 != 1 && info&31 != 4) {
+		return errKeptSchema
+	}
+	if err := keptTextOrigins(r, info); err != nil {
+		return err
+	}
+	if info&31 == 4 {
+		s, err := r.str()
+		if err != nil || s == "" {
+			return errKeptSchema
+		}
+		return nil
+	}
+	n, err := r.uint()
+	if err != nil || n == 0 {
+		return errKeptSchema
+	}
+	return nil
+}
+
+func keptTextOrigins(r *keptSchemaReader, info byte) error {
+	if info&0x80 != 0 {
+		if err := r.id(); err != nil {
+			return err
+		}
+	}
+	if info&0x40 != 0 {
+		if err := r.id(); err != nil {
+			return err
+		}
+	}
+	if info&0xc0 == 0 {
+		named, err := r.uint()
+		if err != nil || named != 1 {
+			return errKeptSchema
+		}
+		root, err := r.str()
+		if err != nil || root != "content" {
+			return errKeptSchema
+		}
+	}
+	return nil
+}
