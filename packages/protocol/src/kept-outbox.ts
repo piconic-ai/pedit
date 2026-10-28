@@ -100,7 +100,28 @@ export class KeptOutbox {
 
   static async open(name = 'pedit-v6-outbox'): Promise<KeptOutbox> {
     const opening = indexedDB.open(name, 2)
+    let blocked = false
+    const database = new Promise<IDBDatabase>((resolve, reject) => {
+      opening.onblocked = () => {
+        blocked = true
+        reject(new Error('outbox database upgrade blocked by another connection'))
+      }
+      opening.onerror = () => reject(opening.error)
+      opening.onsuccess = () => {
+        const db = opening.result
+        if (blocked) {
+          db.close()
+          return
+        }
+        db.onversionchange = () => db.close()
+        resolve(db)
+      }
+    })
     opening.onupgradeneeded = (event) => {
+      if (blocked) {
+        opening.transaction!.abort()
+        return
+      }
       if (event.oldVersion < 1) {
         opening.result.createObjectStore('senders', { keyPath: 'id' })
         opening.result.createObjectStore('operations', { keyPath: ['sender', 'sequence'] })
@@ -109,7 +130,7 @@ export class KeptOutbox {
         opening.transaction!.objectStore('operations').createIndex('sender', 'sender')
       }
     }
-    return new KeptOutbox(await request(opening))
+    return new KeptOutbox(await database)
   }
   close(): void {
     this.db.close()

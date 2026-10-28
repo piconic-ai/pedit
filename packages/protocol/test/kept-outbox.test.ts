@@ -36,6 +36,43 @@ async function mutate(
 }
 
 describe('kept outbox', () => {
+  it('closes an existing outbox connection when another tab upgrades', async () => {
+    const name = dbName()
+    const outbox = await KeptOutbox.open(name)
+    const upgrade = indexedDB.open(name, 3)
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      upgrade.onsuccess = () => resolve(upgrade.result)
+      upgrade.onerror = () => reject(upgrade.error)
+      upgrade.onblocked = () => reject(new Error('upgrade blocked'))
+    })
+    await expect(outbox.createSender(edit, room)).rejects.toThrow()
+    db.close()
+  })
+
+  it('rejects a blocked upgrade and aborts it if the old connection later closes', async () => {
+    const name = dbName()
+    const old = indexedDB.open(name, 1)
+    old.onupgradeneeded = () => {
+      old.result.createObjectStore('senders', { keyPath: 'id' })
+      old.result.createObjectStore('operations', { keyPath: ['sender', 'sequence'] })
+    }
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      old.onsuccess = () => resolve(old.result)
+      old.onerror = () => reject(old.error)
+    })
+    await expect(KeptOutbox.open(name)).rejects.toThrow('upgrade blocked')
+    db.close()
+    const inspection = indexedDB.open(name)
+    const inspected = await new Promise<IDBDatabase>((resolve, reject) => {
+      inspection.onsuccess = () => resolve(inspection.result)
+      inspection.onerror = () => reject(inspection.error)
+    })
+    expect(inspected.version).toBe(1)
+    inspected.close()
+    const reopened = await KeptOutbox.open(name)
+    reopened.close()
+  })
+
   it('persists unique sequence, stable ciphertext and an authenticated ACK across database reopen', async () => {
     const name = dbName()
     const a = await KeptOutbox.open(name)

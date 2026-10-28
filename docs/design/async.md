@@ -139,6 +139,10 @@ accepts at most 64 senders per browser database and 1,024 operations of at most
 64 KiB per sender. It fails instead of deleting accepted history at the limit. The strict IndexedDB durability option is a browser
 hint, not a guarantee against device failure, site-data deletion, eviction,
 or rollback of browser storage. Storage loss must not be reported as saved.
+Outbox connections close on version changes. An upgrade blocked by an older
+connection fails the open call; if that connection later closes, the abandoned
+upgrade is aborted. IndexedDB does not cancel the pending open request, so
+other open requests can still wait behind it until the blocker closes.
 
 ## Ledger snapshot encoding
 
