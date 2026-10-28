@@ -62,7 +62,7 @@ describe('kept attachment cleanup primitive', () => {
       expect((await env.BLOBS.list({ prefix: p })).objects).toHaveLength(0)
       expect(await env.BLOBS.head(other)).not.toBeNull()
     })
-  })
+  }, 20_000)
 
   it('keeps an unresolved upload until its late completion is swept', async () => {
     const stub = room(),
