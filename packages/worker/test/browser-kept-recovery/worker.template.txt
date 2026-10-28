@@ -1,0 +1,62 @@
+import { KeptTransport } from '__WORKER_SRC__/kept-transport.ts'
+import { Room } from '__WORKER_SRC__/room.ts'
+import js from './bundle.txt'
+
+type Setup = {
+  roomId: string
+  host: string
+  editor: string
+  commenter: string
+  reader: string
+  epoch: string
+  checkpoint: string
+}
+export class TestRoom extends Room {
+  async setup(x: Setup) {
+    await new KeptTransport(
+      this.ctx,
+      this.env.ROOM,
+      { bytes: 10000, frames: 10 },
+      { requestedSeconds: 600, roomMaxSeconds: null, maxKeepSeconds: null, alarmSeconds: 60 },
+    ).initialize(
+      x.roomId,
+      x.host,
+      { editor: x.editor, commenter: x.commenter, reader: x.reader },
+      x.epoch,
+      Uint8Array.from(atob(x.checkpoint), (c) => c.charCodeAt(0)).buffer,
+    )
+  }
+  async count() {
+    return this.ctx.storage.sql.exec('SELECT * FROM durable_log').toArray().length
+  }
+}
+type TestEnv = Omit<Env, 'ROOM'> & { ROOM: DurableObjectNamespace<TestRoom> }
+let wires: string[] = []
+export default {
+  async fetch(req: Request, env: TestEnv) {
+    const u = new URL(req.url)
+    if (u.pathname === '/')
+      return new Response(
+        '<button id="run">Run phase</button><p id="status">Ready</p><script src="/bundle.js"></script>',
+        { headers: { 'content-type': 'text/html' } },
+      )
+    if (u.pathname === '/bundle.js')
+      return new Response(js, { headers: { 'content-type': 'text/javascript' } })
+    if (u.pathname === '/test/setup') {
+      const x = await req.json<Setup>()
+      await env.ROOM.get(env.ROOM.idFromName(x.roomId)).setup(x)
+      return new Response(null, { status: 204 })
+    }
+    if (u.pathname === '/test/count') {
+      if (wires.length !== 2 || wires[0] !== wires[1]) return new Response('ciphertext mismatch')
+      return new Response(
+        String(await env.ROOM.get(env.ROOM.idFromName(u.searchParams.get('id')!)).count()),
+      )
+    }
+    const m = /^\/internal\/kept\/([A-Za-z0-9_-]{22})\/(?:append|read)$/.exec(u.pathname)
+    if (!m?.[1]) return new Response(null, { status: 404 })
+    if (u.pathname.endsWith('/append'))
+      wires.push(btoa(String.fromCharCode(...new Uint8Array(await req.clone().arrayBuffer()))))
+    return env.ROOM.get(env.ROOM.idFromName(m[1])).fetch(req)
+  },
+}
