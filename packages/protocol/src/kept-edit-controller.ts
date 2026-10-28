@@ -43,9 +43,9 @@ export class KeptEditController {
     const doc = new Y.Doc()
     try {
       Y.applyUpdate(doc, options.baseline)
-      const remote = await options.outbox.remoteUpdates(options.link, options.context.roomId, options.sender)
-      for (const update of remote) Y.applyUpdate(doc, update)
-      const rows = await options.outbox.operations(options.link, options.context.roomId, options.sender)
+      const snapshot = await options.outbox.recoveryState(options.link, options.context.roomId, options.sender)
+      for (const update of snapshot.remote) Y.applyUpdate(doc, update)
+      const rows = snapshot.operations
       for (const row of rows) {
         const msg = decodeMessage(row.message)
         if (msg.type !== MessageType.Sync) throw new Error('unsupported outbox operation')

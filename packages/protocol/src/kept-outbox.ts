@@ -21,6 +21,7 @@ type Sender = {
   certificate: Uint8Array
   sequence: number
   counter: Uint8Array
+  remoteCount?: number
 }
 type Operation = {
   sender: string
@@ -88,6 +89,8 @@ const epochId = (epoch: Uint8Array) =>
 const same = (a: Uint8Array, b: Uint8Array) =>
   a.length === b.length && a.every((v, i) => v === b[i])
 const counterBody = (id: string, sequence: number) => utf8.encode(`${id}:${sequence}`)
+const senderCounterBody = (id: string, sequence: number, remoteCount: number | undefined) =>
+  remoteCount === undefined ? counterBody(id, sequence) : utf8.encode(`pedit/v6/outbox-counter\0${id}\0${sequence}\0${remoteCount}`)
 const operationBody = (id: string, sequence: number, message: Uint8Array) =>
   concat(counterBody(id, sequence), Uint8Array.of(0), message)
 const senderPrefix = (id: string) => utf8.encode(`pedit/v6/outbox-sender\0${id}\0`)
@@ -201,7 +204,8 @@ export class KeptOutbox {
     if (
       !Number.isSafeInteger(row.sequence) ||
       row.sequence < 0 ||
-      !same(counter, counterBody(sender, row.sequence))
+      (row.remoteCount !== undefined && (!Number.isSafeInteger(row.remoteCount) || row.remoteCount < 0 || row.remoteCount > 1024)) ||
+      !same(counter, senderCounterBody(sender, row.sequence, row.remoteCount))
     )
       throw new Error('invalid outbox counter')
     return row
@@ -231,7 +235,7 @@ export class KeptOutbox {
     } finally {
       seed.fill(0)
     }
-    const counter = await encrypt(auth.wrap, counterBody(id, 0))
+    const counter = await encrypt(auth.wrap, senderCounterBody(id, 0, 0))
     const tx = writable(this.db)
     const done = transactionDone(tx)
     const store = tx.objectStore('senders')
@@ -248,6 +252,7 @@ export class KeptOutbox {
         seed: wrapped,
         certificate,
         sequence: 0,
+        remoteCount: 0,
         counter,
       } satisfies Sender)
     }
@@ -294,32 +299,68 @@ export class KeptOutbox {
     )
   }
 
-  // Remote updates are encrypted recovery dependencies, never sendable operations.
+  // The authenticated sender counter and each ordered row are committed together.
   async saveRemote(link: KeptLinkSecrets, room: string, sender: string, update: Uint8Array): Promise<void> {
     if (!update.length || update.length > MAX_KEPT_RECORD_PAYLOAD) throw new Error('invalid remote update')
+    const input = Uint8Array.from(update)
     const auth = await credentials(link, room)
-    await this.identity(auth, sender)
-    const id = crypto.randomUUID()
-    const prefix = utf8.encode(`pedit/v6/outbox-remote\0${sender}\0${id}\0`)
-    const body = await encrypt(auth.wrap, concat(prefix, Uint8Array.from(update)))
-    const tx = this.db.transaction('remote', 'readwrite', { durability: 'strict' })
-    if (tx.durability !== 'strict') { tx.abort(); throw new Error('strict outbox durability unavailable') }
-    const done = transactionDone(tx)
-    tx.objectStore('remote').add({sender, id, body})
-    await done
+    for (let attempt = 0; attempt < 16; attempt++) {
+      const identity = await this.identity(auth, sender)
+      const snapshot = await this.recoveryState(link, room, sender)
+      if (snapshot.remote.some(value => same(value, input))) return
+      const count = identity.remoteCount ?? 0
+      if (count >= 1024 || snapshot.remote.reduce((n, value) => n + value.length, 0) + input.length > 16 * 1024 * 1024) throw new Error('remote recovery capacity exceeded')
+      const id = String(count + 1).padStart(16, '0')
+      const prefix = utf8.encode(`pedit/v6/outbox-remote\0${sender}\0${id}\0`)
+      const body = await encrypt(auth.wrap, concat(prefix, input))
+      const counter = await encrypt(auth.wrap, senderCounterBody(sender, identity.sequence, count + 1))
+      const tx = this.db.transaction(['senders', 'remote'], 'readwrite', { durability: 'strict' })
+      if (tx.durability !== 'strict') { tx.abort(); throw new Error('strict outbox durability unavailable') }
+      const done = transactionDone(tx)
+      let stale = false
+      const senders = tx.objectStore('senders')
+      const get = senders.get(sender)
+      get.onsuccess = () => {
+        const found: Sender | undefined = get.result
+        if (!found || found.sequence !== identity.sequence || found.remoteCount !== identity.remoteCount || !same(found.counter, identity.counter) || !same(found.seed, identity.seed) || !same(found.certificate, identity.certificate)) {
+          stale = true; tx.abort(); return
+        }
+        const store = tx.objectStore('remote')
+        const keys = store.index('sender').getAllKeys(IDBKeyRange.only(sender))
+        keys.onsuccess = () => {
+          if (keys.result.length !== count || keys.result.some((key, i) => !Array.isArray(key) || key[0] !== sender || key[1] !== String(i + 1).padStart(16, '0'))) { tx.abort(); return }
+          senders.put({...found, remoteCount: count + 1, counter})
+          store.add({sender, id, body})
+        }
+      }
+      try { await done; return } catch (error) { if (!stale) throw error }
+    }
+    throw new Error('outbox is busy')
   }
-  async remoteUpdates(link: KeptLinkSecrets, room: string, sender: string): Promise<Uint8Array[]> {
+  async recoveryState(link: KeptLinkSecrets, room: string, sender: string): Promise<{remote: Uint8Array[]; operations: {sequence: number; message: Uint8Array; acknowledged: boolean}[]}> {
     const auth = await credentials(link, room)
-    await this.identity(auth, sender)
-    const tx = this.db.transaction('remote', 'readonly')
-    const rows: {sender: string; id: string; body: Uint8Array}[] = await request(tx.objectStore('remote').index('sender').getAll(IDBKeyRange.only(sender)))
-    return Promise.all(rows.map(async row => {
-      if (row.sender !== sender || typeof row.id !== 'string' || !(row.body instanceof Uint8Array)) throw new Error('invalid remote update')
-      const prefix = utf8.encode(`pedit/v6/outbox-remote\0${sender}\0${row.id}\0`)
-      const plain = await decrypt(auth.wrap, row.body)
-      if (!same(plain.subarray(0, prefix.length), prefix) || plain.length === prefix.length) throw new Error('invalid remote update')
+    const tx = this.db.transaction(['senders', 'operations', 'remote'], 'readonly')
+    const [row, operations, rows] = await Promise.all([
+      request<Sender | undefined>(tx.objectStore('senders').get(sender)),
+      request<Operation[]>(tx.objectStore('operations').index('sender').getAll(IDBKeyRange.only(sender))),
+      request<{sender: string; id: string; body: Uint8Array}[]>(tx.objectStore('remote').index('sender').getAll(IDBKeyRange.only(sender))),
+    ])
+    const checked = await this.checkIdentity(auth, sender, row)
+    if (rows.length !== (checked.remoteCount ?? 0) || operations.length !== checked.sequence || operations.some((item, i) => item.sender !== sender || item.sequence !== i + 1)) throw new Error('outbox recovery data missing')
+    const remote = await Promise.all(rows.map(async (item, i) => {
+      const id = String(i + 1).padStart(16, '0')
+      if (item.sender !== sender || item.id !== id || !(item.body instanceof Uint8Array)) throw new Error('invalid remote update')
+      const prefix = utf8.encode(`pedit/v6/outbox-remote\0${sender}\0${id}\0`)
+      const plain = await decrypt(auth.wrap, item.body)
+      if (!same(plain.subarray(0, prefix.length), prefix) || plain.length === prefix.length || plain.length > prefix.length + MAX_KEPT_RECORD_PAYLOAD) throw new Error('invalid remote update')
       return plain.slice(prefix.length)
     }))
+    if (remote.reduce((n, value) => n + value.length, 0) > 16 * 1024 * 1024) throw new Error('remote recovery capacity exceeded')
+    const decoded = await Promise.all(operations.map(async item => {
+      await verifyState(auth, item)
+      return {sequence: item.sequence, message: unpack(sender, item.sequence, await decrypt(auth.wrap, item.body)), acknowledged: await this.acknowledged(auth, item)}
+    }))
+    return {remote, operations: decoded}
   }
 
   async enqueue(
@@ -345,7 +386,7 @@ export class KeptOutbox {
         throw new Error('invalid outbox counter')
       const sequence = identity.sequence + 1
       const body = await encrypt(auth.wrap, operationBody(sender, sequence, input))
-      const counter = await encrypt(auth.wrap, counterBody(sender, sequence))
+      const counter = await encrypt(auth.wrap, senderCounterBody(sender, sequence, identity.remoteCount))
       const operation: Operation = {
         sender,
         sequence,

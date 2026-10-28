@@ -14,11 +14,12 @@ const until = async (f: () => boolean) => {
  if (!f()) throw new Error('timed out')
 }
 async function setup() {
- const outbox = await KeptOutbox.open(`review-${crypto.randomUUID()}`)
+ const name = `review-${crypto.randomUUID()}`
+ const outbox = await KeptOutbox.open(name)
  const sender = await outbox.createSender(link, roomId)
  let status: KeptEditStatus = 'idle'
  const opts = { url:'https://example.test', link, context, sender, outbox, baseline:Y.encodeStateAsUpdate(new Y.Doc()), onStatus:(x:KeptEditStatus) => { status = x }, fetch: async () => { throw new Error('offline') } }
- return {outbox, sender, opts, status: () => status}
+ return {outbox, sender, opts, name, status: () => status}
 }
 it('close drains all edits and restores them', async () => {
  const {outbox, sender, opts} = await setup()
@@ -128,5 +129,54 @@ it('does not expose remote state if its persistence fails', async () => {
  outbox.saveRemote = async () => { throw new Error('disk') }
  await expect(c.applyRemote(Y.encodeStateAsUpdate(remote))).rejects.toThrow('disk')
  expect(c.text()).toBe('')
+ await c.close(); remote.destroy(); outbox.close()
+})
+
+it.each(['delete', 'reorder', 'add'])('rejects %s of remote recovery rows', async mutation => {
+ const {outbox, sender, opts, name} = await setup()
+ const c = await KeptEditController.open(opts)
+ const a = new Y.Doc(); a.getText('content').insert(0, 'one')
+ const b = new Y.Doc(); b.getText('content').insert(0, 'two')
+ await c.applyRemote(Y.encodeStateAsUpdate(a)); await c.applyRemote(Y.encodeStateAsUpdate(b)); await c.close()
+ const db = await new Promise<IDBDatabase>((resolve, reject) => { const r = indexedDB.open(name); r.onsuccess = () => resolve(r.result); r.onerror = () => reject(r.error) })
+ await new Promise<void>((resolve, reject) => {
+   const tx = db.transaction('remote', 'readwrite'); const store = tx.objectStore('remote')
+   const get = store.getAll()
+   get.onsuccess = () => {
+     const [first, second] = get.result
+     if (mutation === 'delete') store.delete([sender, first.id])
+     if (mutation === 'reorder') { store.put({...first, body: second.body}); store.put({...second, body: first.body}) }
+     if (mutation === 'add') store.add({...first, id: '0000000000000003'})
+   }
+   tx.oncomplete = () => resolve(); tx.onabort = () => reject(tx.error)
+ })
+ db.close()
+ await expect(KeptEditController.open(opts)).rejects.toThrow()
+ a.destroy(); b.destroy(); outbox.close()
+})
+it('deduplicates repeated remote delivery', async () => {
+ const {outbox, sender, opts} = await setup()
+ const c = await KeptEditController.open(opts)
+ const remote = new Y.Doc(); remote.getText('content').insert(0, 'remote')
+ const update = Y.encodeStateAsUpdate(remote)
+ for (let i = 0; i < 10; i++) await c.applyRemote(update)
+ await c.close()
+ expect((await outbox.recoveryState(link, roomId, sender)).remote).toHaveLength(1)
+ remote.destroy(); outbox.close()
+})
+it('aborts remote row and authenticated counter together on interrupted transaction', async () => {
+ const {outbox, sender, opts} = await setup()
+ const c = await KeptEditController.open(opts)
+ const remote = new Y.Doc(); remote.getText('content').insert(0, 'remote')
+ const add = IDBObjectStore.prototype.add
+ IDBObjectStore.prototype.add = function (...args) {
+   const result = add.apply(this, args)
+   if (this.name === 'remote') this.transaction.abort()
+   return result
+ }
+ try { await expect(c.applyRemote(Y.encodeStateAsUpdate(remote))).rejects.toThrow() }
+ finally { IDBObjectStore.prototype.add = add }
+ expect(c.text()).toBe('')
+ expect((await outbox.recoveryState(link, roomId, sender)).remote).toHaveLength(0)
  await c.close(); remote.destroy(); outbox.close()
 })
