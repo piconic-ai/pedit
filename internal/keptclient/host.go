@@ -16,6 +16,10 @@ import (
 	"github.com/piconic-ai/pedit/internal/protocol"
 )
 
+// ErrInitializationUncertain means the relay may have initialized the room,
+// but the saved credentials changed or became unreadable during the request.
+var ErrInitializationUncertain = errors.New("initialization outcome uncertain: the relay may have initialized the room")
+
 type Host struct {
 	credentials hoststate.Credentials
 	store       *hoststate.Store
@@ -96,6 +100,10 @@ func (h *Host) Initialize(ctx context.Context, epoch [32]byte, checkpoint []byte
 	effective, err := strconv.ParseInt(resp.Header.Get("X-Pedit-Keep-Seconds"), 10, 64)
 	if err != nil || effective <= 0 || effective > seconds {
 		return 0, errors.New("invalid relay keep duration")
+	}
+	latest, err := h.currentCredentials()
+	if err != nil || latest.Generation != c.Generation {
+		return 0, ErrInitializationUncertain
 	}
 	return time.Duration(effective) * time.Second, nil
 }

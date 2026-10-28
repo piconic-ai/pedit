@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"os"
@@ -239,5 +240,95 @@ func TestLiveHostLifecycle(t *testing.T) {
 	socket.CloseNow()
 	if _, err = host.Connect(ctx); err == nil {
 		t.Fatal("closed room reconnected")
+	}
+}
+
+func TestLiveHostInitializationRace(t *testing.T) {
+	live := os.Getenv("PEDIT_TEST_LIVE_ROOM")
+	if live == "" {
+		t.Skip("requires test Worker")
+	}
+	target, err := url.Parse(live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{10}, 32))
+	sum := sha256.Sum256([]byte(token))
+	room := base64.RawURLEncoding.EncodeToString(sum[:])[:22]
+	c := hoststate.Credentials{Version: 1, Origin: "https://example.test", RoomID: room, HostToken: token, Generation: 1}
+	copy(c.HostSeed[:], bytes.Repeat([]byte{7}, 32))
+	copy(c.EditSecret[:], bytes.Repeat([]byte{3}, 32))
+	store, err := hoststate.Open(filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err = store.Save(c); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile("../../packages/testdata/kept-text-payload-vectors.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vector struct{ Payload string }
+	if err = json.Unmarshal(data, &vector); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(vector.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, private, err := c.Keys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var epoch [32]byte
+	for i := range epoch {
+		epoch[i] = 5
+	}
+	checkpoint, err := protocol.SealKeptCheckpoint(keys, private, protocol.KeptCheckpointContext{RoomID: room, Epoch: epoch, Generation: 1}, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved bool
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		response, err := (testForward{target, room}).RoundTrip(r)
+		if err == nil && r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/initialize") && response.StatusCode == http.StatusNoContent {
+			next := c
+			next.Generation = 2
+			if saveErr := store.Save(next); saveErr != nil {
+				t.Errorf("save: %v", saveErr)
+			} else {
+				saved = true
+			}
+		}
+		return response, err
+	})}
+	host, err := Open(store, room, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	duration, err := host.Initialize(ctx, epoch, checkpoint, time.Hour)
+	if !saved || duration != 0 || !errors.Is(err, ErrInitializationUncertain) {
+		t.Fatalf("got duration=%s error=%v saved=%v", duration, err, saved)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, live+"/__test/state", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Test-Room", room)
+	response, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var state struct{ Host string }
+	if err = json.NewDecoder(response.Body).Decode(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state.Host != "away" {
+		t.Fatalf("relay state = %q; initialization should not close it", state.Host)
 	}
 }
