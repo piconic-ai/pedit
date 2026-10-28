@@ -2,6 +2,8 @@ const RETRY_MS = 60_000
 const MAX_BATCHES = 16
 const BLOB_ID = /^[A-Za-z0-9_-]{22}$/
 
+export class KeptBlobConflictError extends Error {}
+
 type PutRow = { id: string; completed: number }
 export type KeptBlobLimits = { count: number; blobBytes: number; quotaBytes: number }
 
@@ -12,6 +14,7 @@ export class KeptBlobCleanup {
     state: DurableObjectState,
     private readonly bucket: R2Bucket,
     private readonly limits: KeptBlobLimits,
+    private readonly assertActive: () => void = () => {},
   ) {
     if (
       !Number.isSafeInteger(limits.count) ||
@@ -49,8 +52,16 @@ export class KeptBlobCleanup {
     if (!BLOB_ID.test(id) || content.length === 0 || content.length > this.limits.blobBytes)
       throw new Error('invalid kept blob')
     const data = Uint8Array.from(content)
-    this.storage.transactionSync(() => {
+    const previous = this.storage.transactionSync(() => {
+      this.assertActive()
       if (this.closed()) throw new Error('kept room is closed')
+      const existing = this.storage.sql
+        .exec<{ completed: number; bytes: number }>(
+          'SELECT completed, bytes FROM kept_blob_puts WHERE id = ?',
+          id,
+        )
+        .toArray()[0]
+      if (existing) return existing
       const usage = this.storage.sql
         .exec<{ count: number; bytes: number }>(
           'SELECT count(*) AS count, coalesce(sum(bytes), 0) AS bytes FROM kept_blob_puts',
@@ -63,17 +74,52 @@ export class KeptBlobCleanup {
         id,
         data.length,
       )
+      return null
     })
+    if (previous) {
+      if (previous.completed !== 1 || previous.bytes !== data.length)
+        throw new KeptBlobConflictError('kept blob conflicts')
+      const existing = await this.bucket.get(this.prefix + id)
+      if (!existing || existing.size !== data.length)
+        throw new KeptBlobConflictError('kept blob conflicts')
+      const stored = new Uint8Array(await existing.arrayBuffer())
+      if (stored.length !== data.length || !stored.every((byte, index) => byte === data[index]))
+        throw new KeptBlobConflictError('kept blob conflicts')
+      await this.storage.sync()
+      this.assertActive()
+      if (this.closed()) throw new Error('kept room is closed')
+      return
+    }
     await this.storage.sync()
     if (this.closed()) {
       this.storage.sql.exec('DELETE FROM kept_blob_puts WHERE id = ?', id)
       await this.storage.sync()
       throw new Error('kept room is closed')
     }
+    try {
+      this.assertActive()
+    } catch (error) {
+      this.storage.sql.exec('DELETE FROM kept_blob_puts WHERE id = ?', id)
+      await this.storage.sync()
+      throw error
+    }
     await this.bucket.put(this.prefix + id, data)
     this.storage.sql.exec('UPDATE kept_blob_puts SET completed = 1 WHERE id = ?', id)
     await this.storage.sync()
     if (this.closed()) throw new Error('kept room is closed')
+  }
+
+  static async closeForLifetime(storage: DurableObjectStorage): Promise<boolean> {
+    const exists =
+      storage.sql
+        .exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'kept_blob_state'")
+        .toArray().length > 0
+    if (!exists) return false
+    storage.sql.exec('UPDATE kept_blob_state SET closed = 1 WHERE singleton = 1')
+    const next = Date.now() + RETRY_MS
+    const old = await storage.getAlarm()
+    if (old === null || next < old) await storage.setAlarm(next)
+    return true
   }
 
   async close(): Promise<void> {

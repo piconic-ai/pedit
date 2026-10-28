@@ -345,3 +345,35 @@ change does not silently change it. An authenticated retry uses the saved
 policy and reports its applied duration even when the current limit changes;
 a different checkpoint, capability set, or effective duration is rejected.
 This internal path is not public yet.
+
+The internal Room blob prototype accepts encrypted uploads only from an
+editor or host capability and permits encrypted reads to all authorized tiers.
+It checks the kept lifetime before and after R2 operations and enforces a
+bounded request body, concurrent uploads, and persisted count and byte quota.
+A kept lifecycle close marks the blob state closed and arms cleanup in the
+same Durable Object transaction that closes the log. The Room alarm then sweeps
+the kept prefix, including after eviction. The internal route is not exposed by
+the Worker and does not enable kept rooms for users.
+
+An ambiguous or late R2 PUT remains reserved and must be swept again. This
+prototype has no independent registry or cron: alarms have finite automatic
+retry and may cease to run after repeated failures. Consequently it does not
+ensure eventual deletion or bound orphan retention. The configured lifecycle
+must not expire active kept data, especially for unlimited self-hosted rooms;
+no deployment or R2 lifecycle change is made here. R2 operation deadlines, rate
+limits, independent scheduling, and full cross-operation recovery must be
+resolved before enabling this path.
+
+Kept upload request bodies have a 30-second deadline and a bounded chunk count.
+At most three editor uploads can be in progress, leaving one of four slots for
+the authenticated host. A request already sent to R2 may still remain in
+flight after that body deadline; a pending reservation is retained, and an
+in-flight upload of the same ID can still block another upload of that ID.
+
+A completed ID may be retried only with byte-identical ciphertext, after
+comparing the R2 object and syncing its reservation. Different bytes or an
+ambiguous reservation return 409 without replacing the object. Existing web uploads use random AES-GCM IVs,
+so the same plaintext can produce different ciphertext under the same hash ID.
+A future v6 uploader must retain its ciphertext for retry, or fetch the existing
+object, decrypt it, and check the expected plaintext hash before reusing it.
+The relay cannot establish plaintext equality from ciphertext alone.

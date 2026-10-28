@@ -1,5 +1,6 @@
 import { DurableLog } from './durable-log.ts'
 import { KeptAdmission } from './kept-admission.ts'
+import { KeptBlobCleanup } from './kept-blob-cleanup.ts'
 import {
   closeKeptLifetime,
   hostLeaves,
@@ -180,6 +181,7 @@ export class KeptLifecycle {
         if (state.host === 'closed') {
           DurableLog.clear(storage)
           storage.kv.delete(ADMISSION_KEY)
+          await KeptBlobCleanup.closeForLifetime(storage)
         } else {
           const deadline = keptNextAlarm(state, this.policy.alarmSeconds)
           const old = await storage.getAlarm()

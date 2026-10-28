@@ -27,9 +27,11 @@ import { RELAY_BYTE_RATE, RELAY_MESSAGE_RATE } from '@pedit/protocol/pace'
 import { DurableLog } from './durable-log.ts'
 import { KEPT_ADMISSION_KEY, KeptAdmission } from './kept-admission.ts'
 import { KeptAppendRate, keptAppend } from './kept-append.ts'
+import { KeptBlobCleanup } from './kept-blob-cleanup.ts'
 import type { KeepPolicy } from './kept-lifecycle.ts'
 import { KeptLifecycle } from './kept-lifecycle.ts'
 import { initializeKeptRoom } from './kept-room-initialize.ts'
+import { keptRoomBlob } from './kept-room-blobs.ts'
 import { keptRoomRead } from './kept-room-read.ts'
 import { KEPT_POLICY_KEY } from './kept-transport.ts'
 import { ADMISSION_KEY } from './room-storage.ts'
@@ -212,6 +214,7 @@ interface Usage {
 export class Room extends DurableObject<Env> {
   // Blob ids being uploaded right now, so two uploads of one id cannot race.
   private readonly uploading = new Set<string>()
+  private readonly keptUploading = new Map<string, 'host' | 'editor'>()
   // What each connection may still send. In memory only: a room that wakes
   // from hibernation starts everyone with a full allowance, which is fine.
   private readonly allowances = new WeakMap<WebSocket, Allowance>()
@@ -235,6 +238,15 @@ export class Room extends DurableObject<Env> {
     // Answered without waking the room, so a client can check that the room
     // still has its connection at no cost.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(RELAY_PING, RELAY_PONG))
+  }
+
+  private keptBlobLimits() {
+    const l = limits(this.env)
+    return {
+      count: Math.min(l.quotaCount, 1024),
+      blobBytes: Math.min(l.blobBytes + BLOB_OVERHEAD, 10 * 1024 * 1024),
+      quotaBytes: Math.min(l.quotaBytes, 100 * 1024 * 1024),
+    }
   }
 
   override async fetch(request: Request): Promise<Response> {
@@ -273,6 +285,20 @@ export class Room extends DurableObject<Env> {
         keptRead[1],
         () => maintenance(this.env as { MAINTENANCE?: string }) === 'closed',
       )
+    const keptBlob = /^\/internal\/kept\/([A-Za-z0-9_-]{22})\/blobs\/([A-Za-z0-9_-]{22})$/.exec(
+      path,
+    )
+    if (keptBlob?.[1] && keptBlob[2])
+      return keptRoomBlob(
+        request,
+        this.ctx,
+        this.env,
+        keptBlob[1],
+        keptBlob[2],
+        this.keptBlobLimits(),
+        this.keptUploading,
+        () => maintenance(this.env as { MAINTENANCE?: string }) === 'closed',
+      )
     if (this.ctx.storage.kv.get(KEPT_ADMISSION_KEY) !== undefined)
       return new Response('room protocol unavailable', { status: 403 })
     const blob = BLOB_PATH.exec(path)?.[1]
@@ -280,6 +306,10 @@ export class Room extends DurableObject<Env> {
     // Only a connection goes on: a blob path the pattern missed is not one.
     if (path.includes('/blobs/')) return new Response('invalid blob id', { status: 400 })
 
+    return this.connectLegacy(request)
+  }
+
+  private async connectLegacy(request: Request): Promise<Response> {
     if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
       return new Response('expected a WebSocket upgrade', { status: 426 })
     }
@@ -508,17 +538,29 @@ export class Room extends DurableObject<Env> {
       const current = this.keptHostHandshakes
         ? await lifecycle.observe()
         : await lifecycle.reconcileHost(() => this.ctx.getWebSockets(KEPT_HOST_TAG).length > 0)
-      if (current.host === 'closed')
+      if (current.host === 'closed') {
         for (const socket of this.ctx.getWebSockets(KEPT_HOST_TAG))
           safeClose(socket, ROOM_CLOSED, 'room closed')
+        await this.sweepKeptBlobs()
+      }
       return
     }
-    await KeptLifecycle.observeAlarm(
+    const current = await KeptLifecycle.observeAlarm(
       this.ctx,
       this.env.ROOM,
       ALARM_INTERVAL_MS / 1000,
       () => maintenance(this.env as { MAINTENANCE?: string }) === 'closed',
     )
+    if (current.host === 'closed') await this.sweepKeptBlobs()
+  }
+
+  private async sweepKeptBlobs(): Promise<void> {
+    if (
+      this.ctx.storage.sql
+        .exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'kept_blob_state'")
+        .toArray().length
+    )
+      await new KeptBlobCleanup(this.ctx, this.env.BLOBS, this.keptBlobLimits()).sweep()
   }
 
   override async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {

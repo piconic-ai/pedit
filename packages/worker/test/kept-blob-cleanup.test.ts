@@ -218,6 +218,7 @@ describe('kept attachment cleanup primitive', () => {
         quotaBytes: 8,
       })
       await expect(x.put(id(1), Uint8Array.of(1))).rejects.toThrow('ambiguous')
+      await expect(x.put(id(1), Uint8Array.of(1))).rejects.toThrow('conflicts')
       await expect(x.put(id(2), Uint8Array.of(1))).rejects.toThrow('capacity')
       expect(state.storage.sql.exec('SELECT * FROM kept_blob_puts').toArray()).toHaveLength(1)
       await x.close()
@@ -256,5 +257,20 @@ describe('kept attachment cleanup primitive', () => {
       expect(await x.sweep()).toBe(true)
       expect(await env.BLOBS.head(prefix(state) + id(1))).toBeNull()
     })
+  })
+})
+
+it('does not report a duplicate as durable if storage sync fails', async () => {
+  const stub = room()
+  await runInDurableObject(stub, async (_: Room, state) => {
+    const x = new KeptBlobCleanup(state, env.BLOBS, limits)
+    await x.put(id(1), Uint8Array.of(1))
+    const spy = vi.spyOn(state.storage, 'sync').mockRejectedValueOnce(new Error('sync failed'))
+    try {
+      await expect(x.put(id(1), Uint8Array.of(1))).rejects.toThrow('sync failed')
+    } finally {
+      spy.mockRestore()
+    }
+    await expect(x.put(id(1), Uint8Array.of(1))).resolves.toBeUndefined()
   })
 })
