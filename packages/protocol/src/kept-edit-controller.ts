@@ -27,6 +27,7 @@ export class KeptEditController {
   private readonly sender: KeptOutboxSender
   private readonly queued: Uint8Array[] = []
   private running: Promise<void> | undefined
+  private remoteWork: Promise<void> | undefined
   private closeAttempt: Promise<void> | undefined
   private closing = false
   private stopped = false
@@ -42,6 +43,8 @@ export class KeptEditController {
     const doc = new Y.Doc()
     try {
       Y.applyUpdate(doc, options.baseline)
+      const remote = await options.outbox.remoteUpdates(options.link, options.context.roomId, options.sender)
+      for (const update of remote) Y.applyUpdate(doc, update)
       const rows = await options.outbox.operations(options.link, options.context.roomId, options.sender)
       for (const row of rows) {
         const msg = decodeMessage(row.message)
@@ -77,17 +80,25 @@ export class KeptEditController {
       offset = end
     }
   }
-  applyRemote(update: Uint8Array): void {
-    if (this.stopped || this.closing || this.invalid) throw new Error('kept editor closed')
-    const probe = new Y.Doc()
-    try {
-      Y.applyUpdate(probe, Y.encodeStateAsUpdate(this.#doc))
-      const decoder = decoding.createDecoder(update)
-      Y.readUpdate(decoder, probe)
-      if (decoder.pos !== update.length || probe.store.pendingStructs || probe.store.pendingDs || !checkKeptTextState(Y.encodeStateAsUpdate(probe)))
-        throw new Error('invalid remote text state')
-      Y.applyUpdate(this.#doc, update, this)
-    } finally { probe.destroy() }
+  applyRemote(update: Uint8Array): Promise<void> {
+    if (this.stopped || this.closing || this.invalid) return Promise.reject(new Error('kept editor closed'))
+    const input = Uint8Array.from(update)
+    const apply = async () => {
+      const probe = new Y.Doc()
+      try {
+        Y.applyUpdate(probe, Y.encodeStateAsUpdate(this.#doc))
+        const decoder = decoding.createDecoder(input)
+        Y.readUpdate(decoder, probe)
+        if (decoder.pos !== input.length || probe.store.pendingStructs || probe.store.pendingDs || !checkKeptTextState(Y.encodeStateAsUpdate(probe)))
+          throw new Error('invalid remote text state')
+        await this.options.outbox.saveRemote(this.options.link, this.options.context.roomId, this.options.sender, input)
+        Y.applyUpdate(this.#doc, input, this)
+      } finally { probe.destroy() }
+    }
+    const work = this.remoteWork ? this.remoteWork.then(apply, apply) : apply()
+    this.remoteWork = work
+    void work.then(() => { if (this.remoteWork === work) this.remoteWork = undefined }, () => { if (this.remoteWork === work) this.remoteWork = undefined })
+    return work
   }
   private readonly onUpdate = (update: Uint8Array, _origin: unknown, _doc: Y.Doc, transaction: Y.Transaction): void => {
     if (this.stopped || !transaction.local) return
@@ -148,6 +159,7 @@ export class KeptEditController {
     this.closing = true
     this.abort.abort()
     if (this.running) await this.running
+    if (this.remoteWork) await this.remoteWork
     if (this.invalid) throw new Error('invalid kept text state')
     try {
       while (this.queued.length) {

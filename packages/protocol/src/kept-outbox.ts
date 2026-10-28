@@ -148,7 +148,7 @@ export class KeptOutbox {
   private constructor(private readonly db: IDBDatabase) {}
 
   static async open(name = 'pedit-v6-outbox'): Promise<KeptOutbox> {
-    const opening = indexedDB.open(name, 2)
+    const opening = indexedDB.open(name, 3)
     let blocked = false
     const database = new Promise<IDBDatabase>((resolve, reject) => {
       opening.onblocked = () => {
@@ -177,6 +177,9 @@ export class KeptOutbox {
       }
       if (event.oldVersion < 2) {
         opening.transaction!.objectStore('operations').createIndex('sender', 'sender')
+      }
+      if (event.oldVersion < 3) {
+        opening.result.createObjectStore('remote', { keyPath: ['sender', 'id'] }).createIndex('sender', 'sender')
       }
     }
     return new KeptOutbox(await database)
@@ -289,6 +292,34 @@ export class KeptOutbox {
         }
       }),
     )
+  }
+
+  // Remote updates are encrypted recovery dependencies, never sendable operations.
+  async saveRemote(link: KeptLinkSecrets, room: string, sender: string, update: Uint8Array): Promise<void> {
+    if (!update.length || update.length > MAX_KEPT_RECORD_PAYLOAD) throw new Error('invalid remote update')
+    const auth = await credentials(link, room)
+    await this.identity(auth, sender)
+    const id = crypto.randomUUID()
+    const prefix = utf8.encode(`pedit/v6/outbox-remote\0${sender}\0${id}\0`)
+    const body = await encrypt(auth.wrap, concat(prefix, Uint8Array.from(update)))
+    const tx = this.db.transaction('remote', 'readwrite', { durability: 'strict' })
+    if (tx.durability !== 'strict') { tx.abort(); throw new Error('strict outbox durability unavailable') }
+    const done = transactionDone(tx)
+    tx.objectStore('remote').add({sender, id, body})
+    await done
+  }
+  async remoteUpdates(link: KeptLinkSecrets, room: string, sender: string): Promise<Uint8Array[]> {
+    const auth = await credentials(link, room)
+    await this.identity(auth, sender)
+    const tx = this.db.transaction('remote', 'readonly')
+    const rows: {sender: string; id: string; body: Uint8Array}[] = await request(tx.objectStore('remote').index('sender').getAll(IDBKeyRange.only(sender)))
+    return Promise.all(rows.map(async row => {
+      if (row.sender !== sender || typeof row.id !== 'string' || !(row.body instanceof Uint8Array)) throw new Error('invalid remote update')
+      const prefix = utf8.encode(`pedit/v6/outbox-remote\0${sender}\0${row.id}\0`)
+      const plain = await decrypt(auth.wrap, row.body)
+      if (!same(plain.subarray(0, prefix.length), prefix) || plain.length === prefix.length) throw new Error('invalid remote update')
+      return plain.slice(prefix.length)
+    }))
   }
 
   async enqueue(
