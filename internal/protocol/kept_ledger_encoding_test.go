@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"os"
 	"testing"
@@ -64,6 +65,13 @@ func TestKeptLedgerEncodingRejectsMalformed(t *testing.T) {
 	gap[ledgerHeaderSize+3*ledgerReceiptSize+40] = 2
 	if _, err := DecodeKeptLedger(4, gap); err == nil {
 		t.Fatal("accepted gap")
+	}
+	for _, count := range []uint32{0xffffffff, 0x40000000, 0x80000004, uint32(maxLedgerReceipts + 1)} {
+		bad := bytes.Clone(input)
+		binary.BigEndian.PutUint32(bad[len(ledgerDomain):], count)
+		if _, err := DecodeKeptLedger(4, bad); err == nil {
+			t.Fatalf("accepted count %d", count)
+		}
 	}
 	duplicate := bytes.Clone(input)
 	copy(duplicate[ledgerHeaderSize+ledgerReceiptSize:], duplicate[ledgerHeaderSize:ledgerHeaderSize+ledgerReceiptSize])

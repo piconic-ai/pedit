@@ -64,8 +64,12 @@ func DecodeKeptLedger(limit int, data []byte) (KeptLedger, error) {
 	if len(data) < ledgerHeaderSize || len(data) > maxKeptCheckpointPayload || !bytes.Equal(data[:len(ledgerDomain)], []byte(ledgerDomain)) {
 		return KeptLedger{}, bad
 	}
-	count := int(binary.BigEndian.Uint32(data[len(ledgerDomain):ledgerHeaderSize]))
-	if limit < 1 || count > limit || count > maxLedgerReceipts || len(data) != ledgerHeaderSize+count*ledgerReceiptSize {
+	rawCount := binary.BigEndian.Uint32(data[len(ledgerDomain):ledgerHeaderSize])
+	if rawCount > uint32(maxLedgerReceipts) {
+		return KeptLedger{}, bad
+	}
+	count := int(rawCount)
+	if limit < 1 || count > limit || len(data) != ledgerHeaderSize+count*ledgerReceiptSize {
 		return KeptLedger{}, bad
 	}
 	items := make([]KeptReceipt, 0, count)
