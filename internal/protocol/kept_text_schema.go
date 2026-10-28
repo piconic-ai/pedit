@@ -1,5 +1,7 @@
 package protocol
 
+import "unicode/utf16"
+
 // CheckKeptTextState accepts only the plain-text subset of a complete Yjs V1 snapshot.
 func CheckKeptTextState(state []byte) error { return checkKeptSchema(state, keptTextItem, false) }
 func keptTextItem(r *keptSchemaReader) error {
@@ -15,12 +17,20 @@ func keptTextItem(r *keptSchemaReader) error {
 		if err != nil || s == "" {
 			return errKeptSchema
 		}
-		return nil
+		return r.advanceTextClock(uint64(len(utf16.Encode([]rune(s)))))
 	}
 	n, err := r.uint()
 	if err != nil || n == 0 {
 		return errKeptSchema
 	}
+	return r.advanceTextClock(n)
+}
+
+func (r *keptSchemaReader) advanceTextClock(n uint64) error {
+	if n > (1<<53-1)-r.clock {
+		return errKeptSchema
+	}
+	r.clock += n
 	return nil
 }
 

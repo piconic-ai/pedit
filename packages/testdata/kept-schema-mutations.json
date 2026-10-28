@@ -208,5 +208,41 @@
     "kind": "comments",
     "hex": "010101000081800400",
     "valid": false
+  },
+  {
+    "name": "clock overflow reported",
+    "kind": "text",
+    "hex": "01030100010107636f6e74656e74ffffffffffffff0f81010002840101016100",
+    "valid": false
+  },
+  {
+    "name": "clock boundary ascii",
+    "kind": "text",
+    "hex": "01020100010107636f6e74656e74feffffffffffff0f840100016100",
+    "valid": true
+  },
+  {
+    "name": "clock overflow ascii",
+    "kind": "text",
+    "hex": "01020100010107636f6e74656e74ffffffffffffff0f840100016100",
+    "valid": false
+  },
+  {
+    "name": "clock boundary utf16 surrogate pair",
+    "kind": "text",
+    "hex": "01020100010107636f6e74656e74fdffffffffffff0f84010004f09f988000",
+    "valid": true
+  },
+  {
+    "name": "clock overflow utf16 surrogate pair",
+    "kind": "text",
+    "hex": "01020100010107636f6e74656e74feffffffffffff0f84010004f09f988000",
+    "valid": false
+  },
+  {
+    "name": "text clock resets for each client",
+    "kind": "text",
+    "hex": "02010100010107636f6e74656e74ffffffffffffff0f010200010107636f6e74656e74ffffffffffffff0f00",
+    "valid": true
   }
 ]

@@ -9,7 +9,10 @@ function item(r: KeptSchemaReader): void {
   if (info & 0x40) r.id()
   if ((info & 0xc0) === 0 && (r.uint() !== 1 || r.str() !== 'content'))
     throw new Error('invalid root')
-  if (ref === 4 ? r.str() === '' : r.uint() === 0) throw new Error('empty item')
+  const length = ref === 4 ? r.str().length : r.uint()
+  if (length === 0 || length > Number.MAX_SAFE_INTEGER - r.clock)
+    throw new Error('invalid text clock')
+  r.clock += length
 }
 export function checkKeptTextState(input: Uint8Array): boolean {
   return checkKeptSchema(input, item, false)

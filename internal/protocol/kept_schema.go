@@ -11,6 +11,7 @@ type keptSchemaReader struct {
 	d     *encoding.Decoder
 	input []byte
 	work  uint64
+	clock uint64
 }
 
 func (r *keptSchemaReader) uint() (uint64, error) {
@@ -72,6 +73,7 @@ func (r *keptSchemaReader) client(seen map[uint64]bool, item func(*keptSchemaRea
 		return errKeptSchema
 	}
 	seen[id] = true
+	r.clock = 0
 	clock, err := r.uint()
 	if err != nil || clock != 0 {
 		return errKeptSchema
