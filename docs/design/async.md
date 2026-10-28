@@ -176,6 +176,18 @@ rooms; orphan cleanup must not delete their attachments.
 The public relay remains a service without an SLA. Self-hosted limits are
 configurable.
 
+The lifetime model is a standalone Worker primitive; it is not yet connected
+to room admission, alarms or client messages. It retains the requested duration
+and applies the current relay cap whenever the host leaves. With a finite room
+limit, a departure extends the total deadline to at least the resulting keep
+deadline. A returning host keeps the extended total deadline. A later departure
+starts a new keep period, subject to the then-current cap. An unlimited total
+lifetime has no total deadline, but an absence still ends at its keep deadline.
+The closed state cannot be reopened. Its caller must persist each transition,
+including expiry to closed, before reporting it and must coordinate the alarm
+with that state. Clock rollback before an expiry is recorded still needs a
+policy; the calculation alone does not provide a monotonic clock.
+
 ## Verification before release
 
 Tests must cover cross-language encoding, signature and access validation,
