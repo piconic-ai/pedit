@@ -7,7 +7,8 @@ const DOMAIN = utf8.encode('pedit/v6/checkpoint\0')
 const HEADER_BYTES = DOMAIN.length + 22 + 32 + 8 + 8 + 4
 const SIGNATURE_BYTES = 64
 const ENCRYPTION_BYTES = 12 + 16
-const MAX_PAYLOAD = MAX_FRAME_BYTES - HEADER_BYTES - SIGNATURE_BYTES - ENCRYPTION_BYTES
+export const MAX_KEPT_CHECKPOINT_PAYLOAD =
+  MAX_FRAME_BYTES - HEADER_BYTES - SIGNATURE_BYTES - ENCRYPTION_BYTES
 
 export interface KeptCheckpointContext {
   roomId: string
@@ -27,7 +28,7 @@ function checkpointHeader(context: KeptCheckpointContext, payloadSize: number): 
     !Number.isSafeInteger(context.cutoff) ||
     context.cutoff < 0 ||
     payloadSize < 1 ||
-    payloadSize > MAX_PAYLOAD
+    payloadSize > MAX_KEPT_CHECKPOINT_PAYLOAD
   ) {
     throw new Error('invalid checkpoint context or size')
   }

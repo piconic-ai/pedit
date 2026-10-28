@@ -90,6 +90,28 @@ by the initial read. The public protocol must bind that tail to the read
 session or otherwise enforce the same boundary; the current storage API alone
 does not prevent a caller from substituting a later tail.
 
+## Ledger snapshot encoding
+
+The ledger snapshot uses `pedit/v6/ledger\0`, a big-endian 32-bit receipt
+count, then fixed 74-byte receipts. Each receipt contains a tier byte (editor
+0 or commenter 1), the 32-byte sender public key, a big-endian 64-bit sequence,
+the 32-byte operation digest, and an outcome byte (applied 0 or rejected 1).
+Receipts sort by tier, sender bytes and sequence. Each sender's sequence begins
+at one and is contiguous. Unknown values, duplicate or out-of-order receipts,
+trailing bytes, and sequences above JavaScript's safe integer limit are invalid.
+The digest is SHA-256 over `pedit/v6/operation\0`, tier, sender, sequence,
+a big-endian 32-bit message length, and the message bytes. It excludes epoch
+and generation so an unchanged operation retains its identity across cutover.
+The checkpoint signature authenticates the snapshot, not its format alone.
+
+The ledger cannot exceed the existing checkpoint payload limit. The caller
+must also reserve space for document state and other checkpoint data; an
+oversized ledger or checkpoint is an error, not permission to drop receipts.
+The caller must save the ledger and its corresponding document state together,
+and serialize the ledger read, decision, commit and save or use persistent
+compare-and-swap. This encoding does not yet define the complete checkpoint
+payload, persist Yjs state, or connect checkpoint transport.
+
 ## Host recovery
 
 The host restores the prior Yjs state, validates the checkpoint and log, and

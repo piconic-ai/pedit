@@ -52,3 +52,6 @@ implementation by `node packages/testdata/generate-kept-record.mjs`.
 
 `kept-ledger-vectors.json` is generated with Node's SHA-256 implementation by
 `node packages/testdata/generate-kept-ledger.mjs`.
+
+`kept-ledger-encoding-vectors.json` is generated independently by
+`node packages/testdata/generate-kept-ledger-encoding.mjs`.
