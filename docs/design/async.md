@@ -113,12 +113,29 @@ host saves the results and the covered log is removed.
 
 - The canvas JSON pane sends edits to the host for validation and waits for
   its answer. A kept room needs a way to validate and apply those edits while
-  the host is away. The Go and browser implementations must agree on the
-  result without applying the same operation twice.
+  the host is away. Moving the current host algorithm to each browser is not
+  sufficient: reordering deletes and reinserts a Y.Map, so concurrent moves
+  can create duplicate IDs or strand edits on a deleted map. The Go and
+  browser implementations need a shared model that preserves concurrent board
+  and JSON edits without applying an operation twice. Test concurrent moves,
+  text edits and deletions as well as the resulting saved canvas.
+  One candidate stores each node and edge as a stable record, with a separate
+  order key and deletion marker. Moving it changes its order rather than
+  replacing its Y.Map. Internal IDs and order keys would not appear in the
+  exported JSON Canvas file. Simultaneous public-ID collisions and edges to a
+  deleted node need explicit conflict handling rather than silently dropping
+  an item. Existing clients read arrays directly, so this change requires a
+  new protocol version and coordinated Go and browser support.
 - An acknowledged append whose response was lost must be distinguishable from
   a new operation when a client retries, including across an epoch change.
-  The event identity and the retention of pending browser edits need a precise
-  wire and local-storage design.
+  One candidate is a durable per-sender sequence separate from the live frame
+  counter. A browser would persist its pending operation and sequence together
+  before sending, retry the same ciphertext within an epoch, and preserve the
+  operation identity when re-signing for a new epoch. Receivers would verify
+  signatures before advancing a checkpointed floor and wait on sequence gaps.
+  This still needs a proof for concurrent tabs, sender impersonation and
+  checkpoint replacement. In-memory pending edits alone are not enough when
+  a browser closes before an acknowledgement.
 - Signing keys are currently shared within an access tier. One participant at
   that tier can impersonate another sender and advance its counter. Define
   per-sender authentication or explicitly state this trust boundary.

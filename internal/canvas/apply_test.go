@@ -121,6 +121,39 @@ func TestApplyKeepsWhatOthersChanged(t *testing.T) {
 	}
 }
 
+func TestConcurrentReordersCreateDuplicateRecords(t *testing.T) {
+	a, base := loaded(t, obsidianFile)
+	b := crdt.New()
+	if err := crdt.ApplyUpdateV1(b, a.EncodeStateAsUpdate(), nil); err != nil {
+		t.Fatal(err)
+	}
+	next := base.Canvas
+	next.Nodes = append(append([]map[string]any{}, next.Nodes[1:]...), next.Nodes[0])
+	sa, sb := a.StateVector(), b.StateVector()
+	Apply(a, base.Canvas, next, nil)
+	Apply(b, base.Canvas, next, nil)
+	if err := crdt.ApplyUpdateV1(a, crdt.EncodeStateAsUpdateV1(b, sb), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := crdt.ApplyUpdateV1(b, crdt.EncodeStateAsUpdateV1(a, sa), nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, doc := range []*crdt.Doc{a, b} {
+		count := 0
+		list := doc.GetArray(NodesKey)
+		for i := 0; i < list.Len(); i++ {
+			if m, ok := list.Get(i).(*crdt.YMap); ok {
+				if id, _ := m.Get("id"); id == "a1" {
+					count++
+				}
+			}
+		}
+		if count != 2 {
+			t.Errorf("concurrent reorders left %d records for a1, want 2", count)
+		}
+	}
+}
+
 func TestApplyTextMergesByCharacter(t *testing.T) {
 	doc, base := loaded(t, obsidianFile)
 	a1 := itemMap(t, doc, NodesKey, "a1")
