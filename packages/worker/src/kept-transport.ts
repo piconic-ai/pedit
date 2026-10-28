@@ -1,6 +1,14 @@
 import { DurableLog, type LogCut, type LogLimits } from './durable-log.ts'
 import { KeptAdmission, type KeptCapabilities } from './kept-admission.ts'
-import { type KeepPolicy, KeptLifecycle } from './kept-lifecycle.ts'
+import { type KeepPolicy, KeptLifecycle, LIFETIME_KEY } from './kept-lifecycle.ts'
+import {
+  hostLeaves,
+  keptNextAlarm,
+  restoreKeptLifetime,
+  startKeptLifetime,
+} from './kept-lifetime.ts'
+
+export const KEPT_POLICY_KEY = 'keptPolicy'
 
 export class KeptTransport {
   private readonly admission: KeptAdmission
@@ -10,12 +18,55 @@ export class KeptTransport {
     private readonly state: DurableObjectState,
     namespace: Pick<Env['ROOM'], 'idFromName'>,
     private readonly limits: LogLimits,
-    policy: KeepPolicy,
-    now: () => number = Date.now,
-    maintenanceClosed: () => boolean = () => false,
+    private readonly policy: KeepPolicy,
+    private readonly now: () => number = Date.now,
+    private readonly maintenanceClosed: () => boolean = () => false,
   ) {
     this.admission = new KeptAdmission(state, namespace)
     this.lifecycle = new KeptLifecycle(state, namespace, policy, now, maintenanceClosed)
+  }
+
+  async initializeAway(
+    roomId: string,
+    hostToken: string,
+    capabilities: KeptCapabilities,
+    epoch: string,
+    ciphertext: ArrayBuffer,
+  ): Promise<void> {
+    const input = ciphertext.slice(0)
+    const verifiers = await this.admission.prepare(roomId, hostToken, capabilities)
+    const storage = this.state.storage
+    await storage.transaction(async () => {
+      if (this.maintenanceClosed()) throw new Error('room under maintenance')
+      const savedPolicy = storage.kv.get<KeepPolicy>(KEPT_POLICY_KEY)
+      if (savedPolicy && JSON.stringify(savedPolicy) !== JSON.stringify(this.policy))
+        throw new Error('kept policy changed')
+      const existing = storage.kv.get(LIFETIME_KEY)
+      const lifetime =
+        existing === undefined
+          ? hostLeaves(
+              startKeptLifetime(
+                this.now(),
+                this.policy.roomMaxSeconds,
+                this.policy.requestedSeconds,
+              ),
+              this.now(),
+              this.policy.maxKeepSeconds,
+            )
+          : restoreKeptLifetime(existing)
+      if (lifetime.host !== 'away' || lifetime.requestedSeconds !== this.policy.requestedSeconds)
+        throw new Error('kept room already initialized')
+      this.admission.registerPrepared(verifiers)
+      storage.kv.put(KEPT_POLICY_KEY, this.policy)
+      storage.kv.put(LIFETIME_KEY, lifetime)
+      this.log().initializeInTransaction(epoch, input)
+      const next = keptNextAlarm(lifetime, this.policy.alarmSeconds)
+      const alarm = await storage.getAlarm()
+      if (alarm === null || next < alarm) await storage.setAlarm(next)
+    })
+    await storage.sync()
+    await this.admission.authorizeHost(roomId, hostToken)
+    this.lifecycle.assertOpen()
   }
 
   private log(): DurableLog {

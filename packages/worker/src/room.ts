@@ -25,9 +25,12 @@ import {
 import { MAX_FRAME_BYTES } from '@pedit/protocol/frame'
 import { RELAY_BYTE_RATE, RELAY_MESSAGE_RATE } from '@pedit/protocol/pace'
 import { DurableLog } from './durable-log.ts'
-import { KEPT_ADMISSION_KEY } from './kept-admission.ts'
+import { KEPT_ADMISSION_KEY, KeptAdmission } from './kept-admission.ts'
+import type { KeepPolicy } from './kept-lifecycle.ts'
 import { KeptLifecycle } from './kept-lifecycle.ts'
+import { initializeKeptRoom } from './kept-room-initialize.ts'
 import { keptRoomRead } from './kept-room-read.ts'
+import { KEPT_POLICY_KEY } from './kept-transport.ts'
 import { ADMISSION_KEY } from './room-storage.ts'
 
 // Shared browser code brings DOM's SubtleCrypto into this program. Augment it
@@ -163,6 +166,7 @@ export function maintenance(env: { MAINTENANCE?: string }): Maintenance {
 const BLOB_SESSION_KEY = 'blobSession'
 
 const HOST_TAG = 'host'
+const KEPT_HOST_TAG = 'kept-host'
 // A guest admitted with the reader token: a comment-only or read-only link.
 const READER_TAG = 'reader'
 const BLOB_PATH = /\/blobs\/([A-Za-z0-9_-]{22})$/
@@ -221,6 +225,7 @@ export class Room extends DurableObject<Env> {
   private generation = 0
   // Host connections between the start of fetch and the accept or refusal.
   private hostHandshakes = 0
+  private keptHostHandshakes = 0
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
@@ -231,6 +236,20 @@ export class Room extends DurableObject<Env> {
 
   override async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname
+    const keptSocket = /^\/internal\/kept\/([A-Za-z0-9_-]{22})\/host$/.exec(path)
+    if (keptSocket?.[1]) return this.keptHostSocket(request, keptSocket[1])
+    const keptInit = /^\/internal\/kept\/([A-Za-z0-9_-]{22})\/initialize$/.exec(path)
+    if (keptInit?.[1]) {
+      const roomSeconds = limits(this.env).roomSeconds
+      return initializeKeptRoom(
+        request,
+        this.ctx,
+        this.env,
+        keptInit[1],
+        Number.isFinite(roomSeconds) ? roomSeconds : null,
+        () => maintenance(this.env as { MAINTENANCE?: string }) !== 'none',
+      )
+    }
     const keptRead = /^\/internal\/kept\/([A-Za-z0-9_-]{22})\/read$/.exec(path)
     if (keptRead?.[1])
       return keptRoomRead(
@@ -435,6 +454,17 @@ export class Room extends DurableObject<Env> {
    */
   override async alarm(): Promise<void> {
     if (this.ctx.storage.kv.get(KEPT_ADMISSION_KEY) !== undefined) {
+      const policy = this.ctx.storage.kv.get<KeepPolicy>(KEPT_POLICY_KEY)
+      if (policy) {
+        const lifecycle = this.keptLifecycle(policy)
+        const current = this.keptHostHandshakes
+          ? await lifecycle.observe()
+          : await lifecycle.reconcileHost(() => this.ctx.getWebSockets(KEPT_HOST_TAG).length > 0)
+        if (current.host === 'closed')
+          for (const socket of this.ctx.getWebSockets(KEPT_HOST_TAG))
+            safeClose(socket, ROOM_CLOSED, 'room closed')
+        return
+      }
       await KeptLifecycle.observeAlarm(
         this.ctx,
         this.env.ROOM,
@@ -474,6 +504,10 @@ export class Room extends DurableObject<Env> {
   }
 
   override async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    if (this.ctx.getTags(ws).includes(KEPT_HOST_TAG)) {
+      safeClose(ws, 1003, 'unsupported')
+      return
+    }
     if (typeof message === 'string') {
       this.closePeer(ws, 1003, 'binary frames only')
       return
@@ -518,6 +552,14 @@ export class Room extends DurableObject<Env> {
     wasClean: boolean,
   ): Promise<void> {
     safeClose(ws, code, reason)
+    if (this.ctx.getTags(ws).includes(KEPT_HOST_TAG)) {
+      const policy = this.ctx.storage.kv.get<KeepPolicy>(KEPT_POLICY_KEY)
+      if (policy)
+        await this.keptLifecycle(policy).reconcileHost(() =>
+          this.ctx.getWebSockets(KEPT_HOST_TAG).some((other) => other !== ws),
+        )
+      return
+    }
     if (this.isHost(ws))
       this.log('host closed', { code, wasClean, otherHosts: this.hosts(ws).length })
     await this.closeIfHostLeft(ws, code)
@@ -525,8 +567,55 @@ export class Room extends DurableObject<Env> {
 
   override async webSocketError(ws: WebSocket): Promise<void> {
     safeClose(ws, 1011, 'error')
+    if (this.ctx.getTags(ws).includes(KEPT_HOST_TAG)) {
+      const policy = this.ctx.storage.kv.get<KeepPolicy>(KEPT_POLICY_KEY)
+      if (policy)
+        await this.keptLifecycle(policy).reconcileHost(() =>
+          this.ctx.getWebSockets(KEPT_HOST_TAG).some((other) => other !== ws),
+        )
+      return
+    }
     if (this.isHost(ws)) this.log('host errored', { otherHosts: this.hosts(ws).length })
     await this.closeIfHostLeft(ws, 1011)
+  }
+
+  private keptLifecycle(policy: KeepPolicy): KeptLifecycle {
+    return new KeptLifecycle(
+      this.ctx,
+      this.env.ROOM,
+      policy,
+      Date.now,
+      () => maintenance(this.env as { MAINTENANCE?: string }) === 'closed',
+    )
+  }
+
+  private async keptHostSocket(request: Request, roomId: string): Promise<Response> {
+    if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket')
+      return new Response(null, { status: 426 })
+    const host = /^Host ([A-Za-z0-9_-]{43})$/.exec(request.headers.get('Authorization') ?? '')?.[1]
+    if (!host) return new Response(null, { status: 403 })
+    this.keptHostHandshakes++
+    try {
+      await new KeptAdmission(this.ctx, this.env.ROOM).authorizeHost(roomId, host)
+      const policy = this.ctx.storage.kv.get<KeepPolicy>(KEPT_POLICY_KEY)
+      if (!policy) return new Response(null, { status: 403 })
+      const pair = new WebSocketPair()
+      this.ctx.acceptWebSocket(pair[1], [KEPT_HOST_TAG])
+      try {
+        const state = await this.keptLifecycle(policy).reconcileHost(
+          () => this.ctx.getWebSockets(KEPT_HOST_TAG).length > 0,
+        )
+        if (state.host === 'closed') throw new Error('room closed')
+      } catch {
+        safeClose(pair[1], ROOM_CLOSED, 'room closed')
+        return new Response(null, { status: 403 })
+      }
+      return new Response(null, { status: 101, webSocket: pair[0] })
+    } catch {
+      return new Response(null, { status: 403 })
+    } finally {
+      this.keptHostHandshakes--
+    }
   }
 
   // Closes one connection on the relay's own account.

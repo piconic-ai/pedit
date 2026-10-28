@@ -387,38 +387,8 @@ export class DurableLog {
   }
 
   async initialize(epoch: string, ciphertext: ArrayBuffer): Promise<void> {
-    if (
-      !epoch ||
-      epoch.length > 128 ||
-      ciphertext.byteLength === 0 ||
-      ciphertext.byteLength > MAX_FRAME_BYTES
-    ) {
-      throw new Error('invalid checkpoint')
-    }
     ciphertext = ciphertext.slice(0)
-    await this.guardedTransaction(() => {
-      this.ensureOpen()
-      const current = this.storage.sql
-        .exec<{ epoch: string; generation: number; same: number }>(
-          'SELECT epoch, generation, ciphertext = ? AS same FROM durable_checkpoint WHERE singleton = 1',
-          ciphertext,
-        )
-        .toArray()[0]
-      if (current?.epoch === epoch && current.generation === 1 && current.same === 1) return
-      if (
-        current ||
-        this.storage.sql.exec<{ count: number }>('SELECT count(*) AS count FROM durable_log').one()
-          .count
-      ) {
-        throw new StaleCheckpointError('checkpoint already initialized')
-      }
-      this.storage.sql.exec('INSERT INTO durable_epochs (epoch) VALUES (?)', epoch)
-      this.storage.sql.exec(
-        'INSERT INTO durable_checkpoint (singleton, epoch, generation, cutoff, ciphertext) VALUES (1, ?, 1, 0, ?)',
-        epoch,
-        ciphertext,
-      )
-    })
+    await this.guardedTransaction(() => this.initializeInTransaction(epoch, ciphertext))
     const current = this.storage.sql
       .exec<{ epoch: string; generation: number; same: number }>(
         'SELECT epoch, generation, ciphertext = ? AS same FROM durable_checkpoint WHERE singleton = 1',
@@ -428,6 +398,38 @@ export class DurableLog {
     if (!current || current.epoch !== epoch || current.generation !== 1 || current.same !== 1) {
       throw new StaleCheckpointError('checkpoint changed')
     }
+  }
+
+  initializeInTransaction(epoch: string, ciphertext: ArrayBuffer): void {
+    if (
+      !epoch ||
+      epoch.length > 128 ||
+      ciphertext.byteLength === 0 ||
+      ciphertext.byteLength > MAX_FRAME_BYTES
+    ) {
+      throw new Error('invalid checkpoint')
+    }
+    this.ensureOpen()
+    const current = this.storage.sql
+      .exec<{ epoch: string; generation: number; same: number }>(
+        'SELECT epoch, generation, ciphertext = ? AS same FROM durable_checkpoint WHERE singleton = 1',
+        ciphertext,
+      )
+      .toArray()[0]
+    if (current?.epoch === epoch && current.generation === 1 && current.same === 1) return
+    if (
+      current ||
+      this.storage.sql.exec<{ count: number }>('SELECT count(*) AS count FROM durable_log').one()
+        .count
+    ) {
+      throw new StaleCheckpointError('checkpoint already initialized')
+    }
+    this.storage.sql.exec('INSERT INTO durable_epochs (epoch) VALUES (?)', epoch)
+    this.storage.sql.exec(
+      'INSERT INTO durable_checkpoint (singleton, epoch, generation, cutoff, ciphertext) VALUES (1, ?, 1, 0, ?)',
+      epoch,
+      ciphertext,
+    )
   }
 
   async freeze(epoch: string, generation: number): Promise<LogCut> {

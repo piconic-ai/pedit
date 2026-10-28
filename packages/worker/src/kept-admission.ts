@@ -22,37 +22,9 @@ export class KeptAdmission {
   ) {}
 
   async register(roomId: string, hostToken: string, capabilities: KeptCapabilities): Promise<void> {
-    const { editor, commenter, reader } = capabilities
-    await this.authenticateHost(roomId, hostToken)
-    if (
-      !ADMISSION_PATTERN.test(editor) ||
-      !ADMISSION_PATTERN.test(commenter) ||
-      !ADMISSION_PATTERN.test(reader) ||
-      new Set([hostToken, editor, commenter, reader]).size !== 4
-    )
-      throw new Error('invalid kept admission')
-    const [e, c, r] = await Promise.all([digest(editor), digest(commenter), digest(reader)])
-    const verifiers: Verifiers = { editor: e, commenter: c, reader: r }
-    this.state.storage.transactionSync(() => {
-      const kv = this.state.storage.kv
-      const existing = kv.get<Verifiers>(KEPT_ADMISSION_KEY)
-      if (existing) {
-        const active = kv.get<ArrayBuffer>(ADMISSION_KEY)
-        if (
-          !active ||
-          !equal(active, e) ||
-          !equal(existing.editor, e) ||
-          !equal(existing.commenter, c) ||
-          !equal(existing.reader, r)
-        )
-          throw new Error('kept admission already registered')
-        return
-      }
-      if (kv.get(ADMISSION_KEY) !== undefined || kv.get('openedAt') !== undefined)
-        throw new Error('room already used')
-      kv.put(KEPT_ADMISSION_KEY, verifiers)
-      kv.put(ADMISSION_KEY, e)
-    })
+    const verifiers = await this.prepare(roomId, hostToken, capabilities)
+    const { editor: e, commenter: c, reader: r } = verifiers
+    this.state.storage.transactionSync(() => this.registerPrepared(verifiers))
     await this.state.storage.sync()
     const active = this.state.storage.kv.get<ArrayBuffer>(ADMISSION_KEY)
     const current = this.state.storage.kv.get<Verifiers>(KEPT_ADMISSION_KEY)
@@ -65,6 +37,46 @@ export class KeptAdmission {
       !equal(current.reader, r)
     )
       throw new Error('kept admission no longer active')
+  }
+
+  async prepare(
+    roomId: string,
+    hostToken: string,
+    capabilities: KeptCapabilities,
+  ): Promise<Verifiers> {
+    const { editor, commenter, reader } = capabilities
+    await this.authenticateHost(roomId, hostToken)
+    if (
+      !ADMISSION_PATTERN.test(editor) ||
+      !ADMISSION_PATTERN.test(commenter) ||
+      !ADMISSION_PATTERN.test(reader) ||
+      new Set([hostToken, editor, commenter, reader]).size !== 4
+    )
+      throw new Error('invalid kept admission')
+    const [e, c, r] = await Promise.all([digest(editor), digest(commenter), digest(reader)])
+    return { editor: e, commenter: c, reader: r }
+  }
+
+  registerPrepared(verifiers: Verifiers): void {
+    const { editor: e, commenter: c, reader: r } = verifiers
+    const kv = this.state.storage.kv
+    const existing = kv.get<Verifiers>(KEPT_ADMISSION_KEY)
+    if (existing) {
+      const active = kv.get<ArrayBuffer>(ADMISSION_KEY)
+      if (
+        !active ||
+        !equal(active, e) ||
+        !equal(existing.editor, e) ||
+        !equal(existing.commenter, c) ||
+        !equal(existing.reader, r)
+      )
+        throw new Error('kept admission already registered')
+      return
+    }
+    if (kv.get(ADMISSION_KEY) !== undefined || kv.get('openedAt') !== undefined)
+      throw new Error('room already used')
+    kv.put(KEPT_ADMISSION_KEY, verifiers)
+    kv.put(ADMISSION_KEY, e)
   }
 
   async authenticateHost(roomId: string, hostToken: string): Promise<void> {

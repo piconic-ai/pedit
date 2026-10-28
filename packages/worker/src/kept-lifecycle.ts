@@ -12,7 +12,7 @@ import {
 } from './kept-lifetime.ts'
 import { ADMISSION_KEY } from './room-storage.ts'
 
-const LIFETIME_KEY = 'keptLifetime'
+export const LIFETIME_KEY = 'keptLifetime'
 export type KeepPolicy = {
   requestedSeconds: number
   roomMaxSeconds: number | null
@@ -105,6 +105,17 @@ export class KeptLifecycle {
   async resume(roomId: string, hostToken: string): Promise<KeptLifetime> {
     await this.admission.authorizeHost(roomId, hostToken)
     return this.update((current, now) => hostReturns(this.required(current), now))
+  }
+
+  async reconcileHost(isPresent: () => boolean): Promise<KeptLifetime> {
+    return this.update((current, now) => {
+      const observed = observeKeptLifetime(this.required(current), now)
+      if (observed.host === 'closed') return observed
+      if (isPresent()) return observed.host === 'away' ? hostReturns(observed, now) : observed
+      return observed.host === 'connected'
+        ? hostLeaves(observed, now, this.policy.maxKeepSeconds)
+        : observed
+    })
   }
 
   async close(roomId: string, hostToken: string): Promise<KeptLifetime> {

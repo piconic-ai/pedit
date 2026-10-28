@@ -240,8 +240,11 @@ maintenance, but it does not remove R2 attachments. It must not be exposed
 until real socket lifecycle and attachment cleanup are integrated and tested.
 The Room alarm dispatches kept admission to the internal lifetime observer,
 including after eviction, so a hostless kept room does not enter v5 cleanup.
-An incomplete kept initialization fails closed. Socket lifecycle, attachment
-cleanup, independent retry discovery and public routes remain unconnected.
+The internal initialization path stores admission, the initial away lifetime,
+checkpoint, policy and alarm in one transaction. It tracks authenticated host
+sockets using a separate tag and reconciles their presence on alarms and close.
+These internal paths are not routed by the public Worker. Attachment cleanup,
+independent retry discovery, guest sockets and public routes remain unconnected.
 
 The separate kept attachment cleanup primitive uses `kept/<object-id>/`, so
 the existing `rooms/` age rule does not apply to it. Every PUT reserves a
@@ -266,12 +269,9 @@ An internal Room fetch path exposes a fixed checkpoint and tail to an
 authenticated host or tier capability. It is not routed by the public Worker.
 The response contains base64 ciphertext, with no key or plaintext; clients
 must request a new fixed read after the tail to catch up. The read path does
-not provide durable client cursors or live delivery. Initialization can still
-stop after admission registration and before the lifetime and alarm are
-recorded, so it needs recovery before any public route is enabled.
-Likewise, initialization can record a connected host before any socket is
-accepted; with no total room limit this state can persist indefinitely. Host
-presence must be reconciled from real sockets before enabling the feature.
+not provide durable client cursors or live delivery. The older internal
+transport initialize method still commits admission separately from lifetime
+and checkpoint; it must not be used for public initialization.
 
 ## Verification before release
 
