@@ -183,10 +183,12 @@ limit, a departure extends the total deadline to at least the resulting keep
 deadline. A returning host keeps the extended total deadline. A later departure
 starts a new keep period, subject to the then-current cap. An unlimited total
 lifetime has no total deadline, but an absence still ends at its keep deadline.
-The closed state cannot be reopened. Its caller must persist each transition,
-including expiry to closed, before reporting it and must coordinate the alarm
-with that state. Clock rollback before an expiry is recorded still needs a
-policy; the calculation alone does not provide a monotonic clock.
+The closed state cannot be reopened. Each time observation is checked against
+the last observed time and returns the updated state, closing it at the
+deadline. The caller must persist every observation and transition before
+reporting or scheduling from it. It must also persist closed before deleting
+room data, and coordinate the alarm with that state. A backward clock is rejected
+until a valid time is available. Restored data must pass the lifetime parser.
 
 ## Verification before release
 
