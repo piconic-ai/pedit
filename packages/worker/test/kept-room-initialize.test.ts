@@ -234,3 +234,63 @@ it('rejects invalid and unrepresentable requested durations before initializatio
     expect(state.storage.kv.get('keptLifetime')).toBeUndefined()
   })
 })
+
+it('retries with the persisted policy after configuration changes', async () => {
+  const host = token(),
+    id = await roomIdFor(host),
+    caps = { editor: token(), commenter: token(), reader: token() }
+  const stub = env.ROOM.get(env.ROOM.idFromName(id))
+  const url = `https://room/internal/kept/${id}/initialize`
+  const headers = {
+    Authorization: `Host ${host}`,
+    'X-Pedit-Editor': caps.editor,
+    'X-Pedit-Commenter': caps.commenter,
+    'X-Pedit-Reader': caps.reader,
+    'X-Pedit-Epoch': 'one',
+    'X-Pedit-Keep-Seconds': '200',
+  }
+  expect(
+    (await stub.fetch(url, { method: 'POST', headers, body: new Uint8Array([1]) })).status,
+  ).toBe(204)
+  await evictDurableObject(stub)
+  await runInDurableObject(stub, async (_, state) => {
+    const original = state.storage.kv.get('keptPolicy')
+    for (const maximum of ['60', '300', undefined]) {
+      const request = () => new Request(url, { method: 'POST', headers, body: new Uint8Array([1]) })
+      const result = await initializeKeptRoom(
+        request(),
+        state,
+        { ...env, KEEP_MAX_SECONDS: maximum },
+        id,
+        2,
+        () => false,
+      )
+      expect(result.status).toBe(204)
+      expect(result.headers.get('X-Pedit-Keep-Seconds')).toBe('120')
+      expect(state.storage.kv.get('keptPolicy')).toEqual(original)
+    }
+    const bad = await initializeKeptRoom(
+      new Request(url, {
+        method: 'POST',
+        headers: { ...headers, Authorization: `Host ${token()}` },
+        body: new Uint8Array([1]),
+      }),
+      state,
+      { ...env, KEEP_MAX_SECONDS: '60' },
+      id,
+      null,
+      () => false,
+    )
+    expect(bad.status).toBe(403)
+    const changed = await initializeKeptRoom(
+      new Request(url, { method: 'POST', headers, body: new Uint8Array([2]) }),
+      state,
+      { ...env, KEEP_MAX_SECONDS: '60' },
+      id,
+      null,
+      () => false,
+    )
+    expect(changed.status).toBe(403)
+    expect(state.storage.kv.get('keptPolicy')).toEqual(original)
+  })
+})

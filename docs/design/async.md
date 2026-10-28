@@ -332,4 +332,7 @@ configuration refuses initialization. The requested duration is clamped to
 the configured limit and `X-Pedit-Keep-Seconds` in the successful response
 reports the applied value. Durations that cannot produce a safe timestamp are
 rejected. The selected policy is persisted with the room; a later configuration
-change does not silently change it. This internal path is not public yet.
+change does not silently change it. An authenticated retry uses the saved
+policy and reports its applied duration even when the current limit changes;
+a different checkpoint, capability set, or effective duration is rejected.
+This internal path is not public yet.

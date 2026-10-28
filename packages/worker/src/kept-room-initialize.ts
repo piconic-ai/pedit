@@ -1,6 +1,8 @@
 import { MAX_FRAME_BYTES } from '@pedit/protocol/frame'
+import { KeptAdmission } from './kept-admission.ts'
+import { type KeepPolicy } from './kept-lifecycle.ts'
 import { effectiveKeepSeconds } from './kept-lifetime.ts'
-import { KeptTransport } from './kept-transport.ts'
+import { KEPT_POLICY_KEY, KeptTransport } from './kept-transport.ts'
 
 async function body(request: Request): Promise<ArrayBuffer> {
   if (!request.body) throw new Error('checkpoint missing')
@@ -55,38 +57,32 @@ export async function initializeKeptRoom(
   const maxKeepSeconds = configured === undefined ? null : Number(configured)
   if (!requestedHeader || !/^[1-9][0-9]{0,31}$/.test(requestedHeader))
     return new Response(null, { status: 400 })
+  if (!host || !editor || !commenter || !reader || !epoch)
+    return new Response(null, { status: 400 })
   const requestedBig = BigInt(requestedHeader)
-  const effectiveBig =
-    maxKeepSeconds === null
-      ? requestedBig
-      : requestedBig < BigInt(maxKeepSeconds)
-        ? requestedBig
-        : BigInt(maxKeepSeconds)
-  if (effectiveBig > BigInt(Math.floor((Number.MAX_SAFE_INTEGER - Date.now()) / 1000)))
-    return new Response(null, { status: 400 })
-  const requested = Number(effectiveBig)
-  if (
-    !host ||
-    !editor ||
-    !commenter ||
-    !reader ||
-    !epoch ||
-    !Number.isSafeInteger(requested) ||
-    requested < 1
-  )
-    return new Response(null, { status: 400 })
   try {
     const checkpoint = await body(request)
+    await new KeptAdmission(state, env.ROOM).authenticateHost(roomId, host)
+    const saved = state.storage.kv.get<KeepPolicy>(KEPT_POLICY_KEY)
+    const cap = saved ? saved.maxKeepSeconds : maxKeepSeconds
+    const effective =
+      cap === null ? requestedBig : requestedBig < BigInt(cap) ? requestedBig : BigInt(cap)
+    if (effective > BigInt(Number.MAX_SAFE_INTEGER)) return new Response(null, { status: 400 })
+    const requested = Number(effective)
+    if (!saved && effective > BigInt(Math.floor((Number.MAX_SAFE_INTEGER - Date.now()) / 1000)))
+      return new Response(null, { status: 400 })
+    if (saved && requested !== saved.requestedSeconds) throw new Error('kept duration changed')
+    const policy: KeepPolicy = saved ?? {
+      requestedSeconds: requested,
+      roomMaxSeconds,
+      maxKeepSeconds,
+      alarmSeconds: 3600,
+    }
     const transport = new KeptTransport(
       state,
       env.ROOM,
       { bytes: 50 * 1024 * 1024, frames: 10000 },
-      {
-        requestedSeconds: requested,
-        roomMaxSeconds,
-        maxKeepSeconds,
-        alarmSeconds: 3600,
-      },
+      policy,
       Date.now,
       maintenanceClosed,
     )
@@ -95,7 +91,9 @@ export async function initializeKeptRoom(
       status: 204,
       headers: {
         'Cache-Control': 'no-store',
-        'X-Pedit-Keep-Seconds': String(effectiveKeepSeconds(requested, maxKeepSeconds)),
+        'X-Pedit-Keep-Seconds': String(
+          effectiveKeepSeconds(policy.requestedSeconds, policy.maxKeepSeconds),
+        ),
       },
     })
   } catch {
