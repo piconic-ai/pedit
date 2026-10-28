@@ -395,3 +395,117 @@ it('stops a shard when retirement RPC times out', async () => {
   expect(nextCalls).toBe(1)
   expect(retireCalls).toBe(1)
 }, 5000)
+
+it('limits stalled retirement operations until the original call resolves', async () => {
+  const shard = registry.getByName(`retire-review-${crypto.randomUUID()}`)
+  await runInDurableObject(shard, async (instance) => {
+    let calls = 0
+    let release!: () => void
+    const pending = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const attempted: string[] = []
+    Object.defineProperty(instance, 'registry', {
+      value: {
+        retire: (id: string) => {
+          calls++
+          attempted.push(id)
+          return pending
+        },
+      },
+    })
+    const first = instance.retire('a'.repeat(64), 1)
+    const second = instance.retire('b'.repeat(64), 2)
+    const third = instance.retire('c'.repeat(64), 3)
+    const results = await Promise.allSettled([first, second, third])
+    expect(results.every((result) => result.status === 'rejected')).toBe(true)
+    expect(calls).toBe(1)
+    expect(attempted).toEqual(['a'.repeat(64)])
+    await expect(instance.retire('b'.repeat(64), 2)).rejects.toThrow('registry unavailable')
+    expect(calls).toBe(1)
+    release()
+    await pending
+    await instance.retire('b'.repeat(64), 2)
+    expect(calls).toBe(2)
+    expect(attempted).toEqual(['a'.repeat(64), 'b'.repeat(64)])
+  })
+}, 5000)
+
+it('limits stalled register across all shard operations without sharing results', async () => {
+  const shard = registry.getByName(`register-review-${crypto.randomUUID()}`)
+  await runInDurableObject(shard, async (instance) => {
+    let calls = 0,
+      release!: () => void
+    const pending = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const attempted: string[] = []
+    Object.defineProperty(instance, 'registry', {
+      value: {
+        register: (id: string) => {
+          calls++
+          attempted.push(id)
+          return pending
+        },
+        retire: () => {
+          calls++
+          return Promise.resolve()
+        },
+        next: () => {
+          calls++
+          return Promise.resolve(null)
+        },
+      },
+    })
+    const first = instance.register('a'.repeat(64))
+    const other = instance.register('b'.repeat(64))
+    const retire = instance.retire('c'.repeat(64), 3)
+    const read = instance.next()
+    const results = await Promise.allSettled([first, other, retire, read])
+    expect(results.every((result) => result.status === 'rejected')).toBe(true)
+    expect(calls).toBe(1)
+    expect(attempted).toEqual(['a'.repeat(64)])
+    await expect(instance.register('b'.repeat(64))).rejects.toThrow('registry unavailable')
+    await expect(instance.next()).rejects.toThrow('registry unavailable')
+    expect(calls).toBe(1)
+    release()
+    await pending
+    await instance.register('b'.repeat(64))
+    expect(await instance.next()).toBeNull()
+    await instance.retire('c'.repeat(64), 3)
+    expect(attempted).toEqual(['a'.repeat(64), 'b'.repeat(64)])
+    expect(calls).toBe(4)
+  })
+}, 5000)
+
+it('refuses later RPC invocations until a stalled shard operation settles', async () => {
+  const name = `rpc-recovery-${crypto.randomUUID()}`
+  const shard = () => registry.getByName(name)
+  await runInDurableObject(shard(), (instance) => {
+    let release!: () => void
+    const pending = new Promise<null>((resolve) => {
+      release = () => resolve(null)
+    })
+    Object.defineProperty(instance, 'registry', {
+      value: {
+        next: () => pending,
+        register: () => Promise.resolve(),
+      },
+    })
+    Object.defineProperty(instance, 'testRelease', { value: release })
+  })
+  await runInDurableObject(shard(), async (instance) => {
+    await expect(instance.next()).rejects.toThrow('registry timed out')
+  })
+  await runInDurableObject(shard(), async (instance) => {
+    await expect(instance.register('a'.repeat(64))).rejects.toThrow('registry unavailable')
+  })
+  await runInDurableObject(shard(), (instance) => {
+    const release = Reflect.get(instance, 'testRelease')
+    if (typeof release !== 'function') throw new Error('missing release')
+    release()
+  })
+  await runInDurableObject(shard(), async (instance) => {
+    await instance.register('a'.repeat(64))
+  })
+})
