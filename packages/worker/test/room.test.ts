@@ -255,6 +255,19 @@ describe('rooms', () => {
     await until(() => a.received.length === 1)
   })
 
+  it('does not replay earlier frames to a guest who joins later', async () => {
+    const room = await createRoom()
+    const h = await host(room)
+    const first = await connect(room.id)
+    h.ws.send(new Uint8Array([1]))
+    await until(() => first.received.length === 1)
+
+    const late = await connect(room.id)
+    h.ws.send(new Uint8Array([2]))
+    await until(() => late.received.length === 1)
+    expect([...new Uint8Array(late.received[0] ?? new ArrayBuffer(0))]).toEqual([2])
+  })
+
   it('keeps rooms isolated', async () => {
     const one = await createRoom()
     const two = await createRoom()
