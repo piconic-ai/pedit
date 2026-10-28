@@ -13,9 +13,10 @@ import { ADMISSION_KEY } from '../src/room-storage.ts'
 const bytes = (...values: number[]) => new Uint8Array(values).buffer
 const limits = { bytes: 5, frames: 2 }
 const open = (storage: DurableObjectStorage) => storage.kv.put(ADMISSION_KEY, bytes(1))
-const readAll = (log: DurableLog, epoch: string) => {
-  const snapshot = log.beginRead()
-  return log.readPage(epoch, snapshot.generation, snapshot.cutoff, snapshot.tail, 16)
+const readAll = async (log: DurableLog, epoch: string) => {
+  const snapshot = await log.beginRead()
+  if (snapshot.epoch !== epoch) throw new StaleCheckpointError('stale checkpoint')
+  return (await log.readPage(snapshot.session, snapshot.cursor)).entries
 }
 
 describe('durable ciphertext log', () => {
@@ -35,10 +36,9 @@ describe('durable ciphertext log', () => {
     await evictDurableObject(stub)
     await runInDurableObject(stub, async (_: Room, state) => {
       const log = new DurableLog(state.storage, limits)
-      const snapshot = log.beginRead()
-      const rows = log.readPage('one', snapshot.generation, first, snapshot.tail, 10)
-      expect(rows).toHaveLength(1)
-      expect([...new Uint8Array(rows[0]?.ciphertext ?? new ArrayBuffer(0))]).toEqual([3])
+      const rows = await readAll(log, 'one')
+      expect(rows.map((r) => r.sequence)).toContain(first)
+      expect([...new Uint8Array(rows[1]?.ciphertext ?? new ArrayBuffer(0))]).toEqual([3])
       DurableLog.clear(state.storage)
       DurableLog.clear(state.storage)
       expect(state.storage.sql.exec('SELECT sequence FROM durable_log').toArray()).toHaveLength(0)
@@ -117,7 +117,7 @@ describe('durable ciphertext log', () => {
         log.append('one', bytes(2)),
       ])
       expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
-      expect(readAll(log, 'one')).toHaveLength(1)
+      expect(await readAll(log, 'one')).toHaveLength(1)
     })
   })
 
@@ -134,7 +134,7 @@ describe('durable ciphertext log', () => {
         spy.mockRestore()
       }
       const sequence = await log.append('one', bytes(1))
-      expect(readAll(log, 'one').map((entry) => entry.sequence)).toEqual([sequence])
+      expect((await readAll(log, 'one')).map((entry) => entry.sequence)).toEqual([sequence])
     })
   })
 
@@ -148,18 +148,16 @@ describe('durable ciphertext log', () => {
       await log.append('one', bytes(1, 2, 3))
       await expect(log.append('one', bytes(4, 5, 6))).rejects.toBeInstanceOf(LogFullError)
       await expect(log.append('two', bytes(1, 2, 3))).rejects.toBeInstanceOf(StaleCheckpointError)
-      expect(() => readAll(log, 'two')).toThrow(StaleCheckpointError)
+      await expect(readAll(log, 'two')).rejects.toBeInstanceOf(StaleCheckpointError)
       await expect(log.append('one', new ArrayBuffer(0))).rejects.toThrow('invalid durable frame')
     })
     await runInDurableObject(second, async (_: Room, state) => {
       open(state.storage)
       const log = new DurableLog(state.storage, limits)
-      expect(() => log.beginRead()).toThrow(StaleCheckpointError)
+      await expect(log.beginRead()).rejects.toBeInstanceOf(StaleCheckpointError)
       await log.initialize('two', bytes(0))
       const b = await log.append('two', bytes(1))
-      expect(readAll(log, 'two').map((entry) => entry.sequence)).toEqual([b])
-      expect(() => log.readPage('two', 1, 0, b, -1)).toThrow('invalid durable log range')
-      expect(() => log.readPage('two', 1, 0, b, 17)).toThrow('invalid durable log range')
+      expect((await readAll(log, 'two')).map((entry) => entry.sequence)).toEqual([b])
     })
   })
 })

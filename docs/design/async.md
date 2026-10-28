@@ -89,11 +89,12 @@ that, the caller must inspect the current generation and pending cut instead
 of treating a stale response as success. The host must authorize every freeze,
 inspection, abort and commit before those operations are exposed.
 
-The prototype reads a checkpoint and a log tail together. Each page checks
-the epoch and generation, but relies on its caller to retain the tail returned
-by the initial read. The public protocol must bind that tail to the read
-session or otherwise enforce the same boundary; the current storage API alone
-does not prevent a caller from substituting a later tail.
+The storage prototype captures a checkpoint and log tail together in a bounded,
+expiring read session. Each page uses a server-issued cursor and the stored
+tail; it rejects a changed epoch or generation. The last cursor can be retried
+after a lost response, including after eviction. A later append cannot extend
+the captured tail. The session does not authorize its caller; the public
+protocol must check admission and connect the fixed tail to live delivery.
 
 ## Ledger snapshot encoding
 

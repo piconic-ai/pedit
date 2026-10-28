@@ -11,6 +11,10 @@ import type { Room } from '../src/room.ts'
 import { ADMISSION_KEY } from '../src/room-storage.ts'
 
 const bytes = (...values: number[]) => new Uint8Array(values).buffer
+const readAll = async (log: DurableLog) => {
+  const snapshot = await log.beginRead()
+  return (await log.readPage(snapshot.session, snapshot.cursor)).entries
+}
 
 describe('checkpoint cutover', () => {
   it('requires an initial checkpoint before accepting a durable frame', async () => {
@@ -28,18 +32,20 @@ describe('checkpoint cutover', () => {
       const log = new DurableLog(state.storage, { bytes: 100, frames: 10 })
       await log.initialize('first', bytes(1))
       const sequence = await log.append('first', bytes(2))
+      const oldRead = await log.beginRead()
       const cut = await log.freeze('first', 1)
       expect(cut.cutoff).toBe(sequence)
       await expect(log.append('first', bytes(3))).rejects.toBeInstanceOf(LogFrozenError)
       await log.commit(cut, 'second', bytes(4))
       expect(log.checkpoint()).toMatchObject({ epoch: 'second', generation: 2, cutoff: sequence })
-      expect(() => log.readPage('first', 1, 0, sequence, 10)).toThrow(StaleCheckpointError)
+      await expect(log.readPage(oldRead.session, oldRead.cursor)).rejects.toBeInstanceOf(
+        StaleCheckpointError,
+      )
       await expect(log.append('first', bytes(5))).rejects.toBeInstanceOf(StaleCheckpointError)
-      const snapshot = log.beginRead()
+      const snapshot = await log.beginRead()
       const later = await log.append('second', bytes(6))
       expect(later).toBeGreaterThan(sequence)
-      expect(log.readPage('second', 2, sequence, snapshot.tail, 10)).toHaveLength(0)
-      expect(() => log.readPage('second', 2, 0, snapshot.tail, 10)).toThrow(StaleCheckpointError)
+      expect((await log.readPage(snapshot.session, snapshot.cursor)).entries).toHaveLength(0)
     })
   })
 
@@ -55,7 +61,7 @@ describe('checkpoint cutover', () => {
       await expect(
         log.commit({ ...cut, cutoff: cut.cutoff + 1 }, 'second', bytes(3)),
       ).rejects.toBeInstanceOf(StaleCheckpointError)
-      expect(log.readPage('first', 1, 0, cut.cutoff, 10)).toHaveLength(1)
+      expect(await readAll(log)).toHaveLength(1)
       await log.commit(cut, 'second', bytes(3))
       await expect(log.commit(cut, 'second', bytes(3))).resolves.toBeUndefined()
       await expect(log.commit(cut, 'second', bytes(4))).rejects.toBeInstanceOf(StaleCheckpointError)
@@ -71,11 +77,14 @@ describe('checkpoint cutover', () => {
       await log.append('first', bytes(2))
       const cut = await log.freeze('first', 1)
       await log.abort(cut)
-      expect(log.readPage('first', 1, 0, cut.cutoff, 10)).toHaveLength(1)
+      expect(await readAll(log)).toHaveLength(1)
       await expect(log.commit(cut, 'second', bytes(3))).rejects.toBeInstanceOf(StaleCheckpointError)
+      const oldRead = await log.beginRead()
       const next = await log.freeze('first', 1)
       await log.commit(next, 'second', bytes(3))
-      expect(() => log.readPage('first', 1, 0, cut.cutoff, 10)).toThrow(StaleCheckpointError)
+      await expect(log.readPage(oldRead.session, oldRead.cursor)).rejects.toBeInstanceOf(
+        StaleCheckpointError,
+      )
     })
   })
 
@@ -96,7 +105,7 @@ describe('checkpoint cutover', () => {
       expect(log.pendingCut()).toEqual(cut)
       await log.abort(cut)
       expect(log.pendingCut()).toBeUndefined()
-      expect(log.readPage('first', 1, 0, cut.cutoff, 10)).toHaveLength(1)
+      expect(await readAll(log)).toHaveLength(1)
     })
   })
 
@@ -111,7 +120,7 @@ describe('checkpoint cutover', () => {
       await log.append('second', bytes(3))
       const next = await log.freeze('second', 2)
       await expect(log.commit(next, 'first', bytes(4))).rejects.toBeInstanceOf(StaleCheckpointError)
-      expect(log.readPage('second', 2, initial.cutoff, next.cutoff, 10)).toHaveLength(1)
+      expect(await readAll(log)).toHaveLength(1)
       expect(log.pendingCut()).toEqual(next)
     })
   })
@@ -137,7 +146,7 @@ describe('checkpoint cutover', () => {
         resume()
         await expect(pending).rejects.toBeInstanceOf(LogFrozenError)
         expect(cut.cutoff).toBe(0)
-        expect(log.readPage('first', 1, 0, 0, 10)).toHaveLength(0)
+        expect(await readAll(log)).toHaveLength(0)
       } finally {
         spy.mockRestore()
       }

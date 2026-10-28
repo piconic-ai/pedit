@@ -15,6 +15,26 @@ export class LogFullError extends Error {}
 export class LogClosedError extends Error {}
 export class LogFrozenError extends Error {}
 export class StaleCheckpointError extends Error {}
+export class ReadSessionFullError extends Error {}
+
+const READ_SESSION_LIMIT = 64
+const READ_SESSION_MS = 5 * 60_000
+const READ_PAGE_SIZE = 16
+
+type ReadSession = {
+  epoch: string
+  generation: number
+  tail: number
+  expires: number
+  cursor: string | null
+  after: number
+  previous: string | null
+  previousAfter: number | null
+  previousEnd: number | null
+  next: string | null
+}
+
+export type ReadPage = { entries: LogEntry[]; next: string | null }
 
 export type Checkpoint = {
   epoch: string
@@ -65,6 +85,11 @@ export class DurableLog {
       aborted_cut INTEGER
     )`)
     storage.sql.exec('CREATE TABLE IF NOT EXISTS durable_epochs (epoch TEXT PRIMARY KEY)')
+    storage.sql.exec(`CREATE TABLE IF NOT EXISTS durable_reads (
+      id TEXT PRIMARY KEY, epoch TEXT NOT NULL, generation INTEGER NOT NULL,
+      tail INTEGER NOT NULL, expires INTEGER NOT NULL, cursor TEXT, after_seq INTEGER NOT NULL,
+      previous TEXT, previous_after INTEGER, previous_end INTEGER, next TEXT
+    )`)
   }
 
   async append(epoch: string, ciphertext: ArrayBuffer): Promise<number> {
@@ -151,51 +176,117 @@ export class DurableLog {
       .toArray()[0]
   }
 
-  beginRead(): Checkpoint & { tail: number } {
-    return this.storage.transactionSync(() => {
+  async beginRead(): Promise<Checkpoint & { session: string; cursor: string; tail: number }> {
+    const session = crypto.randomUUID()
+    const cursor = crypto.randomUUID()
+    const snapshot = this.storage.transactionSync(() => {
       this.ensureOpen()
       const current = this.checkpoint()
       if (!current) throw new StaleCheckpointError('checkpoint is missing')
-      const tail = this.storage.sql
+      const sql = this.storage.sql
+      sql.exec(
+        'DELETE FROM durable_reads WHERE expires <= ? OR epoch != ? OR generation != ?',
+        Date.now(),
+        current.epoch,
+        current.generation,
+      )
+      if (
+        sql.exec<{ count: number }>('SELECT count(*) AS count FROM durable_reads').one().count >=
+        READ_SESSION_LIMIT
+      ) {
+        throw new ReadSessionFullError('too many read sessions')
+      }
+      const tail = sql
         .exec<{ tail: number }>('SELECT coalesce(max(sequence), 0) AS tail FROM durable_log')
         .one().tail
-      return { ...current, tail: Math.max(current.cutoff, tail) }
+      const through = Math.max(current.cutoff, tail)
+      sql.exec(
+        'INSERT INTO durable_reads (id, epoch, generation, tail, expires, cursor, after_seq) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        session,
+        current.epoch,
+        current.generation,
+        through,
+        Date.now() + READ_SESSION_MS,
+        cursor,
+        current.cutoff,
+      )
+      return { ...current, tail: through }
     })
+    await this.storage.sync()
+    this.readSession(session)
+    return { ...snapshot, session, cursor }
   }
 
-  readPage(
-    epoch: string,
-    generation: number,
-    after: number,
-    through: number,
-    limit: number,
-  ): LogEntry[] {
-    return this.storage.transactionSync(() => {
-      this.ensureOpen()
-      const current = this.checkpoint()
-      if (
-        !current ||
-        current.epoch !== epoch ||
-        current.generation !== generation ||
-        !Number.isSafeInteger(after) ||
-        after < current.cutoff ||
-        !Number.isSafeInteger(through) ||
-        through < after
-      ) {
-        throw new StaleCheckpointError('stale checkpoint')
+  private readSession(id: string): ReadSession {
+    this.ensureOpen()
+    const row = this.storage.sql
+      .exec<ReadSession>(
+        `SELECT epoch, generation, tail, expires, cursor, after_seq AS after,
+      previous, previous_after AS previousAfter, previous_end AS previousEnd, next FROM durable_reads WHERE id = ?`,
+        id,
+      )
+      .toArray()[0]
+    const current = this.checkpoint()
+    if (
+      !row ||
+      row.expires <= Date.now() ||
+      !current ||
+      current.epoch !== row.epoch ||
+      current.generation !== row.generation
+    ) {
+      throw new StaleCheckpointError('stale read session')
+    }
+    return row
+  }
+
+  async readPage(session: string, cursor: string): Promise<ReadPage> {
+    if (
+      typeof session !== 'string' ||
+      typeof cursor !== 'string' ||
+      session.length !== 36 ||
+      cursor.length !== 36
+    ) {
+      throw new StaleCheckpointError('invalid read cursor')
+    }
+    const page = this.storage.transactionSync(() => {
+      const row = this.readSession(session)
+      const sql = this.storage.sql
+      if (cursor === row.previous) {
+        const entries = sql
+          .exec<LogEntry>(
+            'SELECT sequence, ciphertext FROM durable_log WHERE epoch = ? AND sequence > ? AND sequence <= ? ORDER BY sequence',
+            row.epoch,
+            row.previousAfter,
+            row.previousEnd,
+          )
+          .toArray()
+        return { entries, next: row.next }
       }
-      if (!Number.isInteger(limit) || limit < 1 || limit > 16)
-        throw new Error('invalid durable log range')
-      return this.storage.sql
+      if (cursor !== row.cursor) throw new StaleCheckpointError('invalid read cursor')
+      const entries = sql
         .exec<LogEntry>(
           'SELECT sequence, ciphertext FROM durable_log WHERE epoch = ? AND sequence > ? AND sequence <= ? ORDER BY sequence LIMIT ?',
-          epoch,
-          after,
-          through,
-          limit,
+          row.epoch,
+          row.after,
+          row.tail,
+          READ_PAGE_SIZE,
         )
         .toArray()
+      const end = entries.at(-1)?.sequence ?? row.after
+      const next = end < row.tail && entries.length > 0 ? crypto.randomUUID() : null
+      sql.exec(
+        'UPDATE durable_reads SET previous = cursor, previous_after = after_seq, previous_end = ?, next = ?, cursor = ?, after_seq = ? WHERE id = ?',
+        end,
+        next,
+        next,
+        end,
+        session,
+      )
+      return { entries, next }
     })
+    await this.storage.sync()
+    this.readSession(session)
+    return page
   }
 
   private ensureOpen(): void {
@@ -414,6 +505,13 @@ export class DurableLog {
             .toArray().length
         ) {
           storage.sql.exec('DELETE FROM durable_epochs')
+        }
+        if (
+          storage.sql
+            .exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'durable_reads'")
+            .toArray().length
+        ) {
+          storage.sql.exec('DELETE FROM durable_reads')
         }
         storage.sql.exec('UPDATE durable_log_meta SET closed = 1')
       })
