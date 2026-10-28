@@ -41,3 +41,8 @@ TypeScript side derives the same.
 and TypeScript tests read it. Regenerate it with `node
 packages/testdata/generate-kept-access.mjs > packages/testdata/kept-access-vectors.json`.
 The generator's fixed keys are for tests only.
+
+`kept-checkpoint-vectors.json` contains one signed, encrypted v6 checkpoint.
+The Go and TypeScript tests verify it. Regenerate it with `node
+packages/testdata/generate-kept-checkpoint.mjs > packages/testdata/kept-checkpoint-vectors.json`.
+Its key and IV are fixed for the test; production encryption uses random IVs.

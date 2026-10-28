@@ -21,8 +21,13 @@ export interface KeptSigner {
   key: CryptoKey
 }
 
-export interface KeptRoomKeys extends Omit<RoomKeys, 'version' | 'signer'> {
+const keptKeysBrand: unique symbol = Symbol('kept room keys')
+const derivedKeys = new WeakSet<object>()
+
+export interface KeptRoomKeys extends Readonly<Omit<RoomKeys, 'version' | 'signer'>> {
+  readonly [keptKeysBrand]: true
   version: 'v6'
+  roomId: string
   signer: KeptSigner | null
   hostKey: CryptoKey
 }
@@ -151,8 +156,12 @@ export async function deriveKeptRoomKeys(
     verifyingKey(commentKey),
     verifyingKey(link.hostKey),
   ])
-  return {
+  if (signer) Object.freeze(signer)
+  Object.freeze(fragments)
+  const result: KeptRoomKeys = {
+    [keptKeysBrand]: true,
     version: 'v6',
+    roomId,
     access: link.access,
     frameKey,
     editKey: edit,
@@ -162,8 +171,17 @@ export async function deriveKeptRoomKeys(
     readAdmission: await deriveAdmissionToken(frame),
     editAdmission,
     fragments,
-    frameSecret: frame,
+    get frameSecret() {
+      return Uint8Array.from(frame)
+    },
   }
+  Object.freeze(result)
+  derivedKeys.add(result)
+  return result
+}
+
+export function isKeptRoomKeys(keys: KeptRoomKeys): boolean {
+  return derivedKeys.has(keys)
 }
 
 function validKeptPublicKey(raw: Uint8Array): boolean {

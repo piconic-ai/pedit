@@ -24,6 +24,9 @@ type KeptLinkSecrets struct {
 }
 
 type KeptRoomKeys struct {
+	roomID        string
+	hostBinding   [32]byte
+	frameBinding  [32]byte
 	Access        Access
 	FrameKey      []byte
 	EditKey       ed25519.PublicKey
@@ -110,7 +113,7 @@ func DeriveKeptRoomKeys(link KeptLinkSecrets, roomID string) (*KeptRoomKeys, err
 		return nil, errors.New("invalid room ID")
 	}
 	enc := base64.RawURLEncoding.EncodeToString
-	k := &KeptRoomKeys{Access: link.Access, HostKey: append(ed25519.PublicKey(nil), link.HostKey[:]...), Fragments: map[Access]string{}}
+	k := &KeptRoomKeys{roomID: roomID, Access: link.Access, HostKey: append(ed25519.PublicKey(nil), link.HostKey[:]...), Fragments: map[Access]string{}}
 	var comment, read []byte
 	editKey := link.EditKey[:]
 	if link.Access == AccessEdit {
@@ -148,6 +151,8 @@ func DeriveKeptRoomKeys(link KeptLinkSecrets, roomID string) (*KeptRoomKeys, err
 	info = append(info, commentKey...)
 	info = append(info, link.HostKey[:]...)
 	k.FrameKey = derive(read, string(info))
+	copy(k.hostBinding[:], k.HostKey)
+	copy(k.frameBinding[:], k.FrameKey)
 	k.ReadAdmission = enc(derive(k.FrameKey, labelReadAdmission))
 	return k, nil
 }
