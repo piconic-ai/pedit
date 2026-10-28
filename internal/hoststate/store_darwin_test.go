@@ -3,6 +3,7 @@
 package hoststate
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -14,7 +15,7 @@ import (
 )
 
 func credentials() Credentials {
-	c := Credentials{Version: 1, Origin: "https://edit.piconic.ai", RoomID: "AAECAwQFBgcICQoLDA0ODw", HostToken: "host-token", Generation: 1}
+	c := Credentials{Version: 1, Origin: "https://edit.piconic.ai", RoomID: "6oZqdX5MOLq_qBJ8vppAnT", HostToken: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8", Generation: 1}
 	c.EditSecret[0] = 1
 	c.HostSeed[0] = 2
 	return c
@@ -340,5 +341,36 @@ func TestConcurrentGenerationUpdates(t *testing.T) {
 	got, err := s.Load(c.RoomID)
 	if err != nil || got.Generation != 20 {
 		t.Fatalf("concurrent generation: %d, %v", got.Generation, err)
+	}
+}
+
+func TestRejectMismatchedHostOnSaveAndLoad(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "host")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	c := credentials()
+	bad := c
+	bad.HostToken = "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8"
+	if err = s.Save(bad); !errors.Is(err, ErrInvalid) {
+		t.Fatal("mismatched host token saved")
+	}
+	if err = s.Save(c); err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(bad)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(path, c.RoomID), b, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Load(c.RoomID); !errors.Is(err, ErrInvalid) {
+		t.Fatal("mismatched host token loaded")
+	}
+	if err = s.Save(c); !errors.Is(err, ErrInvalid) {
+		t.Fatal("corrupt record overwritten")
 	}
 }

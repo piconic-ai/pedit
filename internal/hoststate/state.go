@@ -3,6 +3,7 @@ package hoststate
 
 import (
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"net/url"
@@ -29,17 +30,16 @@ type Credentials struct {
 
 func (c Credentials) validate() error {
 	u, err := url.Parse(c.Origin)
-	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.String() != c.Origin || len(c.Origin) > 2048 || !roomPattern.MatchString(c.RoomID) || len(c.HostToken) < 1 || len(c.HostToken) > 1024 || c.Generation > 1<<53-1 || c.Version != 1 || c.EditSecret == [32]byte{} || c.HostSeed == [32]byte{} {
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.String() != c.Origin || len(c.Origin) > 2048 || !roomPattern.MatchString(c.RoomID) || len(c.HostToken) != 43 || c.Generation > 1<<53-1 || c.Version != 1 || c.EditSecret == [32]byte{} || c.HostSeed == [32]byte{} {
 		return ErrInvalid
 	}
-	room, err := base64.RawURLEncoding.Strict().DecodeString(c.RoomID)
-	if err != nil || len(room) != 16 || base64.RawURLEncoding.EncodeToString(room) != c.RoomID {
+	token, err := base64.RawURLEncoding.Strict().DecodeString(c.HostToken)
+	if err != nil || len(token) != 32 || base64.RawURLEncoding.EncodeToString(token) != c.HostToken {
 		return ErrInvalid
 	}
-	for _, b := range []byte(c.HostToken) {
-		if b < 0x21 || b > 0x7e {
-			return ErrInvalid
-		}
+	digest := sha256.Sum256([]byte(c.HostToken))
+	if base64.RawURLEncoding.EncodeToString(digest[:])[:22] != c.RoomID {
+		return ErrInvalid
 	}
 	return nil
 }
