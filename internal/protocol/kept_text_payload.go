@@ -13,7 +13,11 @@ const textPayloadDomain = "pedit/v6/text-checkpoint\x00"
 
 var keptAssetReference = regexp.MustCompile(`assets/[0-9a-f]{32}\.(png|jpg|gif|webp)`)
 
-func validKeptYjsUpdate(update []byte, content bool) (valid bool) {
+func validKeptYjsUpdate(update []byte, content bool) bool {
+	return validKeptYjsUpdateWithAssets(update, content, false)
+}
+
+func validKeptYjsUpdateWithAssets(update []byte, content, allowAssets bool) (valid bool) {
 	if content && CheckKeptTextState(update) != nil {
 		return false
 	}
@@ -34,7 +38,7 @@ func validKeptYjsUpdate(update []byte, content bool) (valid bool) {
 	if pending.Items != 0 || pending.DeleteRanges != 0 || len(doc.GetSubdocs()) != 0 {
 		return false
 	}
-	return !content || !keptAssetReference.MatchString(doc.GetText("content").ToString())
+	return !content || allowAssets || !keptAssetReference.MatchString(doc.GetText("content").ToString())
 }
 
 type KeptAttachmentInventory uint8
