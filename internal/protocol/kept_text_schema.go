@@ -1,6 +1,9 @@
 package protocol
 
-import "unicode/utf16"
+import (
+	"unicode/utf16"
+	"unicode/utf8"
+)
 
 // CheckKeptTextState accepts only the plain-text subset of a complete Yjs V1 snapshot.
 func CheckKeptTextState(state []byte) error { return checkKeptSchema(state, keptTextItem, false) }
@@ -29,7 +32,7 @@ func keptTextItem(r *keptSchemaReader) error {
 	}
 	if info&31 == 4 {
 		s, err := r.str()
-		if err != nil || s == "" {
+		if err != nil || s == "" || !utf8.ValidString(s) {
 			return errKeptSchema
 		}
 		return r.advanceTextClock(uint64(len(utf16.Encode([]rune(s)))))

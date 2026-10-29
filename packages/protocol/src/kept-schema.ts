@@ -92,12 +92,18 @@ export class KeptSchemaReader {
     }
   }
 }
-function client(r: KeptSchemaReader, seen: Set<number>, item: (r: KeptSchemaReader) => void): void {
+function client(
+  r: KeptSchemaReader,
+  seen: Set<number>,
+  item: (r: KeptSchemaReader) => void,
+  allowStart: boolean,
+): void {
   const count = r.count(true),
     id = r.uint()
-  if (seen.has(id) || r.uint() !== 0) throw new Error('invalid client')
+  const start = r.uint()
+  if (seen.has(id) || (!allowStart && start !== 0)) throw new Error('invalid client')
   seen.add(id)
-  r.clock = 0
+  r.clock = start
   for (let i = 0; i < count; i++) item(r)
 }
 function deletions(r: KeptSchemaReader): number {
@@ -113,13 +119,14 @@ export function checkKeptSchema(
   input: Uint8Array,
   item: (r: KeptSchemaReader) => void,
   comments: boolean,
+  allowStart = false,
 ): boolean {
   if (!input.length || input.length > MAX_FRAME_BYTES) return false
   try {
     const r = new KeptSchemaReader(input),
       clients = r.count(false),
       seen = new Set<number>()
-    for (let i = 0; i < clients; i++) client(r, seen, item)
+    for (let i = 0; i < clients; i++) client(r, seen, item, allowStart)
     const deleted = deletions(r)
     return (
       r.remaining() === 0 &&
