@@ -324,3 +324,24 @@ func TestKeptRecoveryRejectsTailWithoutMutatingCheckpointLedgerOrDisk(t *testing
 		})
 	}
 }
+
+func TestKeptRecoveryRetriesValidTailAfterInvalidTail(t *testing.T) {
+	f := newRecoveryFixture(t)
+	frame := f.frame(t, f.keys, 1, 1, f.textUpdate)
+	tampered := bytes.Clone(frame)
+	tampered[len(tampered)-1] ^= 1
+	if _, err := startKeptRecovery(context.Background(), f.opts, f.checkpoint, f.ledger, f.keys, f.context, [][]byte{tampered}); err == nil {
+		t.Fatal("accepted invalid tail")
+	}
+	s, err := startKeptRecovery(context.Background(), f.opts, f.checkpoint, f.ledger, f.keys, f.context, [][]byte{frame})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop()
+	if len(s.recovery.ledger.Snapshot()) != 1 || len(f.ledger.Snapshot()) != 0 {
+		t.Fatal("retry did not preserve ledger isolation")
+	}
+	if got := readFile(t, f.opts.File); got != "external edit" {
+		t.Fatalf("disk changed: %q", got)
+	}
+}

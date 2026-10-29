@@ -285,6 +285,22 @@ func (s *Session) startRuntime(opts Options, recovery *recoveryCheckpoint) error
 	return nil
 }
 
+func initialRoom(ctx context.Context, opts Options, server string, recovery *recoveryCheckpoint) (*room, error) {
+	if recovery != nil {
+		return &room{ID: "AAAAAAAAAAAAAAAAAAAAAA"}, nil
+	}
+	return createRoom(ctx, opts.HTTPClient, server, opts.Header)
+}
+
+func (s *Session) configureRecovery(recovery *recoveryCheckpoint) {
+	if recovery != nil {
+		s.URL = ""
+		if recovery.metaID != 0 {
+			s.nextID = recovery.metaID
+		}
+	}
+}
+
 func Start(ctx context.Context, opts Options) (*Session, error) {
 	return start(ctx, opts, nil)
 }
@@ -346,12 +362,9 @@ func start(ctx context.Context, opts Options, recovery *recoveryCheckpoint) (*Se
 	}
 
 	server := strings.TrimRight(opts.Server, "/")
-	room := &room{ID: "AAAAAAAAAAAAAAAAAAAAAA"}
-	if recovery == nil {
-		room, err = createRoom(ctx, opts.HTTPClient, server, opts.Header)
-		if err != nil {
-			return nil, err
-		}
+	room, err := initialRoom(ctx, opts, server, recovery)
+	if err != nil {
+		return nil, err
 	}
 	key := protocol.GenerateEditSecret()
 	rawKey, err := protocol.DecodeKey(key)
@@ -395,12 +408,7 @@ func start(ctx context.Context, opts Options, recovery *recoveryCheckpoint) (*Se
 		nextID:    1,
 		recovery:  recovery,
 	}
-	if recovery != nil {
-		s.URL = ""
-		if recovery.metaID != 0 {
-			s.nextID = recovery.metaID
-		}
-	}
+	s.configureRecovery(recovery)
 	s.opts.OnError = onError
 	s.Writer = filewriter.New(opts.File, initial, filewriter.Options{
 		Bound:            bound,
