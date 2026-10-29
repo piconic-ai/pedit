@@ -175,8 +175,18 @@ func (h *Host) currentCredentials() (hoststate.Credentials, error) {
 		return hoststate.Credentials{}, hoststate.ErrInvalid
 	}
 	original.Generation = c.Generation
-	if c != original {
+	currentInitial, originalInitial := c.Initial, original.Initial
+	c.Initial, original.Initial = nil, nil
+	if c != original || !equalInitial(currentInitial, originalInitial) {
 		return hoststate.Credentials{}, hoststate.ErrInvalid
 	}
+	c.Initial = currentInitial
 	return c, nil
+}
+
+func equalInitial(a, b *hoststate.InitialRecord) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return bytes.Equal(a.Payload, b.Payload) && bytes.Equal(a.Signature, b.Signature)
 }

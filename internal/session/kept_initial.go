@@ -1,12 +1,16 @@
 package session
 
 import (
+	"bytes"
+	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
 
 	"github.com/piconic-ai/pedit/internal/filewriter"
+	"github.com/piconic-ai/pedit/internal/hoststate"
 	"github.com/piconic-ai/pedit/internal/meta"
 	"github.com/piconic-ai/pedit/internal/protocol"
 	"github.com/reearth/ygo/crdt"
@@ -147,6 +151,127 @@ func (s *keptInitial) verify() error {
 	comments, ok := s.metaBound.Read()
 	if !ok || comments != s.comments {
 		return errors.New("initial metadata changed")
+	}
+	return nil
+}
+
+// keptInitialRecord is private until the full recovery path validates it.
+// It preserves the original bytes alongside the encrypted checkpoint.
+type keptInitialRecord struct {
+	File           string   `json:"file"`
+	Project        string   `json:"project"`
+	Text           string   `json:"text"`
+	CommentsExists bool     `json:"commentsExists"`
+	Comments       string   `json:"comments"`
+	Epoch          [32]byte `json:"epoch"`
+	Checkpoint     []byte   `json:"checkpoint"`
+}
+
+func (s *keptInitial) persist(store *hoststate.Store, credentials hoststate.Credentials) (hoststate.Credentials, error) {
+	if s == nil || store == nil || credentials.Generation != 1 || credentials.Initial != nil {
+		return hoststate.Credentials{}, errors.New("invalid initial state")
+	}
+	if err := s.verify(); err != nil {
+		return hoststate.Credentials{}, err
+	}
+	keys, signer, err := credentials.Keys()
+	if err != nil {
+		return hoststate.Credentials{}, err
+	}
+	var epoch [32]byte
+	if _, err = rand.Read(epoch[:]); err != nil {
+		return hoststate.Credentials{}, err
+	}
+	checkpoint, err := protocol.SealKeptCheckpoint(keys, signer, protocol.KeptCheckpointContext{RoomID: credentials.RoomID, Epoch: epoch, Generation: 1}, s.payload)
+	if err != nil {
+		return hoststate.Credentials{}, err
+	}
+	record := keptInitialRecord{File: s.file, Project: s.project.Name(), Text: s.text, CommentsExists: s.metaBound != nil, Comments: s.comments, Epoch: epoch, Checkpoint: checkpoint}
+	payload, err := json.Marshal(record)
+	if err != nil {
+		return hoststate.Credentials{}, err
+	}
+	saved, err := credentials.BindInitial(payload)
+	if err != nil {
+		return hoststate.Credentials{}, err
+	}
+	if err = store.Save(saved); err != nil {
+		return hoststate.Credentials{}, err
+	}
+	if err = s.verify(); err != nil {
+		return hoststate.Credentials{}, err
+	}
+	return saved, nil
+}
+
+func loadKeptInitial(credentials hoststate.Credentials) (keptInitialRecord, error) {
+	var record keptInitialRecord
+	keys, _, err := credentials.Keys()
+	if err != nil || credentials.Initial == nil {
+		return record, errors.New("initial baseline unavailable")
+	}
+	raw := credentials.Initial.Payload
+	if err = json.Unmarshal(raw, &record); err != nil {
+		return keptInitialRecord{}, errors.New("invalid initial baseline")
+	}
+	canonical, err := json.Marshal(record)
+	if err != nil || !bytes.Equal(raw, canonical) {
+		return keptInitialRecord{}, errors.New("invalid initial baseline")
+	}
+	if !filepath.IsAbs(record.File) || filepath.Clean(record.File) != record.File || !filepath.IsAbs(record.Project) || filepath.Clean(record.Project) != record.Project || (!record.CommentsExists && record.Comments != "") {
+		return keptInitialRecord{}, errors.New("invalid initial baseline")
+	}
+	rel, err := filepath.Rel(record.Project, record.File)
+	if err != nil || !filepath.IsLocal(rel) {
+		return keptInitialRecord{}, errors.New("invalid initial baseline")
+	}
+	path := filepath.ToSlash(rel)
+	payload, err := protocol.OpenKeptCheckpoint(keys, protocol.KeptCheckpointContext{RoomID: credentials.RoomID, Epoch: record.Epoch, Generation: 1}, record.Checkpoint)
+	if err != nil {
+		return keptInitialRecord{}, errors.New("invalid initial checkpoint")
+	}
+	decoded, err := protocol.DecodeKeptTextPayload(payload, protocol.MaxKeptCheckpointReceipts)
+	if err != nil {
+		return keptInitialRecord{}, errors.New("invalid initial checkpoint")
+	}
+	if decoded.Manifest[0].Path != path || decoded.Manifest[0].ID != 0 {
+		return keptInitialRecord{}, errors.New("initial path mismatch")
+	}
+	textDoc := crdt.New()
+	defer textDoc.Destroy()
+	if crdt.ApplyUpdateV1(textDoc, decoded.Documents[0], nil) != nil || textDoc.GetText("content").ToString() != record.Text {
+		return keptInitialRecord{}, errors.New("initial text mismatch")
+	}
+	if err = checkInitialComments(record, path, textDoc, decoded.Documents[1]); err != nil {
+		return keptInitialRecord{}, err
+	}
+	return record, nil
+}
+
+func checkInitialComments(record keptInitialRecord, path string, textDoc *crdt.Doc, update []byte) error {
+	old := &meta.File{Path: path}
+	if record.CommentsExists {
+		var err error
+		old, err = meta.Parse([]byte(record.Comments))
+		if err != nil || old.Path != path {
+			return errors.New("invalid initial metadata")
+		}
+	}
+	expected := crdt.New()
+	defer expected.Destroy()
+	meta.Load(expected, old, meta.NewTracker(textDoc))
+	actual := crdt.New()
+	defer actual.Destroy()
+	if crdt.ApplyUpdateV1(actual, update, nil) != nil {
+		return errors.New("invalid initial comments")
+	}
+	left, err := meta.Render(meta.Read(expected, old, meta.NewTracker(textDoc)))
+	if err != nil {
+		return err
+	}
+	right, err := meta.Render(meta.Read(actual, old, meta.NewTracker(textDoc)))
+	if err != nil || !bytes.Equal(left, right) {
+		return errors.New("initial comments mismatch")
 	}
 	return nil
 }
