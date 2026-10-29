@@ -3,7 +3,7 @@ import * as Y from 'yjs'
 import { decodeFiles } from './files.ts'
 import { MAX_FRAME_BYTES } from './frame.ts'
 import { isKeptRoomKeys, type KeptRoomKeys } from './kept-access.ts'
-import { openKeptCheckpoint } from './kept-checkpoint.ts'
+import { type KeptCheckpointContext, openKeptCheckpoint } from './kept-checkpoint.ts'
 import { checkKeptCommentsState } from './kept-comments-schema.ts'
 import { KeptLedger } from './kept-ledger.ts'
 import {
@@ -18,7 +18,18 @@ import { decodeKeptTextPayload } from './kept-text-payload.ts'
 import { checkKeptTextState } from './kept-text-schema.ts'
 import { decodeMessage, MessageType } from './message.ts'
 
+// A host-signed checkpoint, distinct from the provisional tail below. It is
+// authenticated but does not prove freshness or tail completeness.
+export type KeptAuthenticatedCheckpoint = Readonly<{
+  kind: 'authenticated-checkpoint'
+  context: Readonly<KeptCheckpointContext>
+  metadataId: number
+  textState: Uint8Array
+  commentsState: Uint8Array
+}>
+
 export type KeptReadInspection = {
+  checkpoint: KeptAuthenticatedCheckpoint
   status: 'tail-unverified'
   applicable: false
   generation: number
@@ -281,6 +292,13 @@ export class KeptRoomClient {
       )
         throw new Error('kept attachment inventory unverified')
       return {
+        checkpoint: {
+          kind: 'authenticated-checkpoint',
+          context: { ...context, epoch: Uint8Array.from(context.epoch), cutoff: snapshot.cutoff },
+          metadataId: meta.id,
+          textState: Uint8Array.from(text),
+          commentsState: Uint8Array.from(comments),
+        },
         status: 'tail-unverified',
         applicable: false,
         generation: snapshot.generation,
