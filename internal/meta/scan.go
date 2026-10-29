@@ -58,6 +58,10 @@ var errContent = errors.New("not content a comments doc holds")
 
 // scan reads update, a V1 update of a metadata doc.
 func scan(update []byte) (*scanned, error) {
+	return scanUpdate(update, false)
+}
+
+func scanUpdate(update []byte, complete bool) (*scanned, error) {
 	d := encoding.NewDecoder(update)
 	clients, err := d.ReadVarUint()
 	if err != nil {
@@ -70,7 +74,13 @@ func scan(update []byte) (*scanned, error) {
 			return nil, err
 		}
 	}
-	return s, scanDeletes(d, s)
+	if err := scanDeletes(d, s); err != nil {
+		return nil, err
+	}
+	if complete && d.HasContent() {
+		return nil, errors.New("trailing bytes in comments update")
+	}
+	return s, nil
 }
 
 // scanClient reads the structs of one client. Yjs and ygo keep only the

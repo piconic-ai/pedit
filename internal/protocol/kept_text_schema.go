@@ -4,6 +4,21 @@ import "unicode/utf16"
 
 // CheckKeptTextState accepts only the plain-text subset of a complete Yjs V1 snapshot.
 func CheckKeptTextState(state []byte) error { return checkKeptSchema(state, keptTextItem, false) }
+
+// CheckKeptTextUpdate validates a possibly incremental text update.
+func CheckKeptTextUpdate(update []byte) error {
+	return checkKeptSchemaWithStart(update, keptTextItem, false, true)
+}
+
+// MaxKeptYjsWork bounds pre-application work in retained checkpoint recovery.
+const MaxKeptYjsWork = 1024
+
+// KeptTextWork counts encoded structs and potential delete boundary splits.
+// The caller must include the baseline and all applied updates in its budget.
+func KeptTextWork(update []byte, incremental bool) (uint64, error) {
+	return measureKeptSchema(update, keptTextItem, false, incremental)
+}
+
 func keptTextItem(r *keptSchemaReader) error {
 	info, err := r.d.ReadUint8()
 	if err != nil || info&0x20 != 0 || (info&31 != 1 && info&31 != 4) {

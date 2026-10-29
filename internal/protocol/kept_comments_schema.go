@@ -5,6 +5,17 @@ import "math"
 // CheckKeptCommentsState accepts the map-only Yjs V1 subset used by comments.
 // The caller must also apply the update and reject pending dependencies.
 func CheckKeptCommentsState(state []byte) error { return checkKeptSchema(state, keptCommentItem, true) }
+
+// CheckKeptCommentsUpdate validates a possibly incremental comments update.
+func CheckKeptCommentsUpdate(update []byte) error {
+	return checkKeptSchemaWithStart(update, keptCommentItem, true, true)
+}
+
+// KeptCommentsWork counts comment structs and potential delete boundary splits.
+func KeptCommentsWork(update []byte, incremental bool) (uint64, error) {
+	return measureKeptSchema(update, keptCommentItem, true, incremental)
+}
+
 func keptCommentParent(r *keptSchemaReader, info byte) error {
 	if info&0x80 != 0 {
 		return r.id()

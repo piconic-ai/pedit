@@ -48,8 +48,8 @@ func TestReadKeptHostSeparatesBaselineAndTailLimits(t *testing.T) {
 		{"1025 baseline and signed tail", 1025, 1, true},
 		{"maximum baseline and signed tail", MaxKeptCheckpointReceipts, 1, true},
 		{"baseline over maximum", MaxKeptCheckpointReceipts + 1, 1, false},
-		{"maximum tail", 0, maxKeptReadRecords, true},
-		{"tail over maximum", 0, maxKeptReadRecords + 1, false},
+		{"maximum tail", 0, MaxKeptReadRecords, true},
+		{"tail over maximum", 0, MaxKeptReadRecords + 1, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			receipts := make([]KeptReceipt, tc.baseline)
@@ -132,7 +132,7 @@ func TestReadKeptHostSeparatesBaselineAndTailLimits(t *testing.T) {
 
 func TestReadKeptEntryRejectsTailLimitsBeforeProcessing(t *testing.T) {
 	entry := KeptReadEntry{Sequence: 1, Ciphertext: base64.StdEncoding.EncodeToString([]byte{1})}
-	for _, bounds := range []struct{ count, total int }{{maxKeptReadRecords, 0}, {0, maxKeptReadBytes}} {
+	for _, bounds := range []struct{ count, total int }{{MaxKeptReadRecords, 0}, {0, maxKeptReadBytes}} {
 		_, _, _, err := readKeptEntry(entry, nil, "", [32]byte{}, 1, KeptLedger{}, bounds.count, bounds.total)
 		if err == nil || err.Error() != "read capacity exceeded" {
 			t.Fatalf("bounds %+v: %v", bounds, err)

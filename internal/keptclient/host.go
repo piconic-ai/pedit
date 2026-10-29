@@ -70,6 +70,12 @@ func (h *Host) Initialize(ctx context.Context, epoch [32]byte, checkpoint []byte
 	if err != nil || c.Generation != 1 {
 		return 0, errors.New("invalid initialization")
 	}
+	if c.Initial != nil {
+		initial, err := c.InitialState()
+		if err != nil || initial.Epoch != epoch || !bytes.Equal(initial.Checkpoint, checkpoint) {
+			return 0, errors.New("checkpoint differs from saved initial state")
+		}
+	}
 	keys, _, err := c.Keys()
 	if err != nil {
 		return 0, err
@@ -106,6 +112,19 @@ func (h *Host) Initialize(ctx context.Context, epoch [32]byte, checkpoint []byte
 		return 0, ErrInitializationUncertain
 	}
 	return time.Duration(effective) * time.Second, nil
+}
+
+// InitializeStored starts only from the exact durable initial record.
+func (h *Host) InitializeStored(ctx context.Context, keep time.Duration) (time.Duration, error) {
+	c, err := h.currentCredentials()
+	if err != nil {
+		return 0, err
+	}
+	initial, err := c.InitialState()
+	if err != nil {
+		return 0, errors.New("saved initial state required")
+	}
+	return h.Initialize(ctx, initial.Epoch, initial.Checkpoint, keep)
 }
 
 // Connect establishes host presence. Losing or closing the socket makes the
@@ -175,8 +194,18 @@ func (h *Host) currentCredentials() (hoststate.Credentials, error) {
 		return hoststate.Credentials{}, hoststate.ErrInvalid
 	}
 	original.Generation = c.Generation
-	if c != original {
+	currentInitial, originalInitial := c.Initial, original.Initial
+	c.Initial, original.Initial = nil, nil
+	if c != original || !equalInitial(currentInitial, originalInitial) {
 		return hoststate.Credentials{}, hoststate.ErrInvalid
 	}
+	c.Initial = currentInitial
 	return c, nil
+}
+
+func equalInitial(a, b *hoststate.InitialRecord) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return bytes.Equal(a.Payload, b.Payload) && bytes.Equal(a.Signature, b.Signature)
 }

@@ -178,6 +178,44 @@ payload, persist Yjs state, or connect checkpoint transport.
 
 ## Host recovery
 
+The internal session start path can build a text document and its comments
+from caller-verified Yjs checkpoint states instead of reconstructing them from
+the local files. In this mode the filewriter is held from creation, comments
+saving is held, and stopping reports the hold. It exposes the current local
+and recovered text for comparison without treating a match as permission to
+write. Extra files, canvas recovery, file watching and attachments are not
+enabled in this mode.
+
+The internal tail path verifies each encrypted record, checks its ledger
+sequence and access tier, and applies it to isolated candidate documents.
+An exact duplicate is skipped according to its recorded applied or rejected
+outcome; a conflicting digest or a sequence gap fails the batch. A
+failure discards the candidates and leaves the caller's checkpoint and ledger
+unchanged. Only after all records pass does it construct the held session. The
+session does not create a relay room or connect to one. Text updates use the
+existing Sync message, and comments updates use Files with the metadata ID
+from the authenticated single-file manifest.
+
+An internal read path starts from the exact signed checkpoint saved in the
+initial host baseline and verifies the fixed tail before constructing this held
+session. It cannot establish that the relay supplied every unseen update. It
+persists a separate private candidate on supported filesystems before opening
+the local file or project. Its file comparison is unavailable. If publication
+or later local session construction fails, the caller receives the candidate
+and any published path with the error. It does not compare local comments, safely release the hold, or commit
+the relay cut. The candidate is for inspection and does not prove relay tail
+completeness. The relay data must remain available until a separately durable
+recovery is complete. A missing local text file or malformed local metadata
+does not prevent candidate retention; recovery leaves both untouched.
+The text check rejects known attachment references, but a string scan cannot
+prove that the attachment inventory is empty. Saving and cut acknowledgement
+remain unavailable until the caller verifies the complete inventory.
+The checkpoint text validator accepts only a complete Yjs V1 plain-text
+snapshot under the `content` root; other roots, embeds, formatting and garbage
+collection structs are rejected. Incremental tail updates are validated against
+the supported text and comment subsets before and after applying them. This
+does not enable live host synchronization or establish tail completeness.
+
 The host restores the prior Yjs state, validates the checkpoint and log, and
 merges changes made to the local files while it was away. Before writing any
 output, it durably records a recovery journal containing the resulting state,
@@ -486,3 +524,18 @@ disconnect a reader when the socket limit is full, and an arriving editor can
 disconnect a reader or commenter. When the configured writer limit is full,
 an editor can disconnect a commenter to make room. Read and socket requests
 use the highest admission tier available in the link.
+
+The Go retained-checkpoint validator limits each text or comment document to
+1,024 work units before applying Yjs. Multi-file checkpoints share that budget
+across their documents. Recovery separately limits text and comments to 1,024
+units each across the checkpoint and all newly applied tail records. Each
+encoded struct costs one unit; each delete range costs two for possible
+boundary splits. This conservative limit bounds conflict lists before applying
+an update. A fragmented but valid document can exceed the limit and is then
+left unapplied; the relay history and local file remain unchanged. This is a Go
+resource limit, not a change to the shared wire format.
+
+Reopening or exporting a held recovery candidate also checks the text and
+comments work limits before applying either Yjs state. Candidate files are
+private local inspections, not authenticated checkpoints; exceeding either
+limit rejects the candidate without modifying the original file.

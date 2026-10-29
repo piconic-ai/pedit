@@ -9,7 +9,11 @@ import { checkKeptTextState } from './kept-text-schema.ts'
 
 const DOMAIN = utf8.encode('pedit/v6/text-checkpoint\0')
 const ASSET = /assets\/[0-9a-f]{32}\.(?:png|jpg|gif|webp)/
-function validUpdate(update: Uint8Array, content: boolean): boolean {
+export function validKeptUpdate(
+  update: Uint8Array,
+  content: boolean,
+  allowAssets = false,
+): boolean {
   if (content ? !checkKeptTextState(update) : !checkKeptCommentsState(update)) return false
   const doc = new Y.Doc()
   try {
@@ -18,7 +22,7 @@ function validUpdate(update: Uint8Array, content: boolean): boolean {
       !doc.store.pendingStructs &&
       !doc.store.pendingDs &&
       doc.getSubdocs().size === 0 &&
-      (!content || !ASSET.test(doc.getText('content').toString()))
+      (!content || allowAssets || !ASSET.test(doc.getText('content').toString()))
     )
   } catch {
     return false
@@ -55,7 +59,8 @@ export function encodeKeptTextPayload(value: KeptTextPayload): Uint8Array {
     throw new Error('unsupported or invalid text checkpoint')
   const text = new Uint8Array(textInput)
   const meta = new Uint8Array(metaInput)
-  if (!validUpdate(text, true) || !validUpdate(meta, false)) throw new Error('invalid Yjs state')
+  if (!validKeptUpdate(text, true) || !validKeptUpdate(meta, false))
+    throw new Error('invalid Yjs state')
   const parts = [encodeManifest(value.manifest), text, meta, encodeKeptLedger(value.ledger)]
   let size = DOMAIN.length + 1 + 4 * parts.length
   for (const part of parts) {
@@ -96,7 +101,7 @@ export function decodeKeptTextPayload(data: Uint8Array, ledgerLimit: number): Ke
   if (parsed.kind !== 'manifest') throw bad()
   const id = metaId(parsed.files)
   if (id === null || !same(manifest, encodeManifest(parsed.files))) throw bad()
-  if (!validUpdate(text, true) || !validUpdate(meta, false)) throw bad()
+  if (!validKeptUpdate(text, true) || !validKeptUpdate(meta, false)) throw bad()
   return {
     manifest: parsed.files,
     documents: new Map([

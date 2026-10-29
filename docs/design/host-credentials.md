@@ -76,3 +76,14 @@ checkpoint baseline and independently reads at most 1,024 tail records and
 limits; it does not change the returned baseline or persist the tail. The
 checkpoint itself remains frame-size bounded, and a rejected or over-capacity
 read releases its session on a bounded best-effort basis.
+
+The internal initial-state path captures one text file and its comments without
+starting a v5 session. It stores the original text and metadata bytes, paths,
+epoch and encrypted checkpoint in a host-signed record in the same atomic
+credential write. Reload validates the signature, checkpoint, file path, text,
+and comment state. A failed directory sync can leave the record present even
+though the caller received an error; a later attempt must inspect the existing
+record instead of generating a replacement. This only prepares an initial
+baseline: attachment absence must be established by the caller, and observing
+unchanged files is not an external-editor lock. It does not enable a public CLI,
+verify an unseen relay tail, or authorize recovery, cut, or acknowledgement.

@@ -298,8 +298,8 @@ func (s *Store) load(room string) (Credentials, error) {
 		return c, err
 	}
 	defer f.Close()
-	b, err := io.ReadAll(io.LimitReader(f, 8193))
-	if err != nil || len(b) > 8192 {
+	b, err := io.ReadAll(io.LimitReader(f, maxCredentialsBytes+1))
+	if err != nil || len(b) > maxCredentialsBytes {
 		return c, ErrInvalid
 	}
 	d := json.NewDecoder(bytes.NewReader(b))
@@ -346,7 +346,7 @@ func (s *Store) Save(c Credentials) error {
 	}
 	old, err := s.load(c.RoomID)
 	if err == nil {
-		if old.Origin != c.Origin || old.HostToken != c.HostToken || old.EditSecret != c.EditSecret || old.HostSeed != c.HostSeed || old.Generation > c.Generation {
+		if old.Origin != c.Origin || old.HostToken != c.HostToken || old.EditSecret != c.EditSecret || old.HostSeed != c.HostSeed || old.Generation > c.Generation || !sameInitial(old.Initial, c.Initial) {
 			return ErrInvalid
 		}
 	} else if !errors.Is(err, unix.ENOENT) {

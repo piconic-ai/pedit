@@ -33,6 +33,19 @@ const MaxListWork = 1 << 20
 // ErrRefused marks an update a peer drops by these rules.
 var ErrRefused = errors.New("refused")
 
+// CheckRecoveryUpdate also rejects bytes after the end of the Yjs update.
+func CheckRecoveryUpdate(doc *crdt.Doc, update []byte) (err error) {
+	defer func() {
+		if recover() != nil {
+			err = fmt.Errorf("%w: invalid update", ErrRefused)
+		}
+	}()
+	if _, err := scanUpdate(update, true); err != nil {
+		return fmt.Errorf("%w: %v", ErrRefused, err)
+	}
+	return CheckUpdate(doc, update)
+}
+
 // CheckUpdate tells whether update, received for doc, a metadata doc, may be
 // applied. It reads the update without applying it, and refuses it when:
 //

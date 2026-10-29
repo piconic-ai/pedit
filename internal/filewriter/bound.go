@@ -277,6 +277,32 @@ func (f *BoundFile) Read() (string, bool) {
 	return e.content, true
 }
 
+// ReadLimited reads a regular file without allocating more than max+1 bytes.
+// Unreadable, replaced, non-regular, and larger files are unavailable.
+func (f *BoundFile) ReadLimited(max int) (string, bool) {
+	if max < 0 || max == int(^uint(0)>>1) {
+		return "", false
+	}
+	info, err := f.root.Lstat(f.name)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > int64(max) {
+		return "", false
+	}
+	file, err := f.root.Open(f.name)
+	if err != nil {
+		return "", false
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !os.SameFile(info, opened) {
+		return "", false
+	}
+	data, err := io.ReadAll(io.LimitReader(file, int64(max)+1))
+	if err != nil || len(data) > max {
+		return "", false
+	}
+	return string(data), true
+}
+
 // maxPresize caps the buffer readAll allocates up front from a file's size.
 const maxPresize = 1 << 30
 

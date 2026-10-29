@@ -24,7 +24,8 @@ var keptRoomID = regexp.MustCompile(`^[A-Za-z0-9_-]{22}$`)
 // MaxKeptCheckpointReceipts bounds the authenticated baseline ledger.
 const MaxKeptCheckpointReceipts = 10000
 
-const maxKeptReadRecords = 1024
+// MaxKeptReadRecords bounds one fixed tail independently of its baseline.
+const MaxKeptReadRecords = 1024
 const maxKeptReadBytes = 16 * MaxFrameBytes
 
 // KeptReadInspection is authenticated but is not a recovered document. The
@@ -136,7 +137,7 @@ func readKeptPages(ctx context.Context, safeClient *http.Client, base *url.URL, 
 	// The provisional ledger tracks sequence ordering only. It must never be
 	// persisted or reported as having applied these operations.
 	ledger := payload.Ledger
-	ledger.limit = MaxKeptCheckpointReceipts + maxKeptReadRecords
+	ledger.limit = MaxKeptCheckpointReceipts + MaxKeptReadRecords
 	cursor, after, total := snapshot.Cursor, snapshot.Cutoff, 0
 	rateRetries := 0
 	records := []KeptRecord{}
@@ -178,7 +179,7 @@ func readKeptEntry(entry KeptReadEntry, keys *KeptRoomKeys, roomID string, epoch
 	if err != nil {
 		return nil, empty, ledger, err
 	}
-	if count >= maxKeptReadRecords || total+len(sealed) > maxKeptReadBytes {
+	if count >= MaxKeptReadRecords || total+len(sealed) > maxKeptReadBytes {
 		return nil, empty, ledger, errors.New("read capacity exceeded")
 	}
 	record, err := OpenKeptRecord(keys, KeptRecordContext{RoomID: roomID, Epoch: epoch, Generation: generation}, sealed)
