@@ -98,10 +98,7 @@ try {
     bundle: true,
     format: 'iife',
     platform: 'browser',
-    nodePaths: [
-      resolve(workerDir, '../protocol/node_modules'),
-      resolve(workerDir, '../web/node_modules'),
-    ],
+    nodePaths: [resolve(workerDir, '../protocol/node_modules')],
     outfile: resolve(temp, 'bundle.txt'),
   })
   const template = await readFile(resolve(dir, 'worker.template.txt'), 'utf8')

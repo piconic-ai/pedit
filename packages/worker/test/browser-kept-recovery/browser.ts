@@ -243,6 +243,30 @@ async function run() {
         await new Promise((resolve) => setTimeout(resolve, 20))
       if (!remoteController.text().endsWith(' REMOTE LOCAL'))
         throw Error('local edit removed remote content')
+      const priorVector = Y.encodeStateVector(remoteDoc)
+      remoteDoc.getText('content').insert(0, 'OTHER ')
+      await remoteEditor.applyRemote(Y.encodeStateAsUpdate(remoteDoc, priorVector))
+      remoteEditor.view.contentDOM.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'z',
+          metaKey: /Mac|iPhone|iPad/.test(navigator.platform),
+          ctrlKey: !/Mac|iPhone|iPad/.test(navigator.platform),
+          bubbles: true,
+        }),
+      )
+      for (let i = 0; i < 200 && remoteController.text().endsWith(' LOCAL'); i++)
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      if (
+        remoteController.text().endsWith(' LOCAL') ||
+        !remoteController.text().startsWith('OTHER ')
+      )
+        throw Error('undo failed to retain remote and reverse local edit')
+      remoteEditor.view.dispatch({
+        changes: { from: remoteEditor.view.state.doc.length, insert: ' LOCAL' },
+      })
+      for (let i = 0; i < 200 && !remoteController.text().endsWith(' REMOTE LOCAL'); i++)
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      if (!remoteController.text().endsWith(' REMOTE LOCAL')) throw Error('local edit not restored')
       remoteEditor.view.contentDOM.dispatchEvent(
         new CompositionEvent('compositionstart', { bubbles: true }),
       )

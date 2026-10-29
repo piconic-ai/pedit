@@ -177,10 +177,22 @@ export class TestKeptEditor {
     if (this.busy || !this.draft.hidden) throw new Error('edit or draft in progress')
     this.busy = true
     try {
-      await this.controller.applyRemote(update)
-      const next = this.controller.text()
+      const delta = await this.controller.applyRemote(update)
+      const changes: { from: number; to: number; insert: string }[] = []
+      let offset = 0
+      for (const part of delta) {
+        if (part.retain) offset += part.retain
+        if (part.delete) {
+          changes.push({ from: offset, to: offset + part.delete, insert: '' })
+          offset += part.delete
+        }
+        if (part.insert) {
+          if (typeof part.insert !== 'string') throw new Error('invalid remote text')
+          changes.push({ from: offset, to: offset, insert: part.insert })
+        }
+      }
       this.view.dispatch({
-        changes: { from: 0, to: this.view.state.doc.length, insert: next },
+        changes,
         annotations: [internal.of(true), Transaction.addToHistory.of(false)],
       })
     } finally {
