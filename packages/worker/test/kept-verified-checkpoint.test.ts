@@ -171,6 +171,28 @@ it('returns signed checkpoint state separately from the provisional tail', async
       headers: { Authorization: `Bearer ${fixture.editor}`, 'X-Pedit-Read-Session': realSession },
     })
     expect(cleanup.status).toBe(204)
+    for (const variant of ['whitespace', 'duplicate'] as const) {
+      let issued = ''
+      const forged: typeof fetch = async (input, init) => {
+        const response = await fetcher(input, init)
+        if (init?.method !== 'POST') return response
+        const raw = await response.text()
+        issued = JSON.parse(raw).session
+        return new Response(
+          variant === 'whitespace' ? ` ${raw}` : raw.replace('{', `{"session":"${issued}",`),
+          { status: 200 },
+        )
+      }
+      await expect(
+        new KeptRoomClient({ url: 'https://room', keys, fetch: forged }).inspect(),
+      ).rejects.toThrow()
+      expect(deletes).toBe(8)
+      const cleanup2 = await room.fetch(`${base}/read`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${fixture.editor}`, 'X-Pedit-Read-Session': issued },
+      })
+      expect(cleanup2.status).toBe(204)
+    }
   } finally {
     await evictDurableObject(room, { webSockets: 'close' })
   }
