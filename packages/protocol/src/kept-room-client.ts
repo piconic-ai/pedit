@@ -5,6 +5,7 @@ import { MAX_FRAME_BYTES } from './frame.ts'
 import { isKeptRoomKeys, type KeptRoomKeys } from './kept-access.ts'
 import { openKeptCheckpoint } from './kept-checkpoint.ts'
 import { checkKeptCommentsState } from './kept-comments-schema.ts'
+import { KeptLedger } from './kept-ledger.ts'
 import {
   checkKeptReadAnchor,
   type KeptReadAnchor,
@@ -35,6 +36,8 @@ export type KeptRoomClientOptions = {
   // Absence of a verifier or an indeterminate result fails closed.
   attachmentInventory?: (text: string) => Promise<'none' | 'present' | 'unverified'>
 }
+// Match MaxKeptCheckpointReceipts in internal/protocol/kept_read_client.go.
+const maxCheckpointReceipts = 10000
 const maxEntries = 1024
 const maxBytes = 16 * MAX_FRAME_BYTES
 const decode64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0))
@@ -219,7 +222,7 @@ export class KeptRoomClient {
       { ...context, cutoff: snapshot.cutoff },
       decode64(snapshot.ciphertext),
     )
-    const payload = decodeKeptTextPayload(plain, maxEntries)
+    const payload = decodeKeptTextPayload(plain, maxCheckpointReceipts)
     const text = payload.documents.get(0)
     const meta = payload.manifest.find((f) => f.format === 'meta')
     const comments = meta && payload.documents.get(meta.id)
@@ -229,7 +232,11 @@ export class KeptRoomClient {
     try {
       applyDocument(textDoc, text, 'content')
       applyDocument(commentsDoc, comments, 'comments')
-      let ledger = payload.ledger,
+      // This ledger is provisional: the authenticated baseline stays unchanged.
+      let ledger = KeptLedger.restore(
+          maxCheckpointReceipts + maxEntries,
+          payload.ledger.snapshot(),
+        ),
         cursor = snapshot.cursor,
         after = snapshot.cutoff,
         count = 0,
