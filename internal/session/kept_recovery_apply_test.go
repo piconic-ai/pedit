@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -452,5 +453,129 @@ func TestKeptRecoveryBoundsCheckpointConflictWork(t *testing.T) {
 	}
 	if readFile(t, f.opts.File) != "external edit" {
 		t.Fatal("rejected checkpoint changed original file")
+	}
+}
+
+func replaceCheckpointPart(t *testing.T, raw []byte, domain string, part int, replacement []byte) []byte {
+	t.Helper()
+	at := len(domain) + 1
+	for i := 0; i < part; i++ {
+		n := int(binary.BigEndian.Uint32(raw[at:]))
+		at += 4 + n
+	}
+	end := at + 4 + int(binary.BigEndian.Uint32(raw[at:]))
+	result := append([]byte(nil), raw[:at]...)
+	result = binary.BigEndian.AppendUint32(result, uint32(len(replacement)))
+	result = append(result, replacement...)
+	return append(result, raw[end:]...)
+}
+
+func TestKeptCheckpointRejectsWorkBeforeYjsApplication(t *testing.T) {
+	f := newRecoveryFixture(t)
+	updates := concurrentRecoveryUpdates(t, f.checkpoint.text, 1, maxRecoveryTextWork)
+	largeText, err := crdt.MergeUpdatesV1(f.checkpoint.text, updates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := []protocol.FileEntry{{ID: 0, Path: "note.md", Format: protocol.FormatText}, {ID: 7, Path: protocol.MetaPath("note.md"), Format: protocol.FormatMeta}}
+	docs := map[uint64][]byte{0: f.checkpoint.text, 7: f.checkpoint.comments}
+	single, err := protocol.EncodeKeptTextPayload(protocol.KeptTextPayload{Manifest: files, Documents: docs, Ledger: f.ledger, Attachments: protocol.KeptAttachmentsNone})
+	if err != nil {
+		t.Fatal(err)
+	}
+	multi, err := protocol.EncodeKeptMultiPayload(protocol.KeptMultiPayload{Manifest: files, Documents: docs, Ledger: f.ledger, Attachments: []string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	badSingle := replaceCheckpointPart(t, single, "pedit/v6/text-checkpoint\x00", 1, largeText)
+	badMulti := replaceCheckpointPart(t, multi, "pedit/v6/multi-checkpoint\x00", 1, largeText)
+	if _, err = protocol.DecodeKeptTextPayload(badSingle, 20); err == nil {
+		t.Fatal("accepted expensive single checkpoint")
+	}
+	if _, err = protocol.DecodeKeptMultiPayload(badMulti, 20); err == nil {
+		t.Fatal("accepted expensive multi checkpoint")
+	}
+	docs[0] = largeText
+	if _, err = protocol.EncodeKeptTextPayload(protocol.KeptTextPayload{Manifest: files, Documents: docs, Ledger: f.ledger, Attachments: protocol.KeptAttachmentsNone}); err == nil {
+		t.Fatal("encoded expensive checkpoint")
+	}
+}
+
+func TestKeptCheckpointRejectsExcessCommentDeletes(t *testing.T) {
+	f := newRecoveryFixture(t)
+	doc := crdt.New(crdt.WithClientID(7))
+	root := doc.GetMap("comments")
+	doc.Transact(func(tx *crdt.Transaction) { root.Set(tx, "x", "v") })
+	comment := crdt.EncodeStateAsUpdateV1(doc, nil)
+	doc.Destroy()
+	comment = append(comment[:len(comment)-1], 1, 7, 0x88, 0x27) // 5,000 ranges
+	for i := 0; i < 5000; i++ {
+		comment = append(comment, 0, 1)
+	}
+	files := []protocol.FileEntry{{ID: 0, Path: "note.md", Format: protocol.FormatText}, {ID: 7, Path: protocol.MetaPath("note.md"), Format: protocol.FormatMeta}}
+	docs := map[uint64][]byte{0: f.checkpoint.text, 7: f.checkpoint.comments}
+	raw, err := protocol.EncodeKeptTextPayload(protocol.KeptTextPayload{Manifest: files, Documents: docs, Ledger: f.ledger, Attachments: protocol.KeptAttachmentsNone})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw = replaceCheckpointPart(t, raw, "pedit/v6/text-checkpoint\x00", 2, comment)
+	if _, err = protocol.DecodeKeptTextPayload(raw, 20); err == nil {
+		t.Fatal("accepted excess comment deletes")
+	}
+	f.checkpoint.comments = comment
+	if _, err = startKeptRecovery(context.Background(), f.opts, f.checkpoint, f.ledger, f.keys, f.context, nil); err == nil {
+		t.Fatal("recovery accepted excess comment deletes")
+	}
+}
+
+func TestKeptRecoveryBoundsCommentDeletesAcrossRecords(t *testing.T) {
+	f := newRecoveryFixture(t)
+	doc := crdt.New(crdt.WithClientID(7))
+	root := doc.GetMap("comments")
+	doc.Transact(func(tx *crdt.Transaction) { root.Set(tx, "x", "v") })
+	f.checkpoint.comments = crdt.EncodeStateAsUpdateV1(doc, nil)
+	doc.Destroy()
+	deletions := func(count int) []byte {
+		update := []byte{0, 1, 7, byte(count&127) | 128, byte(count >> 7)}
+		for i := 0; i < count; i++ {
+			update = append(update, 0, 1)
+		}
+		return update
+	}
+	frames := [][]byte{f.frame(t, f.commenter, 1, 2, deletions(256)), f.frame(t, f.commenter, 2, 2, deletions(256))}
+	if _, err := startKeptRecovery(context.Background(), f.opts, f.checkpoint, f.ledger, f.keys, f.context, frames); err == nil || !strings.Contains(err.Error(), "work exceeded") {
+		t.Fatalf("accepted excess cumulative comment work: %v", err)
+	}
+	if readFile(t, f.opts.File) != "external edit" {
+		t.Fatal("changed original")
+	}
+}
+
+func TestKeptMultiCheckpointBoundsAggregateWork(t *testing.T) {
+	f := newRecoveryFixture(t)
+	updates := concurrentRecoveryUpdates(t, f.checkpoint.text, 1, 600)
+	text, err := crdt.MergeUpdatesV1(f.checkpoint.text, updates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := crdt.New(crdt.WithClientID(7))
+	root := doc.GetMap("comments")
+	doc.Transact(func(tx *crdt.Transaction) { root.Set(tx, "x", "v") })
+	comments := crdt.EncodeStateAsUpdateV1(doc, nil)
+	doc.Destroy()
+	comments = append(comments[:len(comments)-1], 1, 7, 0x80, 2) // 256 ranges
+	for i := 0; i < 256; i++ {
+		comments = append(comments, 0, 1)
+	}
+	files := []protocol.FileEntry{{ID: 0, Path: "note.md", Format: protocol.FormatText}, {ID: 7, Path: protocol.MetaPath("note.md"), Format: protocol.FormatMeta}}
+	docs := map[uint64][]byte{0: f.checkpoint.text, 7: f.checkpoint.comments}
+	raw, err := protocol.EncodeKeptMultiPayload(protocol.KeptMultiPayload{Manifest: files, Documents: docs, Ledger: f.ledger, Attachments: []string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw = replaceCheckpointPart(t, raw, "pedit/v6/multi-checkpoint\x00", 1, text)
+	raw = replaceCheckpointPart(t, raw, "pedit/v6/multi-checkpoint\x00", 2, comments)
+	if _, err = protocol.DecodeKeptMultiPayload(raw, 20); err == nil {
+		t.Fatal("accepted excess aggregate work")
 	}
 }

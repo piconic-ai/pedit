@@ -520,9 +520,12 @@ disconnect a reader or commenter. When the configured writer limit is full,
 an editor can disconnect a commenter to make room. Read and socket requests
 use the highest admission tier available in the link.
 
-The internal host recovery replay accepts at most 1,024 text work units across
-the checkpoint and all newly applied tail records. Each encoded struct costs
-one unit; each delete range costs two for possible boundary splits. This
-conservative limit bounds the size of conflict lists before applying an update.
-A fragmented but valid document can exceed the limit and is then left
-unapplied; the relay history and local file remain unchanged.
+The Go retained-checkpoint validator limits each text or comment document to
+1,024 work units before applying Yjs. Multi-file checkpoints share that budget
+across their documents. Recovery separately limits text and comments to 1,024
+units each across the checkpoint and all newly applied tail records. Each
+encoded struct costs one unit; each delete range costs two for possible
+boundary splits. This conservative limit bounds conflict lists before applying
+an update. A fragmented but valid document can exceed the limit and is then
+left unapplied; the relay history and local file remain unchanged. This is a Go
+resource limit, not a change to the shared wire format.

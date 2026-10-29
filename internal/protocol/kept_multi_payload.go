@@ -31,6 +31,7 @@ func validateMultiManifest(files []FileEntry, docs map[uint64][]byte) error {
 	}
 	pairs := MetaFiles(files)
 	texts, metas, root := 0, 0, false
+	var totalWork uint64
 	for _, f := range files {
 		switch f.Format {
 		case FormatText:
@@ -46,15 +47,27 @@ func validateMultiManifest(files []FileEntry, docs map[uint64][]byte) error {
 		default:
 			return errMultiPayload
 		}
-		update, ok := docs[f.ID]
-		if !ok || len(update) == 0 || len(update) > maxKeptCheckpointPayload || !validKeptYjsUpdateWithAssets(update, f.Format == FormatText, true) {
-			return errMultiPayload
+		work, err := validateMultiDocument(docs[f.ID], f.Format == FormatText, MaxKeptYjsWork-totalWork)
+		if err != nil {
+			return err
 		}
+		totalWork += work
 	}
 	if !root || texts != metas {
 		return errMultiPayload
 	}
 	return nil
+}
+
+func validateMultiDocument(update []byte, content bool, remaining uint64) (uint64, error) {
+	if len(update) == 0 || len(update) > maxKeptCheckpointPayload {
+		return 0, errMultiPayload
+	}
+	work, err := keptCheckpointWork(update, content)
+	if err != nil || work > remaining || !validKeptYjsUpdateWithAssets(update, content, true) {
+		return 0, errMultiPayload
+	}
+	return work, nil
 }
 
 func validateMultiAttachments(files []FileEntry, docs map[uint64][]byte, paths []string) error {

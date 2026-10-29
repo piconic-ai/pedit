@@ -10,6 +10,9 @@ func CheckKeptTextUpdate(update []byte) error {
 	return checkKeptSchemaWithStart(update, keptTextItem, false, true)
 }
 
+// MaxKeptYjsWork bounds pre-application work in retained checkpoint recovery.
+const MaxKeptYjsWork = 1024
+
 // KeptTextWork counts encoded structs and potential delete boundary splits.
 // The caller must include the baseline and all applied updates in its budget.
 func KeptTextWork(update []byte, incremental bool) (uint64, error) {

@@ -14,7 +14,7 @@ import (
 
 // Each text struct can scan the existing sequence, and each deletion can split
 // two existing structs. Bound the cumulative encoded work before applying it.
-const maxRecoveryTextWork = 1024
+const maxRecoveryTextWork = protocol.MaxKeptYjsWork
 
 var keptAttachment = regexp.MustCompile(`assets/[0-9a-f]{32}\.(png|jpg|gif|webp)`)
 
@@ -56,10 +56,14 @@ func startKeptRecovery(ctx context.Context, opts Options, checkpoint recoveryChe
 		return nil, err
 	}
 	if work > maxRecoveryTextWork {
-		return nil, errors.New("recovery text work exceeded")
+		return nil, errors.New("recovery work exceeded")
 	}
 	if err := crdt.ApplyUpdateV1(text, checkpoint.text, nil); err != nil {
 		return nil, err
+	}
+	commentsWork, err := protocol.KeptCommentsWork(checkpoint.comments, false)
+	if err != nil || commentsWork > maxRecoveryTextWork {
+		return nil, errors.New("recovery comments work exceeded")
 	}
 	if err := meta.CheckRecoveryUpdate(comments, checkpoint.comments); err != nil {
 		return nil, err
@@ -73,7 +77,7 @@ func startKeptRecovery(ctx context.Context, opts Options, checkpoint recoveryChe
 	if keptAttachment.MatchString(text.GetText("content").ToString()) {
 		return nil, errors.New("recovery attachments unavailable")
 	}
-	r := keptReplayer{text: text, comments: comments, ledger: ledger, keys: keys, context: recordContext, metaID: checkpoint.metaID, textWork: work}
+	r := keptReplayer{text: text, comments: comments, ledger: ledger, keys: keys, context: recordContext, metaID: checkpoint.metaID, textWork: work, commentsWork: commentsWork}
 	for _, frame := range frames {
 		if err := r.apply(frame); err != nil {
 			return nil, err
@@ -94,6 +98,7 @@ type keptReplayer struct {
 	metaID         uint64
 	total          int
 	textWork       uint64
+	commentsWork   uint64
 }
 
 func (r *keptReplayer) apply(frame []byte) error {
@@ -125,10 +130,10 @@ func (r *keptReplayer) apply(frame []byte) error {
 	if err != nil {
 		return err
 	}
-	if err = checkRecoveryUpdate(doc, update, isComments); err != nil {
+	if err = r.chargeWork(update, isComments); err != nil {
 		return err
 	}
-	if err = r.chargeTextWork(update, isComments); err != nil {
+	if err = checkRecoveryUpdate(doc, update, isComments); err != nil {
 		return err
 	}
 	next, err := r.ledger.Commit(plan, protocol.KeptApplied)
@@ -148,18 +153,20 @@ func (r *keptReplayer) apply(frame []byte) error {
 	return nil
 }
 
-func (r *keptReplayer) chargeTextWork(update []byte, comments bool) error {
-	if comments {
-		return nil
-	}
+func (r *keptReplayer) chargeWork(update []byte, comments bool) error {
 	work, err := protocol.KeptTextWork(update, true)
+	used := &r.textWork
+	if comments {
+		work, err = protocol.KeptCommentsWork(update, true)
+		used = &r.commentsWork
+	}
 	if err != nil {
 		return err
 	}
-	if work > maxRecoveryTextWork-r.textWork {
-		return errors.New("recovery text work exceeded")
+	if work > maxRecoveryTextWork-*used {
+		return errors.New("recovery work exceeded")
 	}
-	r.textWork += work
+	*used += work
 	return nil
 }
 

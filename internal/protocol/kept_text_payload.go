@@ -17,11 +17,16 @@ func validKeptYjsUpdate(update []byte, content bool) bool {
 	return validKeptYjsUpdateWithAssets(update, content, false)
 }
 
-func validKeptYjsUpdateWithAssets(update []byte, content, allowAssets bool) (valid bool) {
-	if content && CheckKeptTextState(update) != nil {
-		return false
+func keptCheckpointWork(update []byte, content bool) (uint64, error) {
+	if content {
+		return KeptTextWork(update, false)
 	}
-	if !content && CheckKeptCommentsState(update) != nil {
+	return KeptCommentsWork(update, false)
+}
+
+func validKeptYjsUpdateWithAssets(update []byte, content, allowAssets bool) (valid bool) {
+	work, err := keptCheckpointWork(update, content)
+	if err != nil || work > MaxKeptYjsWork {
 		return false
 	}
 	defer func() {
