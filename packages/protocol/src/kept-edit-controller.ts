@@ -63,6 +63,8 @@ export class KeptEditController {
   private readonly sender: KeptOutboxSender
   private readonly queued: Uint8Array[] = []
   private running: Promise<void> | undefined
+  private persistence: Promise<void> = Promise.resolve()
+  private editRevision = 0
   private remoteWork: Promise<void> | undefined
   private closeAttempt: Promise<void> | undefined
   private closing = false
@@ -220,9 +222,29 @@ export class KeptEditController {
     }
     const encoder = encoding.createEncoder()
     sync.writeUpdate(encoder, update)
+    this.editRevision++
     this.queued.push(encodeMessage(MessageType.Sync, encoding.toUint8Array(encoder)))
     this.options.onStatus('pending')
-    if (!this.closing) void this.retry()
+    void this.persist().then(
+      () => {
+        if (!this.closing) void this.retry()
+      },
+      () => this.options.onStatus('failed'),
+    )
+  }
+  private persist(): Promise<void> {
+    const work = this.persistence
+      .catch(() => {})
+      .then(async () => {
+        while (this.queued.length) {
+          const first = this.queued[0]
+          if (!first) break
+          await this.sender.enqueue(first)
+          this.queued.shift()
+        }
+      })
+    this.persistence = work
+    return work
   }
   retry(): Promise<void> {
     if (this.running) return this.running
@@ -239,17 +261,13 @@ export class KeptEditController {
     let sentAny = false
     try {
       while (!this.closing && !this.stopped && !this.invalid) {
-        const first = this.queued[0]
-        if (first) {
-          await this.sender.enqueue(first)
-          this.queued.shift()
-          continue
-        }
+        await this.persist()
+        const revision = this.editRevision
         const sent = await this.sender.sendNext(this.abort.signal)
         if (sent.status === 'idle') {
-          if (this.queued.length) continue
+          if (this.queued.length || revision !== this.editRevision) continue
           this.options.onStatus(sentAny ? 'relay-accepted' : 'idle')
-          if (this.queued.length) continue
+          if (this.queued.length || revision !== this.editRevision) continue
           break
         }
         sentAny = true
@@ -282,12 +300,7 @@ export class KeptEditController {
     if (this.remoteWork) await this.remoteWork
     if (this.invalid) throw new Error('invalid kept text state')
     try {
-      while (this.queued.length) {
-        const first = this.queued[0]
-        if (!first) break
-        await this.sender.enqueue(first)
-        this.queued.shift()
-      }
+      await this.persist()
     } catch (error) {
       this.options.onStatus('failed')
       throw error

@@ -74,6 +74,36 @@ it('close drains all edits and restores them', async () => {
   await reopened.close()
   outbox.close()
 })
+it('persists edits while a previous append is in flight and fails', async () => {
+  const { outbox, sender, opts } = await setup()
+  let requestStarted = false
+  let rejectRequest!: (error: Error) => void
+  const request = new Promise<Response>((_resolve, reject) => {
+    rejectRequest = reject
+  })
+  const c = await KeptEditController.open({
+    ...opts,
+    fetch: async () => {
+      requestStarted = true
+      return request
+    },
+  })
+  await c.replace(0, 0, 'first')
+  await until(() => requestStarted)
+  await c.replace(5, 5, ' second')
+  let rows = await outbox.operations(link, roomId, sender)
+  for (let i = 0; i < 1000 && rows.length !== 2; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 2))
+    rows = await outbox.operations(link, roomId, sender)
+  }
+  expect(rows).toHaveLength(2)
+  rejectRequest(new Error('offline'))
+  await c.close()
+  const reopened = await KeptEditController.open(opts)
+  expect(reopened.text()).toBe('first second')
+  await reopened.close()
+  outbox.close()
+}, 15000)
 it('remote updates are never re-sent and unknown roots are rejected', async () => {
   const { outbox, sender, opts } = await setup()
   const c = await KeptEditController.open(opts)
@@ -338,5 +368,45 @@ it('rejects stale offsets while a remote change is being persisted', async () =>
   expect(c.text()).not.toContain('!')
   await c.close()
   remote.destroy()
+  outbox.close()
+})
+it('review: edit persisted while an idle send is completing is sent', async () => {
+  const { outbox, sender, opts, status } = await setup()
+  const operations = outbox.operations.bind(outbox)
+  let release!: () => void
+  const gate = new Promise<void>((r) => {
+    release = r
+  })
+  let snapshot = false
+  let first = true
+  outbox.operations = async (...args) => {
+    const rows = await operations(...args)
+    if (first) {
+      first = false
+      snapshot = true
+      await gate
+    }
+    return rows
+  }
+  let sends = 0
+  const c = await KeptEditController.open({
+    ...opts,
+    fetch: async () => {
+      sends++
+      throw Error('offline')
+    },
+  })
+  const retry = c.retry()
+  await until(() => snapshot)
+  await c.replace(0, 0, 'saved')
+  await until(() => status() === 'pending')
+  for (let i = 0; i < 1000 && (await operations(link, roomId, sender)).length !== 1; i++)
+    await new Promise((r) => setTimeout(r, 2))
+  await new Promise((r) => setTimeout(r, 20))
+  release()
+  await retry
+  await new Promise((r) => setTimeout(r, 30))
+  expect(sends).toBe(1)
+  await c.close()
   outbox.close()
 })
