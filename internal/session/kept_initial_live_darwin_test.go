@@ -262,6 +262,65 @@ func TestLiveKeptInitial(t *testing.T) {
 			t.Fatal(e)
 		}
 	}
+	if err = os.Remove(file); err != nil {
+		t.Fatal(err)
+	}
+	missing, e := inspectKeptRecovery(ctx, store, room, client)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if missing.path == "" || missing.session.Text.ToString() != "initial file guest" {
+		t.Fatal("missing-file candidate unavailable")
+	}
+	if e = missing.session.Stop(); !errors.Is(e, filewriter.ErrRecoveryHeld) {
+		t.Fatalf("missing hold: %v", e)
+	}
+	if _, e = os.Lstat(file); !errors.Is(e, os.ErrNotExist) {
+		t.Fatal("missing source was recreated")
+	}
+	missingReopened, e := openRecoveryExport(ctx, Options{File: file, Root: dir, Project: dir, Server: c.Origin}, store, room, missing.path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if missingReopened.session.Text.ToString() != "initial file guest" {
+		t.Fatal("missing-file export lost candidate")
+	}
+	if e = missingReopened.session.Stop(); !errors.Is(e, filewriter.ErrRecoveryHeld) {
+		t.Fatalf("missing reopen hold: %v", e)
+	}
+	if _, e = os.Lstat(file); !errors.Is(e, os.ErrNotExist) {
+		t.Fatal("missing source recreated on reopen")
+	}
+	if err = os.WriteFile(file, []byte(external), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(metadata, []byte("not json"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	malformed, e := inspectKeptRecovery(ctx, store, room, client)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if malformed.path == "" || malformed.session.Text.ToString() != "initial file guest" {
+		t.Fatal("malformed metadata candidate unavailable")
+	}
+	if e = malformed.session.Stop(); !errors.Is(e, filewriter.ErrRecoveryHeld) {
+		t.Fatalf("malformed metadata hold: %v", e)
+	}
+	dataBefore, e := os.ReadFile(metadata)
+	if e != nil || string(dataBefore) != "not json" {
+		t.Fatal("malformed metadata changed")
+	}
+	malformedReopened, e := openRecoveryExport(ctx, Options{File: file, Root: dir, Project: dir, Server: c.Origin}, store, room, malformed.path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = malformedReopened.session.Stop(); !errors.Is(e, filewriter.ErrRecoveryHeld) {
+		t.Fatalf("malformed reopen hold: %v", e)
+	}
+	if err = os.WriteFile(metadata, []byte(localMeta), 0600); err != nil {
+		t.Fatal(err)
+	}
 	if err = host.CloseRoom(ctx); err != nil {
 		t.Fatal(err)
 	}

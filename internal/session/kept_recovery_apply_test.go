@@ -327,6 +327,102 @@ func TestKeptRecoveryRejectsTailWithoutMutatingCheckpointLedgerOrDisk(t *testing
 	}
 }
 
+func TestKeptRecoveryAcceptsMaximumBaselineAndSignedTail(t *testing.T) {
+	f := newRecoveryFixture(t)
+	receipts := make([]protocol.KeptReceipt, protocol.MaxKeptCheckpointReceipts)
+	for i := range receipts {
+		receipts[i] = protocol.KeptReceipt{Access: protocol.AccessEdit, Sequence: uint64(i + 1), Outcome: protocol.KeptApplied}
+	}
+	ledger, err := protocol.RestoreKeptLedger(protocol.MaxKeptCheckpointReceipts, receipts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame := f.frame(t, f.keys, 1, 1, f.textUpdate)
+	s, err := startKeptRecovery(context.Background(), f.opts, f.checkpoint, ledger, f.keys, f.context, [][]byte{frame})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop()
+	if s.Text.ToString() != "base guest" {
+		t.Fatalf("recovery text %q", s.Text.ToString())
+	}
+}
+
+func TestReviewRecoveryRetainsCandidateWhenLocalFileMissing(t *testing.T) {
+	f := newRecoveryFixture(t)
+	frame := f.frame(t, f.keys, 1, 1, f.textUpdate)
+	if err := os.Remove(f.opts.File); err != nil {
+		t.Fatal(err)
+	}
+	s, err := startKeptRecovery(context.Background(), f.opts, f.checkpoint, f.ledger, f.keys, f.context, [][]byte{frame})
+	if err != nil {
+		t.Fatalf("cannot stage verified recovery after local deletion: %v", err)
+	}
+	defer s.Stop()
+	if s.Text.ToString() != "base guest" {
+		t.Fatalf("text %q", s.Text.ToString())
+	}
+}
+
+func TestKeptRecoveryRetainsCandidateWhenLocalFileMissing(t *testing.T) {
+	f := newRecoveryFixture(t)
+	frame := f.frame(t, f.keys, 1, 1, f.textUpdate)
+	if err := os.Remove(f.opts.File); err != nil {
+		t.Fatal(err)
+	}
+	s, err := startKeptRecovery(context.Background(), f.opts, f.checkpoint, f.ledger, f.keys, f.context, [][]byte{frame})
+	if err != nil {
+		t.Fatalf("cannot stage verified recovery after local deletion: %v", err)
+	}
+	defer s.Stop()
+	if _, err := os.Lstat(f.opts.File); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("missing local file was recreated")
+	}
+	if s.Text.ToString() != "base guest" {
+		t.Fatalf("text %q", s.Text.ToString())
+	}
+}
+
+func TestKeptRecoverySeparatelyBoundsBaselineAndTail(t *testing.T) {
+	f := newRecoveryFixture(t)
+	receipts := make([]protocol.KeptReceipt, protocol.MaxKeptCheckpointReceipts+1)
+	for i := range receipts {
+		receipts[i] = protocol.KeptReceipt{Access: protocol.AccessEdit, Sequence: uint64(i + 1), Outcome: protocol.KeptApplied}
+	}
+	ledger, err := protocol.RestoreKeptLedger(len(receipts), receipts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = startKeptRecovery(context.Background(), f.opts, f.checkpoint, ledger, f.keys, f.context, nil); err == nil {
+		t.Fatal("accepted oversized baseline")
+	}
+	if _, err = startKeptRecovery(context.Background(), f.opts, f.checkpoint, f.ledger, f.keys, f.context, make([][]byte, protocol.MaxKeptReadRecords+1)); err == nil {
+		t.Fatal("accepted oversized tail")
+	}
+	if got := readFile(t, f.opts.File); got != "external edit" {
+		t.Fatalf("disk changed: %q", got)
+	}
+}
+
+func TestKeptRecoveryRetainsCandidateWhenLocalMetadataMalformed(t *testing.T) {
+	f := newRecoveryFixture(t)
+	frame := f.frame(t, f.keys, 1, 1, f.textUpdate)
+	path := filepath.Join(f.opts.Project, ".pedit", "meta", "note.md.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("not json"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := startKeptRecovery(context.Background(), f.opts, f.checkpoint, f.ledger, f.keys, f.context, [][]byte{frame})
+	if err != nil {
+		t.Fatalf("cannot stage verified recovery with malformed local metadata: %v", err)
+	}
+	defer s.Stop()
+	if got := readFile(t, path); got != "not json" {
+		t.Fatalf("local metadata changed: %q", got)
+	}
+}
 func TestKeptRecoveryRetriesValidTailAfterInvalidTail(t *testing.T) {
 	f := newRecoveryFixture(t)
 	frame := f.frame(t, f.keys, 1, 1, f.textUpdate)

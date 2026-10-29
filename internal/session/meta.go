@@ -89,12 +89,11 @@ func (s *Session) openMeta(f *sharedFile) (*metaFile, string) {
 		notices: newNotices(filepath.Join(s.project.Name(), name), s.opts.OnNotice, s.opts.OnError),
 		file:    &meta.File{Path: rel},
 	}
-	if off := m.read(rel); off != "" {
-		m.close()
-		return nil, off
-	}
 	if s.recovery != nil {
 		m.held = true
+	} else if off := m.read(rel); off != "" {
+		m.close()
+		return nil, off
 	}
 	if _, ok := f.content.(*textContent); ok {
 		m.tracker = meta.NewTracker(f.doc)

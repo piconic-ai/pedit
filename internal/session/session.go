@@ -202,6 +202,27 @@ func initialAwareness(doc *crdt.Doc, opts Options, shared content, recovery *rec
 	return aw
 }
 
+// A missing recovery file is kept absent; the held writer can never create it.
+func openSessionFile(path string, recovery *recoveryCheckpoint) (*filewriter.BoundFile, string, error) {
+	if recovery == nil {
+		return openShared(path)
+	}
+	_, err := os.Lstat(path)
+	if !errors.Is(err, os.ErrNotExist) {
+		return openShared(path)
+	}
+	bound, err := filewriter.OpenBound(path)
+	if err != nil {
+		return nil, "", err
+	}
+	if _, err = os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		bound.Close()
+		return nil, "", errors.New("recovery file changed while opening")
+	}
+	bound.CreateOnly()
+	return bound, "", nil
+}
+
 func initialContent(doc *crdt.Doc, file, initial string, recovery *recoveryCheckpoint) (content, error) {
 	if recovery == nil {
 		return newContent(doc, file, initial)
@@ -270,7 +291,7 @@ func start(ctx context.Context, opts Options, recovery *recoveryCheckpoint) (*Se
 	if keepsComments(project, opts.File) {
 		return nil, errKeepsComments
 	}
-	bound, initial, err := openShared(opts.File)
+	bound, initial, err := openSessionFile(opts.File, recovery)
 	if err != nil {
 		return nil, err
 	}

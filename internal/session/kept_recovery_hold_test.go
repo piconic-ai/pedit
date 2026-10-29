@@ -67,7 +67,7 @@ func TestRecoveryContentsRejectsUnknownRootAddedAfterStart(t *testing.T) {
 	}
 }
 
-func TestRecoveryMetadataFailureDoesNotStartAttachmentWorker(t *testing.T) {
+func TestRecoveryMalformedMetadataDoesNotStartAttachmentWorker(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "notes.md")
 	metaPath := filepath.Join(dir, ".pedit", "meta", "notes.md.json")
@@ -92,10 +92,16 @@ func TestRecoveryMetadataFailureDoesNotStartAttachmentWorker(t *testing.T) {
 	before := count()
 	empty := crdt.EncodeStateAsUpdateV1(crdt.New(), nil)
 	for range 3 {
-		_, err := start(context.Background(), Options{File: path, Project: dir, Server: server.URL}, &recoveryCheckpoint{text: empty, comments: empty})
-		if err == nil || !strings.Contains(err.Error(), "cannot open recovery comments") {
+		s, err := start(context.Background(), Options{File: path, Project: dir, Server: server.URL}, &recoveryCheckpoint{text: empty, comments: empty})
+		if err != nil {
 			t.Fatalf("start: %v", err)
 		}
+		if err = s.Stop(); !errors.Is(err, filewriter.ErrRecoveryHeld) {
+			t.Fatalf("stop: %v", err)
+		}
+	}
+	if got := readFile(t, metaPath); got != "invalid metadata" {
+		t.Fatalf("changed metadata: %q", got)
 	}
 	if after := count(); after != before {
 		t.Fatalf("attachment workers before=%d after=%d", before, after)

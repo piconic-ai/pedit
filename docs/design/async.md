@@ -204,7 +204,8 @@ fails, the caller receives the held candidate and any published path with the
 error. It does not compare local comments, safely release the hold, or commit
 the relay cut. The candidate is for inspection and does not prove relay tail
 completeness. The relay data must remain available until a separately durable
-recovery is complete.
+recovery is complete. A missing local text file or malformed local metadata
+does not prevent candidate retention; recovery leaves both untouched.
 The text check rejects known attachment references, but a string scan cannot
 prove that the attachment inventory is empty. Saving and cut acknowledgement
 remain unavailable until the caller verifies the complete inventory.
