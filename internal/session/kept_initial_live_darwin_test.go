@@ -221,6 +221,38 @@ func TestLiveKeptInitial(t *testing.T) {
 	if evidence.TailStatus != "unverified" || len(evidence.Entries) != 2 || evidence.Entries[0].Sequence >= evidence.Entries[1].Sequence {
 		t.Fatal("wrong observed tail evidence")
 	}
+	artifacts, err := publishRecoveryBundle(store, room, evidencePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := openRecoveryBundle(store, room, artifacts.Manifest)
+	if err != nil || string(bundle.Text) != "initial file guest" || !bytes.Contains(bundle.Comments, []byte("guest quote")) || bundle.TailStatus != "unverified" || bundle.AttachmentStatus != "unverified" || bundle.CommentsFormat != "inspection-json" || bundle.TextPath != artifacts.Text || bundle.CommentsPath != artifacts.Comments || bundle.EvidencePath != evidencePath {
+		t.Fatal("invalid recovery bundle", err)
+	}
+	for _, path := range []string{artifacts.Evidence, artifacts.Text, artifacts.Comments, artifacts.Manifest} {
+		original, e := os.ReadFile(path)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if e = os.WriteFile(path, append(bytes.Clone(original), 'x'), 0600); e != nil {
+			t.Fatal(e)
+		}
+		if _, e = openRecoveryBundle(store, room, artifacts.Manifest); e == nil {
+			t.Fatalf("accepted altered artifact %s", path)
+		}
+		if e = os.WriteFile(path, original, 0600); e != nil {
+			t.Fatal(e)
+		}
+	}
+	if err = os.Rename(artifacts.Text, artifacts.Text+".missing"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = openRecoveryBundle(store, room, artifacts.Manifest); err == nil {
+		t.Fatal("accepted missing text")
+	}
+	if err = os.Rename(artifacts.Text+".missing", artifacts.Text); err != nil {
+		t.Fatal(err)
+	}
 	signAndReject := func(changed recoveryEvidence) {
 		t.Helper()
 		message, e := evidenceMessage(changed)
@@ -558,7 +590,7 @@ func TestLiveKeptInitial(t *testing.T) {
 		t.Fatal(err)
 	}
 	child := exec.Command(os.Args[0], "-test.run=^TestOpenReadEvidenceChild$")
-	child.Env = append(os.Environ(), "PEDIT_EVIDENCE_STORE="+stateDir, "PEDIT_EVIDENCE_ROOM="+room, "PEDIT_EVIDENCE_PATH="+evidencePath)
+	child.Env = append(os.Environ(), "PEDIT_EVIDENCE_STORE="+stateDir, "PEDIT_EVIDENCE_ROOM="+room, "PEDIT_EVIDENCE_PATH="+evidencePath, "PEDIT_BUNDLE_PATH="+artifacts.Manifest)
 	if output, e := child.CombinedOutput(); e != nil {
 		t.Fatalf("fresh process evidence: %v %s", e, output)
 	}
@@ -604,5 +636,9 @@ func TestOpenReadEvidenceChild(t *testing.T) {
 	e, err := openReadEvidence(store, os.Getenv("PEDIT_EVIDENCE_ROOM"), os.Getenv("PEDIT_EVIDENCE_PATH"))
 	if err != nil || e.TailStatus != "unverified" || len(e.Entries) != 2 {
 		t.Fatalf("fresh evidence: %v", err)
+	}
+	b, err := openRecoveryBundle(store, os.Getenv("PEDIT_EVIDENCE_ROOM"), os.Getenv("PEDIT_BUNDLE_PATH"))
+	if err != nil || string(b.Text) != "initial file guest" || !bytes.Contains(b.Comments, []byte("guest quote")) {
+		t.Fatalf("fresh bundle: %v", err)
 	}
 }

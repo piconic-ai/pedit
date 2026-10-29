@@ -132,3 +132,15 @@ explicit; callers must schedule refreshes because the host socket provides no
 append notifications. The observer does not journal or publish host edits,
 write files, acknowledge a cut, or prove tail completeness or attachment
 inventory. It is not connected to the CLI or a user-facing live session.
+
+An internal recovery bundle binds a verified read-evidence file to separate
+private text and comments output files in a host-signed manifest. Opening the
+manifest verifies the signature, replays the evidence and checks that both
+output bytes match it. The API returns verified bytes as well as paths; paths
+can be changed after inspection. The comments file is a JSON view of the Yjs
+comments map, not the `.pedit/meta` format or a merged metadata save. A bundle
+still has an unverified tail and attachment inventory and cannot authorize a
+file write, relay cut or acknowledgement. Outputs are private macOS-only
+artifacts; an interrupted publication can leave orphan outputs. After any
+uncertain sync the caller must retain returned paths and revalidate. Complete
+store rollback and power-loss durability remain outside this guarantee.
