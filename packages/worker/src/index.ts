@@ -82,6 +82,7 @@ type Bindings = Omit<Env, 'ROOM_CREATION_LIMIT' | 'CONNECTION_LIMIT'> & {
   ROOM_CREATION_LIMIT?: RateLimit
   CONNECTION_LIMIT?: RateLimit
   MAINTENANCE?: string
+  KEEP_PUBLIC_V6?: string
   // Where the Markdown preview may load images and videos from (docs/self-hosting.md).
   MEDIA_SOURCES?: string
 }
@@ -115,6 +116,10 @@ function isLoopback(hostname: string): boolean {
 // fragment across it. 308 keeps the method of anything but a GET or HEAD.
 app.use('*', async (c, next) => {
   const url = new URL(c.req.url)
+  if (url.pathname === '/internal/kept' || url.pathname.startsWith('/internal/kept/')) {
+    if (c.env.KEEP_PUBLIC_V6 !== '1') return new Response(null, { status: 404 })
+    if (url.search) return new Response(null, { status: 400 })
+  }
   if (url.protocol !== 'http:' || isLoopback(url.hostname)) return next()
   url.protocol = 'https:'
   const status = c.req.method === 'GET' || c.req.method === 'HEAD' ? 301 : 308
@@ -163,6 +168,113 @@ app.get('/api/rooms/:id/ws', async (c) => {
   return room.fetch(new Request(c.req.raw, { headers }))
 })
 
+// The public bridge only exposes the explicitly listed v6 Room operations.
+// It forwards streams without buffering; Room retains authentication and its
+// own body, lifecycle, and per-role limits.
+const KEPT_METHODS: Record<string, readonly string[]> = {
+  initialize: ['POST'],
+  read: ['POST', 'GET', 'DELETE'],
+  append: ['POST'],
+  host: ['GET'],
+  guest: ['GET'],
+  close: ['POST'],
+  blobs: ['GET', 'PUT'],
+}
+const KEPT_HEADERS = [
+  'Authorization',
+  'Upgrade',
+  'Sec-WebSocket-Protocol',
+  'Content-Length',
+  'Content-Type',
+  'X-Pedit-Editor',
+  'X-Pedit-Commenter',
+  'X-Pedit-Reader',
+  'X-Pedit-Epoch',
+  'X-Pedit-Keep-Seconds',
+  'X-Pedit-Read-Session',
+  'X-Pedit-Read-Cursor',
+]
+
+function validateKeptRequest(
+  request: Request,
+  id: string,
+  action: string,
+  blob?: string,
+): Response | undefined {
+  const methods = Object.hasOwn(KEPT_METHODS, action) ? KEPT_METHODS[action] : undefined
+  if (
+    !ROOM_ID.test(id) ||
+    !methods ||
+    (action === 'blobs' && (!blob || !BLOB_ID.test(blob))) ||
+    new URL(request.url).search
+  )
+    return new Response(null, { status: 400 })
+  if (!methods.includes(request.method)) return new Response(null, { status: 405 })
+  if (!allowedOrigin(request)) return new Response(null, { status: 403 })
+  const socket = action === 'host' || action === 'guest'
+  const upgrade = request.headers.get('Upgrade')?.toLowerCase() === 'websocket'
+  if (socket && !upgrade) return new Response(null, { status: 426 })
+  if (!socket && request.headers.has('Upgrade')) return new Response(null, { status: 400 })
+}
+
+async function keptRate(
+  request: Request,
+  env: Bindings,
+  action: string,
+): Promise<Response | undefined> {
+  if (!env.CONNECTION_LIMIT || !env.ROOM_CREATION_LIMIT) return new Response(null, { status: 503 })
+  try {
+    if (await overLimit(env.CONNECTION_LIMIT, request, 'v6 request'))
+      return new Response(null, { status: 429 })
+    if (
+      action === 'initialize' &&
+      (await overLimit(env.ROOM_CREATION_LIMIT, request, 'v6 initialize'))
+    )
+      return new Response(null, { status: 429 })
+  } catch {
+    return new Response(null, { status: 503 })
+  }
+}
+
+async function forwardKept(
+  request: Request,
+  env: Bindings,
+  id: string,
+  action: string,
+  blob?: string,
+): Promise<Response> {
+  if (env.KEEP_PUBLIC_V6 !== '1') return new Response(null, { status: 404 })
+  const invalid = validateKeptRequest(request, id, action, blob)
+  if (invalid) return invalid
+  const level = maintenance(env)
+  if (level === 'closed' || (action === 'initialize' && level !== 'none'))
+    return new Response(null, { status: 503 })
+  const limited = await keptRate(request, env, action)
+  if (limited) return limited
+  const headers = new Headers()
+  for (const name of KEPT_HEADERS) {
+    const value = request.headers.get(name)
+    if (value !== null) headers.set(name, value)
+  }
+  const path = `/internal/kept/${id}/${action}${blob ? `/${blob}` : ''}`
+  const dest = new URL(path, new URL(request.url).origin)
+  try {
+    const room = env.ROOM.get(env.ROOM.idFromName(id))
+    return await room.fetch(
+      new Request(dest, { method: request.method, headers, body: request.body }),
+    )
+  } catch {
+    return new Response(null, { status: 503 })
+  }
+}
+
+app.all('/internal/kept/:id/:action', (c) =>
+  forwardKept(c.req.raw, c.env, c.req.param('id'), c.req.param('action')),
+)
+app.all('/internal/kept/:id/blobs/:blob', (c) =>
+  forwardKept(c.req.raw, c.env, c.req.param('id'), 'blobs', c.req.param('blob')),
+)
+
 // Encrypted attachments, stored while the room's host is connected. The Room
 // verifies the admission capability before allowing reads or writes.
 app.all('/api/rooms/:id/blobs/:blobId', async (c) => {
@@ -186,7 +298,11 @@ app.all('/api/rooms/:id/blobs/:blobId', async (c) => {
 // Everything but /api/* is a page or a static file: Workers Assets serves it, and the
 // Worker adds the security headers to HTML (wrangler.jsonc run_worker_first).
 app.notFound((c) =>
-  c.req.path.startsWith('/api/') ? c.text('404 Not Found', 404) : servePage(c.req.raw, c.env),
+  c.req.path.startsWith('/api/') ||
+  c.req.path === '/internal/kept' ||
+  c.req.path.startsWith('/internal/kept/')
+    ? c.text('404 Not Found', 404)
+    : servePage(c.req.raw, c.env),
 )
 
 export default {
