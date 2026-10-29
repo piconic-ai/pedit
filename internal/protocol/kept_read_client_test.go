@@ -416,3 +416,20 @@ func TestKeptPageRetryBoundaries(t *testing.T) {
 		})
 	}
 }
+
+func TestKeptRetryDelayDigitsOnly(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  time.Duration
+	}{
+		{"", time.Minute}, {"1", time.Second}, {"60", time.Minute}, {"01", time.Second},
+		{"+1", 0}, {"-1", 0}, {" 1", 0}, {"1 ", 0}, {"1.0", 0}, {"１", 0},
+		{"0", 0}, {"61", 0}, {"999999999999999999999999999999", 0},
+	} {
+		t.Run(fmt.Sprintf("%q", tc.value), func(t *testing.T) {
+			if got := keptRetryDelay(tc.value).delay; got != tc.want {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

@@ -281,6 +281,11 @@ func keptRetryDelay(value string) keptRateLimit {
 	if value == "" {
 		return keptRateLimit{delay: time.Minute}
 	}
+	for _, c := range value {
+		if c < '0' || c > '9' {
+			return keptRateLimit{}
+		}
+	}
 	seconds, err := strconv.Atoi(value)
 	if err != nil || seconds < 1 || seconds > 60 {
 		return keptRateLimit{}
