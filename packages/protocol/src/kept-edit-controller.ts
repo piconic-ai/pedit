@@ -66,7 +66,7 @@ export class KeptEditController {
   private persistence: Promise<void> = Promise.resolve()
   private editRevision = 0
   private operationCount = 0
-  private remoteWork: Promise<void> | undefined
+  private remoteWork: Promise<Y.YTextEvent['delta']> | undefined
   private closeAttempt: Promise<void> | undefined
   private closing = false
   private stopped = false
@@ -175,7 +175,7 @@ export class KeptEditController {
       offset = end
     }
   }
-  applyRemote(update: Uint8Array): Promise<void> {
+  applyRemote(update: Uint8Array): Promise<Y.YTextEvent['delta']> {
     if (this.stopped || this.closing || this.invalid)
       return Promise.reject(new Error('kept editor closed'))
     const input = Uint8Array.from(update)
@@ -198,7 +198,18 @@ export class KeptEditController {
           this.options.sender,
           input,
         )
-        Y.applyUpdate(this.#doc, input, this)
+        const text = this.#doc.getText('content')
+        let delta: Y.YTextEvent['delta'] = []
+        const observe = (event: Y.YTextEvent) => {
+          delta = event.delta
+        }
+        text.observe(observe)
+        try {
+          Y.applyUpdate(this.#doc, input, this)
+        } finally {
+          text.unobserve(observe)
+        }
+        return delta
       } finally {
         probe.destroy()
       }

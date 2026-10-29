@@ -1,3 +1,4 @@
+import { undoDepth } from '@codemirror/commands'
 import * as Y from 'yjs'
 import { deriveKeptRoomKeys, parseKeptFragment } from '../../../protocol/src/kept-access.ts'
 import {
@@ -8,6 +9,7 @@ import { KeptOutbox } from '../../../protocol/src/kept-outbox.ts'
 import { KeptRoomClient } from '../../../protocol/src/kept-room-client.ts'
 import fixture from '../../../testdata/kept-read-interop.json'
 import shared from '../../../testdata/kept-recovery-wire.json'
+import { KeptCommentController } from '../../../web/src/kept-comment-controller.ts'
 import { TestKeptEditor } from './test-editor.ts'
 
 const status = document.querySelector('#status')!
@@ -184,10 +186,57 @@ async function run() {
       Y.applyUpdate(remoteDoc, state)
       const vector = Y.encodeStateVector(remoteDoc)
       remoteDoc.getText('content').insert(remoteDoc.getText('content').length, ' REMOTE')
-      const remoteEditor = new TestKeptEditor(remoteController)
+      let remoteEditor = new TestKeptEditor(remoteController)
       await remoteEditor.applyRemote(Y.encodeStateAsUpdate(remoteDoc, vector))
       if (!remoteEditor.view.state.doc.toString().endsWith(' REMOTE'))
         throw Error('remote update not displayed')
+      remoteEditor.view.contentDOM.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'z',
+          metaKey: /Mac|iPhone|iPad/.test(navigator.platform),
+          ctrlKey: !/Mac|iPhone|iPad/.test(navigator.platform),
+          bubbles: true,
+        }),
+      )
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      if (
+        !remoteEditor.view.state.doc.toString().endsWith(' REMOTE') ||
+        !remoteController.text().endsWith(' REMOTE')
+      )
+        throw Error('undo reversed remote content')
+      if ((await remoteBox.operations(link, fixture.roomId, remoteSender)).length !== 0)
+        throw Error('undo resent remote content')
+      const remoteText = remoteController.text()
+      remoteEditor.view.dispatch({
+        changes: [
+          { from: 0, insert: 'first' },
+          { from: remoteText.length, insert: 'last' },
+        ],
+      })
+      for (let i = 0; i < 200 && remoteEditor.draft.hidden; i++)
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      if (remoteEditor.draft.hidden || remoteEditor.view.state.doc.toString() !== remoteText)
+        throw Error('failed edit rollback did not retain remote content')
+      if (undoDepth(remoteEditor.view.state) !== 0) throw Error('rollback entered undo history')
+      const rejectedDraft = remoteEditor.draft.value
+      remoteEditor.view.contentDOM.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'z',
+          metaKey: /Mac|iPhone|iPad/.test(navigator.platform),
+          ctrlKey: !/Mac|iPhone|iPad/.test(navigator.platform),
+          bubbles: true,
+        }),
+      )
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      if (
+        remoteEditor.view.state.doc.toString() !== remoteText ||
+        remoteController.text() !== remoteText ||
+        remoteEditor.draft.value !== rejectedDraft ||
+        (await remoteBox.operations(link, fixture.roomId, remoteSender)).length !== 0
+      )
+        throw Error('undo after rollback changed remote content or draft')
+      remoteEditor.destroy()
+      remoteEditor = new TestKeptEditor(remoteController)
       remoteEditor.view.dispatch({
         changes: { from: remoteEditor.view.state.doc.length, insert: ' LOCAL' },
       })
@@ -195,10 +244,123 @@ async function run() {
         await new Promise((resolve) => setTimeout(resolve, 20))
       if (!remoteController.text().endsWith(' REMOTE LOCAL'))
         throw Error('local edit removed remote content')
+      const priorVector = Y.encodeStateVector(remoteDoc)
+      remoteDoc.getText('content').insert(0, 'OTHER ')
+      await remoteEditor.applyRemote(Y.encodeStateAsUpdate(remoteDoc, priorVector))
+      remoteEditor.view.contentDOM.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'z',
+          metaKey: /Mac|iPhone|iPad/.test(navigator.platform),
+          ctrlKey: !/Mac|iPhone|iPad/.test(navigator.platform),
+          bubbles: true,
+        }),
+      )
+      for (let i = 0; i < 200 && remoteController.text().endsWith(' LOCAL'); i++)
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      if (
+        remoteController.text().endsWith(' LOCAL') ||
+        !remoteController.text().startsWith('OTHER ')
+      )
+        throw Error('undo failed to retain remote and reverse local edit')
+      remoteEditor.view.dispatch({
+        changes: { from: remoteEditor.view.state.doc.length, insert: ' LOCAL' },
+      })
+      for (let i = 0; i < 200 && !remoteController.text().endsWith(' REMOTE LOCAL'); i++)
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      if (!remoteController.text().endsWith(' REMOTE LOCAL')) throw Error('local edit not restored')
+      remoteEditor.view.dispatch({ changes: { from: 0, insert: '\uFEFF' } })
+      for (let i = 0; i < 200 && !remoteController.text().startsWith('\uFEFF'); i++)
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      if (!remoteController.text().startsWith('\uFEFF') || !remoteEditor.draft.hidden)
+        throw Error('valid leading BOM was rejected')
+      const beforeInvalid = remoteController.text()
+      remoteEditor.view.dispatch({
+        changes: { from: remoteEditor.view.state.doc.length, insert: '\uD800' },
+      })
+      for (let i = 0; i < 200 && remoteEditor.draft.hidden; i++)
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      if (
+        remoteEditor.draft.hidden ||
+        !remoteEditor.draft.value.endsWith('\uD800') ||
+        remoteController.text() !== beforeInvalid ||
+        remoteEditor.view.state.doc.toString() !== beforeInvalid
+      )
+        throw Error('unpaired surrogate was not rejected into draft')
+      remoteEditor.destroy()
+      remoteEditor = new TestKeptEditor(remoteController)
+      remoteEditor.view.contentDOM.dispatchEvent(
+        new CompositionEvent('compositionstart', { bubbles: true }),
+      )
+      remoteEditor.view.dispatch({
+        changes: { from: remoteEditor.view.state.doc.length, insert: '拼' },
+      })
+      remoteEditor.view.dispatch({
+        changes: { from: remoteEditor.view.state.doc.length, insert: '音' },
+      })
+      if (remoteController.text().endsWith('拼音')) throw Error('composition committed prematurely')
+      remoteEditor.view.contentDOM.dispatchEvent(
+        new CompositionEvent('compositionend', { bubbles: true }),
+      )
+      for (let i = 0; i < 200 && !remoteController.text().endsWith('拼音'); i++)
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      if (!remoteController.text().endsWith(' REMOTE LOCAL拼音')) throw Error('composition lost')
+      remoteEditor.view.dispatch({
+        changes: { from: remoteEditor.view.state.doc.length, insert: '😀' },
+      })
+      for (let i = 0; i < 200 && !remoteController.text().endsWith('😀'); i++)
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      const end = remoteEditor.view.state.doc.length
+      remoteEditor.view.dispatch({ changes: { from: end - 2, to: end, insert: '😁' } })
+      for (let i = 0; i < 200 && !remoteController.text().endsWith('😁'); i++)
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      if (!remoteController.text().endsWith(' REMOTE LOCAL拼音😁'))
+        throw Error('Unicode replacement lost')
+      const unchanged = remoteController.text()
+      remoteEditor.view.dispatch({
+        changes: [
+          { from: 0, to: 1, insert: 'Q' },
+          { from: unchanged.length, insert: ' split' },
+        ],
+      })
+      for (let i = 0; i < 200 && remoteEditor.draft.hidden; i++)
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      if (
+        remoteEditor.draft.hidden ||
+        remoteEditor.draft.value !== 'Q' + unchanged.slice(1) + ' split' ||
+        remoteController.text() !== unchanged
+      )
+        throw Error('noncontiguous edit was not retained as a draft')
       remoteEditor.destroy()
       await remoteController.close()
       remoteDoc.destroy()
       remoteBox.close()
+      const commentLink = parseKeptFragment(keys.fragments.comment ?? '')
+      if (!commentLink || commentLink.access !== 'comment') throw Error('comment link missing')
+      const commentBox = await KeptOutbox.open(`${dbName}-comments`)
+      const commentSender = await commentBox.createSender(commentLink, fixture.roomId)
+      const commentState = Uint8Array.from(
+        atob(shared.commentsState.replace(/-/g, '+').replace(/_/g, '/')),
+        (c) => c.charCodeAt(0),
+      )
+      const comments = await KeptCommentController.open({
+        url: location.origin,
+        link: commentLink,
+        context,
+        sender: commentSender,
+        outbox: commentBox,
+        metaId: 7,
+        text: state,
+        comments: commentState,
+        name: () => 'Ada',
+        onStatus: () => {},
+        fetch: async () => {
+          throw Error('offline')
+        },
+      })
+      const thread = await comments.start(0, 5, 'offline comment')
+      await comments.reply(thread, 'offline reply')
+      await comments.close()
+      commentBox.close()
       // Keep a writer lock held until the harness kills Chrome.
       const crashBox = await KeptOutbox.open(dbName)
       await KeptEditController.open({
@@ -235,8 +397,11 @@ async function run() {
         throw Error('offline')
       },
     })
-    if (!remoteController.text().endsWith(' REMOTE LOCAL'))
-      throw Error('remote dependency not restored')
+    if (
+      !remoteController.text().startsWith('\uFEFF') ||
+      !remoteController.text().endsWith(' REMOTE LOCAL拼音😁')
+    )
+      throw Error('remote dependency or BOM not restored')
     await remoteController.close()
     remoteBox.close()
     const [sender] = await outbox.senders(link, fixture.roomId)
@@ -299,6 +464,44 @@ async function run() {
     initial.destroy()
     if (restored.getText('content').toString() !== expected) throw Error('Yjs text mismatch')
     restored.destroy()
+    const commentLink = parseKeptFragment(keys.fragments.comment ?? '')
+    if (!commentLink || commentLink.access !== 'comment') throw Error('comment link missing')
+    const commentBox = await KeptOutbox.open(`${dbName}-comments`)
+    const [commentSender] = await commentBox.senders(commentLink, fixture.roomId)
+    if (!commentSender) throw Error('comment sender missing')
+    const commentState = Uint8Array.from(
+      atob(shared.commentsState.replace(/-/g, '+').replace(/_/g, '/')),
+      (c) => c.charCodeAt(0),
+    )
+    let commentStatus: KeptEditStatus = 'idle'
+    const commentController = await KeptCommentController.open({
+      url: location.origin,
+      link: commentLink,
+      context,
+      sender: commentSender,
+      outbox: commentBox,
+      metaId: 7,
+      text: state,
+      comments: commentState,
+      name: () => 'Ada',
+      onStatus: (value) => {
+        commentStatus = value
+      },
+    })
+    const recovered = new Y.Doc()
+    Y.applyUpdate(recovered, commentController.commentState())
+    if (!JSON.stringify(recovered.getMap('comments').toJSON()).includes('offline reply'))
+      throw Error('comment not recovered')
+    recovered.destroy()
+    await untilStatus(() => commentStatus, 'relay-accepted')
+    await commentController.close()
+    commentBox.close()
+    const withComments = await reader.inspect()
+    const remoteComments = new Y.Doc()
+    Y.applyUpdate(remoteComments, withComments.commentsState)
+    if (!JSON.stringify(remoteComments.getMap('comments').toJSON()).includes('offline reply'))
+      throw Error('comment not accepted by Room')
+    remoteComments.destroy()
     status.textContent =
       'PASS: checkpoint and Yjs edit recovered after Chrome crash; tail unverified'
   } catch (e) {

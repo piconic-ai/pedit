@@ -25,6 +25,26 @@ export class Room extends ProductionRoom {
       }
       return new Response(null, { status: 204 })
     }
+    if (['/__test/freeze', '/__test/pending'].includes(new URL(request.url).pathname)) {
+      const room = request.headers.get('X-Test-Room')!
+      const host = request.headers.get('X-Test-Host')!
+      const transport = new KeptTransport(
+        this.ctx,
+        this.env.ROOM,
+        { bytes: 50 * 1024 * 1024, frames: 10000 },
+        { requestedSeconds: 1, roomMaxSeconds: null, maxKeepSeconds: null, alarmSeconds: 3600 },
+      )
+      try {
+        if (new URL(request.url).pathname === '/__test/freeze') {
+          return Response.json(
+            await transport.freeze(room, host, request.headers.get('X-Test-Epoch')!, 1),
+          )
+        }
+        return Response.json((await transport.pendingCut(room, host)) ?? null)
+      } catch {
+        return new Response(null, { status: 403 })
+      }
+    }
     if (new URL(request.url).pathname === '/__test/advance') {
       const room = request.headers.get('X-Test-Room')!
       const host = request.headers.get('X-Test-Host')!

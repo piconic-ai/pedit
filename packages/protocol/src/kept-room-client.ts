@@ -3,13 +3,14 @@ import * as Y from 'yjs'
 import { decodeFiles } from './files.ts'
 import { MAX_FRAME_BYTES } from './frame.ts'
 import { isKeptRoomKeys, type KeptRoomKeys } from './kept-access.ts'
-import { openKeptCheckpoint } from './kept-checkpoint.ts'
+import { type KeptCheckpointContext, openKeptCheckpoint } from './kept-checkpoint.ts'
 import { checkKeptCommentsState } from './kept-comments-schema.ts'
 import { KeptLedger } from './kept-ledger.ts'
 import {
   checkKeptReadAnchor,
   type KeptReadAnchor,
   type KeptReadSnapshot,
+  keptReadSessionForCleanup,
   parseKeptReadPage,
   parseKeptReadSnapshot,
 } from './kept-read-wire.ts'
@@ -18,7 +19,18 @@ import { decodeKeptTextPayload } from './kept-text-payload.ts'
 import { checkKeptTextState } from './kept-text-schema.ts'
 import { decodeMessage, MessageType } from './message.ts'
 
+// A host-signed checkpoint, distinct from the provisional tail below. It is
+// authenticated but does not prove freshness or tail completeness.
+export type KeptAuthenticatedCheckpoint = Readonly<{
+  kind: 'authenticated-checkpoint'
+  context: Readonly<KeptCheckpointContext>
+  metadataId: number
+  textState: Uint8Array
+  commentsState: Uint8Array
+}>
+
 export type KeptReadInspection = {
+  checkpoint: KeptAuthenticatedCheckpoint
   status: 'tail-unverified'
   applicable: false
   generation: number
@@ -231,35 +243,40 @@ export class KeptRoomClient {
         }
       }
     }
-    const snapshot = parseKeptReadSnapshot(await get('POST'))
+    const raw = await get('POST')
+    const session = keptReadSessionForCleanup(raw)
     try {
+      const snapshot = parseKeptReadSnapshot(raw)
       return await this.inspectSnapshot(snapshot, get, signal)
     } finally {
-      const controller = new AbortController()
-      let timer: ReturnType<typeof setTimeout> | undefined
-      try {
-        await Promise.race([
-          this.fetcher(this.endpoint, {
-            method: 'DELETE',
-            headers: { ...auth, 'X-Pedit-Read-Session': snapshot.session },
-            signal: controller.signal,
-            redirect: 'manual',
-            cache: 'no-store',
-          }).then((response) => {
-            void response.body?.cancel().catch(() => {})
-          }),
-          new Promise<void>((resolve) => {
-            timer = setTimeout(() => {
-              controller.abort()
-              resolve()
-            }, 2000)
-          }),
-        ])
-      } catch {
-        // Session expiry is the fallback if cleanup cannot reach the relay.
-      } finally {
-        clearTimeout(timer)
-      }
+      if (session) await this.cancelRead(auth, session)
+    }
+  }
+  private async cancelRead(auth: { Authorization: string }, session: string): Promise<void> {
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([
+        this.fetcher(this.endpoint, {
+          method: 'DELETE',
+          headers: { ...auth, 'X-Pedit-Read-Session': session },
+          signal: controller.signal,
+          redirect: 'manual',
+          cache: 'no-store',
+        }).then((response) => {
+          void response.body?.cancel().catch(() => {})
+        }),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(() => {
+            controller.abort()
+            resolve()
+          }, 2000)
+        }),
+      ])
+    } catch {
+      // Session expiry is the fallback if cleanup cannot reach the relay.
+    } finally {
+      clearTimeout(timer)
     }
   }
   private async inspectSnapshot(
@@ -334,6 +351,13 @@ export class KeptRoomClient {
       )
         throw new Error('kept attachment inventory unverified')
       return {
+        checkpoint: {
+          kind: 'authenticated-checkpoint',
+          context: { ...context, epoch: Uint8Array.from(context.epoch), cutoff: snapshot.cutoff },
+          metadataId: meta.id,
+          textState: Uint8Array.from(text),
+          commentsState: Uint8Array.from(comments),
+        },
         status: 'tail-unverified',
         applicable: false,
         generation: snapshot.generation,

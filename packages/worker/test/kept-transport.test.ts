@@ -250,3 +250,69 @@ describe('kept transport', () => {
     })
   })
 })
+
+it('preserves the observed frozen cutoff through eviction when append races freeze', async () => {
+  for (const first of ['append', 'freeze'] as const) {
+    const r = await room(),
+      c = caps()
+    let savedCut: Awaited<ReturnType<KeptTransport['freeze']>> | undefined
+    await runInDurableObject(r.stub, async (_: Room, state) => {
+      const t = transport(state)
+      await t.initialize(r.id, r.host, c, 'first', bytes(9))
+      const append = () => t.append(c.editor, 'first', bytes(1))
+      const freeze = () => t.freeze(r.id, r.host, 'first', 1)
+      const jobs = first === 'append' ? [append(), freeze()] : [freeze(), append()]
+      const outcomes = await Promise.allSettled(jobs)
+      const cutResult = outcomes[first === 'freeze' ? 0 : 1]
+      if (!cutResult || cutResult.status !== 'fulfilled' || typeof cutResult.value === 'number')
+        throw new Error('freeze failed')
+      const cut = cutResult.value
+      savedCut = cut
+      const appendResult = outcomes[first === 'append' ? 0 : 1]
+      expect(cut.cutoff).toBe(appendResult?.status === 'fulfilled' ? 1 : 0)
+      const read = await t.beginHostRead(r.id, r.host)
+      expect(read.tail).toBe(cut.cutoff)
+      const page = await t.readHostPage(r.id, r.host, read.session, read.cursor)
+      expect(page.entries.map((entry) => entry.sequence)).toEqual(cut.cutoff ? [1] : [])
+      await t.finishHostRead(r.id, r.host, read.session, read.cursor)
+    })
+    await evictDurableObject(r.stub)
+    await runInDurableObject(r.stub, async (_: Room, state) => {
+      const t = transport(state)
+      expect(await t.pendingCut(r.id, r.host)).toEqual(savedCut)
+      await expect(t.pendingCut(r.id, c.reader)).rejects.toThrow()
+      await expect(t.append(c.editor, 'first', bytes(2))).rejects.toBeInstanceOf(LogFrozenError)
+    })
+  }
+})
+
+it('does not report a freeze success when its storage synchronization fails', async () => {
+  const r = await room(),
+    c = caps()
+  await runInDurableObject(r.stub, async (_: Room, state) => {
+    const t = transport(state)
+    await t.initialize(r.id, r.host, c, 'first', bytes(9))
+    const sync = state.storage.sync.bind(state.storage)
+    let failed = false
+    const spy = vi.spyOn(state.storage, 'sync').mockImplementation(async () => {
+      const pending = state.storage.sql
+        .exec<{ token: string | null }>('SELECT token FROM durable_checkpoint')
+        .one()
+      if (pending.token && !failed) {
+        failed = true
+        throw new Error('sync failed')
+      }
+      await sync()
+    })
+    try {
+      await expect(t.freeze(r.id, r.host, 'first', 1)).rejects.toThrow('sync failed')
+    } finally {
+      spy.mockRestore()
+    }
+    expect(failed).toBe(true)
+    // A failed response is uncertain. Querying pending is safe; it does not
+    // claim that a freeze definitely survived the failed synchronization.
+    const pending = await t.pendingCut(r.id, r.host)
+    if (pending) expect(pending.epoch).toBe('first')
+  })
+})

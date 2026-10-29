@@ -109,8 +109,19 @@ it('remote updates are never re-sent and unknown roots are rejected', async () =
   const c = await KeptEditController.open(opts)
   const remote = new Y.Doc()
   remote.getText('content').insert(0, 'remote')
-  await c.applyRemote(Y.encodeStateAsUpdate(remote))
+  expect(await c.applyRemote(Y.encodeStateAsUpdate(remote))).toEqual([{ insert: 'remote' }])
   expect(c.text()).toBe('remote')
+  const vector = Y.encodeStateVector(remote)
+  remote.transact(() => {
+    remote.getText('content').insert(0, 'first ')
+    remote.getText('content').insert(remote.getText('content').length, ' last')
+  })
+  expect(await c.applyRemote(Y.encodeStateAsUpdate(remote, vector))).toEqual([
+    { insert: 'first ' },
+    { retain: 6 },
+    { insert: ' last' },
+  ])
+  expect(c.text()).toBe('first remote last')
   const wrong = new Y.Doc()
   wrong.getMap('other').set('key', 'value')
   await expect(c.applyRemote(Y.encodeStateAsUpdate(wrong))).rejects.toThrow()

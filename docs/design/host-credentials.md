@@ -87,3 +87,38 @@ record instead of generating a replacement. This only prepares an initial
 baseline: attachment absence must be established by the caller, and observing
 unchanged files is not an external-editor lock. It does not enable a public CLI,
 verify an unseen relay tail, or authorize recovery, cut, or acknowledgement.
+
+An internal read-evidence bundle records the exact initial checkpoint, observed
+relay sequence numbers and ciphertext frames, replayed text and comments Yjs,
+and replayed ledger under a host signature. Opening it verifies the signature,
+replays the ciphertext and checks the resulting state and ledger again. It is
+an observation, not proof that the relay delivered every unseen record: relay
+sequence numbers and the fixed tail are not signed by a trusted independent
+source. It cannot authorize file writes, a cut, or acknowledgement. Capture
+accepts at most 1,024 frames and 10 MiB of checkpoint plus ciphertext; the
+private candidate store imposes a further 16 MiB serialized limit. Over-limit
+reads fail without cutting the relay log. Candidate storage remains supported
+only on macOS in this prototype. The record contains private plaintext Yjs and
+is protected by the host credential store's existing permissions and durability
+limits; power-loss guarantees are unchanged.
+
+The internal frozen-observation experiment accepts an already pending freeze
+from an authenticated caller, reads and saves a signed evidence bundle, then
+checks that the same pending token and cutoff were still reported. It stores a
+second signed record binding the observed cut to the exact evidence bytes. This
+is a historical observation, not proof that the relay is honest, that the tail
+is complete, or that the freeze is still active when the record is reopened.
+The experiment does not claim ownership of a pending freeze and does not abort,
+commit, delete records, write local files, or provide a public route. If a later
+step fails, the returned result distinguishes the paths of any published read
+evidence and frozen observation. Tests use a test-only Worker route.
+
+An internal-only retained-close RPC stores a full host-token digest alongside
+the closed lifetime and cleanup obligation in the same transaction. A retry
+checks the token's room binding, the digest and closed state, then synchronizes
+before returning. The HTTP close route and CLI do not use this RPC. A closed
+result reports attachment cleanup as complete, pending, or untracked; pending
+includes a failed or incomplete sweep, and untracked is not a deletion claim.
+A close response can be lost, and an error before a durable receipt is confirmed
+remains uncertain. This operation closes the room and discards its relay log;
+it does not prove that guest edits were recovered locally.

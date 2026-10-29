@@ -148,6 +148,9 @@ func TestReadKeptHostRetriesCursorAndKeepsFixedTail(t *testing.T) {
 	if got.Completeness != "tail-unverified" || got.Snapshot.Tail != 2 || len(got.Records) != 2 || got.Records[1].Sequence != 2 {
 		t.Fatalf("unexpected result %#v", got)
 	}
+	if len(got.Sequences) != 2 || got.Sequences[0] != 1 || got.Sequences[1] != 2 {
+		t.Fatalf("observed sequences %v", got.Sequences)
+	}
 	if finishes != 1 {
 		t.Fatalf("read session finished %d times", finishes)
 	}
