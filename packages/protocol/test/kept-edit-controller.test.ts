@@ -28,7 +28,7 @@ it('close drains all edits and restores them', async () => {
  const gate = new Promise<void>(r => { release = r })
  outbox.enqueue = async (...args) => { await gate; return enqueue(...args) }
  const c = await KeptEditController.open(opts)
- c.replace(0, 0, 'one'); c.replace(3, 3, 'two')
+ await c.replace(0, 0, 'one'); await c.replace(3, 3, 'two')
  const done = c.close(); release(); await done
  expect(await outbox.operations(link, roomId, sender)).toHaveLength(2)
  const reopened = await KeptEditController.open(opts)
@@ -90,7 +90,7 @@ it('restores a large Unicode paste and subsequent edit', async () => {
  const {outbox, sender, opts} = await setup()
  const c = await KeptEditController.open(opts)
  const input = 'x'.repeat(8191) + '🌸' + '🍀'.repeat(35000)
- c.replace(0, 0, input); c.replace(input.length, input.length, 'later')
+ await c.replace(0, 0, input); await c.replace(input.length, input.length, 'later')
  await c.close()
  expect((await outbox.operations(link, roomId, sender)).length).toBeGreaterThan(1)
  const reopened = await KeptEditController.open(opts)
@@ -102,7 +102,7 @@ it('failed close retains edits for a later close retry', async () => {
  const enqueue = outbox.enqueue.bind(outbox); let fail = true
  outbox.enqueue = async (...args) => { if (fail) throw new Error('disk'); return enqueue(...args) }
  const c = await KeptEditController.open(opts)
- c.replace(0, 0, 'unsaved')
+ await c.replace(0, 0, 'unsaved')
  await expect(c.close()).rejects.toThrow('disk')
  expect(await outbox.operations(link, roomId, sender)).toHaveLength(0)
  fail = false; await c.close()
@@ -115,7 +115,7 @@ it('restores local edits depending on durably stored remote content', async () =
  const c = await KeptEditController.open(opts)
  const remote = new Y.Doc(); remote.getText('content').insert(0, 'remote')
  await c.applyRemote(Y.encodeStateAsUpdate(remote))
- c.replace(6, 6, ' local')
+ await c.replace(6, 6, ' local')
  await c.close()
  expect(await outbox.operations(link, roomId, sender)).toHaveLength(1)
  const reopened = await KeptEditController.open(opts)
@@ -180,3 +180,21 @@ it('aborts remote row and authenticated counter together on interrupted transact
  expect((await outbox.recoveryState(link, roomId, sender)).remote).toHaveLength(0)
  await c.close(); remote.destroy(); outbox.close()
 })
+it('serializes remote persistence and rejects an oversized combined edit without changing the document', async () => {
+ const {outbox, opts} = await setup()
+ const c = await KeptEditController.open(opts)
+ const remote = new Y.Doc(); remote.getText('content').insert(0, 'r'.repeat(600_000))
+ const save = outbox.saveRemote.bind(outbox)
+ let release!: () => void, started!: () => void
+ const gate = new Promise<void>(r => { release = r }); const ready = new Promise<void>(r => { started = r })
+ outbox.saveRemote = async (...args) => { started(); await gate; return save(...args) }
+ const pending = c.applyRemote(Y.encodeStateAsUpdate(remote)); await ready
+ const edit = c.replace(0, 0, 'l'.repeat(600_000))
+ release(); await pending
+ await expect(edit).rejects.toThrow('capacity')
+ expect(c.text()).toBe('r'.repeat(600_000))
+ await c.close()
+ const reopened = await KeptEditController.open(opts)
+ expect(reopened.text()).toBe('r'.repeat(600_000))
+ await reopened.close(); remote.destroy(); outbox.close()
+}, 30000)

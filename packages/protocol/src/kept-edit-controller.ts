@@ -66,17 +66,27 @@ export class KeptEditController {
   text(): string { return this.#doc.getText('content').toString() }
   // Apply one editor replacement as bounded Yjs transactions, preserving UTF-16
   // pairs and the user's replacement order. No update bytes are split.
-  replace(from: number, to: number, value: string): void {
+  async replace(from: number, to: number, value: string): Promise<void> {
+    while (this.remoteWork) await this.remoteWork
     const text = this.#doc.getText('content')
     if (this.stopped || this.closing || this.invalid || !Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < from || to > text.length)
       throw new Error('invalid kept edit')
+    const probe = new Y.Doc()
+    try {
+      Y.applyUpdate(probe, Y.encodeStateAsUpdate(this.#doc))
+      probe.clientID = this.#doc.clientID
+      this.replaceText(probe.getText('content'), from, to, value)
+      if (!checkKeptTextState(Y.encodeStateAsUpdate(probe))) throw new Error('kept text capacity exceeded')
+    } finally { probe.destroy() }
+    this.replaceText(text, from, to, value)
+  }
+  private replaceText(text: Y.Text, from: number, to: number, value: string): void {
     if (to > from) text.delete(from, to - from)
     let offset = 0
     while (offset < value.length) {
       let end = Math.min(offset + 8192, value.length)
       if (end < value.length && /[\uD800-\uDBFF]/.test(value.charAt(end - 1)) && /[\uDC00-\uDFFF]/.test(value.charAt(end))) end--
-      const part = value.slice(offset, end)
-      text.insert(from + offset, part)
+      text.insert(from + offset, value.slice(offset, end))
       offset = end
     }
   }

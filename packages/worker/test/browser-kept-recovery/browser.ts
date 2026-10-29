@@ -59,7 +59,7 @@ async function run() {
           throw Error('simulated response loss')
         },
       })
-      controller.replace(controller.text().length, controller.text().length, ' CRASH-EDIT')
+      await controller.replace(controller.text().length, controller.text().length, ' CRASH-EDIT')
       if (current !== 'pending') throw Error('edit not immediately pending')
       await untilStatus(() => current, 'failed')
       if ((await outbox.operations(link, fixture.roomId, sender)).length !== 0)
@@ -78,7 +78,7 @@ async function run() {
       const vector = Y.encodeStateVector(remoteDoc)
       remoteDoc.getText('content').insert(remoteDoc.getText('content').length, ' REMOTE')
       await remoteController.applyRemote(Y.encodeStateAsUpdate(remoteDoc, vector))
-      remoteController.replace(remoteController.text().length, remoteController.text().length, ' LOCAL')
+      await remoteController.replace(remoteController.text().length, remoteController.text().length, ' LOCAL')
       await remoteController.close()
       remoteDoc.destroy()
       remoteBox.close()
