@@ -101,3 +101,14 @@ reads fail without cutting the relay log. Candidate storage remains supported
 only on macOS in this prototype. The record contains private plaintext Yjs and
 is protected by the host credential store's existing permissions and durability
 limits; power-loss guarantees are unchanged.
+
+The internal frozen-observation experiment accepts an already pending freeze
+from an authenticated caller, reads and saves a signed evidence bundle, then
+checks that the same pending token and cutoff were still reported. It stores a
+second signed record binding the observed cut to the exact evidence bytes. This
+is a historical observation, not proof that the relay is honest, that the tail
+is complete, or that the freeze is still active when the record is reopened.
+The experiment does not claim ownership of a pending freeze and does not abort,
+commit, delete records, write local files, or provide a public route. If a later
+step fails, the returned result distinguishes the paths of any published read
+evidence and frozen observation. Tests use a test-only Worker route.

@@ -262,6 +262,106 @@ func TestLiveKeptInitial(t *testing.T) {
 	altered.Entries[0].Ciphertext = bytes.Clone(altered.Entries[0].Ciphertext)
 	altered.Entries[0].Ciphertext[0] ^= 1
 	signAndReject(altered)
+	// The freeze response is deliberately discarded. A fresh host process
+	// recovers the pending cut and records only a historical observation.
+	freezeReq, err := http.NewRequestWithContext(ctx, http.MethodPost, live+"/__test/freeze", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	freezeReq.Header.Set("X-Test-Room", room)
+	freezeReq.Header.Set("X-Test-Host", token)
+	freezeReq.Header.Set("X-Test-Epoch", hex.EncodeToString(record.Epoch[:]))
+	freezeResp, err := http.DefaultClient.Do(freezeReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	freezeResp.Body.Close()
+	if freezeResp.StatusCode != 200 {
+		t.Fatalf("freeze: %d", freezeResp.StatusCode)
+	}
+	if _, e := testPending(ctx, live, room, keys.EditAdmission); e == nil {
+		t.Fatal("non-host inspected pending cut")
+	}
+	appendReq, err := http.NewRequestWithContext(ctx, http.MethodPost, live+"/internal/kept/"+room+"/append", bytes.NewReader([]byte{1}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendReq.Header.Set("Authorization", "Bearer "+keys.EditAdmission)
+	appendReq.Header.Set("X-Pedit-Epoch", hex.EncodeToString(record.Epoch[:]))
+	appendResp, err := http.DefaultClient.Do(appendReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendResp.Body.Close()
+	if appendResp.StatusCode != 403 {
+		t.Fatalf("frozen append: %d", appendResp.StatusCode)
+	}
+	if err = store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	resultDir := t.TempDir()
+	freezeChild := exec.Command(os.Args[0], "-test.run=^TestFrozenObservationChild$")
+	freezeChild.Env = append(os.Environ(), "PEDIT_FROZEN_STORE="+stateDir, "PEDIT_FROZEN_ROOM="+room, "PEDIT_FROZEN_RESULT="+resultDir, "PEDIT_TEST_LIVE_ROOM="+live)
+	if output, e := freezeChild.CombinedOutput(); e != nil {
+		t.Fatalf("frozen observation process: %v %s", e, output)
+	}
+	store, err = hoststate.Open(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	pathBytes, err := os.ReadFile(filepath.Join(resultDir, "paths"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var frozen frozenCapture
+	if err = json.Unmarshal(pathBytes, &frozen); err != nil {
+		t.Fatal(err)
+	}
+	observed, err := openFrozenEvidence(store, room, frozen.ObservationPath)
+	if err != nil || observed.Status != "observed-not-complete" || observed.Cut.Cutoff != 2 {
+		t.Fatalf("frozen observation: %v", err)
+	}
+	assertFrozenRejected := func(bad frozenEvidence) {
+		t.Helper()
+		msg, e := frozenMessage(bad)
+		if e != nil {
+			t.Fatal(e)
+		}
+		bad.Signature = ed25519.Sign(signer, msg)
+		raw, e := json.Marshal(bad)
+		if e != nil {
+			t.Fatal(e)
+		}
+		path, e := store.PublishCandidate(room, raw)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if _, e = openFrozenEvidence(store, room, path); e == nil {
+			t.Fatal("accepted inconsistent frozen observation")
+		}
+	}
+	wrongCut := observed
+	wrongCut.Cut.Cutoff++
+	assertFrozenRejected(wrongCut)
+	wrongHash := observed
+	wrongHash.EvidenceHash[0] ^= 1
+	assertFrozenRejected(wrongHash)
+	wrongStatus := observed
+	wrongStatus.Status = "complete"
+	assertFrozenRejected(wrongStatus)
+	callsPending := 0
+	failed, err := captureFrozenEvidence(ctx, store, room, client, func(c context.Context) (*observedFrozenCut, error) {
+		cut, e := testPending(c, live, room, token)
+		callsPending++
+		if e == nil && callsPending == 2 {
+			cut.Token = "00000000-0000-4000-8000-000000000000"
+		}
+		return cut, e
+	})
+	if err == nil || failed.ReadPath == "" || failed.ObservationPath != "" {
+		t.Fatal("accepted changed pending cut")
+	}
 	external := "external edit"
 	if err = os.WriteFile(file, []byte(external), 0600); err != nil {
 		t.Fatal(err)
