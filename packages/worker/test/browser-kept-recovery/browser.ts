@@ -7,6 +7,7 @@ import {
 } from '../../../protocol/src/kept-edit-controller.ts'
 import { KeptOutbox } from '../../../protocol/src/kept-outbox.ts'
 import { KeptRoomClient } from '../../../protocol/src/kept-room-client.ts'
+import { TestBootstrapCoordinator } from '../../../protocol/test/kept-bootstrap-coordinator.ts'
 import fixture from '../../../testdata/kept-read-interop.json'
 import shared from '../../../testdata/kept-recovery-wire.json'
 import { KeptCommentController } from '../../../web/src/kept-comment-controller.ts'
@@ -361,6 +362,41 @@ async function run() {
       await comments.reply(thread, 'offline reply')
       await comments.close()
       commentBox.close()
+      const bootstrapRead = await new KeptRoomClient({
+        url: location.origin,
+        keys,
+        attachmentInventory: async () => 'none',
+      }).inspect()
+      const bootstrapBox = await KeptOutbox.open(`${dbName}-bootstrap`)
+      const bootstrapEdit = await bootstrapBox.createSender(link, fixture.roomId)
+      const bootstrapComment = await bootstrapBox.createSender(commentLink, fixture.roomId)
+      const saveRemote = bootstrapBox.saveRemote.bind(bootstrapBox)
+      bootstrapBox.saveRemote = async (...args) => {
+        if (args[0].access === 'comment' && args[3][0] === 2) throw Error('bootstrap interrupted')
+        return saveRemote(...args)
+      }
+      let interrupted = false
+      try {
+        await TestBootstrapCoordinator.start({
+          outbox: bootstrapBox,
+          edit: link,
+          comment: commentLink,
+          editSender: bootstrapEdit,
+          commentSender: bootstrapComment,
+          read: bootstrapRead,
+          url: location.origin,
+          fetch,
+        })
+      } catch {
+        interrupted = true
+      }
+      if (
+        !interrupted ||
+        (await bootstrapBox.bootstrapState(link, fixture.roomId, bootstrapEdit)).ready ||
+        (await bootstrapBox.bootstrapState(commentLink, fixture.roomId, bootstrapComment)).ready
+      )
+        throw Error('bootstrap did not remain incomplete')
+      bootstrapBox.close()
       // Keep a writer lock held until the harness kills Chrome.
       const crashBox = await KeptOutbox.open(dbName)
       await KeptEditController.open({
@@ -502,6 +538,52 @@ async function run() {
     if (!JSON.stringify(remoteComments.getMap('comments').toJSON()).includes('offline reply'))
       throw Error('comment not accepted by Room')
     remoteComments.destroy()
+    const bootstrapBox = await KeptOutbox.open(`${dbName}-bootstrap`)
+    const [bootstrapEdit] = await bootstrapBox.senders(link, fixture.roomId)
+    const [bootstrapComment] = await bootstrapBox.senders(commentLink, fixture.roomId)
+    if (!bootstrapEdit || !bootstrapComment) throw Error('bootstrap senders missing')
+    const seen: string[] = []
+    let fail = true
+    const orderedFetch: typeof fetch = async (input, init) => {
+      const tier =
+        new Headers(init?.headers).get('Authorization') === `Bearer ${keys.editAdmission}`
+          ? 'edit'
+          : 'comment'
+      seen.push(tier)
+      if (fail) {
+        fail = false
+        return new Response(null, { status: 503 })
+      }
+      return fetch(input, init)
+    }
+    const coordinator = await TestBootstrapCoordinator.resume({
+      outbox: bootstrapBox,
+      edit: link,
+      comment: commentLink,
+      editSender: bootstrapEdit,
+      commentSender: bootstrapComment,
+      roomId: fixture.roomId,
+      url: location.origin,
+      fetch: orderedFetch,
+    })
+    const decode = (value: string) =>
+      Uint8Array.from(atob(value.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0))
+    await coordinator.enqueue('edit', decode(shared.textMessage))
+    await coordinator.enqueue('comment', decode(shared.commentsMessage))
+    let sendFailed = false
+    try {
+      await coordinator.flush()
+    } catch {
+      sendFailed = true
+    }
+    if (!sendFailed || seen.join() !== 'edit') throw Error('comment sent before failed text')
+    await coordinator.flush()
+    if (seen.join() !== 'edit,edit,comment') throw Error('wrong bootstrap send order')
+    await coordinator.close()
+    bootstrapBox.close()
+    const afterBootstrap = await reader.inspect()
+    if (afterBootstrap.status !== 'tail-unverified' || afterBootstrap.applicable !== false)
+      throw Error('unsafe bootstrap status')
     status.textContent =
       'PASS: checkpoint and Yjs edit recovered after Chrome crash; tail unverified'
   } catch (e) {

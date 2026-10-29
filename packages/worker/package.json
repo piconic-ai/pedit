@@ -21,6 +21,7 @@
     "@codemirror/commands": "^6.11.1",
     "@codemirror/state": "^6.5.2",
     "@codemirror/view": "^6.38.1",
+    "fake-indexeddb": "^6.2.6",
     "wrangler": "^4.151.2",
     "yjs": "^13.6.33"
   }

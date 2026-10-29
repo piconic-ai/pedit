@@ -27,13 +27,16 @@
     "./kept-ledger": "./src/kept-ledger.ts",
     "./kept-ledger-encoding": "./src/kept-ledger-encoding.ts",
     "./kept-record": "./src/kept-record.ts",
+    "./kept-inventory-update": "./src/kept-inventory-update.ts",
+    "./kept-inventory-replay": "./src/kept-inventory-replay.ts",
     "./kept-room-client": "./src/kept-room-client.ts",
     "./kept-outbox": "./src/kept-outbox.ts",
     "./kept-outbox-sender": "./src/kept-outbox-sender.ts",
     "./kept-edit-controller": "./src/kept-edit-controller.ts",
     "./pace": "./src/pace.ts",
     "./testing": "./src/testing.ts",
-    "./kept-attachment-client": "./src/kept-attachment-client.ts"
+    "./kept-attachment-client": "./src/kept-attachment-client.ts",
+    "./kept-attachment-verify": "./src/kept-attachment-verify.ts"
   },
   "devDependencies": {
     "@types/node": "^22.20.4",

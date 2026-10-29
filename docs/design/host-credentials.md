@@ -122,3 +122,13 @@ includes a failed or incomplete sweep, and untracked is not a deletion claim.
 A close response can be lost, and an error before a durable receipt is confirmed
 remains uncertain. This operation closes the room and discards its relay log;
 it does not prove that guest edits were recovered locally.
+
+An internal host observer can open the authenticated initial Yjs state, hold a
+presence socket, and refresh from fixed checkpoint and tail reads. Each refresh
+replays into isolated documents and replaces its in-memory candidate and
+provisional ledger together only after all records validate. It restarts from the same initial checkpoint each time;
+it does not rebuild identities from plain text. Disconnect and reconnect are
+explicit; callers must schedule refreshes because the host socket provides no
+append notifications. The observer does not journal or publish host edits,
+write files, acknowledge a cut, or prove tail completeness or attachment
+inventory. It is not connected to the CLI or a user-facing live session.

@@ -17,3 +17,7 @@ function item(r: KeptSchemaReader): void {
 export function checkKeptTextState(input: Uint8Array): boolean {
   return checkKeptSchema(input, item, false)
 }
+
+export function checkKeptTextUpdate(input: Uint8Array): boolean {
+  return checkKeptSchema(input, item, false, true)
+}

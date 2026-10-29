@@ -1,6 +1,8 @@
+import * as Y from 'yjs'
 import { buf, concat, hkdf, signingPair, utf8 } from './access-crypto.ts'
 import { decrypt, encrypt } from './cipher.ts'
 import { deriveKeptRoomKeys, type KeptLinkSecrets, type KeptRoomKeys } from './kept-access.ts'
+import { type KeptCheckpointContext, openKeptCheckpoint } from './kept-checkpoint.ts'
 import {
   createKeptSenderCertificate,
   type KeptRecordContext,
@@ -8,10 +10,129 @@ import {
   openKeptRecord,
   sealKeptRecord,
 } from './kept-record.ts'
+import type { KeptAuthenticatedCheckpoint } from './kept-room-client.ts'
+import { decodeKeptTextPayload, validKeptUpdate } from './kept-text-payload.ts'
+import { fromBase64Url, toBase64Url } from './key.ts'
 
 export const MAX_OUTBOX_SENDERS = 64
 export const MAX_OUTBOX_OPERATIONS = 1024
 export const MAX_OUTBOX_MESSAGE_BYTES = 64 * 1024
+
+export type StoredBootstrap = {
+  context: { roomId: string; epoch: string; generation: number; cutoff: number }
+  metadataId: number
+  pair: { editSender: string; commentSender: string }
+  ciphertext: Uint8Array
+  baselineText: Uint8Array
+  baselineComments: Uint8Array
+  candidateText: Uint8Array
+  candidateComments: Uint8Array
+}
+function includesBaseline(baseline: Uint8Array, candidate: Uint8Array, text: boolean): boolean {
+  if (!validKeptUpdate(candidate, text)) return false
+  const a = new Y.Doc(),
+    b = new Y.Doc()
+  try {
+    Y.applyUpdate(a, candidate)
+    Y.applyUpdate(b, baseline)
+    Y.applyUpdate(b, candidate)
+    return same(Y.encodeStateAsUpdate(a), Y.encodeStateAsUpdate(b))
+  } catch {
+    return false
+  } finally {
+    a.destroy()
+    b.destroy()
+  }
+}
+
+async function verifiedBootstrapValue(
+  auth: Credentials,
+  checkpoint: KeptAuthenticatedCheckpoint,
+  candidate: { textState: Uint8Array; commentsState: Uint8Array },
+  pair: { editSender: string; commentSender: string },
+): Promise<string> {
+  const room = checkpoint.context.roomId
+  const raw = await openKeptCheckpoint(auth.keys, checkpoint.context, checkpoint.ciphertext)
+  const payload = decodeKeptTextPayload(raw, 10000)
+  const meta = payload.manifest.find((file) => file.format === 'meta')
+  const text = payload.documents.get(0),
+    comments = meta && payload.documents.get(meta.id)
+  if (
+    !meta ||
+    meta.id !== checkpoint.metadataId ||
+    !text ||
+    !comments ||
+    !same(text, checkpoint.textState) ||
+    !same(comments, checkpoint.commentsState) ||
+    !includesBaseline(text, candidate.textState, true) ||
+    !includesBaseline(comments, candidate.commentsState, false)
+  )
+    throw new Error('invalid bootstrap checkpoint')
+  return JSON.stringify([
+    room,
+    epochId(checkpoint.context.epoch),
+    checkpoint.context.generation,
+    checkpoint.context.cutoff,
+    meta.id,
+    toBase64Url(checkpoint.ciphertext),
+    toBase64Url(candidate.textState),
+    toBase64Url(candidate.commentsState),
+    pair.editSender,
+    pair.commentSender,
+  ])
+}
+function sameBootstrapPair(
+  a: StoredBootstrap,
+  b: StoredBootstrap,
+  editSender: string,
+  commentSender: string,
+): boolean {
+  return (
+    JSON.stringify(a.context) === JSON.stringify(b.context) &&
+    a.metadataId === b.metadataId &&
+    a.pair.editSender === editSender &&
+    a.pair.commentSender === commentSender &&
+    b.pair.editSender === editSender &&
+    b.pair.commentSender === commentSender &&
+    same(a.ciphertext, b.ciphertext) &&
+    same(a.candidateText, b.candidateText) &&
+    same(a.candidateComments, b.candidateComments)
+  )
+}
+
+function hasBootstrapDependencies(
+  stored: StoredBootstrap,
+  edit: { operations: unknown[]; remote: Uint8Array[] },
+  comment: { operations: unknown[]; remote: Uint8Array[] },
+): boolean {
+  const tag = (kind: number, value: Uint8Array) => concat(Uint8Array.of(kind), value)
+  return (
+    edit.operations.length === 0 &&
+    comment.operations.length === 0 &&
+    edit.remote.length === 1 &&
+    comment.remote.length === 2 &&
+    same(edit.remote[0]!, stored.candidateText) &&
+    same(comment.remote[0]!, tag(1, stored.candidateText)) &&
+    same(comment.remote[1]!, tag(2, stored.candidateComments))
+  )
+}
+
+function sameRemoteRows(
+  rows: { sender: string; id: string; body: Uint8Array }[],
+  sender: string,
+  bodies: Uint8Array[],
+): boolean {
+  return (
+    rows.length === bodies.length &&
+    rows.every(
+      (row, i) =>
+        row.sender === sender &&
+        row.id === String(i + 1).padStart(16, '0') &&
+        row.body instanceof Uint8Array &&
+        same(row.body, bodies[i]!),
+    )
+  )
+}
 
 type Sender = {
   id: string
@@ -22,6 +143,9 @@ type Sender = {
   sequence: number
   counter: Uint8Array
   remoteCount?: number
+  bootstrap?: Uint8Array
+  bootstrapHash?: Uint8Array
+  bootstrapReady?: boolean
 }
 type Operation = {
   sender: string
@@ -89,10 +213,29 @@ const epochId = (epoch: Uint8Array) =>
 const same = (a: Uint8Array, b: Uint8Array) =>
   a.length === b.length && a.every((v, i) => v === b[i])
 const counterBody = (id: string, sequence: number) => utf8.encode(`${id}:${sequence}`)
-const senderCounterBody = (id: string, sequence: number, remoteCount: number | undefined) =>
-  remoteCount === undefined
-    ? counterBody(id, sequence)
-    : utf8.encode(`pedit/v6/outbox-counter\0${id}\0${sequence}\0${remoteCount}`)
+const senderCounterBody = (
+  id: string,
+  sequence: number,
+  remoteCount: number | undefined,
+  bootstrap?: Uint8Array,
+  ready?: boolean,
+) => {
+  const base =
+    remoteCount === undefined
+      ? counterBody(id, sequence)
+      : utf8.encode(`pedit/v6/outbox-counter\0${id}\0${sequence}\0${remoteCount}`)
+  if (bootstrap === undefined) {
+    if (ready !== undefined) throw new Error('invalid bootstrap state')
+    return base
+  }
+  if (!(bootstrap instanceof Uint8Array) || bootstrap.length !== 32 || typeof ready !== 'boolean')
+    throw new Error('invalid bootstrap state')
+  return concat(
+    base,
+    utf8.encode(`\0pedit/v6/bootstrap\0${ready ? 'ready' : 'pending'}\0`),
+    bootstrap,
+  )
+}
 const operationBody = (id: string, sequence: number, message: Uint8Array) =>
   concat(counterBody(id, sequence), Uint8Array.of(0), message)
 const senderPrefix = (id: string) => utf8.encode(`pedit/v6/outbox-sender\0${id}\0`)
@@ -205,6 +348,17 @@ export class KeptOutbox {
     const seed = await openSeed(auth, sender, row)
     seed.fill(0)
     const counter = await decrypt(auth.wrap, row.counter)
+    if ((row.bootstrap === undefined) !== (row.bootstrapHash === undefined))
+      throw new Error('invalid bootstrap state')
+    if (
+      row.bootstrap &&
+      (!row.bootstrapHash ||
+        !same(
+          new Uint8Array(await crypto.subtle.digest('SHA-256', buf(row.bootstrap))),
+          row.bootstrapHash,
+        ))
+    )
+      throw new Error('invalid bootstrap state')
     if (
       !Number.isSafeInteger(row.sequence) ||
       row.sequence < 0 ||
@@ -212,7 +366,16 @@ export class KeptOutbox {
         (!Number.isSafeInteger(row.remoteCount) ||
           row.remoteCount < 0 ||
           row.remoteCount > 1024)) ||
-      !same(counter, senderCounterBody(sender, row.sequence, row.remoteCount))
+      !same(
+        counter,
+        senderCounterBody(
+          sender,
+          row.sequence,
+          row.remoteCount,
+          row.bootstrapHash,
+          row.bootstrapReady,
+        ),
+      )
     )
       throw new Error('invalid outbox counter')
     return row
@@ -332,7 +495,13 @@ export class KeptOutbox {
       const body = await encrypt(auth.wrap, concat(prefix, input))
       const counter = await encrypt(
         auth.wrap,
-        senderCounterBody(sender, identity.sequence, count + 1),
+        senderCounterBody(
+          sender,
+          identity.sequence,
+          count + 1,
+          identity.bootstrapHash,
+          identity.bootstrapReady,
+        ),
       )
       const tx = this.db.transaction(['senders', 'remote'], 'readwrite', { durability: 'strict' })
       if (tx.durability !== 'strict') {
@@ -385,13 +554,14 @@ export class KeptOutbox {
     }
     throw new Error('outbox is busy')
   }
-  async recoveryState(
+  private async readRecoveryState(
     link: KeptLinkSecrets,
     room: string,
     sender: string,
   ): Promise<{
     remote: Uint8Array[]
     operations: { sequence: number; message: Uint8Array; acknowledged: boolean }[]
+    remoteBodies: Uint8Array[]
   }> {
     const auth = await credentials(link, room)
     const tx = this.db.transaction(['senders', 'operations', 'remote'], 'readonly')
@@ -439,7 +609,368 @@ export class KeptOutbox {
         }
       }),
     )
-    return { remote, operations: decoded }
+    return {
+      remote,
+      operations: decoded,
+      remoteBodies: rows.map((row) => Uint8Array.from(row.body)),
+    }
+  }
+  async recoveryState(
+    link: KeptLinkSecrets,
+    room: string,
+    sender: string,
+  ): Promise<{
+    remote: Uint8Array[]
+    operations: { sequence: number; message: Uint8Array; acknowledged: boolean }[]
+  }> {
+    const state = await this.readRecoveryState(link, room, sender)
+    return { remote: state.remote, operations: state.operations }
+  }
+
+  // A newly bound sender cannot enqueue or send until its dependencies are durable.
+  async stageBootstrap(
+    link: KeptLinkSecrets,
+    checkpoint: KeptAuthenticatedCheckpoint,
+    candidate: { textState: Uint8Array; commentsState: Uint8Array },
+    sender: string,
+    pair: { editSender: string; commentSender: string },
+  ): Promise<void> {
+    pair = { ...pair }
+    if (
+      pair.editSender === pair.commentSender ||
+      sender !== (link.access === 'edit' ? pair.editSender : pair.commentSender)
+    )
+      throw new Error('invalid bootstrap pair')
+    checkpoint = {
+      ...checkpoint,
+      context: { ...checkpoint.context, epoch: Uint8Array.from(checkpoint.context.epoch) },
+      ciphertext: Uint8Array.from(checkpoint.ciphertext),
+      textState: Uint8Array.from(checkpoint.textState),
+      commentsState: Uint8Array.from(checkpoint.commentsState),
+    }
+    candidate = {
+      textState: Uint8Array.from(candidate.textState),
+      commentsState: Uint8Array.from(candidate.commentsState),
+    }
+    const room = checkpoint.context.roomId
+    const auth = await credentials(link, room)
+    const value = await verifiedBootstrapValue(auth, checkpoint, candidate, pair)
+    const plain = utf8.encode(`pedit/v6/bootstrap-data\0${sender}\0${value}`)
+    for (let attempt = 0; attempt < 16; attempt++) {
+      const current = await this.identity(auth, sender)
+      if (current.bootstrap) {
+        if (!same(await decrypt(auth.wrap, current.bootstrap), plain))
+          throw new Error('bootstrap context changed')
+        return
+      }
+      if (current.sequence !== 0 || (current.remoteCount ?? 0) !== 0)
+        throw new Error('existing sender is not empty')
+      const bootstrap = await encrypt(auth.wrap, plain)
+      const bootstrapHash = new Uint8Array(await crypto.subtle.digest('SHA-256', buf(bootstrap)))
+      const counter = await encrypt(
+        auth.wrap,
+        senderCounterBody(sender, current.sequence, current.remoteCount, bootstrapHash, false),
+      )
+      const tx = writable(this.db),
+        done = transactionDone(tx)
+      let stale = false
+      const store = tx.objectStore('senders'),
+        get = store.get(sender)
+      get.onsuccess = () => {
+        const found: Sender | undefined = get.result
+        if (
+          !found ||
+          !same(found.counter, current.counter) ||
+          found.sequence !== current.sequence ||
+          found.remoteCount !== current.remoteCount
+        ) {
+          stale = true
+          tx.abort()
+          return
+        }
+        store.put({ ...found, bootstrap, bootstrapHash, bootstrapReady: false, counter })
+      }
+      try {
+        await done
+        return
+      } catch (error) {
+        if (!stale) throw error
+      }
+    }
+    throw new Error('outbox is busy')
+  }
+  // Validate both senders before writing either binding, then commit them together.
+  async stageBootstrapPair(
+    edit: KeptLinkSecrets,
+    comment: KeptLinkSecrets,
+    checkpoint: KeptAuthenticatedCheckpoint,
+    candidate: { textState: Uint8Array; commentsState: Uint8Array },
+    pair: { editSender: string; commentSender: string },
+  ): Promise<void> {
+    if (
+      edit.access !== 'edit' ||
+      comment.access !== 'comment' ||
+      pair.editSender === pair.commentSender
+    )
+      throw new Error('invalid bootstrap pair')
+    pair = { ...pair }
+    checkpoint = {
+      ...checkpoint,
+      context: { ...checkpoint.context, epoch: Uint8Array.from(checkpoint.context.epoch) },
+      ciphertext: Uint8Array.from(checkpoint.ciphertext),
+      textState: Uint8Array.from(checkpoint.textState),
+      commentsState: Uint8Array.from(checkpoint.commentsState),
+    }
+    candidate = {
+      textState: Uint8Array.from(candidate.textState),
+      commentsState: Uint8Array.from(candidate.commentsState),
+    }
+    const room = checkpoint.context.roomId
+    const auths = await Promise.all([credentials(edit, room), credentials(comment, room)])
+    const values = await Promise.all(
+      auths.map((auth) => verifiedBootstrapValue(auth, checkpoint, candidate, pair)),
+    )
+    const ids = [pair.editSender, pair.commentSender]
+    for (let attempt = 0; attempt < 16; attempt++) {
+      const current = await Promise.all(auths.map((auth, i) => this.identity(auth, ids[i]!)))
+      const updated = await Promise.all(
+        current.map(async (row, i) => {
+          const plain = utf8.encode(`pedit/v6/bootstrap-data\0${ids[i]!}\0${values[i]}`)
+          if (row.bootstrap) {
+            if (!same(await decrypt(auths[i]!.wrap, row.bootstrap), plain))
+              throw new Error('bootstrap context changed')
+            return row
+          }
+          if (row.sequence !== 0 || (row.remoteCount ?? 0) !== 0)
+            throw new Error('existing sender is not empty')
+          const bootstrap = await encrypt(auths[i]!.wrap, plain)
+          const bootstrapHash = new Uint8Array(
+            await crypto.subtle.digest('SHA-256', buf(bootstrap)),
+          )
+          const counter = await encrypt(
+            auths[i]!.wrap,
+            senderCounterBody(ids[i]!, row.sequence, row.remoteCount, bootstrapHash, false),
+          )
+          return { ...row, bootstrap, bootstrapHash, bootstrapReady: false, counter }
+        }),
+      )
+      const tx = writable(this.db),
+        done = transactionDone(tx),
+        store = tx.objectStore('senders')
+      let stale = false,
+        count = 0
+      for (let i = 0; i < ids.length; i++) {
+        const get = store.get(ids[i]!)
+        get.onsuccess = () => {
+          const found: Sender | undefined = get.result
+          if (
+            !found ||
+            !same(found.counter, current[i]!.counter) ||
+            found.sequence !== current[i]!.sequence ||
+            found.remoteCount !== current[i]!.remoteCount
+          ) {
+            stale = true
+            tx.abort()
+            return
+          }
+          if (++count === ids.length) for (const row of updated) store.put(row)
+        }
+      }
+      try {
+        await done
+        return
+      } catch (error) {
+        if (!stale) throw error
+      }
+    }
+    throw new Error('outbox is busy')
+  }
+  private async openBootstrap(auth: Credentials, sender: Sender): Promise<StoredBootstrap> {
+    if (!sender.bootstrap) throw new Error('bootstrap unavailable')
+    const plain = await decrypt(auth.wrap, sender.bootstrap)
+    const prefix = utf8.encode(`pedit/v6/bootstrap-data\0${sender.id}\0`)
+    if (!same(plain.subarray(0, prefix.length), prefix)) throw new Error('invalid bootstrap')
+    const json = new TextDecoder('utf-8', { fatal: true }).decode(plain.subarray(prefix.length))
+    const value: unknown = JSON.parse(json)
+    if (
+      !Array.isArray(value) ||
+      value.length !== 10 ||
+      JSON.stringify(value) !== json ||
+      typeof value[0] !== 'string' ||
+      typeof value[1] !== 'string' ||
+      typeof value[2] !== 'number' ||
+      typeof value[3] !== 'number' ||
+      typeof value[4] !== 'number' ||
+      typeof value[5] !== 'string' ||
+      typeof value[6] !== 'string' ||
+      typeof value[7] !== 'string' ||
+      typeof value[8] !== 'string' ||
+      typeof value[9] !== 'string'
+    )
+      throw new Error('invalid bootstrap')
+    const [
+      room,
+      epoch,
+      generation,
+      cutoff,
+      metadataId,
+      cipher,
+      text,
+      comments,
+      editSender,
+      commentSender,
+    ] = value
+    if (room !== auth.keys.roomId || !/^[0-9a-f]{64}$/.test(epoch))
+      throw new Error('invalid bootstrap')
+    if (
+      editSender === commentSender ||
+      sender.id !== (auth.access === 'edit' ? editSender : commentSender)
+    )
+      throw new Error('invalid bootstrap pair')
+    const bytes = (value: string) => {
+      const result = fromBase64Url(value)
+      if (toBase64Url(result) !== value) throw new Error('invalid bootstrap')
+      return result
+    }
+    const context = { roomId: room, epoch, generation, cutoff }
+    const checkpointContext = {
+      roomId: room,
+      epoch: Uint8Array.from(epoch.match(/../g)!, (pair) => parseInt(pair, 16)),
+      generation,
+      cutoff,
+    }
+    const ciphertext = bytes(cipher),
+      candidateText = bytes(text),
+      candidateComments = bytes(comments)
+    const payload = decodeKeptTextPayload(
+      await openKeptCheckpoint(auth.keys, checkpointContext, ciphertext),
+      10000,
+    )
+    const meta = payload.manifest.find((file) => file.format === 'meta')
+    const baselineText = payload.documents.get(0),
+      baselineComments = meta && payload.documents.get(meta.id)
+    if (
+      !meta ||
+      meta.id !== metadataId ||
+      !baselineText ||
+      !baselineComments ||
+      !includesBaseline(baselineText, candidateText, true) ||
+      !includesBaseline(baselineComments, candidateComments, false)
+    )
+      throw new Error('invalid bootstrap')
+    return {
+      context,
+      metadataId,
+      pair: { editSender, commentSender },
+      ciphertext,
+      baselineText,
+      baselineComments,
+      candidateText,
+      candidateComments,
+    }
+  }
+  async bootstrapState(
+    link: KeptLinkSecrets,
+    room: string,
+    sender: string,
+  ): Promise<{ ready: boolean; checkpoint: StoredBootstrap }> {
+    const auth = await credentials(link, room),
+      identity = await this.identity(auth, sender)
+    return {
+      ready: identity.bootstrapReady === true,
+      checkpoint: await this.openBootstrap(auth, identity),
+    }
+  }
+  async finishBootstrapPair(
+    edit: KeptLinkSecrets,
+    comment: KeptLinkSecrets,
+    room: string,
+    editSender: string,
+    commentSender: string,
+  ): Promise<void> {
+    if (edit.access !== 'edit' || comment.access !== 'comment' || editSender === commentSender)
+      throw new Error('invalid bootstrap pair')
+    const editAuth = await credentials(edit, room),
+      commentAuth = await credentials(comment, room)
+    for (let attempt = 0; attempt < 16; attempt++) {
+      const first = await this.identity(editAuth, editSender),
+        second = await this.identity(commentAuth, commentSender)
+      const a = await this.openBootstrap(editAuth, first),
+        b = await this.openBootstrap(commentAuth, second)
+      if (!sameBootstrapPair(a, b, editSender, commentSender))
+        throw new Error('bootstrap pair mismatch')
+      if (first.bootstrapReady && second.bootstrapReady) {
+        await this.recoveryState(edit, room, editSender)
+        await this.recoveryState(comment, room, commentSender)
+        return
+      }
+      if (first.bootstrapReady || second.bootstrapReady)
+        throw new Error('inconsistent bootstrap pair')
+      const editState = await this.readRecoveryState(edit, room, editSender),
+        commentState = await this.readRecoveryState(comment, room, commentSender)
+      if (!hasBootstrapDependencies(a, editState, commentState))
+        throw new Error('bootstrap dependencies incomplete')
+      const editCounter = await encrypt(
+        editAuth.wrap,
+        senderCounterBody(editSender, first.sequence, first.remoteCount, first.bootstrapHash, true),
+      )
+      const commentCounter = await encrypt(
+        commentAuth.wrap,
+        senderCounterBody(
+          commentSender,
+          second.sequence,
+          second.remoteCount,
+          second.bootstrapHash,
+          true,
+        ),
+      )
+      const tx = this.db.transaction(['senders', 'operations', 'remote'], 'readwrite', {
+        durability: 'strict',
+      })
+      if (tx.durability !== 'strict') {
+        tx.abort()
+        throw new Error('strict outbox durability unavailable')
+      }
+      const done = transactionDone(tx),
+        store = tx.objectStore('senders'),
+        remote = tx.objectStore('remote').index('sender')
+      const firstGet = store.get(editSender),
+        secondGet = store.get(commentSender)
+      const firstRemote = remote.getAll(IDBKeyRange.only(editSender)),
+        secondRemote = remote.getAll(IDBKeyRange.only(commentSender))
+      let stale = false,
+        completed = 0
+      const commit = () => {
+        if (++completed !== 4) return
+        const arow: Sender | undefined = firstGet.result,
+          brow: Sender | undefined = secondGet.result
+        if (
+          !arow ||
+          !brow ||
+          !same(arow.counter, first.counter) ||
+          !same(brow.counter, second.counter) ||
+          !sameRemoteRows(firstRemote.result, editSender, editState.remoteBodies) ||
+          !sameRemoteRows(secondRemote.result, commentSender, commentState.remoteBodies)
+        ) {
+          stale = true
+          tx.abort()
+          return
+        }
+        store.put({ ...arow, bootstrapReady: true, counter: editCounter })
+        store.put({ ...brow, bootstrapReady: true, counter: commentCounter })
+      }
+      firstGet.onsuccess = commit
+      secondGet.onsuccess = commit
+      firstRemote.onsuccess = commit
+      secondRemote.onsuccess = commit
+      try {
+        await done
+        return
+      } catch (error) {
+        if (!stale) throw error
+      }
+    }
+    throw new Error('outbox is busy')
   }
 
   async enqueue(
@@ -457,6 +988,7 @@ export class KeptOutbox {
     const auth = await credentials(link, room)
     for (let attempt = 0; attempt < 16; attempt++) {
       const identity = await this.identity(auth, sender)
+      if (identity.bootstrap && !identity.bootstrapReady) throw new Error('bootstrap incomplete')
       if (
         !Number.isSafeInteger(identity.sequence) ||
         identity.sequence < 0 ||
@@ -467,7 +999,13 @@ export class KeptOutbox {
       const body = await encrypt(auth.wrap, operationBody(sender, sequence, input))
       const counter = await encrypt(
         auth.wrap,
-        senderCounterBody(sender, sequence, identity.remoteCount),
+        senderCounterBody(
+          sender,
+          sequence,
+          identity.remoteCount,
+          identity.bootstrapHash,
+          identity.bootstrapReady,
+        ),
       )
       const operation: Operation = {
         sender,
@@ -530,10 +1068,22 @@ export class KeptOutbox {
     context: KeptRecordContext,
     sender: string,
     sequence: number,
+    testOnlyBootstrap = false,
   ): Promise<PendingOperation> {
     const c = { ...context, epoch: Uint8Array.from(context.epoch) }
     const auth = await credentials(link, c.roomId)
     const identity = await this.identity(auth, sender)
+    if (identity.bootstrap) {
+      if (!identity.bootstrapReady) throw new Error('bootstrap incomplete')
+      const stored = await this.openBootstrap(auth, identity)
+      if (
+        stored.context.roomId !== c.roomId ||
+        stored.context.epoch !== epochId(c.epoch) ||
+        stored.context.generation !== c.generation
+      )
+        throw new Error('outbox epoch changed')
+      if (!testOnlyBootstrap) throw new Error('bootstrap sender requires test-only coordinator')
+    }
     if (!Number.isSafeInteger(sequence) || sequence < 1 || sequence > identity.sequence)
       throw new Error('invalid outbox sequence')
     const epoch = epochId(c.epoch)

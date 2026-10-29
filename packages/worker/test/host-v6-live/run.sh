@@ -22,4 +22,4 @@ if [ "$ready" != true ]; then cat "$test_dir/wrangler.log"; exit 1; fi
 cd "$root"
 PEDIT_TEST_LIVE_ROOM="http://127.0.0.1:$port" go test ./internal/keptclient -run '^TestLiveHost(Lifecycle|InitializationRace|MaximumTail)$' -count=1
 
-PEDIT_TEST_LIVE_ROOM="http://127.0.0.1:$port" go test ./internal/session -run '^TestLiveKeptInitial$' -count=1
+PEDIT_TEST_LIVE_ROOM="http://127.0.0.1:$port" go test ./internal/session -run '^TestLiveKept(Initial|HostObserver)$' -count=1

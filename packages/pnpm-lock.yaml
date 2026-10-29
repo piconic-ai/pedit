@@ -175,6 +175,9 @@ importers:
       '@codemirror/view':
         specifier: ^6.38.1
         version: 6.43.15
+      fake-indexeddb:
+        specifier: ^6.2.6
+        version: 6.2.6
       wrangler:
         specifier: ^4.151.2
         version: 4.151.2(@types/node@22.20.4)
