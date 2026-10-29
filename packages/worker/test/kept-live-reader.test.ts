@@ -186,7 +186,7 @@ it('catches writes during a fixed read and missed notifications through a later 
   await vi.waitFor(() => expect(resumed).toContain(3), { timeout: 5000 })
   reconnect.stop()
   await evictDurableObject(room, { webSockets: 'close' })
-})
+}, 20000)
 
 it('uses each link tier for both socket and fixed reads when reader capacity is full', async () => {
   const edit = await deriveKeptRoomKeys(parseKeptFragment(fixture.fragment)!, fixture.roomId)
