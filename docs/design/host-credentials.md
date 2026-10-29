@@ -196,3 +196,11 @@ commit or authorization to exchange, cut, or acknowledge. Missing metadata,
 other filesystems, and platforms without this implementation fail closed.
 External directory moves and later noncooperative writes can invalidate that
 observation; power-loss rename durability is not guaranteed.
+
+The exchange inspector reads the signed receipt and evidence without requiring
+the destinations still to be at their baseline names. It reports each file as
+old, new, conflict, or uncertain from inode identities and bytes. Its output
+is an observation, not an atomic two-file snapshot, save confirmation, or
+permission to swap. Test-only swaps exercise mixed states after process death;
+there is no production exchange. If a parent has moved, signed original paths
+are returned but may no longer locate the retained files.

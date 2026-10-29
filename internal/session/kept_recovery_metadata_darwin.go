@@ -24,30 +24,7 @@ func recoveryMetadata(store *hoststate.Store, room, intentPath string) (view rec
 	if err != nil || !bytes.Equal(verified.view.Text, view.NewText) || !bytes.Equal(verified.evidence.Comments, view.CommentsYjs) {
 		return view, nil, errors.New("recovery candidate changed")
 	}
-	baseline, err := loadKeptInitial(verified.credentials)
-	if err != nil {
-		return view, nil, err
-	}
-	rel, err := filepath.Rel(baseline.Project, baseline.File)
-	if err != nil || !filepath.IsLocal(rel) {
-		return view, nil, errors.New("invalid metadata path")
-	}
-	old := &meta.File{Path: filepath.ToSlash(rel)}
-	if baseline.CommentsExists {
-		old, err = meta.Parse([]byte(baseline.Comments))
-		if err != nil || old.Path != filepath.ToSlash(rel) {
-			return view, nil, errors.New("invalid baseline metadata")
-		}
-	}
-	textDoc, commentDoc := crdt.New(), crdt.New()
-	defer textDoc.Destroy()
-	defer commentDoc.Destroy()
-	if crdt.ApplyUpdateV1(textDoc, verified.evidence.Text, nil) != nil || crdt.ApplyUpdateV1(commentDoc, verified.evidence.Comments, nil) != nil || textDoc.GetText(meta.ContentText).ToString() != string(view.NewText) {
-		return view, nil, errors.New("invalid recovery state")
-	}
-	tracker := meta.NewTracker(textDoc)
-	defer tracker.Close()
-	output, err = meta.RenderRecovery(commentDoc, old, tracker)
+	output, err = renderVerifiedRecoveryMetadata(verified, view.NewText)
 	if err != nil {
 		return view, nil, err
 	}
@@ -60,4 +37,35 @@ func recoveryMetadata(store *hoststate.Store, room, intentPath string) (view rec
 	}
 	view.MetadataStatus = "proposal-only"
 	return view, output, nil
+}
+
+func renderVerifiedRecoveryMetadata(verified verifiedRecoveryBundle, text []byte) ([]byte, error) {
+	baseline, err := loadKeptInitial(verified.credentials)
+	if err != nil {
+		return nil, err
+	}
+	rel, err := filepath.Rel(baseline.Project, baseline.File)
+	if err != nil || !filepath.IsLocal(rel) {
+		return nil, errors.New("invalid metadata path")
+	}
+	old := &meta.File{Path: filepath.ToSlash(rel)}
+	if baseline.CommentsExists {
+		old, err = meta.Parse([]byte(baseline.Comments))
+		if err != nil || old.Path != filepath.ToSlash(rel) {
+			return nil, errors.New("invalid baseline metadata")
+		}
+	}
+	textDoc, commentDoc := crdt.New(), crdt.New()
+	defer textDoc.Destroy()
+	defer commentDoc.Destroy()
+	if crdt.ApplyUpdateV1(textDoc, verified.evidence.Text, nil) != nil || crdt.ApplyUpdateV1(commentDoc, verified.evidence.Comments, nil) != nil || textDoc.GetText(meta.ContentText).ToString() != string(text) {
+		return nil, errors.New("invalid recovery state")
+	}
+	tracker := meta.NewTracker(textDoc)
+	defer tracker.Close()
+	output, err := meta.RenderRecovery(commentDoc, old, tracker)
+	if err != nil {
+		return nil, err
+	}
+	return output, nil
 }
