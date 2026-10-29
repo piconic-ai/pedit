@@ -63,7 +63,7 @@ func (r *keptSchemaReader) count(nonzero bool) (uint64, error) {
 	}
 	return n, nil
 }
-func (r *keptSchemaReader) client(seen map[uint64]bool, item func(*keptSchemaReader) error) error {
+func (r *keptSchemaReader) client(seen map[uint64]bool, item func(*keptSchemaReader) error, allowStart bool) error {
 	count, err := r.count(true)
 	if err != nil {
 		return err
@@ -75,9 +75,10 @@ func (r *keptSchemaReader) client(seen map[uint64]bool, item func(*keptSchemaRea
 	seen[id] = true
 	r.clock = 0
 	clock, err := r.uint()
-	if err != nil || clock != 0 {
+	if err != nil || (!allowStart && clock != 0) {
 		return errKeptSchema
 	}
+	r.clock = clock
 	for range count {
 		if err = item(r); err != nil {
 			return err
@@ -107,6 +108,9 @@ func (r *keptSchemaReader) deletions() (uint64, error) {
 	return n, nil
 }
 func checkKeptSchema(input []byte, item func(*keptSchemaReader) error, comments bool) error {
+	return checkKeptSchemaWithStart(input, item, comments, false)
+}
+func checkKeptSchemaWithStart(input []byte, item func(*keptSchemaReader) error, comments, allowStart bool) error {
 	if len(input) == 0 || len(input) > MaxFrameBytes {
 		return errKeptSchema
 	}
@@ -117,7 +121,7 @@ func checkKeptSchema(input []byte, item func(*keptSchemaReader) error, comments 
 	}
 	seen := map[uint64]bool{}
 	for range clients {
-		if r.client(seen, item) != nil {
+		if r.client(seen, item, allowStart) != nil {
 			return errKeptSchema
 		}
 	}

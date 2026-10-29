@@ -4,6 +4,11 @@ import "unicode/utf16"
 
 // CheckKeptTextState accepts only the plain-text subset of a complete Yjs V1 snapshot.
 func CheckKeptTextState(state []byte) error { return checkKeptSchema(state, keptTextItem, false) }
+
+// CheckKeptTextUpdate validates a possibly incremental text update.
+func CheckKeptTextUpdate(update []byte) error {
+	return checkKeptSchemaWithStart(update, keptTextItem, false, true)
+}
 func keptTextItem(r *keptSchemaReader) error {
 	info, err := r.d.ReadUint8()
 	if err != nil || info&0x20 != 0 || (info&31 != 1 && info&31 != 4) {
