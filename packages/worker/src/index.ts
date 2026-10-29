@@ -244,7 +244,8 @@ async function keptRate(
         ? env.KEPT_PAGE_LIMIT
         : env.CONNECTION_LIMIT
   try {
-    if (await overLimit(limiter, request, 'v6 request')) return new Response(null, { status: 429 })
+    if (await overLimit(limiter, request, 'v6 request'))
+      return new Response(null, { status: 429, headers: { 'Retry-After': '60' } })
     if (
       action === 'initialize' &&
       (await overLimit(env.ROOM_CREATION_LIMIT, request, 'v6 initialize'))

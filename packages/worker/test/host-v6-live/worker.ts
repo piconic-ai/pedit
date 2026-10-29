@@ -43,6 +43,8 @@ export class Room extends ProductionRoom {
     return super.fetch(request)
   }
 }
+const pageAttempts = new Map<string, number>()
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     if (new URL(request.url).pathname.startsWith('/__test/')) {
@@ -50,6 +52,21 @@ export default {
       if (!room || !/^[A-Za-z0-9_-]{22}$/.test(room)) return new Response(null, { status: 400 })
       return env.ROOM.get(env.ROOM.idFromName(room)).fetch(request)
     }
-    return app.fetch(request, env, ctx)
+    const limited = request.headers.get('X-Test-Page-Limit')
+    if (!limited) return app.fetch(request, env, ctx)
+    const configured = {
+      ...env,
+      KEEP_PUBLIC_V6: '1',
+      KEPT_PAGE_LIMIT: {
+        limit: async () => {
+          const count = pageAttempts.get(limited) ?? 0
+          pageAttempts.set(limited, count + 1)
+          return { success: count > 0 }
+        },
+      } as RateLimit,
+    }
+    const response = await app.fetch(request, configured, ctx)
+    if (response.status !== 429) return response
+    return new Response(null, { status: 429, headers: { 'Retry-After': '1' } })
   },
 }

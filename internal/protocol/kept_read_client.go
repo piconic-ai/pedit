@@ -11,9 +11,12 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
+
+const keptReadSessionBudget = 4 * time.Minute
 
 var keptHostToken = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
 var keptRoomID = regexp.MustCompile(`^[A-Za-z0-9_-]{22}$`)
@@ -57,7 +60,9 @@ func ReadKeptHost(ctx context.Context, client *http.Client, endpoint, roomID, ho
 	safeClient := *client
 	safeClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
-	raw, err := fetchKeptRead(&safeClient, base, hostToken, ctx, http.MethodPost, "", "", false)
+	readCtx, cancelRead := context.WithTimeout(ctx, keptReadSessionBudget)
+	defer cancelRead()
+	raw, err := fetchKeptRead(&safeClient, base, hostToken, readCtx, http.MethodPost, "", "", false)
 	if err != nil {
 		return result, err
 	}
@@ -112,12 +117,12 @@ func ReadKeptHost(ctx context.Context, client *http.Client, endpoint, roomID, ho
 	if err != nil {
 		return result, errors.New("unsupported checkpoint payload")
 	}
-	records, frames, cursor, err := readKeptPages(ctx, &safeClient, base, hostToken, roomID, keys, snapshot, payload, epoch)
+	records, frames, cursor, err := readKeptPages(readCtx, &safeClient, base, hostToken, roomID, keys, snapshot, payload, epoch)
 	if err != nil {
 		return KeptReadInspection{}, err
 	}
 
-	finishCtx, cancelFinish := context.WithTimeout(ctx, time.Second)
+	finishCtx, cancelFinish := context.WithTimeout(readCtx, time.Second)
 	_, err = fetchKeptRead(&safeClient, base, hostToken, finishCtx, http.MethodDelete, snapshot.Session, cursor, true)
 	cancelFinish()
 	if err != nil {
@@ -133,10 +138,11 @@ func readKeptPages(ctx context.Context, safeClient *http.Client, base *url.URL, 
 	ledger := payload.Ledger
 	ledger.limit = MaxKeptCheckpointReceipts + maxKeptReadRecords
 	cursor, after, total := snapshot.Cursor, snapshot.Cutoff, 0
+	rateRetries := 0
 	records := []KeptRecord{}
 	frames := [][]byte{}
 	for {
-		raw, err := fetchKeptRead(safeClient, base, hostToken, ctx, http.MethodGet, snapshot.Session, cursor, true)
+		raw, err := fetchKeptPage(safeClient, base, hostToken, ctx, snapshot.Session, cursor, &rateRetries)
 		if err != nil {
 			return nil, nil, "", err
 		}
@@ -196,6 +202,28 @@ func readKeptEntry(entry KeptReadEntry, keys *KeptRoomKeys, roomID string, epoch
 	return sealed, record, ledger, nil
 }
 
+type keptRateLimit struct{ delay time.Duration }
+
+func (e keptRateLimit) Error() string { return "read rate limited" }
+
+func fetchKeptPage(client *http.Client, base *url.URL, hostToken string, ctx context.Context, session, cursor string, retries *int) ([]byte, error) {
+	for {
+		data, err := fetchKeptRead(client, base, hostToken, ctx, http.MethodGet, session, cursor, true)
+		var limited keptRateLimit
+		if !errors.As(err, &limited) || *retries >= 2 || limited.delay <= 0 {
+			return data, err
+		}
+		*retries++
+		timer := time.NewTimer(limited.delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
 func fetchKeptRead(safeClient *http.Client, base *url.URL, hostToken string, requestCtx context.Context, method, session, cursor string, retry bool) ([]byte, error) {
 	attempts := 1
 	if retry {
@@ -230,6 +258,9 @@ func fetchKeptReadOnce(client *http.Client, base *url.URL, hostToken string, ctx
 		return nil, true, errors.New("read request failed")
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusTooManyRequests && method == http.MethodGet {
+		return nil, false, keptRetryDelay(resp.Header.Get("Retry-After"))
+	}
 	if resp.StatusCode != http.StatusOK && !(method == http.MethodDelete && resp.StatusCode == http.StatusNoContent) {
 		return nil, false, errors.New("read request refused")
 	}
@@ -244,6 +275,17 @@ func fetchKeptReadOnce(client *http.Client, base *url.URL, hostToken string, ctx
 		return nil, false, errors.New("read response too large")
 	}
 	return data, false, nil
+}
+
+func keptRetryDelay(value string) keptRateLimit {
+	if value == "" {
+		return keptRateLimit{delay: time.Minute}
+	}
+	seconds, err := strconv.Atoi(value)
+	if err != nil || seconds < 1 || seconds > 60 {
+		return keptRateLimit{}
+	}
+	return keptRateLimit{delay: time.Duration(seconds) * time.Second}
 }
 
 // readSessionID extracts only an unambiguous session from a syntactically

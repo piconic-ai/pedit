@@ -406,7 +406,9 @@ it('keeps page, append and control budgets independent and fails closed', async 
     KEPT_APPEND_LIMIT: deny,
   }
   const path = `/internal/kept/${id}`
-  expect((await request(`${path}/read`, { method: 'GET' }, bindings)).status).toBe(429)
+  const pageLimited = await request(`${path}/read`, { method: 'GET' }, bindings)
+  expect(pageLimited.status).toBe(429)
+  expect(pageLimited.headers.get('Retry-After')).toBe('60')
   expect((await request(`${path}/append`, { method: 'POST' }, bindings)).status).toBe(429)
   expect((await request(`${path}/read`, { method: 'POST' }, bindings)).status).toBe(204)
   expect((await request(`${path}/read`, { method: 'DELETE' }, bindings)).status).toBe(204)

@@ -453,4 +453,44 @@ func TestLiveHostMaximumTail(t *testing.T) {
 	if err != nil || len(inspection.Records) != 1024 {
 		t.Fatalf("inspect %d records: %v", len(inspection.Records), err)
 	}
+
+	for _, scenario := range []struct {
+		name        string
+		deadline    time.Duration
+		wantSuccess bool
+	}{
+		{"recovers", 10 * time.Second, true}, {"deadline", 100 * time.Millisecond, false},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			cancels := 0
+			limited := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				req := r.Clone(r.Context())
+				req.Header = req.Header.Clone()
+				req.Header.Set("X-Test-Page-Limit", scenario.name)
+				if req.Method == http.MethodDelete && req.Header.Get("X-Pedit-Read-Cursor") == "" {
+					cancels++
+				}
+				return (testForward{target, room}).RoundTrip(req)
+			})}
+			limitedHost, e := Open(store, room, limited)
+			if e != nil {
+				t.Fatal(e)
+			}
+			limitedCtx, stop := context.WithTimeout(context.Background(), scenario.deadline)
+			defer stop()
+			result, e := limitedHost.Inspect(limitedCtx, nil)
+			if scenario.wantSuccess {
+				if e != nil || len(result.Records) != 1024 {
+					t.Fatalf("retry: %d records: %v", len(result.Records), e)
+				}
+				if cancels != 0 {
+					t.Fatal("canceled successful read")
+				}
+			} else {
+				if !errors.Is(e, context.DeadlineExceeded) || cancels != 1 {
+					t.Fatalf("deadline: error %v cancellations %d", e, cancels)
+				}
+			}
+		})
+	}
 }
