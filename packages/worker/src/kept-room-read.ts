@@ -9,6 +9,31 @@ function base64(value: ArrayBuffer): string {
   return btoa(binary)
 }
 
+async function cancelRead(
+  transport: KeptTransport,
+  kind: string,
+  token: string,
+  roomId: string,
+  session: string,
+): Promise<Response> {
+  if (kind === 'Host') await transport.cancelHostRead(roomId, token, session)
+  else await transport.cancelRead(token, session)
+  return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } })
+}
+
+async function finishRead(
+  transport: KeptTransport,
+  kind: string,
+  token: string,
+  roomId: string,
+  session: string,
+  cursor: string,
+): Promise<Response> {
+  if (kind === 'Host') await transport.finishHostRead(roomId, token, session, cursor)
+  else await transport.finishRead(token, session, cursor)
+  return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } })
+}
+
 export async function keptRoomRead(
   request: Request,
   state: DurableObjectState,
@@ -26,7 +51,7 @@ export async function keptRoomRead(
   )
   if (!auth) return new Response(null, { status: 403 })
   const [, kind, token] = auth
-  if (!token) return new Response(null, { status: 403 })
+  if (!token || !kind) return new Response(null, { status: 403 })
   const session = request.headers.get('X-Pedit-Read-Session')
   const cursor = request.headers.get('X-Pedit-Read-Cursor')
   const transport = new KeptTransport(
@@ -48,6 +73,8 @@ export async function keptRoomRead(
         { headers: { 'Cache-Control': 'no-store' } },
       )
     }
+    if (request.method === 'DELETE' && session && cursor === null)
+      return await cancelRead(transport, kind, token, roomId, session)
     if (!session || !cursor) return new Response(null, { status: 400 })
     if (request.method === 'GET') {
       const page =
@@ -65,11 +92,8 @@ export async function keptRoomRead(
         { headers: { 'Cache-Control': 'no-store' } },
       )
     }
-    if (request.method === 'DELETE') {
-      if (kind === 'Host') await transport.finishHostRead(roomId, token, session, cursor)
-      else await transport.finishRead(token, session, cursor)
-      return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } })
-    }
+    if (request.method === 'DELETE')
+      return await finishRead(transport, kind, token, roomId, session, cursor)
     return new Response(null, { status: 405 })
   } catch {
     return new Response(null, { status: 403, headers: { 'Cache-Control': 'no-store' } })

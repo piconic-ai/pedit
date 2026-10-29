@@ -263,6 +263,8 @@ export class Room extends DurableObject<Env> {
         this.keptAppendRate,
         () => maintenance(this.env as { MAINTENANCE?: string }) === 'closed',
       )
+    const keptClose = /^\/internal\/kept\/([A-Za-z0-9_-]{22})\/close$/.exec(path)
+    if (keptClose?.[1]) return this.closeKeptRoom(request, keptClose[1])
     const keptSocket = /^\/internal\/kept\/([A-Za-z0-9_-]{22})\/host$/.exec(path)
     if (keptSocket?.[1]) return this.keptHostSocket(request, keptSocket[1])
     const keptInit = /^\/internal\/kept\/([A-Za-z0-9_-]{22})\/initialize$/.exec(path)
@@ -680,6 +682,24 @@ export class Room extends DurableObject<Env> {
       Date.now,
       () => maintenance(this.env as { MAINTENANCE?: string }) === 'closed',
     )
+  }
+
+  private async closeKeptRoom(request: Request, roomId: string): Promise<Response> {
+    if (request.method !== 'POST') return new Response(null, { status: 405 })
+    const host = /^Host ([A-Za-z0-9_-]{43})$/.exec(request.headers.get('Authorization') ?? '')?.[1]
+    if (!host) return new Response(null, { status: 403 })
+    try {
+      const policy = this.ctx.storage.kv.get<KeepPolicy>(KEPT_POLICY_KEY)
+      if (!policy) return new Response(null, { status: 403 })
+      const state = await this.keptLifecycle(policy).close(roomId, host)
+      if (state.host !== 'closed') return new Response(null, { status: 403 })
+      for (const socket of this.ctx.getWebSockets(KEPT_HOST_TAG))
+        safeClose(socket, ROOM_CLOSED, 'room closed')
+      await this.sweepKeptBlobs()
+      return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } })
+    } catch {
+      return new Response(null, { status: 403, headers: { 'Cache-Control': 'no-store' } })
+    }
   }
 
   private async keptHostSocket(request: Request, roomId: string): Promise<Response> {
