@@ -18,8 +18,6 @@ import (
 	"github.com/piconic-ai/pedit/internal/protocol"
 )
 
-// keptHostObserver is an internal, read-only replica. It never writes files,
-// publishes host changes, acknowledges a cut, or proves tail completeness.
 type keptHostObserver struct {
 	lifecycle   sync.Mutex
 	mu          sync.Mutex
@@ -159,8 +157,6 @@ func (o *keptHostObserver) Disconnect() error {
 	return err
 }
 
-// Refresh replays from the authenticated initial snapshot on every read. It
-// replaces the visible candidate only after the entire read and replay succeed.
 func (o *keptHostObserver) Refresh(ctx context.Context) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -222,8 +218,6 @@ func (o *keptHostObserver) Snapshot() keptObservedState {
 	return s
 }
 
-// extendsObserverEvidence prevents a newer observation from discarding or
-// replacing records already accepted. It does not prove unseen records exist.
 func extendsObserverEvidence(oldRaw, nextRaw []byte) error {
 	var old, next recoveryEvidence
 	if json.Unmarshal(oldRaw, &old) != nil || json.Unmarshal(nextRaw, &next) != nil || next.Tail < old.Tail || len(next.Entries) < len(old.Entries) {
