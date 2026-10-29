@@ -293,3 +293,35 @@ it('rejects selections that split a Unicode surrogate pair', async () => {
   text.destroy()
   outbox.close()
 })
+it('review: anchors survive repeated remote update and reopen', async () => {
+  const { outbox, sender, options } = await setup()
+  const editor = await KeptCommentController.open(options)
+  const remote = new Y.Doc()
+  Y.applyUpdate(remote, options.text)
+  const vector = Y.encodeStateVector(remote)
+  remote.getText('content').insert(0, 'prefix ')
+  const update = Y.encodeStateAsUpdate(remote, vector)
+  await editor.applyRemote('text', update)
+  await editor.applyRemote('text', update)
+  const id = await editor.start(7, 12, 'anchored')
+  await editor.close()
+  const reopened = await KeptCommentController.open(options)
+  const text = new Y.Doc()
+  Y.applyUpdate(text, reopened.textState())
+  const meta = new Y.Doc()
+  Y.applyUpdate(meta, reopened.commentState())
+  const thread = meta.getMap('comments').get(id) as Y.Map<unknown>
+  const anchor = thread.get('anchor') as { start: string; end: string }
+  const resolve = (s: string) =>
+    Y.createAbsolutePositionFromRelativePosition(
+      Y.decodeRelativePosition(Uint8Array.from(atob(s), (c) => c.charCodeAt(0))),
+      text,
+    )?.index
+  expect([resolve(anchor.start), resolve(anchor.end)]).toEqual([7, 12])
+  expect((await outbox.recoveryState(link, roomId, sender)).remote).toHaveLength(1)
+  await reopened.close()
+  text.destroy()
+  meta.destroy()
+  remote.destroy()
+  outbox.close()
+})
