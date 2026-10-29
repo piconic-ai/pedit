@@ -15,6 +15,7 @@ const bytes = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0))
 const urlBytes = (s: string) => bytes(s.replace(/-/g, '+').replace(/_/g, '/'))
 
 it('catches writes during a fixed read and missed notifications through a later poll', async () => {
+  console.log('live-reader stage: start')
   const keys = await deriveKeptRoomKeys(parseKeptFragment(fixture.fragment)!, fixture.roomId)
   const epoch = Uint8Array.from(fixture.epoch.match(/../g)!, (x) => Number.parseInt(x, 16))
   const sender = await signingPair(new Uint8Array(32).fill(11))
@@ -45,6 +46,7 @@ it('catches writes during a fixed read and missed notifications through a later 
     body: bytes(fixture.checkpoint),
   })
   expect(init.status).toBe(204)
+  console.log('live-reader stage: initialized')
   expect(
     (
       await room.fetch(`${base}/append`, {
@@ -83,6 +85,7 @@ it('catches writes during a fixed read and missed notifications through a later 
   expect(response.status).toBe(101)
   const actual = response.webSocket!
   actual.accept()
+  console.log('live-reader stage: socket accepted')
   const fake = new EventTarget()
   let notified!: () => void
   const notification = new Promise<void>((resolve) => {
@@ -111,7 +114,9 @@ it('catches writes during a fixed read and missed notifications through a later 
           body: Uint8Array.from(first).buffer,
         })
         expect(appended.status).toBe(200)
+        console.log('live-reader stage: appended first, waiting for notification')
         await notification
+        console.log('live-reader stage: notification received')
       }
     }
     return result
@@ -142,6 +147,7 @@ it('catches writes during a fixed read and missed notifications through a later 
   expect(connectedURL).toBe(`wss://room/internal/kept/${fixture.roomId}/guest`)
   fake.dispatchEvent(new Event('open'))
   await vi.waitFor(() => expect(results).toContain(1), { timeout: 5000 })
+  console.log('live-reader stage: first candidate')
   expect(results).not.toContain(0)
   expect(reads).toBeGreaterThanOrEqual(2)
   await runInDurableObject(room, async (_, state) => {
@@ -153,6 +159,7 @@ it('catches writes during a fixed read and missed notifications through a later 
     ).append(fixture.editor, fixture.epoch, Uint8Array.from(second).buffer)
   })
   await vi.waitFor(() => expect(results).toContain(2), { timeout: 5000 })
+  console.log('live-reader stage: polled candidate')
   expect(error).toBeUndefined()
   fake.dispatchEvent(new Event('close'))
   expect(error?.message).toBe('kept live connection lost')
@@ -184,8 +191,10 @@ it('catches writes during a fixed read and missed notifications through a later 
   reconnect.start()
   nextEvents.dispatchEvent(new Event('open'))
   await vi.waitFor(() => expect(resumed).toContain(3), { timeout: 5000 })
+  console.log('live-reader stage: reconnected')
   reconnect.stop()
   await evictDurableObject(room, { webSockets: 'close' })
+  console.log('live-reader stage: evicted')
 }, 20000)
 
 it('uses each link tier for both socket and fixed reads when reader capacity is full', async () => {
