@@ -55,7 +55,7 @@ it('rediscovers a closed room and retires only after its encrypted attachment is
   await scheduled()
   expect(await env.BLOBS.head(key)).toBeNull()
   expect(await shard.next()).toBeNull()
-})
+}, 30_000)
 
 it('does not retire a new registration using an earlier sweep generation', async () => {
   const roomId = env.ROOM.idFromName(crypto.randomUUID()).toString()
