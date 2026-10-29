@@ -40,7 +40,7 @@ func TestConservativeReferencesCoverRendererLookups(t *testing.T) {
 				return
 			}
 			for _, path := range item.Lookups {
-				if !keptAssetPath.MatchString(path) || !slices.Contains(paths, path) {
+				if !keptAssetPath.MatchString(path) || !slices.Contains(paths.possible, path) {
 					t.Fatalf("renderer reference %q was missed", path)
 				}
 			}
@@ -51,12 +51,12 @@ func TestConservativeReferencesCoverRendererLookups(t *testing.T) {
 func TestConservativeReferencesFailClosed(t *testing.T) {
 	path := "assets/0123456789abcdef0123456789abcdef.png"
 	paths, err := conservativeKeptReferences("before ![](" + path + ") after ![](" + path + ")")
-	if err != nil || !slices.Equal(paths, []string{path}) {
+	if err != nil || !slices.Equal(paths.possible, []string{path}) {
 		t.Fatalf("canonical references: %v %v", paths, err)
 	}
 	second := "assets/fedcba9876543210fedcba9876543210.jpg"
 	paths, err = conservativeKeptReferences("![second](" + second + ") ![first](" + path + ")")
-	if err != nil || !slices.Equal(paths, []string{path, second}) {
+	if err != nil || !slices.Equal(paths.possible, []string{path, second}) {
 		t.Fatalf("sorted references: %v %v", paths, err)
 	}
 	for _, source := range []string{"wow!", "![cat *italic*](" + path + ")", "![](assets&#47;0123456789abcdef0123456789abcdef.png)", "![](images/0123456789abcdef0123456789abcdef.png)"} {
@@ -65,7 +65,7 @@ func TestConservativeReferencesFailClosed(t *testing.T) {
 		}
 	}
 	for _, source := range []string{string([]byte{0xff}), strings.Repeat("x", MaxFrameBytes+1), strings.Repeat("![]("+path+")", MaxKeptInventoryPaths+1)} {
-		if paths, err := conservativeKeptReferences(source); err == nil || paths != nil {
+		if paths, err := conservativeKeptReferences(source); err == nil || paths.possible != nil {
 			t.Fatal("accepted invalid or over-limit input")
 		}
 	}

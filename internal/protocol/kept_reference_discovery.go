@@ -9,11 +9,15 @@ import (
 
 var errUncertainKeptReferences = errors.New("attachment references cannot be determined")
 
+type conservativeKeptReferenceSet struct {
+	possible []string
+}
+
 // conservativeKeptReferences returns a superset of renderer attachment paths
 // for its narrow supported syntax. Unsupported image markers fail closed.
-func conservativeKeptReferences(source string) ([]string, error) {
+func conservativeKeptReferences(source string) (conservativeKeptReferenceSet, error) {
 	if !utf8.ValidString(source) || len(source) > MaxFrameBytes {
-		return nil, errUncertainKeptReferences
+		return conservativeKeptReferenceSet{}, errUncertainKeptReferences
 	}
 	paths := make([]string, 0)
 	for {
@@ -21,37 +25,44 @@ func conservativeKeptReferences(source string) ([]string, error) {
 		if at < 0 {
 			break
 		}
-		source = source[at:]
-		if !strings.HasPrefix(source, "![") {
-			return nil, errUncertainKeptReferences
-		}
-		altEnd := strings.IndexByte(source[2:], ']')
-		if altEnd < 0 {
-			return nil, errUncertainKeptReferences
-		}
-		for _, ch := range source[2 : 2+altEnd] {
-			if !(ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == ' ' || ch == '-' || ch == '_' || ch == '.') {
-				return nil, errUncertainKeptReferences
-			}
-		}
-		source = source[2+altEnd:]
-		if !strings.HasPrefix(source, "](") {
-			return nil, errUncertainKeptReferences
-		}
-		end := strings.IndexByte(source[2:], ')')
-		if end < 0 {
-			return nil, errUncertainKeptReferences
-		}
-		path := source[2 : 2+end]
-		if !keptAssetPath.MatchString(path) {
-			return nil, errUncertainKeptReferences
+		path, rest, ok := parseSimpleKeptImage(source[at:])
+		if !ok {
+			return conservativeKeptReferenceSet{}, errUncertainKeptReferences
 		}
 		paths = append(paths, path)
 		if len(paths) > MaxKeptInventoryPaths {
-			return nil, errUncertainKeptReferences
+			return conservativeKeptReferenceSet{}, errUncertainKeptReferences
 		}
-		source = source[3+end:]
+		source = rest
 	}
 	slices.Sort(paths)
-	return slices.Compact(paths), nil
+	return conservativeKeptReferenceSet{possible: slices.Compact(paths)}, nil
+}
+
+func parseSimpleKeptImage(source string) (string, string, bool) {
+	if !strings.HasPrefix(source, "![") {
+		return "", "", false
+	}
+	altEnd := strings.IndexByte(source[2:], ']')
+	if altEnd < 0 || !simpleKeptAlt(source[2:2+altEnd]) {
+		return "", "", false
+	}
+	source = source[2+altEnd:]
+	if !strings.HasPrefix(source, "](") {
+		return "", "", false
+	}
+	end := strings.IndexByte(source[2:], ')')
+	if end < 0 || !keptAssetPath.MatchString(source[2:2+end]) {
+		return "", "", false
+	}
+	return source[2 : 2+end], source[3+end:], true
+}
+
+func simpleKeptAlt(alt string) bool {
+	for _, ch := range alt {
+		if !(ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == ' ' || ch == '-' || ch == '_' || ch == '.') {
+			return false
+		}
+	}
+	return true
 }
