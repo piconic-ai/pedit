@@ -172,3 +172,13 @@ remain unsupported. Unknown top-level metadata fields are preserved. This
 proposal is bound to a revalidated intent and is returned in memory only; it
 is not a metadata save, tail completeness proof, relay cut, or ACK. External
 editors may still change files immediately after the identity check.
+
+The internal transaction journal signs an intent hash, exact text and metadata
+proposal bytes, and reserved artifact names. It creates no artifacts beside the
+original files. A read-only inspection reports only `baseline-observed` or
+`conflict`; it does not classify a partial exchange or authorize a write. Names
+are reservations, not proof that files exist. Restart revalidates the signature,
+evidence and metadata, and synchronizes the private journal directory. A
+renamed or deleted parent directory may make artifacts undiscoverable, and a
+noncooperative editor can race any observation. Two-file publication, rollback,
+cut and ACK remain unimplemented. Only macOS has this internal journal.
