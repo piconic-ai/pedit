@@ -35,7 +35,8 @@
     "./kept-edit-controller": "./src/kept-edit-controller.ts",
     "./pace": "./src/pace.ts",
     "./testing": "./src/testing.ts",
-    "./kept-attachment-client": "./src/kept-attachment-client.ts"
+    "./kept-attachment-client": "./src/kept-attachment-client.ts",
+    "./kept-attachment-verify": "./src/kept-attachment-verify.ts"
   },
   "devDependencies": {
     "@types/node": "^22.20.4",

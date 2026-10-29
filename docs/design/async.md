@@ -550,3 +550,12 @@ from retained recovery candidates. It does not prove that the relay supplied
 unseen records, detect rollback of the entire private store, verify attachment
 inventory, authorize a cut, or write the original file. Directory synchronization
 is attempted, but power-loss durability of rename is not guaranteed on macOS.
+
+The internal `verifyKeptAttachment` checks one already-known canonical asset
+path. It derives the opaque blob ID and decryption key locally, fetches the
+ciphertext with read admission, then checks AES-GCM, the path's content hash,
+and the image signature against the extension. A successful result is the
+verified bytes observed at that time; it does not prove that the blob will
+remain available, that an image fully decodes, that an inventory is complete,
+or that the relay supplied a complete or current tail. The verifier does not
+announce an attachment or authorize a save, cut, or acknowledgement.

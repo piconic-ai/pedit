@@ -14,7 +14,10 @@ export type KeptAttachmentOptions = {
   timeoutMs?: number
 }
 
-async function readCiphertext(response: Response, signal: AbortSignal): Promise<Uint8Array> {
+export async function readKeptAttachmentCiphertext(
+  response: Response,
+  signal: AbortSignal,
+): Promise<Uint8Array> {
   if (response.status !== 200 || !response.body) {
     void response.body?.cancel().catch(() => {})
     throw new Error('existing attachment unavailable')
@@ -159,7 +162,7 @@ export class KeptAttachmentClient {
         }
         const recovered = await decryptBlob(
           keys,
-          await readCiphertext(existing, controller.signal),
+          await readKeptAttachmentCiphertext(existing, controller.signal),
           hash,
         )
         assertActive()
