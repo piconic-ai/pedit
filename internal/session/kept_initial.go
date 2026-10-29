@@ -99,13 +99,23 @@ func captureKeptInitial(file, project string, inventory protocol.KeptAttachmentI
 func (s *keptInitial) readMetadata(path string) (*meta.File, error) {
 	bound, err := openMetaFile(s.project, s.metaName, false)
 	if errors.Is(err, fs.ErrNotExist) {
+		if err = s.verifyMetadataAbsent(); err != nil {
+			return nil, err
+		}
 		return &meta.File{Path: path}, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	s.metaBound = bound
 	s.metadataInfo, err = os.Lstat(s.metadata)
+	if errors.Is(err, fs.ErrNotExist) {
+		bound.Close()
+		if err = s.verifyMetadataAbsent(); err != nil {
+			return nil, err
+		}
+		return &meta.File{Path: path}, nil
+	}
+	s.metaBound = bound
 	if err != nil || !s.metadataInfo.Mode().IsRegular() {
 		return nil, errors.New("invalid initial metadata")
 	}
@@ -140,14 +150,10 @@ func (s *keptInitial) verify() error {
 	}
 	info, err = os.Lstat(s.metadata)
 	if s.metaBound == nil {
-		check, openErr := openMetaFile(s.project, s.metaName, false)
-		if check != nil {
-			check.Close()
+		if err := s.verifyMetadataAbsent(); err != nil {
+			return err
 		}
-		if errors.Is(err, fs.ErrNotExist) && errors.Is(openErr, fs.ErrNotExist) {
-			return s.verifyProject()
-		}
-		return errors.New("initial metadata changed")
+		return s.verifyProject()
 	}
 	if err != nil || !os.SameFile(s.metadataInfo, info) {
 		return errors.New("initial metadata changed")
@@ -157,6 +163,28 @@ func (s *keptInitial) verify() error {
 		return errors.New("initial metadata changed")
 	}
 	return s.verifyProject()
+}
+
+func (s *keptInitial) verifyMetadataAbsent() error {
+	missing := func(err error) bool { return errors.Is(err, fs.ErrNotExist) }
+	_, absoluteErr := os.Lstat(s.metadata)
+	_, rootErr := s.project.Lstat(s.metaName)
+	if !missing(absoluteErr) || !missing(rootErr) {
+		return errors.New("initial metadata changed")
+	}
+	bound, err := openMetaFile(s.project, s.metaName, false)
+	if missing(err) {
+		return nil
+	}
+	if err != nil {
+		return errors.New("initial metadata changed")
+	}
+	defer bound.Close()
+	_, err = bound.Dir().Lstat(filepath.Base(s.metaName))
+	if !missing(err) {
+		return errors.New("initial metadata changed")
+	}
+	return nil
 }
 
 func (s *keptInitial) verifyProject() error {

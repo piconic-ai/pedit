@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -303,5 +304,88 @@ func TestKeptInitialRejectsReplacedProjectWithSameFile(t *testing.T) {
 	}
 	if snapshot.verify() == nil {
 		t.Fatal("accepted replaced project with same file inode")
+	}
+}
+
+func TestKeptInitialMissingMetadataWithExistingDirectory(t *testing.T) {
+	for _, before := range []bool{true, false} {
+		t.Run(fmt.Sprintf("directory_before_capture_%t", before), func(t *testing.T) {
+			dir := t.TempDir()
+			file := filepath.Join(dir, "notes.md")
+			metadata := filepath.Join(dir, ".pedit", "meta", "notes.md.json")
+			if err := os.WriteFile(file, []byte("text"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if before {
+				if err := os.MkdirAll(filepath.Dir(metadata), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			initial, err := captureKeptInitial(file, dir, protocol.KeptAttachmentsNone)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer initial.Close()
+			if !before {
+				if err = os.MkdirAll(filepath.Dir(metadata), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err = initial.verify(); err != nil {
+				t.Fatal("absent metadata rejected", err)
+			}
+			if err = os.WriteFile(metadata, []byte(`{"version":1,"path":"notes.md","comments":{}}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err = initial.verify(); err == nil {
+				t.Fatal("new metadata accepted")
+			}
+		})
+	}
+}
+
+func TestKeptInitialMissingMetadataRejectsUnsafeLeaf(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "notes.md")
+	metadata := filepath.Join(dir, ".pedit", "meta", "notes.md.json")
+	if err := os.WriteFile(file, []byte("text"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(metadata), 0700); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := captureKeptInitial(file, dir, protocol.KeptAttachmentsNone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer initial.Close()
+	if err = os.Symlink(filepath.Join(dir, "missing"), metadata); err != nil {
+		t.Fatal(err)
+	}
+	if err = initial.verify(); err == nil {
+		t.Fatal("symlink leaf accepted")
+	}
+	if _, err = captureKeptInitial(file, dir, protocol.KeptAttachmentsNone); err == nil {
+		t.Fatal("symlink leaf accepted during capture")
+	}
+}
+
+func TestKeptInitialMissingMetadataRejectsReplacedDirectory(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "notes.md")
+	metaDir := filepath.Join(dir, ".pedit")
+	if err := os.WriteFile(file, []byte("text"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := captureKeptInitial(file, dir, protocol.KeptAttachmentsNone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer initial.Close()
+	if err = os.Symlink(t.TempDir(), metaDir); err != nil {
+		t.Fatal(err)
+	}
+	if err = initial.verify(); err == nil {
+		t.Fatal("symlink directory accepted")
 	}
 }
