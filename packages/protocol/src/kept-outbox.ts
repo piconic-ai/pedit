@@ -699,6 +699,92 @@ export class KeptOutbox {
     }
     throw new Error('outbox is busy')
   }
+  // Validate both senders before writing either binding, then commit them together.
+  async stageBootstrapPair(
+    edit: KeptLinkSecrets,
+    comment: KeptLinkSecrets,
+    checkpoint: KeptAuthenticatedCheckpoint,
+    candidate: { textState: Uint8Array; commentsState: Uint8Array },
+    pair: { editSender: string; commentSender: string },
+  ): Promise<void> {
+    if (
+      edit.access !== 'edit' ||
+      comment.access !== 'comment' ||
+      pair.editSender === pair.commentSender
+    )
+      throw new Error('invalid bootstrap pair')
+    pair = { ...pair }
+    checkpoint = {
+      ...checkpoint,
+      context: { ...checkpoint.context, epoch: Uint8Array.from(checkpoint.context.epoch) },
+      ciphertext: Uint8Array.from(checkpoint.ciphertext),
+      textState: Uint8Array.from(checkpoint.textState),
+      commentsState: Uint8Array.from(checkpoint.commentsState),
+    }
+    candidate = {
+      textState: Uint8Array.from(candidate.textState),
+      commentsState: Uint8Array.from(candidate.commentsState),
+    }
+    const room = checkpoint.context.roomId
+    const auths = await Promise.all([credentials(edit, room), credentials(comment, room)])
+    const values = await Promise.all(
+      auths.map((auth) => verifiedBootstrapValue(auth, checkpoint, candidate, pair)),
+    )
+    const ids = [pair.editSender, pair.commentSender]
+    for (let attempt = 0; attempt < 16; attempt++) {
+      const current = await Promise.all(auths.map((auth, i) => this.identity(auth, ids[i]!)))
+      const updated = await Promise.all(
+        current.map(async (row, i) => {
+          const plain = utf8.encode(`pedit/v6/bootstrap-data\0${ids[i]!}\0${values[i]}`)
+          if (row.bootstrap) {
+            if (!same(await decrypt(auths[i]!.wrap, row.bootstrap), plain))
+              throw new Error('bootstrap context changed')
+            return row
+          }
+          if (row.sequence !== 0 || (row.remoteCount ?? 0) !== 0)
+            throw new Error('existing sender is not empty')
+          const bootstrap = await encrypt(auths[i]!.wrap, plain)
+          const bootstrapHash = new Uint8Array(
+            await crypto.subtle.digest('SHA-256', buf(bootstrap)),
+          )
+          const counter = await encrypt(
+            auths[i]!.wrap,
+            senderCounterBody(ids[i]!, row.sequence, row.remoteCount, bootstrapHash, false),
+          )
+          return { ...row, bootstrap, bootstrapHash, bootstrapReady: false, counter }
+        }),
+      )
+      const tx = writable(this.db),
+        done = transactionDone(tx),
+        store = tx.objectStore('senders')
+      let stale = false,
+        count = 0
+      for (let i = 0; i < ids.length; i++) {
+        const get = store.get(ids[i]!)
+        get.onsuccess = () => {
+          const found: Sender | undefined = get.result
+          if (
+            !found ||
+            !same(found.counter, current[i]!.counter) ||
+            found.sequence !== current[i]!.sequence ||
+            found.remoteCount !== current[i]!.remoteCount
+          ) {
+            stale = true
+            tx.abort()
+            return
+          }
+          if (++count === ids.length) for (const row of updated) store.put(row)
+        }
+      }
+      try {
+        await done
+        return
+      } catch (error) {
+        if (!stale) throw error
+      }
+    }
+    throw new Error('outbox is busy')
+  }
   private async openBootstrap(auth: Credentials, sender: Sender): Promise<StoredBootstrap> {
     if (!sender.bootstrap) throw new Error('bootstrap unavailable')
     const plain = await decrypt(auth.wrap, sender.bootstrap)

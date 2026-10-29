@@ -327,3 +327,63 @@ it('ordinary senders cannot automatically transmit bootstrap-bound operations', 
   await coordinator.close()
   outbox.close()
 })
+it('does not bind either sender when the other has pending operations', async () => {
+  const { edit, comment, read, outbox, editSender, commentSender, locks } = await setup()
+  const operation = Uint8Array.of(1)
+  await outbox.enqueue(comment, fixture.roomId, commentSender, operation)
+  const options = {
+    outbox,
+    edit,
+    comment,
+    editSender,
+    commentSender,
+    locks,
+    read,
+    url: 'https://example.test',
+    fetch: async () => new Response('{"sequence":1}'),
+  }
+  await expect(TestBootstrapCoordinator.start(options)).rejects.toThrow('not empty')
+  await expect(outbox.bootstrapState(edit, fixture.roomId, editSender)).rejects.toThrow(
+    'unavailable',
+  )
+  expect(
+    (await outbox.recoveryState(comment, fixture.roomId, commentSender)).operations[0]?.message,
+  ).toEqual(operation)
+  const freshComment = await outbox.createSender(comment, fixture.roomId)
+  const coordinator = await TestBootstrapCoordinator.start({
+    ...options,
+    commentSender: freshComment,
+  })
+  await coordinator.close()
+  outbox.close()
+})
+it('rolls back both bindings when their transaction aborts', async () => {
+  const { edit, comment, read, outbox, editSender, commentSender } = await setup()
+  const put = IDBObjectStore.prototype.put
+  let writes = 0
+  IDBObjectStore.prototype.put = function (...args) {
+    const result = put.apply(this, args)
+    if (this.name === 'senders' && ++writes === 2) this.transaction.abort()
+    return result
+  }
+  try {
+    await expect(
+      outbox.stageBootstrapPair(
+        edit,
+        comment,
+        read.checkpoint,
+        { textState: read.textState, commentsState: read.commentsState },
+        { editSender, commentSender },
+      ),
+    ).rejects.toThrow()
+  } finally {
+    IDBObjectStore.prototype.put = put
+  }
+  await expect(outbox.bootstrapState(edit, fixture.roomId, editSender)).rejects.toThrow(
+    'unavailable',
+  )
+  await expect(outbox.bootstrapState(comment, fixture.roomId, commentSender)).rejects.toThrow(
+    'unavailable',
+  )
+  outbox.close()
+})

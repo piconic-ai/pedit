@@ -82,11 +82,7 @@ export class TestBootstrapCoordinator {
     )
     try {
       const candidate = { textState: read.textState, commentsState: read.commentsState }
-      await outbox.stageBootstrap(edit, checkpoint, candidate, editSender, {
-        editSender,
-        commentSender,
-      })
-      await outbox.stageBootstrap(comment, checkpoint, candidate, commentSender, {
+      await outbox.stageBootstrapPair(edit, comment, checkpoint, candidate, {
         editSender,
         commentSender,
       })
