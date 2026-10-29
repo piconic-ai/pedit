@@ -57,6 +57,7 @@ export async function verifyKeptAttachment(
   if (signal?.aborted) throw new Error('attachment verification interrupted')
   const hash = match[1]
   const extension = match[2]
+  const expiresAt = performance.now() + timeout
   const controller = new AbortController()
   let timer: ReturnType<typeof setTimeout> | undefined
   let abort: (() => void) | undefined
@@ -70,10 +71,14 @@ export async function verifyKeptAttachment(
     timer = setTimeout(abort, timeout)
   })
   const active = () => {
-    if (controller.signal.aborted) throw new Error('attachment verification interrupted')
+    if (controller.signal.aborted || performance.now() >= expiresAt) {
+      controller.abort()
+      throw new Error('attachment verification interrupted')
+    }
   }
   const work = async () => {
     const keys = await deriveBlobKeys(roomKeys.frameSecret, roomKeys.readAdmission)
+    active()
     const id = await blobIdFor(keys, hash)
     active()
     url.pathname = `${url.pathname.replace(/\/$/, '')}/internal/kept/${roomKeys.roomId}/blobs/${id}`
@@ -83,15 +88,18 @@ export async function verifyKeptAttachment(
       redirect: 'manual',
       cache: 'no-store',
     })
-    if (controller.signal.aborted) {
-      void response.body?.cancel().catch(() => {})
+    try {
       active()
+    } catch (error) {
+      void response.body?.cancel().catch(() => {})
+      throw error
     }
-    const ciphertext = await readKeptAttachmentCiphertext(response, controller.signal)
+    const ciphertext = await readKeptAttachmentCiphertext(response, controller.signal, active, true)
     active()
     const bytes = await decryptBlob(keys, ciphertext, hash)
     active()
     if (!matchesImage(bytes, extension)) throw new Error('attachment type mismatch')
+    active()
     return { path, bytes }
   }
   try {

@@ -17,6 +17,8 @@ export type KeptAttachmentOptions = {
 export async function readKeptAttachmentCiphertext(
   response: Response,
   signal: AbortSignal,
+  checkActive: () => void = () => {},
+  yieldDuringRead = false,
 ): Promise<Uint8Array> {
   if (response.status !== 200 || !response.body) {
     void response.body?.cancel().catch(() => {})
@@ -33,12 +35,18 @@ export async function readKeptAttachmentCiphertext(
     chunks = 0
   try {
     for (;;) {
+      checkActive()
       const part = await reader.read()
+      checkActive()
       if (part.done) break
       if (++chunks > 16384) throw new Error('too many attachment chunks')
       if (part.value.length > data.length - size) throw new Error('existing attachment too large')
       data.set(part.value, size)
       size += part.value.length
+      if (yieldDuringRead && chunks % 128 === 0) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0))
+        checkActive()
+      }
     }
   } catch (error) {
     void reader.cancel().catch(() => {})

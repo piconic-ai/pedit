@@ -1,6 +1,6 @@
 import { runInDurableObject } from 'cloudflare:test'
 import { env } from 'cloudflare:workers'
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import { blobIdFor, contentHash, deriveBlobKeys, encryptBlob } from '../../protocol/src/blob.ts'
 import { deriveKeptRoomKeys, parseKeptFragment } from '../../protocol/src/kept-access.ts'
 import { KeptAttachmentClient } from '../../protocol/src/kept-attachment-client.ts'
@@ -201,5 +201,91 @@ it('checks each supported image signature against its path extension', async () 
     await expect(
       verifyKeptAttachment({ url: 'https://room', keys, fetch: fetcher }, wrong),
     ).rejects.toThrow('type mismatch')
+  }
+})
+
+it('review: deadline is enforced during immediately available empty chunks', async () => {
+  const keys = await deriveKeptRoomKeys(parseKeptFragment(access.edit)!, access.roomId)
+  let chunks = 0
+  const fragmented: typeof fetch = async () =>
+    new Response(
+      new ReadableStream({
+        pull(c) {
+          if (chunks++ < 16385) c.enqueue(new Uint8Array())
+          else c.close()
+        },
+      }),
+    )
+  let error: unknown
+  try {
+    await verifyKeptAttachment(
+      { url: 'https://room', keys, fetch: fragmented, timeoutMs: 1 },
+      `assets/${'a'.repeat(32)}.png`,
+    )
+  } catch (e) {
+    error = e
+  }
+  expect(String(error)).toContain('interrupted')
+})
+
+it('review: valid ciphertext after many empty chunks must not succeed after deadline', async () => {
+  const keys = await deriveKeptRoomKeys(parseKeptFragment(access.edit)!, access.roomId)
+  const blobKeys = await deriveBlobKeys(keys.frameSecret, keys.readAdmission)
+  const plain = Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
+  const path = `assets/${await contentHash(plain)}.png`
+  const ciphertext = await encryptBlob(blobKeys, plain)
+  let count = 0
+  const fetcher: typeof fetch = async () =>
+    new Response(
+      new ReadableStream({
+        pull(c) {
+          if (count++ < 16000) c.enqueue(new Uint8Array())
+          else if (count === 16002) c.close()
+          else c.enqueue(ciphertext)
+        },
+      }),
+    )
+  let result: unknown
+  try {
+    result = await verifyKeptAttachment(
+      { url: 'https://room', keys, fetch: fetcher, timeoutMs: 1 },
+      path,
+    )
+  } catch (e) {
+    result = e
+  }
+  expect(result).toBeInstanceOf(Error)
+})
+
+it('enforces the monotonic deadline between immediately available chunks', async () => {
+  const keys = await deriveKeptRoomKeys(parseKeptFragment(access.edit)!, access.roomId)
+  const blobKeys = await deriveBlobKeys(keys.frameSecret, keys.readAdmission)
+  const plain = Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
+  const path = `assets/${await contentHash(plain)}.png`
+  const ciphertext = await encryptBlob(blobKeys, plain)
+  let elapsed = false,
+    chunks = 0
+  const clock = vi.spyOn(performance, 'now').mockImplementation(() => (elapsed ? 2 : 0))
+  const fetcher: typeof fetch = async () =>
+    new Response(
+      new ReadableStream({
+        pull(controller) {
+          chunks++
+          if (chunks === 4) elapsed = true
+          if (chunks < 8) controller.enqueue(new Uint8Array())
+          else {
+            controller.enqueue(ciphertext)
+            controller.close()
+          }
+        },
+      }),
+    )
+  try {
+    await expect(
+      verifyKeptAttachment({ url: 'https://room', keys, fetch: fetcher, timeoutMs: 1 }, path),
+    ).rejects.toThrow('interrupted')
+    expect(chunks).toBeLessThan(8)
+  } finally {
+    clock.mockRestore()
   }
 })
