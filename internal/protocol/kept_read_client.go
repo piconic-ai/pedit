@@ -18,6 +18,9 @@ import (
 var keptHostToken = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
 var keptRoomID = regexp.MustCompile(`^[A-Za-z0-9_-]{22}$`)
 
+// MaxKeptCheckpointReceipts bounds the authenticated baseline ledger.
+const MaxKeptCheckpointReceipts = 10000
+
 const maxKeptReadRecords = 1024
 const maxKeptReadBytes = 16 * MaxFrameBytes
 
@@ -105,7 +108,7 @@ func ReadKeptHost(ctx context.Context, client *http.Client, endpoint, roomID, ho
 	if err != nil {
 		return result, err
 	}
-	payload, err := DecodeKeptTextPayload(payloadBytes, maxKeptReadRecords)
+	payload, err := DecodeKeptTextPayload(payloadBytes, MaxKeptCheckpointReceipts)
 	if err != nil {
 		return result, errors.New("unsupported checkpoint payload")
 	}
@@ -128,6 +131,7 @@ func readKeptPages(ctx context.Context, safeClient *http.Client, base *url.URL, 
 	// The provisional ledger tracks sequence ordering only. It must never be
 	// persisted or reported as having applied these operations.
 	ledger := payload.Ledger
+	ledger.limit = MaxKeptCheckpointReceipts + maxKeptReadRecords
 	cursor, after, total := snapshot.Cursor, snapshot.Cutoff, 0
 	records := []KeptRecord{}
 	frames := [][]byte{}

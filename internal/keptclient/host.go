@@ -79,7 +79,7 @@ func (h *Host) Initialize(ctx context.Context, epoch [32]byte, checkpoint []byte
 	if err != nil {
 		return 0, errors.New("invalid checkpoint")
 	}
-	if _, err = protocol.DecodeKeptTextPayload(payload, 10000); err != nil {
+	if _, err = protocol.DecodeKeptTextPayload(payload, protocol.MaxKeptCheckpointReceipts); err != nil {
 		return 0, errors.New("invalid checkpoint payload")
 	}
 	seconds := int64(keep / time.Second)

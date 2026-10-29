@@ -66,3 +66,10 @@ initialized the room. This includes 4xx and 5xx responses because an
 intermediary may have replaced a response after the relay committed. The caller must reconcile the room and
 must not infer that it is closed. The caller must serialize credential changes
 with use of the result, because a save can occur after the final check.
+
+The fixed host read accepts at most 10,000 receipts in its authenticated
+checkpoint baseline and independently reads at most 1,024 tail records and
+16 MiB of decoded tail ciphertext. Its provisional ledger has room for both
+limits; it does not change the returned baseline or persist the tail. The
+checkpoint itself remains frame-size bounded, and a rejected or over-capacity
+read releases its session on a bounded best-effort basis.
