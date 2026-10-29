@@ -20,8 +20,9 @@ var keptAttachment = regexp.MustCompile(`assets/[0-9a-f]{32}\.(png|jpg|gif|webp)
 
 // startKeptRecovery builds an isolated candidate before creating a held,
 // disconnected session. The caller must authenticate the checkpoint, provide
-// its matching ledger, and establish that the frames contain the complete tail.
-// The metadata ID must come from the authenticated single-file manifest.
+// its matching ledger, and treat the tail as unverified. The metadata ID must
+// come from the authenticated single-file manifest. This does not authorize
+// saving, acknowledgement, or cutting the relay log.
 func startKeptRecovery(ctx context.Context, opts Options, checkpoint recoveryCheckpoint, ledger protocol.KeptLedger, keys *protocol.KeptRoomKeys, recordContext protocol.KeptRecordContext, frames [][]byte) (session *Session, err error) {
 	if len(frames) > protocol.MaxKeptReadRecords {
 		return nil, errors.New("too many recovery records")
@@ -206,14 +207,17 @@ func checkRecoveryUpdate(doc *crdt.Doc, update []byte, comments bool) error {
 	if !comments {
 		return protocol.CheckKeptTextUpdate(update)
 	}
+	if err := protocol.CheckKeptCommentsUpdate(update); err != nil {
+		return err
+	}
 	return meta.CheckRecoveryUpdate(doc, update)
 }
 
 func checkRecoveryState(doc *crdt.Doc, comments bool) error {
-	if comments {
-		return nil
-	}
 	state := crdt.EncodeStateAsUpdateV1(doc, nil)
+	if comments {
+		return protocol.CheckKeptCommentsState(state)
+	}
 	if err := protocol.CheckKeptTextState(state); err != nil {
 		return err
 	}

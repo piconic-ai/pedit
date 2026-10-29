@@ -196,20 +196,23 @@ session does not create a relay room or connect to one. Text updates use the
 existing Sync message, and comments updates use Files with the metadata ID
 from the authenticated single-file manifest.
 
-This is an internal construction seam, not a v6 recovery or reconnect path.
-The caller must authenticate the checkpoint and its ledger and establish that
-the supplied tail is complete. It does not persist
-reconstructed data, compare local comments, safely release the hold, or commit
-the relay cut. The held state lives in memory and the relay data must remain
-available until a separately durable recovery is complete.
+An internal read path starts from the exact signed checkpoint saved in the
+initial host baseline and verifies the fixed tail before constructing this held
+session. It cannot establish that the relay supplied every unseen update. It
+persists a separate private candidate on supported filesystems; if publication
+fails, the caller receives the held candidate and any published path with the
+error. It does not compare local comments, safely release the hold, or commit
+the relay cut. The candidate is for inspection and does not prove relay tail
+completeness. The relay data must remain available until a separately durable
+recovery is complete.
 The text check rejects known attachment references, but a string scan cannot
 prove that the attachment inventory is empty. Saving and cut acknowledgement
 remain unavailable until the caller verifies the complete inventory.
 The checkpoint text validator accepts only a complete Yjs V1 plain-text
 snapshot under the `content` root; other roots, embeds, formatting and garbage
-collection structs are rejected. This conservative subset does not validate
-subsequent live updates. A complete schema and validated update path are
-required before the held state can be saved or a cut acknowledged.
+collection structs are rejected. Incremental tail updates are validated against
+the supported text and comment subsets before and after applying them. This
+does not enable live host synchronization or establish tail completeness.
 
 The host restores the prior Yjs state, validates the checkpoint and log, and
 merges changes made to the local files while it was away. Before writing any

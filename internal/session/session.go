@@ -174,39 +174,6 @@ func applyRecoveryText(doc *crdt.Doc, update []byte) (err error) {
 	return crdt.ApplyUpdateV1(doc, update, nil)
 }
 
-func initialContent(doc *crdt.Doc, file, initial string, recovery *recoveryCheckpoint) (content, error) {
-	var shared content
-	var err error
-	if recovery == nil {
-		shared, err = newContent(doc, file, initial)
-	} else {
-		if isCanvas(file) || len(recovery.text) == 0 || len(recovery.text) > protocol.MaxFrameBytes || len(recovery.comments) == 0 || len(recovery.comments) > protocol.MaxFrameBytes {
-			return nil, errors.New("invalid recovery checkpoint")
-		}
-		if err = protocol.CheckKeptTextState(recovery.text); err != nil {
-			return nil, fmt.Errorf("unsupported recovery text state: %w", err)
-		}
-		if err = applyRecoveryText(doc, recovery.text); err != nil {
-			return nil, err
-		}
-		if pending := doc.PendingStats(); pending.Items != 0 || pending.DeleteRanges != 0 {
-			return nil, errors.New("incomplete recovery checkpoint")
-		}
-		comments := crdt.New()
-		if err = meta.CheckUpdate(comments, recovery.comments); err != nil {
-			return nil, err
-		}
-		shared = &textContent{doc: doc, text: doc.GetText("content")}
-		if !utf8.ValidString(shared.render()) {
-			return nil, errors.New("invalid recovery text")
-		}
-		if keptAttachment.MatchString(shared.render()) {
-			return nil, errors.New("recovery attachments unavailable")
-		}
-	}
-	return shared, err
-}
-
 func initialAwareness(doc *crdt.Doc, opts Options, shared content, recovery *recoveryCheckpoint) *awareness.Awareness {
 	aw := awareness.New(uint64(doc.ClientID()))
 	name := opts.Name
@@ -235,70 +202,35 @@ func initialAwareness(doc *crdt.Doc, opts Options, shared content, recovery *rec
 	return aw
 }
 
-func (s *Session) startAttachments(opts Options, initial string) {
-	if s.recovery == nil {
-		s.attachments = attach.New(attach.Options{
-			File:            opts.File,
-			Root:            s.bound.Dir(),
-			InitialDocument: initial,
-			Server:          s.server,
-			Room:            s.roomID,
-			// Without the host token: blobs are for everyone in the room.
-			Header:     opts.Header,
-			HTTPClient: opts.HTTPClient,
-			Keys:       s.blobKeys,
-			Send:       s.Client.SendAttachment,
-			OnSaved: func(path string) {
-				s.notices.imageSaved()
-				if opts.OnSaved != nil {
-					opts.OnSaved(path)
-				}
-			},
-			OnSaveError: s.notices.imageError,
-			OnError:     s.opts.OnError,
-		})
-	}
-
-}
-
-func (s *Session) startRuntime(opts Options, recovery *recoveryCheckpoint) error {
-	s.stopAlive = keepAlive(s.awareness)
-	s.notices.start()
-	s.startMeta()
-	if recovery != nil && s.meta == nil {
-		s.notices.stop()
-		s.stopAlive()
-		s.Client.Destroy()
-		s.awareness.Destroy()
-		return errors.New("cannot open recovery comments")
-	}
+func initialContent(doc *crdt.Doc, file, initial string, recovery *recoveryCheckpoint) (content, error) {
 	if recovery == nil {
-		s.Client.Connect()
+		return newContent(doc, file, initial)
 	}
-
-	if opts.Watch && recovery == nil {
-		if err := s.watch(); err != nil {
-			_ = s.Stop()
-			return err
-		}
+	if isCanvas(file) || len(recovery.text) == 0 || len(recovery.text) > protocol.MaxFrameBytes || len(recovery.comments) == 0 || len(recovery.comments) > protocol.MaxFrameBytes {
+		return nil, errors.New("invalid recovery checkpoint")
 	}
-	return nil
-}
-
-func initialRoom(ctx context.Context, opts Options, server string, recovery *recoveryCheckpoint) (*room, error) {
-	if recovery != nil {
-		return &room{ID: "AAAAAAAAAAAAAAAAAAAAAA"}, nil
+	if err := protocol.CheckKeptTextState(recovery.text); err != nil {
+		return nil, fmt.Errorf("unsupported recovery text state: %w", err)
 	}
-	return createRoom(ctx, opts.HTTPClient, server, opts.Header)
-}
-
-func (s *Session) configureRecovery(recovery *recoveryCheckpoint) {
-	if recovery != nil {
-		s.URL = ""
-		if recovery.metaID != 0 {
-			s.nextID = recovery.metaID
-		}
+	if err := applyRecoveryText(doc, recovery.text); err != nil {
+		return nil, err
 	}
+	if p := doc.PendingStats(); p.Items != 0 || p.DeleteRanges != 0 {
+		return nil, errors.New("incomplete recovery checkpoint")
+	}
+	comments := crdt.New()
+	defer comments.Destroy()
+	if err := meta.CheckUpdate(comments, recovery.comments); err != nil {
+		return nil, err
+	}
+	shared := &textContent{doc: doc, text: doc.GetText("content")}
+	if !utf8.ValidString(shared.render()) {
+		return nil, errors.New("invalid recovery text")
+	}
+	if keptAttachment.MatchString(shared.render()) {
+		return nil, errors.New("recovery attachments unavailable")
+	}
+	return shared, nil
 }
 
 func Start(ctx context.Context, opts Options) (*Session, error) {
@@ -378,6 +310,7 @@ func start(ctx context.Context, opts Options, recovery *recoveryCheckpoint) (*Se
 	wsURL := "ws" + strings.TrimPrefix(server, "http") + "/api/rooms/" + room.ID + "/ws"
 
 	aw := initialAwareness(doc, opts, shared, recovery)
+
 	blobKeys, err := protocol.DeriveBlobKeys(keys.FrameKey)
 	if err != nil {
 		return nil, err
@@ -464,9 +397,73 @@ func start(ctx context.Context, opts Options, recovery *recoveryCheckpoint) (*Se
 	if err = s.startRuntime(opts, recovery); err != nil {
 		return nil, err
 	}
+
 	// Session owns the directory handles from here.
 	bound, project = nil, nil
 	return s, nil
+}
+
+func initialRoom(ctx context.Context, opts Options, server string, recovery *recoveryCheckpoint) (*room, error) {
+	if recovery != nil {
+		return &room{ID: "AAAAAAAAAAAAAAAAAAAAAA"}, nil
+	}
+	return createRoom(ctx, opts.HTTPClient, server, opts.Header)
+}
+func (s *Session) configureRecovery(recovery *recoveryCheckpoint) {
+	if recovery != nil {
+		s.URL = ""
+		if recovery.metaID != 0 {
+			s.nextID = recovery.metaID
+		}
+	}
+}
+
+func (s *Session) startAttachments(opts Options, initial string) {
+	if s.recovery == nil {
+		s.attachments = attach.New(attach.Options{
+			File:            opts.File,
+			Root:            s.bound.Dir(),
+			InitialDocument: initial,
+			Server:          s.server,
+			Room:            s.roomID,
+			// Without the host token: blobs are for everyone in the room.
+			Header:     opts.Header,
+			HTTPClient: opts.HTTPClient,
+			Keys:       s.blobKeys,
+			Send:       s.Client.SendAttachment,
+			OnSaved: func(path string) {
+				s.notices.imageSaved()
+				if opts.OnSaved != nil {
+					opts.OnSaved(path)
+				}
+			},
+			OnSaveError: s.notices.imageError,
+			OnError:     s.opts.OnError,
+		})
+	}
+}
+
+func (s *Session) startRuntime(opts Options, recovery *recoveryCheckpoint) error {
+	s.stopAlive = keepAlive(s.awareness)
+	s.notices.start()
+	s.startMeta()
+	if recovery != nil && s.meta == nil {
+		s.notices.stop()
+		s.stopAlive()
+		s.Client.Destroy()
+		s.awareness.Destroy()
+		return errors.New("cannot open recovery comments")
+	}
+	if recovery == nil {
+		s.Client.Connect()
+	}
+	if opts.Watch && recovery == nil {
+		if err := s.watch(); err != nil {
+			_ = s.Stop()
+			return err
+		}
+	}
+	return nil
 }
 
 // displayName reads a peer's name the way the web editor does: from
