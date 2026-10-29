@@ -36,6 +36,7 @@ type KeptReadInspection struct {
 	Records      []KeptRecord
 	Checkpoint   KeptTextPayload
 	Frames       [][]byte
+	Sequences    []uint64
 	Completeness string
 }
 
@@ -118,7 +119,7 @@ func ReadKeptHost(ctx context.Context, client *http.Client, endpoint, roomID, ho
 	if err != nil {
 		return result, errors.New("unsupported checkpoint payload")
 	}
-	records, frames, cursor, err := readKeptPages(readCtx, &safeClient, base, hostToken, roomID, keys, snapshot, payload, epoch)
+	records, frames, sequences, cursor, err := readKeptPages(readCtx, &safeClient, base, hostToken, roomID, keys, snapshot, payload, epoch)
 	if err != nil {
 		return KeptReadInspection{}, err
 	}
@@ -130,10 +131,10 @@ func ReadKeptHost(ctx context.Context, client *http.Client, endpoint, roomID, ho
 		return KeptReadInspection{}, err
 	}
 	finished = true
-	return KeptReadInspection{Snapshot: snapshot, Records: records, Checkpoint: payload, Frames: frames, Completeness: "tail-unverified"}, nil
+	return KeptReadInspection{Snapshot: snapshot, Records: records, Checkpoint: payload, Frames: frames, Sequences: sequences, Completeness: "tail-unverified"}, nil
 }
 
-func readKeptPages(ctx context.Context, safeClient *http.Client, base *url.URL, hostToken, roomID string, keys *KeptRoomKeys, snapshot KeptReadSnapshot, payload KeptTextPayload, epoch [32]byte) ([]KeptRecord, [][]byte, string, error) {
+func readKeptPages(ctx context.Context, safeClient *http.Client, base *url.URL, hostToken, roomID string, keys *KeptRoomKeys, snapshot KeptReadSnapshot, payload KeptTextPayload, epoch [32]byte) ([]KeptRecord, [][]byte, []uint64, string, error) {
 	// The provisional ledger tracks sequence ordering only. It must never be
 	// persisted or reported as having applied these operations.
 	ledger := payload.Ledger
@@ -142,35 +143,37 @@ func readKeptPages(ctx context.Context, safeClient *http.Client, base *url.URL, 
 	rateRetries := 0
 	records := []KeptRecord{}
 	frames := [][]byte{}
+	sequences := []uint64{}
 	for {
 		raw, err := fetchKeptPage(safeClient, base, hostToken, ctx, snapshot.Session, cursor, &rateRetries)
 		if err != nil {
-			return nil, nil, "", err
+			return nil, nil, nil, "", err
 		}
 		page, e := ParseKeptReadPage(raw, after, snapshot.Tail)
 		if e != nil {
-			return nil, nil, "", e
+			return nil, nil, nil, "", e
 		}
 		for _, entry := range page.Entries {
 			sealed, record, nextLedger, e := readKeptEntry(entry, keys, roomID, epoch, snapshot.Generation, ledger, len(records), total)
 			if e != nil {
-				return nil, nil, "", e
+				return nil, nil, nil, "", e
 			}
 			total += len(sealed)
 			ledger = nextLedger
 			records = append(records, record)
 			frames = append(frames, sealed)
+			sequences = append(sequences, entry.Sequence)
 			after = entry.Sequence
 		}
 		if page.Next == nil {
 			break
 		}
 		if *page.Next == cursor {
-			return nil, nil, "", errors.New("repeated read cursor")
+			return nil, nil, nil, "", errors.New("repeated read cursor")
 		}
 		cursor = *page.Next
 	}
-	return records, frames, cursor, nil
+	return records, frames, sequences, cursor, nil
 }
 
 func readKeptEntry(entry KeptReadEntry, keys *KeptRoomKeys, roomID string, epoch [32]byte, generation uint64, ledger KeptLedger, count, total int) ([]byte, KeptRecord, KeptLedger, error) {

@@ -87,3 +87,17 @@ record instead of generating a replacement. This only prepares an initial
 baseline: attachment absence must be established by the caller, and observing
 unchanged files is not an external-editor lock. It does not enable a public CLI,
 verify an unseen relay tail, or authorize recovery, cut, or acknowledgement.
+
+An internal read-evidence bundle records the exact initial checkpoint, observed
+relay sequence numbers and ciphertext frames, replayed text and comments Yjs,
+and replayed ledger under a host signature. Opening it verifies the signature,
+replays the ciphertext and checks the resulting state and ledger again. It is
+an observation, not proof that the relay delivered every unseen record: relay
+sequence numbers and the fixed tail are not signed by a trusted independent
+source. It cannot authorize file writes, a cut, or acknowledgement. Capture
+accepts at most 1,024 frames and 10 MiB of checkpoint plus ciphertext; the
+private candidate store imposes a further 16 MiB serialized limit. Over-limit
+reads fail without cutting the relay log. Candidate storage remains supported
+only on macOS in this prototype. The record contains private plaintext Yjs and
+is protected by the host credential store's existing permissions and durability
+limits; power-loss guarantees are unchanged.

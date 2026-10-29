@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -209,6 +210,58 @@ func TestLiveKeptInitial(t *testing.T) {
 	if response.StatusCode != 204 {
 		t.Fatalf("populate status %d", response.StatusCode)
 	}
+	evidencePath, err := captureReadEvidence(ctx, store, room, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := openReadEvidence(store, room, evidencePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if evidence.TailStatus != "unverified" || len(evidence.Entries) != 2 || evidence.Entries[0].Sequence >= evidence.Entries[1].Sequence {
+		t.Fatal("wrong observed tail evidence")
+	}
+	signAndReject := func(changed recoveryEvidence) {
+		t.Helper()
+		message, e := evidenceMessage(changed)
+		if e != nil {
+			t.Fatal(e)
+		}
+		changed.Signature = ed25519.Sign(signer, message)
+		raw, e := json.Marshal(changed)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if _, e = verifyReadEvidence(saved, raw); e == nil {
+			t.Fatal("accepted inconsistent signed evidence")
+		}
+	}
+	badSignature := evidence
+	badSignature.Signature = bytes.Clone(badSignature.Signature)
+	badSignature.Signature[0] ^= 1
+	rawBad, err := json.Marshal(badSignature)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = verifyReadEvidence(saved, rawBad); err == nil {
+		t.Fatal("accepted bad evidence signature")
+	}
+	altered := evidence
+	altered.Text = bytes.Clone(altered.Text)
+	altered.Text[len(altered.Text)-1] ^= 1
+	signAndReject(altered)
+	altered = evidence
+	altered.Ledger = bytes.Clone(altered.Ledger)
+	altered.Ledger[len(altered.Ledger)-1] ^= 1
+	signAndReject(altered)
+	altered = evidence
+	altered.Tail++
+	signAndReject(altered)
+	altered = evidence
+	altered.Entries = append([]evidenceEntry(nil), altered.Entries...)
+	altered.Entries[0].Ciphertext = bytes.Clone(altered.Entries[0].Ciphertext)
+	altered.Entries[0].Ciphertext[0] ^= 1
+	signAndReject(altered)
 	external := "external edit"
 	if err = os.WriteFile(file, []byte(external), 0600); err != nil {
 		t.Fatal(err)
@@ -398,6 +451,22 @@ func TestLiveKeptInitial(t *testing.T) {
 	if err = os.Rename(moved, dir); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = openReadEvidence(store, room, evidencePath); err != nil {
+		t.Fatalf("evidence after reopen: %v", err)
+	}
+	if err = store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	child := exec.Command(os.Args[0], "-test.run=^TestOpenReadEvidenceChild$")
+	child.Env = append(os.Environ(), "PEDIT_EVIDENCE_STORE="+stateDir, "PEDIT_EVIDENCE_ROOM="+room, "PEDIT_EVIDENCE_PATH="+evidencePath)
+	if output, e := child.CombinedOutput(); e != nil {
+		t.Fatalf("fresh process evidence: %v %s", e, output)
+	}
+	store, err = hoststate.Open(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
 	if err = host.CloseRoom(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -419,5 +488,21 @@ func TestLiveKeptInitial(t *testing.T) {
 	data, err := os.ReadFile(file)
 	if err != nil || string(data) != external {
 		t.Fatalf("file changed: %q %v", data, err)
+	}
+}
+
+func TestOpenReadEvidenceChild(t *testing.T) {
+	path := os.Getenv("PEDIT_EVIDENCE_STORE")
+	if path == "" {
+		t.Skip("evidence subprocess only")
+	}
+	store, err := hoststate.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	e, err := openReadEvidence(store, os.Getenv("PEDIT_EVIDENCE_ROOM"), os.Getenv("PEDIT_EVIDENCE_PATH"))
+	if err != nil || e.TailStatus != "unverified" || len(e.Entries) != 2 {
+		t.Fatalf("fresh evidence: %v", err)
 	}
 }
