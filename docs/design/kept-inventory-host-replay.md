@@ -18,9 +18,10 @@ takes place only in an isolated candidate; a failure returns no observation.
 The #273 text work budget applies to the checkpoint and all applied tail
 updates together, before each ygo application. The existing multi-checkpoint
 validation also checks text and metadata work before applying checkpoint states.
-A reference scan checks known canonical asset paths against the growing inventory;
-it cannot identify all possible references or attest that the inventory is
-complete. Observations do not prove that the relay delivered all records, that
+A conservative reference scan checks supported inline image paths against the
+inventory at the checkpoint and after each update. It rejects unsupported image
+markers and can require extra paths for images appearing in code. It cannot
+attest that inventory is complete. Observations do not prove that the relay delivered all records, that
 blobs remain available, or that either output has been durably saved. Explicit
 version negotiation, full reference enumeration, blob verification, metadata
 updates and crash-durable storage are separate prerequisites for integration.

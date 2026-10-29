@@ -23,9 +23,22 @@ var candidateName = regexp.MustCompile(`^[A-Za-z0-9_-]{22}-[0-9a-f]{32}\.recover
 // existing file. A nonempty path with an error means publication occurred but
 // directory synchronization failed; callers must retain and inspect that path.
 func (s *Store) PublishCandidate(room string, data []byte) (string, error) {
+	return s.publishRecoveryFile(room, data, ".recovery.json", false)
+}
+
+// PublishRecoveryOutput creates a private text or comments inspection file.
+func (s *Store) PublishRecoveryOutput(room string, kind RecoveryOutputKind, data []byte) (string, error) {
+	suffix, ok := recoveryOutputSuffix(kind)
+	if !ok {
+		return "", ErrInvalid
+	}
+	return s.publishRecoveryFile(room, data, suffix, true)
+}
+
+func (s *Store) publishRecoveryFile(room string, data []byte, fileSuffix string, allowEmpty bool) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !roomPattern.MatchString(room) || len(data) == 0 || len(data) > maxCandidateBytes {
+	if !roomPattern.MatchString(room) || (!allowEmpty && len(data) == 0) || len(data) > maxCandidateBytes {
 		return "", ErrInvalid
 	}
 	if err := s.identity(); err != nil {
@@ -40,7 +53,7 @@ func (s *Store) PublishCandidate(room string, data []byte) (string, error) {
 	}
 	suffix := hex.EncodeToString(random[:])
 	tmp := ".pending-candidate-" + suffix
-	name := room + "-" + suffix + ".recovery.json"
+	name := room + "-" + suffix + fileSuffix
 	fd, err := unix.Openat(int(s.dir.Fd()), tmp, unix.O_RDWR|unix.O_NOFOLLOW|unix.O_CLOEXEC|unix.O_CREAT|unix.O_EXCL, 0600)
 	if err != nil {
 		return "", ErrUnavailable
@@ -111,6 +124,38 @@ func (s *Store) ReadCandidate(room, path string) ([]byte, error) {
 	return data, nil
 }
 
+// ReadRecoveryOutput reads a private output from this credential directory.
+func (s *Store) ReadRecoveryOutput(room string, kind RecoveryOutputKind, path string) ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	suffix, ok := recoveryOutputSuffix(kind)
+	base := filepath.Base(path)
+	if !ok || !roomPattern.MatchString(room) || filepath.Dir(path) != s.path || !strings.HasPrefix(base, room+"-") || !strings.HasSuffix(base, suffix) {
+		return nil, ErrInvalid
+	}
+	middle := strings.TrimSuffix(strings.TrimPrefix(base, room+"-"), suffix)
+	decoded, err := hex.DecodeString(middle)
+	if err != nil || len(decoded) != 16 || hex.EncodeToString(decoded) != middle {
+		return nil, ErrInvalid
+	}
+	if err = s.identity(); err != nil {
+		return nil, err
+	}
+	if _, err = s.load(room); err != nil {
+		return nil, ErrInvalid
+	}
+	f, err := s.file(base, false)
+	if err != nil {
+		return nil, ErrUnavailable
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxCandidateBytes+1))
+	if err != nil || len(data) > maxCandidateBytes {
+		return nil, ErrInvalid
+	}
+	return data, nil
+}
+
 // ListCandidates locates retained recovery artifacts after a process restart.
 // Names are not trusted until ReadCandidate has checked the corresponding file.
 func (s *Store) ListCandidates(room string) ([]string, error) {
@@ -146,4 +191,11 @@ func (s *Store) ListCandidates(room string) ([]string, error) {
 		}
 	}
 	return paths, nil
+}
+
+// SyncCandidateDirectory retries synchronization after an uncertain publication.
+func (s *Store) SyncCandidateDirectory() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.syncDir()
 }

@@ -132,3 +132,75 @@ explicit; callers must schedule refreshes because the host socket provides no
 append notifications. The observer does not journal or publish host edits,
 write files, acknowledge a cut, or prove tail completeness or attachment
 inventory. It is not connected to the CLI or a user-facing live session.
+
+An internal recovery bundle binds a verified read-evidence file to separate
+private text and comments output files in a host-signed manifest. Opening the
+manifest verifies the signature, replays the evidence and checks that both
+output bytes match it. The API returns verified bytes as well as paths; paths
+can be changed after inspection. The comments file is a JSON view of the Yjs
+comments map, not the `.pedit/meta` format or a merged metadata save. A bundle
+still has an unverified tail and attachment inventory and cannot authorize a
+file write, relay cut or acknowledgement. Outputs are private macOS-only
+artifacts; an interrupted publication can leave orphan outputs. After any
+uncertain sync the caller must retain returned paths and revalidate. Complete
+store rollback and power-loss durability remain outside this guarantee.
+
+An internal recovery intent binds a verified bundle and evidence to the signed
+initial text and metadata bytes and records the observed project, directory,
+text and metadata identities. Creating or opening it does not write the source
+or contact the relay. It checks that the current text and metadata still match
+the baseline, and rechecks identities after restart. A conflict leaves the
+signed intent and bundle available; their paths are inspection references, not
+proof that a later path lookup is unchanged. Reopening resynchronizes the
+private store directory before validating an uncertain publication. This is a
+macOS-only prepared proposal and does not authorize an exchange, cut, or ACK.
+
+The comments output in a bundle remains inspection JSON. Before writing actual
+`.pedit/meta`, recovery still needs a lossless conversion from comments Yjs,
+anchor validation against the matching text state, preservation of unknown
+metadata fields, and conflict handling for a changed or malformed local sidecar.
+A clock, an unchanged byte comparison, or this intent does not establish that a
+noncooperative editor has finished writing. File and directory sync are
+attempted, but power-loss durability of rename is not claimed.
+
+The internal metadata proposal accepts only text anchors whose endpoints still
+resolve to their original live Yjs items. Unknown thread or message fields,
+missing required fields, invalid IDs or values, excessive size, and positions
+that cannot be resolved cause failure; no comment or message is silently
+omitted. Cells, canvas nodes, and deleted or otherwise ambiguous anchor items
+remain unsupported. Unknown top-level metadata fields are preserved. This
+proposal is bound to a revalidated intent and is returned in memory only; it
+is not a metadata save, tail completeness proof, relay cut, or ACK. External
+editors may still change files immediately after the identity check.
+
+The internal transaction journal signs an intent hash, exact text and metadata
+proposal bytes, and reserved artifact names. It creates no artifacts beside the
+original files. A read-only inspection reports only `baseline-observed` or
+`conflict`; it does not classify a partial exchange or authorize a write. Names
+are reservations, not proof that files exist. Restart revalidates the signature,
+evidence and metadata, and synchronizes the private journal directory. A
+renamed or deleted parent directory may make artifacts undiscoverable, and a
+noncooperative editor can race any observation. Two-file publication, rollback,
+cut and ACK remain unimplemented. Only macOS has this internal journal.
+
+The macOS stage experiment supports only an existing text file and existing
+metadata file in private, owned local APFS directories. Files must be 0600
+with explicit empty ACLs; directories must be 0700 with explicit empty ACLs.
+It creates private staged files and hardlinks to the old inodes without
+replacing either original. A signed receipt records the new inode identities;
+restart verifies every artifact and its bytes, then syncs both directories.
+Without a receipt, artifact names remain discoverable from the signed journal
+but their ownership and completeness are uncertain: they are never adopted or
+deleted automatically. A `prepared` result is only an observation, not a
+commit or authorization to exchange, cut, or acknowledge. Missing metadata,
+other filesystems, and platforms without this implementation fail closed.
+External directory moves and later noncooperative writes can invalidate that
+observation; power-loss rename durability is not guaranteed.
+
+The exchange inspector reads the signed receipt and evidence without requiring
+the destinations still to be at their baseline names. It reports each file as
+old, new, conflict, or uncertain from inode identities and bytes. Its output
+is an observation, not an atomic two-file snapshot, save confirmation, or
+permission to swap. Test-only swaps exercise mixed states after process death;
+there is no production exchange. If a parent has moved, signed original paths
+are returned but may no longer locate the retained files.
