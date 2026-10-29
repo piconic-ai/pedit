@@ -15,6 +15,9 @@ func TestCredentialsFormattingDoesNotRevealSecrets(t *testing.T) {
 	c.EditSecret[0] = 42
 	c.HostSeed[0] = 99
 	for _, f := range []string{"%v", "%+v", "%#v"} {
+		if strings.Contains(fmt.Sprintf(f, InitialState{Text: "private text"}), "private text") {
+			t.Fatal("initial state leaked through formatting")
+		}
 		s := fmt.Sprintf(f, c)
 		if strings.Contains(s, "sensitive-token") || strings.Contains(s, "42") || strings.Contains(s, "99") {
 			t.Fatal("credentials leaked through formatting")

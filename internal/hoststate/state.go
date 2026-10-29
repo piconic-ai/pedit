@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net/url"
 	"regexp"
@@ -26,6 +27,20 @@ type InitialRecord struct {
 
 func (InitialRecord) String() string   { return "[host initial record]" }
 func (InitialRecord) GoString() string { return "[host initial record]" }
+
+// InitialState is the canonical private record signed with the host identity.
+type InitialState struct {
+	File           string   `json:"file"`
+	Project        string   `json:"project"`
+	Text           string   `json:"text"`
+	CommentsExists bool     `json:"commentsExists"`
+	Comments       string   `json:"comments"`
+	Epoch          [32]byte `json:"epoch"`
+	Checkpoint     []byte   `json:"checkpoint"`
+}
+
+func (InitialState) String() string   { return "[host initial state]" }
+func (InitialState) GoString() string { return "[host initial state]" }
 
 const maxInitialBytes = 3 * protocol.MaxFrameBytes
 const maxCredentialsBytes = 4*protocol.MaxFrameBytes + 8192
@@ -87,6 +102,23 @@ func (c Credentials) BindInitial(payload []byte) (Credentials, error) {
 	data := bytes.Clone(payload)
 	c.Initial = &InitialRecord{Payload: data, Signature: ed25519.Sign(key, initialMessage(c.RoomID, data))}
 	return c, nil
+}
+
+// InitialState validates and returns the canonical signed record.
+func (c Credentials) InitialState() (InitialState, error) {
+	var state InitialState
+	if c.validate() != nil || c.Initial == nil {
+		return state, ErrInvalid
+	}
+	raw := c.Initial.Payload
+	if json.Unmarshal(raw, &state) != nil {
+		return InitialState{}, ErrInvalid
+	}
+	canonical, err := json.Marshal(state)
+	if err != nil || !bytes.Equal(raw, canonical) || len(state.Checkpoint) == 0 {
+		return InitialState{}, ErrInvalid
+	}
+	return state, nil
 }
 
 func sameInitial(a, b *InitialRecord) bool {

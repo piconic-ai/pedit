@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 
 	"github.com/piconic-ai/pedit/internal/filewriter"
 	"github.com/piconic-ai/pedit/internal/hoststate"
@@ -126,6 +127,9 @@ func (s *keptInitial) readMetadata(path string) (*meta.File, error) {
 // verify rejects changes observed since capture. It is not an atomic lock on
 // external editors and cannot by itself authorize a later write or cut.
 func (s *keptInitial) verify() error {
+	if err := s.verifyProject(); err != nil {
+		return err
+	}
 	info, err := os.Lstat(s.file)
 	if err != nil || !os.SameFile(s.fileInfo, info) {
 		return errors.New("initial file changed")
@@ -141,7 +145,7 @@ func (s *keptInitial) verify() error {
 			check.Close()
 		}
 		if errors.Is(err, fs.ErrNotExist) && errors.Is(openErr, fs.ErrNotExist) {
-			return nil
+			return s.verifyProject()
 		}
 		return errors.New("initial metadata changed")
 	}
@@ -152,20 +156,24 @@ func (s *keptInitial) verify() error {
 	if !ok || comments != s.comments {
 		return errors.New("initial metadata changed")
 	}
+	return s.verifyProject()
+}
+
+func (s *keptInitial) verifyProject() error {
+	expected, err := s.project.Stat(".")
+	if err != nil {
+		return errors.New("initial project changed")
+	}
+	current, err := os.Lstat(s.project.Name())
+	if err != nil || !current.IsDir() || !os.SameFile(expected, current) {
+		return errors.New("initial project changed")
+	}
 	return nil
 }
 
 // keptInitialRecord is private until the full recovery path validates it.
 // It preserves the original bytes alongside the encrypted checkpoint.
-type keptInitialRecord struct {
-	File           string   `json:"file"`
-	Project        string   `json:"project"`
-	Text           string   `json:"text"`
-	CommentsExists bool     `json:"commentsExists"`
-	Comments       string   `json:"comments"`
-	Epoch          [32]byte `json:"epoch"`
-	Checkpoint     []byte   `json:"checkpoint"`
-}
+type keptInitialRecord = hoststate.InitialState
 
 func (s *keptInitial) persist(store *hoststate.Store, credentials hoststate.Credentials) (hoststate.Credentials, error) {
 	if s == nil || store == nil || credentials.Generation != 1 || credentials.Initial != nil {
@@ -205,19 +213,15 @@ func (s *keptInitial) persist(store *hoststate.Store, credentials hoststate.Cred
 }
 
 func loadKeptInitial(credentials hoststate.Credentials) (keptInitialRecord, error) {
-	var record keptInitialRecord
 	keys, _, err := credentials.Keys()
-	if err != nil || credentials.Initial == nil {
-		return record, errors.New("initial baseline unavailable")
+	if err != nil {
+		return keptInitialRecord{}, errors.New("initial baseline unavailable")
 	}
-	raw := credentials.Initial.Payload
-	if err = json.Unmarshal(raw, &record); err != nil {
+	record, err := credentials.InitialState()
+	if err != nil {
 		return keptInitialRecord{}, errors.New("invalid initial baseline")
 	}
-	canonical, err := json.Marshal(record)
-	if err != nil || !bytes.Equal(raw, canonical) {
-		return keptInitialRecord{}, errors.New("invalid initial baseline")
-	}
+
 	if !filepath.IsAbs(record.File) || filepath.Clean(record.File) != record.File || !filepath.IsAbs(record.Project) || filepath.Clean(record.Project) != record.Project || (!record.CommentsExists && record.Comments != "") {
 		return keptInitialRecord{}, errors.New("invalid initial baseline")
 	}
@@ -265,6 +269,9 @@ func checkInitialComments(record keptInitialRecord, path string, textDoc *crdt.D
 	if crdt.ApplyUpdateV1(actual, update, nil) != nil {
 		return errors.New("invalid initial comments")
 	}
+	if !sameInitialAnchors(expected, actual) {
+		return errors.New("initial anchors mismatch")
+	}
 	left, err := meta.Render(meta.Read(expected, old, meta.NewTracker(textDoc)))
 	if err != nil {
 		return err
@@ -274,4 +281,30 @@ func checkInitialComments(record keptInitialRecord, path string, textDoc *crdt.D
 		return errors.New("initial comments mismatch")
 	}
 	return nil
+}
+
+func sameInitialAnchors(expected, actual *crdt.Doc) bool {
+	want := expected.GetMap(meta.CommentsKey)
+	got := actual.GetMap(meta.CommentsKey)
+	if len(want.Keys()) != len(got.Keys()) {
+		return false
+	}
+	for _, id := range want.Keys() {
+		a, _ := want.Get(id)
+		b, _ := got.Get(id)
+		left, ok := a.(*crdt.YMap)
+		if !ok {
+			return false
+		}
+		right, ok := b.(*crdt.YMap)
+		if !ok {
+			return false
+		}
+		x, xok := left.Get(meta.AnchorKey)
+		y, yok := right.Get(meta.AnchorKey)
+		if !xok || !yok || !reflect.DeepEqual(x, y) {
+			return false
+		}
+	}
+	return true
 }

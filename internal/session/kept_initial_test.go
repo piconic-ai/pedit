@@ -236,4 +236,72 @@ func TestKeptInitialPersistAndReopen(t *testing.T) {
 	if _, err = loadKeptInitial(malicious); err == nil {
 		t.Fatal("accepted signed text inconsistent with checkpoint")
 	}
+
+	decoded, err := protocol.DecodeKeptTextPayload(payload, protocol.MaxKeptCheckpointReceipts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commentsDoc := crdt.New()
+	defer commentsDoc.Destroy()
+	if err = crdt.ApplyUpdateV1(commentsDoc, decoded.Documents[1], nil); err != nil {
+		t.Fatal(err)
+	}
+	rawThread, _ := commentsDoc.GetMap(meta.CommentsKey).Get("c1")
+	thread := rawThread.(*crdt.YMap)
+	commentsDoc.Transact(func(txn *crdt.Transaction) { thread.Set(txn, meta.AnchorKey, map[string]any{"type": "text"}) })
+	decoded.Documents[1] = crdt.EncodeStateAsUpdateV1(commentsDoc, nil)
+	changedPayload, err := protocol.EncodeKeptTextPayload(decoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, signer, err := c.Keys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	altered = record
+	altered.Checkpoint, err = protocol.SealKeptCheckpoint(keys, signer, protocol.KeptCheckpointContext{RoomID: c.RoomID, Epoch: record.Epoch, Generation: 1}, changedPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err = json.Marshal(altered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	malicious, err = c.BindInitial(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = loadKeptInitial(malicious); err == nil {
+		t.Fatal("accepted missing checkpoint anchor positions")
+	}
+}
+
+func TestKeptInitialRejectsReplacedProjectWithSameFile(t *testing.T) {
+	base := t.TempDir()
+	project := filepath.Join(base, "project")
+	if err := os.Mkdir(project, 0700); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(project, "notes.md")
+	if err := os.WriteFile(file, []byte("text"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := captureKeptInitial(file, project, protocol.KeptAttachmentsNone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snapshot.Close()
+	moved := filepath.Join(base, "moved")
+	if err = os.Rename(project, moved); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Mkdir(project, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Link(filepath.Join(moved, "notes.md"), file); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.verify() == nil {
+		t.Fatal("accepted replaced project with same file inode")
+	}
 }

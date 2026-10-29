@@ -19,9 +19,15 @@ import (
 	"github.com/piconic-ai/pedit/internal/protocol"
 )
 
-type initialForward struct{ target *url.URL }
+type initialForward struct {
+	target *url.URL
+	calls  *int
+}
 
 func (f initialForward) RoundTrip(r *http.Request) (*http.Response, error) {
+	if f.calls != nil {
+		*f.calls++
+	}
 	req := r.Clone(r.Context())
 	u := *r.URL
 	u.Scheme = f.target.Scheme
@@ -68,14 +74,39 @@ func TestLiveKeptInitial(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := &http.Client{Transport: initialForward{target}}
+	calls := 0
+	client := &http.Client{Transport: initialForward{target: target, calls: &calls}}
 	host, err := keptclient.Open(store, room, client)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	effective, err := host.Initialize(ctx, record.Epoch, record.Checkpoint, 24*time.Hour)
+	keys, signer, err := saved.Keys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := protocol.OpenKeptCheckpoint(keys, protocol.KeptCheckpointContext{RoomID: room, Epoch: record.Epoch, Generation: 1}, record.Checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alternate, err := protocol.SealKeptCheckpoint(keys, signer, protocol.KeptCheckpointContext{RoomID: room, Epoch: record.Epoch, Generation: 1}, plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(alternate, record.Checkpoint) {
+		t.Fatal("expected fresh ciphertext")
+	}
+	before := calls
+	if _, err = host.Initialize(ctx, record.Epoch, alternate, time.Hour); err == nil || calls != before {
+		t.Fatal("different signed ciphertext reached relay")
+	}
+	otherEpoch := record.Epoch
+	otherEpoch[0] ^= 1
+	if _, err = host.Initialize(ctx, otherEpoch, record.Checkpoint, time.Hour); err == nil || calls != before {
+		t.Fatal("different epoch reached relay")
+	}
+	effective, err := host.InitializeStored(ctx, 24*time.Hour)
 	if err != nil || effective != time.Hour {
 		t.Fatalf("initialize: %v %v", effective, err)
 	}
