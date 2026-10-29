@@ -55,6 +55,25 @@ func TestRenderRecoveryRejectsUnknownThread(t *testing.T) {
 	}
 }
 
+func TestRenderRecoveryRejectsRootBoundaryAnchors(t *testing.T) {
+	doc, text := content("")
+	start, end := pos(text, 0, -1), pos(text, 0, 0)
+	doc.Transact(func(tx *crdt.Transaction) { text.Insert(tx, 0, "unrelated replacement", nil) })
+	comments := crdt.New()
+	guestThread(t, comments, text, "g1", map[string]any{"type": "text", "start": start, "end": end}, "original")
+	value, _ := comments.GetMap(meta.CommentsKey).Get("g1")
+	comments.Transact(func(tx *crdt.Transaction) { value.(*crdt.YMap).Set(tx, "resolved", false) })
+	prev := &meta.File{Path: "a.md"}
+	tracker := meta.NewTracker(doc)
+	defer tracker.Close()
+	if _, err := meta.RenderRecovery(comments, prev, tracker); err == nil {
+		t.Fatal("accepted root-boundary anchors for replacement text")
+	}
+	if len(prev.Comments) != 0 {
+		t.Fatal("baseline mutated")
+	}
+}
+
 func TestRenderRecoveryRejectsInvalidMessageWithoutDroppingThread(t *testing.T) {
 	doc, text := content("hello")
 	comments := crdt.New()

@@ -82,6 +82,11 @@ func recoveryThread(m *crdt.YMap, tr *Tracker, path string) (Thread, error) {
 	if !ok || len(raw) != 3 || raw[typeKey] != AnchorText || raw[startKey] == nil || raw[endKey] == nil {
 		return result, errRecoveryComments
 	}
+	start, startOK := decodePosition(raw[startKey])
+	end, endOK := decodePosition(raw[endKey])
+	if !startOK || !endOK || start.Item == nil || end.Item == nil {
+		return result, errRecoveryComments
+	}
 	anchor, ok := placeNow(AnchorText, raw, textOf(tr, path))
 	if !ok {
 		return result, errRecoveryComments
