@@ -1,5 +1,4 @@
 import { render } from '@barefootjs/client/runtime'
-import { markdown } from '@codemirror/lang-markdown'
 import { Compartment, EditorState, type Extension, Prec } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import {
@@ -13,7 +12,6 @@ import {
   type RoomKeys,
   type RoomStatus,
 } from '@pedit/protocol'
-import { basicSetup } from 'codemirror'
 import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next'
 import { Awareness } from 'y-protocols/awareness'
 import * as Y from 'yjs'
@@ -67,6 +65,7 @@ import {
 } from './room.ts'
 import type { SettingsModel } from './settings.ts'
 import { COPIED, shareLinks } from './share.ts'
+import { defaultSourceLanguage, sourceEditorExtensions } from './source-editor.ts'
 import { Splitter } from './splitter.ts'
 import { Store } from './store.ts'
 import { describeError, TableErrors, TableView } from './table.ts'
@@ -373,7 +372,7 @@ async function joinRoom(
   const wrap = new Compartment()
   const fontMode = new Compartment()
   // Reused so switching back to Markdown does not reparse the document.
-  const markdownSupport = markdown()
+  const markdownSupport = defaultSourceLanguage()
   const readOnly = [EditorState.readOnly.of(true), EditorView.editable.of(false)]
   // Nobody edits while the host is away, nor once the room has ended.
   const editLocked = () => {
@@ -402,33 +401,30 @@ async function joinRoom(
     from?: EditorState,
   ): Extension[] => {
     const held = (c: Compartment, initial: Extension) => (from && c.get(from)) ?? initial
-    return [
+    return sourceEditorExtensions({
       // The Vim keymap must see keys before basicSetup's.
-      vimMode.of(held(vimMode, [])),
-      basicSetup,
+      vim: vimMode.of(held(vimMode, [])),
       // Undo only this browser's edits, not everyone's.
-      Prec.high(keymap.of(lockedUndo(yUndoManagerKeymap, fileLocked))),
-      language.of(held(language, markdownSupport)),
-      themeMode.of(held(themeMode, theme.extension)),
-      fontMode.of(held(fontMode, reader)),
-      wrap.of(held(wrap, lineWrapping(appearance.wrap))),
-      editable.of(held(editable, writesFile ? [] : readOnly)),
-      yCollab(fileText, awareness, { undoManager: undo }),
-      commentMarks(threadsShown, commentFocus),
-      EditorView.updateListener.of((u) => {
+      undo: Prec.high(keymap.of(lockedUndo(yUndoManagerKeymap, fileLocked))),
+      language: language.of(held(language, markdownSupport)),
+      theme: themeMode.of(held(themeMode, theme.extension)),
+      font: fontMode.of(held(fontMode, reader)),
+      wrap: wrap.of(held(wrap, lineWrapping(appearance.wrap))),
+      editable: editable.of(held(editable, writesFile ? [] : readOnly)),
+      collaboration: yCollab(fileText, awareness, { undoManager: undo }),
+      comments: commentMarks(threadsShown, commentFocus),
+      selection: EditorView.updateListener.of((u) => {
         const s = u.state.selection.main
         const was = selection.get()
         if (s.from !== was.from || s.to !== was.to) selection.set({ from: s.from, to: s.to })
       }),
-      imagePaste({
+      paste: imagePaste({
         blocked: noImages,
-        // To the file it was added to, and into it, though another
-        // file may be on screen by then.
         upload: (file) => attachments.upload(file, fileId),
         anchor: (pos) => textAnchor(fileText, pos),
         onError: (message) => notices.show(message),
       }),
-    ]
+    })
   }
   const editor = new EditorView({
     parent: source,

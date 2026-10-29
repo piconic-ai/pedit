@@ -195,6 +195,48 @@ async function run() {
         await new Promise((resolve) => setTimeout(resolve, 20))
       if (!remoteController.text().endsWith(' REMOTE LOCAL'))
         throw Error('local edit removed remote content')
+      remoteEditor.view.contentDOM.dispatchEvent(
+        new CompositionEvent('compositionstart', { bubbles: true }),
+      )
+      remoteEditor.view.dispatch({
+        changes: { from: remoteEditor.view.state.doc.length, insert: '拼' },
+      })
+      remoteEditor.view.dispatch({
+        changes: { from: remoteEditor.view.state.doc.length, insert: '音' },
+      })
+      if (remoteController.text().endsWith('拼音')) throw Error('composition committed prematurely')
+      remoteEditor.view.contentDOM.dispatchEvent(
+        new CompositionEvent('compositionend', { bubbles: true }),
+      )
+      for (let i = 0; i < 200 && !remoteController.text().endsWith('拼音'); i++)
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      if (!remoteController.text().endsWith(' REMOTE LOCAL拼音')) throw Error('composition lost')
+      remoteEditor.view.dispatch({
+        changes: { from: remoteEditor.view.state.doc.length, insert: '😀' },
+      })
+      for (let i = 0; i < 200 && !remoteController.text().endsWith('😀'); i++)
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      const end = remoteEditor.view.state.doc.length
+      remoteEditor.view.dispatch({ changes: { from: end - 2, to: end, insert: '😁' } })
+      for (let i = 0; i < 200 && !remoteController.text().endsWith('😁'); i++)
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      if (!remoteController.text().endsWith(' REMOTE LOCAL拼音😁'))
+        throw Error('Unicode replacement lost')
+      const unchanged = remoteController.text()
+      remoteEditor.view.dispatch({
+        changes: [
+          { from: 0, to: 1, insert: 'Q' },
+          { from: unchanged.length, insert: ' split' },
+        ],
+      })
+      for (let i = 0; i < 200 && remoteEditor.draft.hidden; i++)
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      if (
+        remoteEditor.draft.hidden ||
+        remoteEditor.draft.value !== 'Q' + unchanged.slice(1) + ' split' ||
+        remoteController.text() !== unchanged
+      )
+        throw Error('noncontiguous edit was not retained as a draft')
       remoteEditor.destroy()
       await remoteController.close()
       remoteDoc.destroy()
@@ -235,7 +277,7 @@ async function run() {
         throw Error('offline')
       },
     })
-    if (!remoteController.text().endsWith(' REMOTE LOCAL'))
+    if (!remoteController.text().endsWith(' REMOTE LOCAL拼音😁'))
       throw Error('remote dependency not restored')
     await remoteController.close()
     remoteBox.close()

@@ -4,6 +4,7 @@ import type {
   KeptEditController,
   KeptEditStatus,
 } from '../../../protocol/src/kept-edit-controller.ts'
+import { defaultSourceLanguage, sourceEditorExtensions } from '../../../web/src/source-editor.ts'
 
 const internal = Annotation.define<boolean>()
 const labels: Record<KeptEditStatus, string> = {
@@ -22,6 +23,8 @@ export class TestKeptEditor {
   readonly draft = document.createElement('textarea')
   private readonly writable = new Compartment()
   private busy = false
+  private composing = false
+  private compositionChanges: ChangeSet | undefined
   private draftChanges: ChangeSet | undefined
   constructor(private readonly controller: KeptEditController) {
     this.status.setAttribute('role', 'status')
@@ -33,51 +36,90 @@ export class TestKeptEditor {
       parent: root,
       state: EditorState.create({
         doc: controller.text(),
-        extensions: [
-          this.writable.of(EditorState.readOnly.of(false)),
-          EditorState.transactionFilter.of((transaction) => {
-            if (
-              !transaction.docChanged ||
-              (!this.busy && this.draft.hidden) ||
-              transaction.annotation(internal)
-            )
-              return transaction
-            if (this.draft.hidden) this.draftChanges = undefined
-            const previous = this.draftChanges ?? ChangeSet.empty(transaction.startState.doc.length)
-            if (
-              !this.draft.hidden &&
-              (previous.length !== transaction.startState.doc.length ||
-                previous.apply(transaction.startState.doc).toString() !== this.draft.value)
-            ) {
-              this.status.textContent =
-                'Editor change ignored. Continue editing the draft; host save and deadline are unconfirmed.'
+        extensions: sourceEditorExtensions({
+          vim: [],
+          undo: [],
+          language: defaultSourceLanguage(),
+          theme: [],
+          font: [],
+          wrap: [],
+          editable: this.writable.of(EditorState.readOnly.of(false)),
+          collaboration: [],
+          comments: [],
+          paste: [],
+          selection: [
+            EditorState.transactionFilter.of((transaction) => {
+              if (
+                !transaction.docChanged ||
+                (!this.busy && this.draft.hidden) ||
+                this.composing ||
+                transaction.annotation(internal)
+              )
+                return transaction
+              if (this.draft.hidden) this.draftChanges = undefined
+              const previous =
+                this.draftChanges ?? ChangeSet.empty(transaction.startState.doc.length)
+              if (
+                !this.draft.hidden &&
+                (previous.length !== transaction.startState.doc.length ||
+                  previous.apply(transaction.startState.doc).toString() !== this.draft.value)
+              ) {
+                this.status.textContent =
+                  'Editor change ignored. Continue editing the draft; host save and deadline are unconfirmed.'
+                return []
+              }
+              const edits: { from: number; to: number; insert: string }[] = []
+              transaction.changes.iterChanges((from, to, _fromB, _toB, inserted) => {
+                const start = previous.mapPos(from, from === to ? 1 : -1)
+                const end = previous.mapPos(to, 1)
+                edits.push({ from: start, to: end, insert: inserted.toString() })
+              })
+              const mapped = ChangeSet.of(edits, previous.newLength)
+              this.draftChanges = previous.compose(mapped)
+              this.draft.value = this.draftChanges.apply(transaction.startState.doc).toString()
+              this.draft.hidden = false
+              queueMicrotask(() => this.draft.focus())
+              this.setStatus('failed')
               return []
-            }
-            const edits: { from: number; to: number; insert: string }[] = []
-            transaction.changes.iterChanges((from, to, _fromB, _toB, inserted) => {
-              const start = previous.mapPos(from, from === to ? 1 : -1)
-              const end = previous.mapPos(to, 1)
-              edits.push({ from: start, to: end, insert: inserted.toString() })
-            })
-            const mapped = ChangeSet.of(edits, previous.newLength)
-            this.draftChanges = previous.compose(mapped)
-            this.draft.value = this.draftChanges.apply(transaction.startState.doc).toString()
-            this.draft.hidden = false
-            queueMicrotask(() => this.draft.focus())
-            this.setStatus('failed')
-            return []
-          }),
-          EditorView.updateListener.of((update) => {
-            if (!update.docChanged || update.transactions.every((tr) => tr.annotation(internal)))
-              return
-            const desired = update.state.doc.toString()
-            this.busy = true
-            this.setStatus('pending')
-            queueMicrotask(() => {
-              void this.apply(desired, update.changes)
-            })
-          }),
-        ],
+            }),
+            EditorView.updateListener.of((update) => {
+              if (!update.docChanged || update.transactions.every((tr) => tr.annotation(internal)))
+                return
+              const desired = update.state.doc.toString()
+              if (this.composing) {
+                this.busy = true
+                this.compositionChanges = this.compositionChanges
+                  ? this.compositionChanges.compose(update.changes)
+                  : update.changes
+                this.setStatus('pending')
+                return
+              }
+              this.busy = true
+              this.setStatus('pending')
+              queueMicrotask(() => {
+                void this.apply(desired, update.changes)
+              })
+            }),
+            EditorView.domEventHandlers({
+              compositionstart: () => {
+                if (!this.busy && this.draft.hidden) {
+                  this.composing = true
+                  this.busy = true
+                }
+              },
+              compositionend: () => {
+                if (!this.composing) return
+                queueMicrotask(() => {
+                  this.composing = false
+                  const changes = this.compositionChanges
+                  this.compositionChanges = undefined
+                  if (changes) void this.apply(this.view.state.doc.toString(), changes)
+                  else this.busy = false
+                })
+              },
+            }),
+          ],
+        }),
       }),
     })
     this.setStatus('idle')
@@ -90,16 +132,26 @@ export class TestKeptEditor {
   private async apply(desired: string, changes: ChangeSet): Promise<void> {
     this.view.dispatch({ effects: this.writable.reconfigure(EditorState.readOnly.of(true)) })
     const before = this.controller.text()
-    let from = 0
-    while (from < before.length && from < desired.length && before[from] === desired[from]) from++
-    let a = before.length,
-      b = desired.length
-    while (a > from && b > from && before[a - 1] === desired[b - 1]) {
-      a--
-      b--
-    }
+    const edits: { from: number; to: number; insert: string }[] = []
+    changes.iterChanges((from, to, _fromB, _toB, inserted) => {
+      edits.push({ from, to, insert: inserted.toString() })
+    })
+    const splitPair = (index: number) =>
+      index > 0 &&
+      index < before.length &&
+      /[\uD800-\uDBFF]/.test(before.charAt(index - 1)) &&
+      /[\uDC00-\uDFFF]/.test(before.charAt(index))
     try {
-      await this.controller.replace(from, a, desired.slice(from, b))
+      const edit = edits[0]
+      if (
+        edits.length !== 1 ||
+        !edit ||
+        splitPair(edit.from) ||
+        splitPair(edit.to) ||
+        new TextDecoder().decode(new TextEncoder().encode(edit.insert)) !== edit.insert
+      )
+        throw new Error('unsupported edit')
+      await this.controller.replace(edit.from, edit.to, edit.insert)
     } catch {
       if (this.draft.hidden) {
         this.draft.value = desired
