@@ -19,7 +19,7 @@ var keptAttachment = regexp.MustCompile(`assets/[0-9a-f]{32}\.(png|jpg|gif|webp)
 // its matching ledger, and establish that the frames contain the complete tail.
 // The metadata ID must come from the authenticated single-file manifest.
 func startKeptRecovery(ctx context.Context, opts Options, checkpoint recoveryCheckpoint, ledger protocol.KeptLedger, keys *protocol.KeptRoomKeys, recordContext protocol.KeptRecordContext, frames [][]byte) (session *Session, err error) {
-	if len(frames) > 1024 {
+	if len(frames) > protocol.MaxKeptReadRecords {
 		return nil, errors.New("too many recovery records")
 	}
 	if keys == nil {
@@ -29,6 +29,14 @@ func startKeptRecovery(ctx context.Context, opts Options, checkpoint recoveryChe
 		return nil, errors.New("invalid recovery metadata id")
 	}
 	if _, err := protocol.EncodeKeptLedger(ledger); err != nil {
+		return nil, err
+	}
+	baseline := ledger.Snapshot()
+	if len(baseline) > protocol.MaxKeptCheckpointReceipts {
+		return nil, errors.New("recovery baseline too large")
+	}
+	ledger, err = protocol.RestoreKeptLedger(protocol.MaxKeptCheckpointReceipts+protocol.MaxKeptReadRecords, baseline)
+	if err != nil {
 		return nil, err
 	}
 	defer func() {
