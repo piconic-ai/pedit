@@ -3,9 +3,10 @@ import fixture from '../../testdata/kept-read-interop.json'
 import { deriveKeptRoomKeys, parseKeptFragment } from '../src/kept-access.ts'
 import { KeptRoomClient } from '../src/kept-room-client.ts'
 
-async function setup(retryAfter: string | null = '1', refusals = Infinity) {
+async function setup(retryAfter: string | null = '1', refusals = Infinity, throttlePost = false) {
   const keys = await deriveKeptRoomKeys(parseKeptFragment(fixture.fragment)!, fixture.roomId)
   let pages = 0
+  let posts = 0
   let started!: () => void
   const firstPage = new Promise<void>((resolve) => {
     started = resolve
@@ -15,6 +16,10 @@ async function setup(retryAfter: string | null = '1', refusals = Infinity) {
     keys,
     attachmentInventory: async () => 'none',
     fetch: async (_input, init) => {
+      if (init?.method === 'POST' && ++posts === 1 && throttlePost) {
+        started()
+        return new Response(null, { status: 429, headers: { 'Retry-After': '1' } })
+      }
       if (init?.method === 'POST')
         return Response.json({
           epoch: fixture.epoch,
@@ -35,7 +40,7 @@ async function setup(retryAfter: string | null = '1', refusals = Infinity) {
       })
     },
   })
-  return { client, pages: () => pages, firstPage }
+  return { client, pages: () => pages, posts: () => posts, firstPage }
 }
 afterEach(() => vi.useRealTimers())
 it('waits for Retry-After and stops after two throttling retries', async () => {
@@ -93,4 +98,18 @@ it('defaults missing Retry-After to one minute', async () => {
   await vi.advanceTimersByTimeAsync(1)
   expect((await read).records).toBe(0)
   expect(pages()).toBe(2)
+})
+
+it('backs off when the public control limiter refuses initial snapshot creation', async () => {
+  const { client, pages, posts, firstPage } = await setup('1', 0, true)
+  vi.useFakeTimers()
+  const read = client.inspect()
+  await firstPage
+  await vi.advanceTimersByTimeAsync(999)
+  expect(posts()).toBe(1)
+  expect(pages()).toBe(0)
+  await vi.advanceTimersByTimeAsync(1)
+  expect((await read).records).toBe(0)
+  expect(posts()).toBe(2)
+  expect(pages()).toBe(1)
 })
