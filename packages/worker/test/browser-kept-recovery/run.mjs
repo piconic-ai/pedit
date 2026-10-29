@@ -163,7 +163,7 @@ try {
   if (!second.startsWith('PASS:')) throw new Error(`Unexpected recovery: ${second}`)
   process.stdout.write(`${second}\n`)
 } catch (error) {
-  console.error(error, '\nWorker log:\n', workerLog, '\nChrome log:\n', chromeLog)
+  process.stderr.write(`${String(error)}\nWorker log:\n${workerLog}\nChrome log:\n${chromeLog}\n`)
   process.exitCode = 1
 } finally {
   if (browser && browser.exitCode === null && browser.signalCode === null) {
