@@ -179,7 +179,7 @@ it('returns signed checkpoint state separately from the provisional tail', async
         const raw = await response.text()
         issued = JSON.parse(raw).session
         return new Response(
-          variant === 'whitespace' ? ` ${raw}` : raw.replace('{', `{"session":"${issued}",`),
+          variant === 'whitespace' ? ` ${raw}` : `{"session":"${issued}",${raw.slice(1)}`,
           { status: 200 },
         )
       }
