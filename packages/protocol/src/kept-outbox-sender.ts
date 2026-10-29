@@ -12,6 +12,8 @@ export type KeptOutboxSenderOptions = {
   sender: string
   outbox: KeptOutbox
   fetch?: typeof fetch
+  // Internal test harness only; not authorization for a product sender.
+  testOnlyBootstrap?: true
 }
 
 async function responseText(response: Response): Promise<string> {
@@ -97,6 +99,7 @@ export class KeptOutboxSender {
         this.context,
         this.options.sender,
         next.sequence,
+        this.options.testOnlyBootstrap === true,
       )
       if (!item.acknowledged) break
     }

@@ -25,6 +25,7 @@ export type KeptAuthenticatedCheckpoint = Readonly<{
   kind: 'authenticated-checkpoint'
   context: Readonly<KeptCheckpointContext>
   metadataId: number
+  ciphertext: Uint8Array
   textState: Uint8Array
   commentsState: Uint8Array
 }>
@@ -302,6 +303,7 @@ export class KeptRoomClient {
           kind: 'authenticated-checkpoint',
           context: { ...context, epoch: Uint8Array.from(context.epoch), cutoff: snapshot.cutoff },
           metadataId: meta.id,
+          ciphertext: decode64(snapshot.ciphertext),
           textState: Uint8Array.from(text),
           commentsState: Uint8Array.from(comments),
         },
