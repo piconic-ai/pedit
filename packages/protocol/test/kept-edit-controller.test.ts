@@ -13,12 +13,18 @@ const until = async (f: () => boolean) => {
  for (let i = 0; i < 1000 && !f(); i++) await new Promise(r => setTimeout(r, 2))
  if (!f()) throw new Error('timed out')
 }
+const activeLocks = new Set<string>()
+const locks = { request: async (name: string, _options: unknown, callback: (lock: object | null) => Promise<void>) => {
+ if (activeLocks.has(name)) return callback(null)
+ activeLocks.add(name)
+ try { await callback({}) } finally { activeLocks.delete(name) }
+} } as unknown as LockManager
 async function setup() {
  const name = `review-${crypto.randomUUID()}`
  const outbox = await KeptOutbox.open(name)
  const sender = await outbox.createSender(link, roomId)
  let status: KeptEditStatus = 'idle'
- const opts = { url:'https://example.test', link, context, sender, outbox, baseline:Y.encodeStateAsUpdate(new Y.Doc()), onStatus:(x:KeptEditStatus) => { status = x }, fetch: async () => { throw new Error('offline') } }
+ const opts = { url:'https://example.test', link, context, sender, outbox, locks, baseline:Y.encodeStateAsUpdate(new Y.Doc()), onStatus:(x:KeptEditStatus) => { status = x }, fetch: async () => { throw new Error('offline') } }
  return {outbox, sender, opts, name, status: () => status}
 }
 it('close drains all edits and restores them', async () => {
@@ -189,12 +195,37 @@ it('serializes remote persistence and rejects an oversized combined edit without
  const gate = new Promise<void>(r => { release = r }); const ready = new Promise<void>(r => { started = r })
  outbox.saveRemote = async (...args) => { started(); await gate; return save(...args) }
  const pending = c.applyRemote(Y.encodeStateAsUpdate(remote)); await ready
- const edit = c.replace(0, 0, 'l'.repeat(600_000))
+ await expect(c.replace(0, 0, 'l'.repeat(600_000))).rejects.toThrow('remote update in progress')
  release(); await pending
- await expect(edit).rejects.toThrow('capacity')
  expect(c.text()).toBe('r'.repeat(600_000))
  await c.close()
  const reopened = await KeptEditController.open(opts)
  expect(reopened.text()).toBe('r'.repeat(600_000))
  await reopened.close(); remote.destroy(); outbox.close()
 }, 30000)
+
+it('excludes a second controller and releases the writer after close', async () => {
+ const {outbox, opts} = await setup()
+ const c = await KeptEditController.open(opts)
+ await expect(KeptEditController.open(opts)).rejects.toThrow('already open')
+ await c.replace(0, 0, 'a'.repeat(600_000)); await c.close()
+ const next = await KeptEditController.open(opts)
+ await expect(next.replace(0, 0, 'b'.repeat(600_000))).rejects.toThrow('capacity')
+ expect(next.text()).toBe('a'.repeat(600_000))
+ await next.close(); outbox.close()
+})
+it('rejects stale offsets while a remote change is being persisted', async () => {
+ const {outbox, opts} = await setup()
+ const c = await KeptEditController.open(opts)
+ await c.replace(0, 0, 'abc')
+ const remote = new Y.Doc(); remote.getText('content').insert(0, 'X')
+ const save = outbox.saveRemote.bind(outbox)
+ let release!: () => void, started!: () => void
+ const gate = new Promise<void>(r => { release = r }), ready = new Promise<void>(r => { started = r })
+ outbox.saveRemote = async (...args) => { started(); await gate; return save(...args) }
+ const pending = c.applyRemote(Y.encodeStateAsUpdate(remote)); await ready
+ await expect(c.replace(1, 1, '!')).rejects.toThrow('remote update in progress')
+ release(); await pending
+ expect(c.text()).not.toContain('!')
+ await c.close(); remote.destroy(); outbox.close()
+})

@@ -59,6 +59,11 @@ async function run() {
           throw Error('simulated response loss')
         },
       })
+      let rejectedSecond = false
+      try {
+        await KeptEditController.open({url: location.origin, link, context, sender, outbox, baseline: state, onStatus: () => {}})
+      } catch { rejectedSecond = true }
+      if (!rejectedSecond) throw Error('concurrent writer admitted')
       await controller.replace(controller.text().length, controller.text().length, ' CRASH-EDIT')
       if (current !== 'pending') throw Error('edit not immediately pending')
       await untilStatus(() => current, 'failed')
@@ -82,6 +87,9 @@ async function run() {
       await remoteController.close()
       remoteDoc.destroy()
       remoteBox.close()
+      // Keep a writer lock held until the harness kills Chrome.
+      const crashBox = await KeptOutbox.open(dbName)
+      await KeptEditController.open({url: location.origin, link, context, sender, outbox: crashBox, baseline: state, onStatus: () => {}, fetch: async () => { throw Error('offline') }})
       status.textContent = 'PENDING: response lost after Room accepted'
       return
     }

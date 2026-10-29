@@ -19,6 +19,23 @@ export type KeptEditOptions = {
   baseline: Uint8Array
   onStatus: (status: KeptEditStatus) => void
   fetch?: typeof fetch
+  locks?: LockManager
+}
+
+async function acquireWriter(locks: LockManager | undefined, room: string, sender: string): Promise<() => Promise<void>> {
+  if (!locks) throw new Error('exclusive writer unavailable')
+  let release!: () => void
+  const held = new Promise<void>((resolve) => { release = resolve })
+  let acquired!: () => void, refused!: (error: Error) => void
+  const ready = new Promise<void>((resolve, reject) => { acquired = resolve; refused = reject })
+  const request = locks.request(`pedit-v6-writer:${room}:${sender}`, { mode: 'exclusive', ifAvailable: true }, async (lock) => {
+    if (!lock) { refused(new Error('kept writer already open')); return }
+    acquired()
+    await held
+  })
+  void request.catch(() => refused(new Error('exclusive writer unavailable')))
+  await ready
+  return async () => { release(); await request }
 }
 
 // Relay acceptance is not a host save or proof of a complete relay tail.
@@ -33,13 +50,14 @@ export class KeptEditController {
   private stopped = false
   private invalid = false
   private readonly abort = new AbortController()
-  private constructor(private readonly options: KeptEditOptions, doc: Y.Doc) {
+  private constructor(private readonly options: KeptEditOptions, doc: Y.Doc, private readonly releaseWriter: () => Promise<void>) {
     this.#doc = doc
     this.sender = new KeptOutboxSender(options)
     doc.on('update', this.onUpdate)
   }
   static async open(options: KeptEditOptions): Promise<KeptEditController> {
     if (options.link.access !== 'edit') throw new Error('edit access required')
+    const release = await acquireWriter(options.locks ?? globalThis.navigator?.locks, options.context.roomId, options.sender)
     const doc = new Y.Doc()
     try {
       Y.applyUpdate(doc, options.baseline)
@@ -57,17 +75,17 @@ export class KeptEditController {
       }
       if (doc.store.pendingStructs || doc.store.pendingDs || !checkKeptTextState(Y.encodeStateAsUpdate(doc)))
         throw new Error('invalid or incomplete kept text')
-      const controller = new KeptEditController(options, doc)
+      const controller = new KeptEditController(options, doc, release)
       options.onStatus(rows.some(row => !row.acknowledged) ? 'pending' : 'idle')
       if (rows.some(row => !row.acknowledged)) void controller.retry()
       return controller
-    } catch (error) { doc.destroy(); throw error }
+    } catch (error) { doc.destroy(); await release(); throw error }
   }
   text(): string { return this.#doc.getText('content').toString() }
   // Apply one editor replacement as bounded Yjs transactions, preserving UTF-16
   // pairs and the user's replacement order. No update bytes are split.
   async replace(from: number, to: number, value: string): Promise<void> {
-    while (this.remoteWork) await this.remoteWork
+    if (this.remoteWork) throw new Error('remote update in progress')
     const text = this.#doc.getText('content')
     if (this.stopped || this.closing || this.invalid || !Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < from || to > text.length)
       throw new Error('invalid kept edit')
@@ -184,5 +202,6 @@ export class KeptEditController {
     }
     this.stopped = true
     this.#doc.off('update', this.onUpdate)
+    await this.releaseWriter()
   }
 }
