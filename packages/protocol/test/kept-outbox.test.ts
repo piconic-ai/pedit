@@ -163,7 +163,7 @@ describe('kept outbox', () => {
   it('closes an existing outbox connection when another tab upgrades', async () => {
     const name = dbName()
     const outbox = await KeptOutbox.open(name)
-    const upgrade = indexedDB.open(name, 3)
+    const upgrade = indexedDB.open(name, 4)
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
       upgrade.onsuccess = () => resolve(upgrade.result)
       upgrade.onerror = () => reject(upgrade.error)

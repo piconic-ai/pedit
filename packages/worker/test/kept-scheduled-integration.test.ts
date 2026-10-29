@@ -190,9 +190,24 @@ it('recovers after the room alarm fails to delete an expired room attachment', a
     }
   })
   expect(await env.BLOBS.head(`kept/${roomId}/${blob}`)).not.toBeNull()
+  let other: string
+  do {
+    other = env.ROOM.idFromName(crypto.randomUUID()).toString()
+  } while (other === roomId || keptShardName(other) !== keptShardName(roomId))
+  const shard = registry.getByName(keptShardName(roomId))
+  await shard.register(other)
   await scheduled()
   expect(await env.BLOBS.head(`kept/${roomId}/${blob}`)).toBeNull()
-  expect(await registry.getByName(keptShardName(roomId)).next()).toBeNull()
+  const remaining = await runInDurableObject(shard, (_, state) =>
+    state.storage.sql
+      .exec<{ id: string }>(
+        'SELECT id FROM kept_sweep_rooms WHERE id IN (?, ?) ORDER BY id',
+        roomId,
+        other,
+      )
+      .toArray(),
+  )
+  expect(remaining.map((row) => row.id)).toEqual([other])
 })
 
 it('continues to another room when delivery for one room times out', async () => {

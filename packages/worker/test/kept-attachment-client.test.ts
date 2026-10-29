@@ -152,12 +152,17 @@ it('retries a simultaneous upload until the first stored ciphertext can be verif
       c.close()
     },
   })
+  // Streams may pull eagerly before the Room receives the request. The pull
+  // callback alone therefore does not establish that the upload slot is held.
+  await waiting
+  expect(
+    await runInDurableObject(room, (instance) => instance['keptUploading'].has(idForImage)),
+  ).toBe(false)
   const first = room.fetch(`https://room/internal/kept/${id}/blobs/${idForImage}`, {
     method: 'PUT',
     headers: { Authorization: `Bearer ${keys.editAdmission}` },
     body,
   })
-  await waiting
   const calls: string[] = []
   const fetcher: typeof fetch = async (input, init) => {
     const req = new Request(input, init),
@@ -167,6 +172,9 @@ it('retries a simultaneous upload until the first stored ciphertext can be verif
     return response
   }
   try {
+    await expect
+      .poll(() => runInDurableObject(room, (instance) => instance['keptUploading'].has(idForImage)))
+      .toBe(true)
     const result = await new KeptAttachmentClient({
       url: 'https://room',
       keys,

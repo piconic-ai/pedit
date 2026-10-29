@@ -388,3 +388,48 @@ func TestFetchKeptReadDoesNotRetryRefusal(t *testing.T) {
 		t.Fatalf("refusal: error %v, calls %d", err, calls)
 	}
 }
+
+func TestKeptPageRetryBoundaries(t *testing.T) {
+	base, _ := url.Parse("https://example.test/read")
+	for _, tc := range []struct {
+		name       string
+		status     int
+		retryAfter string
+		retries    int
+		calls      int
+	}{
+		{"other status", 500, "1", 0, 1},
+		{"invalid retry delay", 429, "61", 0, 1},
+		{"global retry budget exhausted", 429, "1", 2, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			client := &http.Client{Transport: readRoundTripFunc(func(*http.Request) (*http.Response, error) {
+				calls++
+				return &http.Response{StatusCode: tc.status, Header: http.Header{"Retry-After": []string{tc.retryAfter}}, Body: io.NopCloser(strings.NewReader(""))}, nil
+			})}
+			retries := tc.retries
+			_, err := fetchKeptPage(client, base, "host", context.Background(), "session", "cursor", &retries)
+			if err == nil || calls != tc.calls {
+				t.Fatalf("error %v, calls %d", err, calls)
+			}
+		})
+	}
+}
+
+func TestKeptRetryDelayDigitsOnly(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  time.Duration
+	}{
+		{"", time.Minute}, {"1", time.Second}, {"60", time.Minute}, {"01", time.Second},
+		{"+1", 0}, {"-1", 0}, {" 1", 0}, {"1 ", 0}, {"1.0", 0}, {"１", 0},
+		{"0", 0}, {"61", 0}, {"999999999999999999999999999999", 0},
+	} {
+		t.Run(fmt.Sprintf("%q", tc.value), func(t *testing.T) {
+			if got := keptRetryDelay(tc.value).delay; got != tc.want {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

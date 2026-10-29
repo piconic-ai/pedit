@@ -23,6 +23,12 @@
       "namespace_id": "1031",
       "simple": { "limit": 20, "period": 60 }
     },
-    { "name": "CONNECTION_LIMIT", "namespace_id": "1032", "simple": { "limit": 60, "period": 60 } }
+    { "name": "CONNECTION_LIMIT", "namespace_id": "1032", "simple": { "limit": 60, "period": 60 } },
+    { "name": "KEPT_PAGE_LIMIT", "namespace_id": "1033", "simple": { "limit": 120, "period": 60 } },
+    {
+      "name": "KEPT_APPEND_LIMIT",
+      "namespace_id": "1034",
+      "simple": { "limit": 120, "period": 60 }
+    }
   ]
 }

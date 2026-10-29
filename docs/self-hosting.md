@@ -170,3 +170,14 @@ The relay is built with its embed providers: one file each in
 To drop, add or change one, edit those files and deploy. See
 [embeds](embeds.md#customizing-the-providers) for the providers that ship, how
 to write one, and the rules the relay checks.
+
+## Experimental retained-room transport
+
+The v6 retained-room Worker routes are disabled by default. Setting
+`KEEP_PUBLIC_V6` to `1` enables the internal-protocol bridge at
+`/internal/kept/`; it requires the `ROOM_CREATION_LIMIT`, `CONNECTION_LIMIT`,
+`KEPT_PAGE_LIMIT`, and `KEPT_APPEND_LIMIT` rate-limit bindings. Page reads and
+appends have separate per-IP budgets so they cannot exhaust the control-request
+budget. The relay still checks room capabilities and receives encrypted data. This switch does not
+connect the CLI or editor, and does not make host recovery, local saving, or
+acknowledgement complete. Leave it unset for ordinary pedit sessions.
