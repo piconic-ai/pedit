@@ -14,10 +14,10 @@
   },
   "dependencies": {
     "@pedit/protocol": "workspace:^",
-    "hono": "^4.13.13"
+    "hono": "^4.13.14"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.23.0",
-    "wrangler": "^4.151.2"
+    "wrangler": "^4.152.0"
   }
 }
