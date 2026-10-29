@@ -142,6 +142,35 @@ it('returns signed checkpoint state separately from the provisional tail', async
       new KeptRoomClient({ url: 'https://room', keys: wrongKeys, fetch: fetcher }).inspect(),
     ).rejects.toThrow()
     expect(deletes).toBe(7)
+    const malformed: typeof fetch = async (input, init) => {
+      const response = await fetcher(input, init)
+      if (init?.method !== 'POST') return response
+      const value = await response.json<{ epoch: string }>()
+      value.epoch = 'not-an-epoch'
+      return new Response(JSON.stringify(value), { status: 200 })
+    }
+    await expect(
+      new KeptRoomClient({ url: 'https://room', keys, fetch: malformed }).inspect(),
+    ).rejects.toThrow()
+    expect(deletes).toBe(8)
+    let realSession = ''
+    const invalidToken: typeof fetch = async (input, init) => {
+      const response = await fetcher(input, init)
+      if (init?.method !== 'POST') return response
+      const value = await response.json<{ session: string }>()
+      realSession = value.session
+      value.session = 'not-a-uuid'
+      return new Response(JSON.stringify(value), { status: 200 })
+    }
+    await expect(
+      new KeptRoomClient({ url: 'https://room', keys, fetch: invalidToken }).inspect(),
+    ).rejects.toThrow()
+    expect(deletes).toBe(8)
+    const cleanup = await room.fetch(`${base}/read`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${fixture.editor}`, 'X-Pedit-Read-Session': realSession },
+    })
+    expect(cleanup.status).toBe(204)
   } finally {
     await evictDurableObject(room, { webSockets: 'close' })
   }

@@ -43,6 +43,27 @@ function cipher(v: unknown): v is string {
     return false
   }
 }
+// Extract only a canonical session capability for best-effort cleanup when
+// other snapshot fields are invalid. Never forward an unvalidated token.
+export function keptReadSessionForCleanup(raw: string): string | undefined {
+  if (raw.length > 2 * MAX_FRAME_BYTES) return undefined
+  try {
+    const value: unknown = JSON.parse(raw)
+    if (
+      !value ||
+      typeof value !== 'object' ||
+      Array.isArray(value) ||
+      JSON.stringify(value) !== raw ||
+      !('session' in value) ||
+      !identifier(value.session)
+    )
+      return undefined
+    return value.session
+  } catch {
+    return undefined
+  }
+}
+
 export function parseKeptReadSnapshot(raw: string): KeptReadSnapshot {
   const v = parse(raw, ['epoch', 'generation', 'cutoff', 'ciphertext', 'tail', 'session', 'cursor'])
   if (

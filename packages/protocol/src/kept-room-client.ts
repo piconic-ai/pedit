@@ -10,6 +10,7 @@ import {
   checkKeptReadAnchor,
   type KeptReadAnchor,
   type KeptReadSnapshot,
+  keptReadSessionForCleanup,
   parseKeptReadPage,
   parseKeptReadSnapshot,
 } from './kept-read-wire.ts'
@@ -189,35 +190,40 @@ export class KeptRoomClient {
         }),
       )
     }
-    const snapshot = parseKeptReadSnapshot(await get('POST'))
+    const raw = await get('POST')
+    const session = keptReadSessionForCleanup(raw)
     try {
+      const snapshot = parseKeptReadSnapshot(raw)
       return await this.inspectSnapshot(snapshot, get, signal)
     } finally {
-      const controller = new AbortController()
-      let timer: ReturnType<typeof setTimeout> | undefined
-      try {
-        await Promise.race([
-          this.fetcher(this.endpoint, {
-            method: 'DELETE',
-            headers: { ...auth, 'X-Pedit-Read-Session': snapshot.session },
-            signal: controller.signal,
-            redirect: 'manual',
-            cache: 'no-store',
-          }).then((response) => {
-            void response.body?.cancel().catch(() => {})
-          }),
-          new Promise<void>((resolve) => {
-            timer = setTimeout(() => {
-              controller.abort()
-              resolve()
-            }, 2000)
-          }),
-        ])
-      } catch {
-        // Session expiry is the fallback if cleanup cannot reach the relay.
-      } finally {
-        clearTimeout(timer)
-      }
+      if (session) await this.cancelRead(auth, session)
+    }
+  }
+  private async cancelRead(auth: { Authorization: string }, session: string): Promise<void> {
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([
+        this.fetcher(this.endpoint, {
+          method: 'DELETE',
+          headers: { ...auth, 'X-Pedit-Read-Session': session },
+          signal: controller.signal,
+          redirect: 'manual',
+          cache: 'no-store',
+        }).then((response) => {
+          void response.body?.cancel().catch(() => {})
+        }),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(() => {
+            controller.abort()
+            resolve()
+          }, 2000)
+        }),
+      ])
+    } catch {
+      // Session expiry is the fallback if cleanup cannot reach the relay.
+    } finally {
+      clearTimeout(timer)
     }
   }
   private async inspectSnapshot(
