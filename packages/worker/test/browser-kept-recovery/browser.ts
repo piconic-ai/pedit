@@ -9,6 +9,7 @@ import { KeptOutbox } from '../../../protocol/src/kept-outbox.ts'
 import { KeptRoomClient } from '../../../protocol/src/kept-room-client.ts'
 import fixture from '../../../testdata/kept-read-interop.json'
 import shared from '../../../testdata/kept-recovery-wire.json'
+import { KeptCommentController } from '../../../web/src/kept-comment-controller.ts'
 import { TestKeptEditor } from './test-editor.ts'
 
 const status = document.querySelector('#status')!
@@ -333,6 +334,33 @@ async function run() {
       await remoteController.close()
       remoteDoc.destroy()
       remoteBox.close()
+      const commentLink = parseKeptFragment(keys.fragments.comment ?? '')
+      if (!commentLink || commentLink.access !== 'comment') throw Error('comment link missing')
+      const commentBox = await KeptOutbox.open(`${dbName}-comments`)
+      const commentSender = await commentBox.createSender(commentLink, fixture.roomId)
+      const commentState = Uint8Array.from(
+        atob(shared.commentsState.replace(/-/g, '+').replace(/_/g, '/')),
+        (c) => c.charCodeAt(0),
+      )
+      const comments = await KeptCommentController.open({
+        url: location.origin,
+        link: commentLink,
+        context,
+        sender: commentSender,
+        outbox: commentBox,
+        metaId: 7,
+        text: state,
+        comments: commentState,
+        name: () => 'Ada',
+        onStatus: () => {},
+        fetch: async () => {
+          throw Error('offline')
+        },
+      })
+      const thread = await comments.start(0, 5, 'offline comment')
+      await comments.reply(thread, 'offline reply')
+      await comments.close()
+      commentBox.close()
       // Keep a writer lock held until the harness kills Chrome.
       const crashBox = await KeptOutbox.open(dbName)
       await KeptEditController.open({
@@ -436,6 +464,44 @@ async function run() {
     initial.destroy()
     if (restored.getText('content').toString() !== expected) throw Error('Yjs text mismatch')
     restored.destroy()
+    const commentLink = parseKeptFragment(keys.fragments.comment ?? '')
+    if (!commentLink || commentLink.access !== 'comment') throw Error('comment link missing')
+    const commentBox = await KeptOutbox.open(`${dbName}-comments`)
+    const [commentSender] = await commentBox.senders(commentLink, fixture.roomId)
+    if (!commentSender) throw Error('comment sender missing')
+    const commentState = Uint8Array.from(
+      atob(shared.commentsState.replace(/-/g, '+').replace(/_/g, '/')),
+      (c) => c.charCodeAt(0),
+    )
+    let commentStatus: KeptEditStatus = 'idle'
+    const commentController = await KeptCommentController.open({
+      url: location.origin,
+      link: commentLink,
+      context,
+      sender: commentSender,
+      outbox: commentBox,
+      metaId: 7,
+      text: state,
+      comments: commentState,
+      name: () => 'Ada',
+      onStatus: (value) => {
+        commentStatus = value
+      },
+    })
+    const recovered = new Y.Doc()
+    Y.applyUpdate(recovered, commentController.commentState())
+    if (!JSON.stringify(recovered.getMap('comments').toJSON()).includes('offline reply'))
+      throw Error('comment not recovered')
+    recovered.destroy()
+    await untilStatus(() => commentStatus, 'relay-accepted')
+    await commentController.close()
+    commentBox.close()
+    const withComments = await reader.inspect()
+    const remoteComments = new Y.Doc()
+    Y.applyUpdate(remoteComments, withComments.commentsState)
+    if (!JSON.stringify(remoteComments.getMap('comments').toJSON()).includes('offline reply'))
+      throw Error('comment not accepted by Room')
+    remoteComments.destroy()
     status.textContent =
       'PASS: checkpoint and Yjs edit recovered after Chrome crash; tail unverified'
   } catch (e) {

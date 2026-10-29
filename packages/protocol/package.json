@@ -22,6 +22,8 @@
     "./frame": "./src/frame.ts",
     "./kept-access": "./src/kept-access.ts",
     "./kept-checkpoint": "./src/kept-checkpoint.ts",
+    "./kept-comments-schema": "./src/kept-comments-schema.ts",
+    "./kept-text-schema": "./src/kept-text-schema.ts",
     "./kept-ledger": "./src/kept-ledger.ts",
     "./kept-ledger-encoding": "./src/kept-ledger-encoding.ts",
     "./kept-record": "./src/kept-record.ts",

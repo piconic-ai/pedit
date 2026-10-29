@@ -25,3 +25,8 @@ The test-only page also mounts CodeMirror against the kept controller. It
 checks pending, failure, and relay-receipt wording, keeps rejected input in a
 copyable draft, and restores the editor when the controller rejects an edit.
 This harness is not the product UI and does not enable a public v6 route.
+
+The comment-only controller is also exercised: a new thread and reply are
+persisted offline, restored after Chrome restarts, and sent to the local Room.
+The Room reader inspects the resulting metadata. This is an internal test;
+it does not enable a product comment editor or prove host-file persistence.
