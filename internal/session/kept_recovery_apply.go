@@ -18,12 +18,11 @@ const maxRecoveryTextWork = protocol.MaxKeptYjsWork
 
 var keptAttachment = regexp.MustCompile(`assets/[0-9a-f]{32}\.(png|jpg|gif|webp)`)
 
-// startKeptRecovery builds an isolated candidate before creating a held,
-// disconnected session. The caller must authenticate the checkpoint, provide
+// replayKeptRecovery builds an isolated candidate without opening local files. The caller must authenticate the checkpoint, provide
 // its matching ledger, and treat the tail as unverified. The metadata ID must
 // come from the authenticated single-file manifest. This does not authorize
 // saving, acknowledgement, or cutting the relay log.
-func startKeptRecovery(ctx context.Context, opts Options, checkpoint recoveryCheckpoint, ledger protocol.KeptLedger, keys *protocol.KeptRoomKeys, recordContext protocol.KeptRecordContext, frames [][]byte) (session *Session, err error) {
+func replayKeptRecovery(checkpoint recoveryCheckpoint, ledger protocol.KeptLedger, keys *protocol.KeptRoomKeys, recordContext protocol.KeptRecordContext, frames [][]byte) (result *recoveryCheckpoint, err error) {
 	if len(frames) > protocol.MaxKeptReadRecords {
 		return nil, errors.New("too many recovery records")
 	}
@@ -46,7 +45,7 @@ func startKeptRecovery(ctx context.Context, opts Options, checkpoint recoveryChe
 	}
 	defer func() {
 		if recover() != nil {
-			session, err = nil, errors.New("invalid recovery update")
+			result, err = nil, errors.New("invalid recovery update")
 		}
 	}()
 	text, comments := crdt.New(), crdt.New()
@@ -88,7 +87,15 @@ func startKeptRecovery(ctx context.Context, opts Options, checkpoint recoveryChe
 	checkpoint.text = crdt.EncodeStateAsUpdateV1(text, nil)
 	checkpoint.comments = crdt.EncodeStateAsUpdateV1(comments, nil)
 	checkpoint.ledger = ledger
-	return start(ctx, opts, &checkpoint)
+	return &checkpoint, nil
+}
+
+func startKeptRecovery(ctx context.Context, opts Options, checkpoint recoveryCheckpoint, ledger protocol.KeptLedger, keys *protocol.KeptRoomKeys, recordContext protocol.KeptRecordContext, frames [][]byte) (*Session, error) {
+	replayed, err := replayKeptRecovery(checkpoint, ledger, keys, recordContext, frames)
+	if err != nil {
+		return nil, err
+	}
+	return start(ctx, opts, replayed)
 }
 
 type keptReplayer struct {

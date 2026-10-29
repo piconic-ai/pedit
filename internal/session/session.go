@@ -141,7 +141,7 @@ func (s *Session) recoveryContents() (local, recovered string, differs bool, err
 	if s.recovery == nil {
 		return "", "", false, errors.New("session is not recovering")
 	}
-	local, ok := s.bound.Read()
+	local, ok := s.bound.ReadLimited(protocol.MaxFrameBytes)
 	if !ok || !utf8.ValidString(local) {
 		return "", "", false, errors.New("cannot read local recovery file")
 	}
@@ -202,22 +202,15 @@ func initialAwareness(doc *crdt.Doc, opts Options, shared content, recovery *rec
 	return aw
 }
 
-// A missing recovery file is kept absent; the held writer can never create it.
+// Recovery never needs local bytes to construct a held candidate. Bind the
+// name without reading it; the held writer cannot modify or create it.
 func openSessionFile(path string, recovery *recoveryCheckpoint) (*filewriter.BoundFile, string, error) {
 	if recovery == nil {
-		return openShared(path)
-	}
-	_, err := os.Lstat(path)
-	if !errors.Is(err, os.ErrNotExist) {
 		return openShared(path)
 	}
 	bound, err := filewriter.OpenBound(path)
 	if err != nil {
 		return nil, "", err
-	}
-	if _, err = os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
-		bound.Close()
-		return nil, "", errors.New("recovery file changed while opening")
 	}
 	bound.CreateOnly()
 	return bound, "", nil

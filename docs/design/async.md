@@ -199,9 +199,10 @@ from the authenticated single-file manifest.
 An internal read path starts from the exact signed checkpoint saved in the
 initial host baseline and verifies the fixed tail before constructing this held
 session. It cannot establish that the relay supplied every unseen update. It
-persists a separate private candidate on supported filesystems; if publication
-fails, the caller receives the held candidate and any published path with the
-error. It does not compare local comments, safely release the hold, or commit
+persists a separate private candidate on supported filesystems before opening
+the local file or project. Its file comparison is unavailable. If publication
+or later local session construction fails, the caller receives the candidate
+and any published path with the error. It does not compare local comments, safely release the hold, or commit
 the relay cut. The candidate is for inspection and does not prove relay tail
 completeness. The relay data must remain available until a separately durable
 recovery is complete. A missing local text file or malformed local metadata

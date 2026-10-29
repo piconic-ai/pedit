@@ -57,12 +57,16 @@ func inspectKeptRecovery(ctx context.Context, store *hoststate.Store, room strin
 	}
 	cp := recoveryCheckpoint{text: result.Checkpoint.Documents[0], comments: result.Checkpoint.Documents[metaID], metaID: metaID}
 	opts := Options{File: baseline.File, Root: baseline.Project, Project: baseline.Project, Server: credentials.Origin}
-	s, err := startKeptRecovery(ctx, opts, cp, result.Checkpoint.Ledger, keys, protocol.KeptRecordContext{RoomID: room, Epoch: baseline.Epoch, Generation: 1}, result.Frames)
+	replayed, err := replayKeptRecovery(cp, result.Checkpoint.Ledger, keys, protocol.KeptRecordContext{RoomID: room, Epoch: baseline.Epoch, Generation: 1}, result.Frames)
 	if err != nil {
 		return nil, err
 	}
-	candidate := &keptRecoveryCandidate{session: s, room: room, baseline: baseline, tailStatus: "tail-unverified", attachmentStatus: "attachments-unverified"}
-	candidate.path, err = candidate.exportRecoveryCandidate(store, room)
+	candidate := &keptRecoveryCandidate{room: room, baseline: baseline, tailStatus: "tail-unverified", attachmentStatus: "attachments-unverified"}
+	candidate.path, err = exportVerifiedRecovery(store, room, result.Checkpoint.Manifest[0].Path, *replayed)
+	if err != nil {
+		return candidate, err
+	}
+	candidate.session, err = start(ctx, opts, replayed)
 	if err != nil {
 		return candidate, err
 	}

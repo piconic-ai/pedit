@@ -32,6 +32,30 @@ type recoveryExport struct {
 	Attachments         string          `json:"attachments"`
 }
 
+// exportVerifiedRecovery retains the authenticated replay without reading or
+// opening the local file. The result remains an unverified-tail inspection.
+func exportVerifiedRecovery(store *hoststate.Store, room, path string, cp recoveryCheckpoint) (string, error) {
+	text := crdt.New()
+	defer text.Destroy()
+	if err := crdt.ApplyUpdateV1(text, cp.text, nil); err != nil {
+		return "", err
+	}
+	comments := crdt.New()
+	defer comments.Destroy()
+	if err := crdt.ApplyUpdateV1(comments, cp.comments, nil); err != nil {
+		return "", err
+	}
+	out := recoveryExport{Version: 1, RoomID: room, Path: path, MetadataID: cp.metaID, TextComparison: "unavailable", Text: text.GetText("content").ToString(), TextYjs: cp.text, CommentsYjs: cp.comments, Tail: "unverified", Attachments: "unverified"}
+	if view, err := comments.GetMap(meta.CommentsKey).ToJSON(); err == nil {
+		out.CommentsView = view
+	}
+	data, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return store.PublishCandidate(room, append(data, '\n'))
+}
+
 // exportRecoveryCandidate writes only a separate, private candidate; the
 // comparison is an observation, not permission to overwrite the local file.
 func (c *keptRecoveryCandidate) exportRecoveryCandidate(store *hoststate.Store, room string) (string, error) {
@@ -75,7 +99,7 @@ func (c *keptRecoveryCandidate) exportRecoveryCandidate(store *hoststate.Store, 
 		if snapshotErr != nil {
 			return snapshotErr
 		}
-		local, ok := s.bound.Read()
+		local, ok := s.bound.ReadLimited(protocol.MaxFrameBytes)
 		if ok && utf8.ValidString(local) {
 			digest := sha256.Sum256([]byte(local))
 			out.ObservedLocalSHA256 = hex.EncodeToString(digest[:])

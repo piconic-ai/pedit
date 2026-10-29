@@ -423,6 +423,25 @@ func TestKeptRecoveryRetainsCandidateWhenLocalMetadataMalformed(t *testing.T) {
 		t.Fatalf("local metadata changed: %q", got)
 	}
 }
+
+func TestKeptRecoveryStagesWhenLocalTextIsNotUTF8(t *testing.T) {
+	f := newRecoveryFixture(t)
+	frame := f.frame(t, f.keys, 1, 1, f.textUpdate)
+	if err := os.WriteFile(f.opts.File, []byte{0xff, 0xfe}, 0600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := startKeptRecovery(context.Background(), f.opts, f.checkpoint, f.ledger, f.keys, f.context, [][]byte{frame})
+	if err != nil {
+		t.Fatalf("verified candidate unavailable for non-UTF-8 local conflict: %v", err)
+	}
+	if err = s.Stop(); !errors.Is(err, filewriter.ErrRecoveryHeld) {
+		t.Fatalf("stop: %v", err)
+	}
+	got, err := os.ReadFile(f.opts.File)
+	if err != nil || !bytes.Equal(got, []byte{0xff, 0xfe}) {
+		t.Fatalf("source changed: %x %v", got, err)
+	}
+}
 func TestKeptRecoveryRetriesValidTailAfterInvalidTail(t *testing.T) {
 	f := newRecoveryFixture(t)
 	frame := f.frame(t, f.keys, 1, 1, f.textUpdate)

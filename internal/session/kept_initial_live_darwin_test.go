@@ -64,7 +64,8 @@ func TestLiveKeptInitial(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer snapshot.Close()
-	store, err := hoststate.Open(filepath.Join(dir, "state"))
+	stateDir := filepath.Join(t.TempDir(), "state")
+	store, err := hoststate.Open(stateDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +127,7 @@ func TestLiveKeptInitial(t *testing.T) {
 	if err = store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	store, err = hoststate.Open(filepath.Join(dir, "state"))
+	store, err = hoststate.Open(stateDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +227,7 @@ func TestLiveKeptInitial(t *testing.T) {
 			if err = store.Close(); err != nil {
 				t.Fatal(err)
 			}
-			store, err = hoststate.Open(filepath.Join(dir, "state"))
+			store, err = hoststate.Open(stateDir)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -319,6 +320,82 @@ func TestLiveKeptInitial(t *testing.T) {
 		t.Fatalf("malformed reopen hold: %v", e)
 	}
 	if err = os.WriteFile(metadata, []byte(localMeta), 0600); err != nil {
+		t.Fatal(err)
+	}
+	invalid := []byte{0xff, 0xfe}
+	if err = os.WriteFile(file, invalid, 0600); err != nil {
+		t.Fatal(err)
+	}
+	nonUTF, e := inspectKeptRecovery(ctx, store, room, client)
+	if e != nil || nonUTF.path == "" {
+		t.Fatalf("non-UTF candidate: %v", e)
+	}
+	if e = nonUTF.session.Stop(); !errors.Is(e, filewriter.ErrRecoveryHeld) {
+		t.Fatalf("non-UTF hold: %v", e)
+	}
+	source, e := os.ReadFile(file)
+	if e != nil || !bytes.Equal(source, invalid) {
+		t.Fatal("non-UTF source changed")
+	}
+	if err = os.Truncate(file, int64(protocol.MaxFrameBytes)+1); err != nil {
+		t.Fatal(err)
+	}
+	large, e := inspectKeptRecovery(ctx, store, room, client)
+	if e != nil || large.path == "" {
+		t.Fatalf("large file candidate: %v", e)
+	}
+	if e = large.session.Stop(); !errors.Is(e, filewriter.ErrRecoveryHeld) {
+		t.Fatalf("large file hold: %v", e)
+	}
+	if err = os.Remove(file); err != nil {
+		t.Fatal(err)
+	}
+	targetFile := filepath.Join(dir, "target")
+	if err = os.WriteFile(targetFile, []byte("untouched"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Symlink(targetFile, file); err != nil {
+		t.Fatal(err)
+	}
+	unbound, e := inspectKeptRecovery(ctx, store, room, client)
+	if e == nil || unbound == nil || unbound.path == "" || unbound.session != nil {
+		t.Fatalf("symlink candidate unavailable: %#v %v", unbound, e)
+	}
+	retainedBytes, e := store.ReadCandidate(room, unbound.path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	var retainedState recoveryExport
+	if e = json.Unmarshal(retainedBytes, &retainedState); e != nil || retainedState.Text != "initial file guest" || retainedState.TextComparison != "unavailable" {
+		t.Fatalf("symlink retained candidate: %v", e)
+	}
+	targetBytes, e := os.ReadFile(targetFile)
+	if e != nil || string(targetBytes) != "untouched" {
+		t.Fatal("symlink target changed")
+	}
+	if err = os.Remove(file); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(file, []byte(external), 0600); err != nil {
+		t.Fatal(err)
+	}
+	moved := dir + "-moved"
+	if err = os.Rename(dir, moved); err != nil {
+		t.Fatal(err)
+	}
+	missingProject, e := inspectKeptRecovery(ctx, store, room, client)
+	if e == nil || missingProject == nil || missingProject.path == "" || missingProject.session != nil {
+		t.Fatalf("missing project candidate unavailable: %#v %v", missingProject, e)
+	}
+	rawCandidate, e := store.ReadCandidate(room, missingProject.path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	var missingState recoveryExport
+	if e = json.Unmarshal(rawCandidate, &missingState); e != nil || missingState.Text != "initial file guest" {
+		t.Fatalf("missing project content: %v", e)
+	}
+	if err = os.Rename(moved, dir); err != nil {
 		t.Fatal(err)
 	}
 	if err = host.CloseRoom(ctx); err != nil {
