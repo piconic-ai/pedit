@@ -3,7 +3,7 @@ import * as encoding from 'lib0/encoding'
 import * as sync from 'y-protocols/sync'
 import * as Y from 'yjs'
 import type { KeptLinkSecrets } from './kept-access.ts'
-import { KeptOutbox } from './kept-outbox.ts'
+import { KeptOutbox, MAX_OUTBOX_OPERATIONS } from './kept-outbox.ts'
 import { KeptOutboxSender } from './kept-outbox-sender.ts'
 import type { KeptRecordContext } from './kept-record.ts'
 import { checkKeptTextState } from './kept-text-schema.ts'
@@ -65,6 +65,7 @@ export class KeptEditController {
   private running: Promise<void> | undefined
   private persistence: Promise<void> = Promise.resolve()
   private editRevision = 0
+  private operationCount = 0
   private remoteWork: Promise<void> | undefined
   private closeAttempt: Promise<void> | undefined
   private closing = false
@@ -113,6 +114,7 @@ export class KeptEditController {
       )
         throw new Error('invalid or incomplete kept text')
       const controller = new KeptEditController(options, doc, release)
+      controller.operationCount = rows.reduce((max, row) => Math.max(max, row.sequence), 0)
       options.onStatus(rows.some((row) => !row.acknowledged) ? 'pending' : 'idle')
       if (rows.some((row) => !row.acknowledged)) void controller.retry()
       return controller
@@ -145,9 +147,14 @@ export class KeptEditController {
     try {
       Y.applyUpdate(probe, Y.encodeStateAsUpdate(this.#doc))
       probe.clientID = this.#doc.clientID
+      let operations = 0
+      probe.on('update', () => operations++)
       this.replaceText(probe.getText('content'), from, to, value)
       if (!checkKeptTextState(Y.encodeStateAsUpdate(probe)))
         throw new Error('kept text capacity exceeded')
+      if (this.operationCount + operations > MAX_OUTBOX_OPERATIONS)
+        throw new Error('kept outbox capacity exceeded')
+      this.operationCount += operations
     } finally {
       probe.destroy()
     }

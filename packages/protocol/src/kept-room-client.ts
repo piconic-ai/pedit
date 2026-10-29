@@ -42,8 +42,37 @@ const maxEntries = 1024
 const maxBytes = 16 * MAX_FRAME_BYTES
 const decode64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0))
 
+class KeptReadRefused extends Error {
+  readonly retryMs: number
+  constructor(response: Response) {
+    super(response.status === 429 ? 'kept read rate limited' : 'kept read refused')
+    const value = response.headers.get('Retry-After') ?? '60'
+    const seconds = /^[0-9]+$/.test(value) ? Number(value) : 0
+    this.retryMs =
+      response.status === 429 && Number.isSafeInteger(seconds) && seconds >= 1 && seconds <= 60
+        ? seconds * 1000
+        : 0
+    void response.body?.cancel().catch(() => {})
+  }
+}
+
+async function waitForRetry(ms: number, signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted()
+  await new Promise<void>((resolve, reject) => {
+    const abort = () => {
+      clearTimeout(timer)
+      reject(signal.reason)
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', abort)
+      resolve()
+    }, ms)
+    signal.addEventListener('abort', abort, { once: true })
+  })
+}
+
 async function boundedText(response: Response): Promise<string> {
-  if (!response.ok || !response.body) throw new Error('kept read refused')
+  if (!response.ok || !response.body) throw new KeptReadRefused(response)
   const reader = response.body.getReader(),
     chunks: Uint8Array[] = []
   let size = 0
@@ -161,22 +190,46 @@ export class KeptRoomClient {
     this.fetcher = opts.fetch ?? ((...args) => fetch(...args))
   }
   async inspect(signal?: AbortSignal): Promise<KeptReadInspection> {
+    const controller = new AbortController()
+    const abort = () => controller.abort(signal?.reason)
+    if (signal?.aborted) abort()
+    else signal?.addEventListener('abort', abort, { once: true })
+    // The relay's fixed read expires after five minutes.
+    const timer = setTimeout(() => controller.abort(), 4 * 60 * 1000)
+    try {
+      return await this.inspectSession(controller.signal)
+    } finally {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', abort)
+    }
+  }
+  private async inspectSession(signal: AbortSignal): Promise<KeptReadInspection> {
     const auth = { Authorization: `Bearer ${keptReadAdmission(this.opts.keys)}` }
+    let rateRetries = 0
     const get = async (method: string, session?: string, cursor?: string) => {
       const headers = new Headers(auth)
       if (session && cursor) {
         headers.set('X-Pedit-Read-Session', session)
         headers.set('X-Pedit-Read-Cursor', cursor)
       }
-      return boundedText(
-        await this.fetcher(this.endpoint, {
-          method,
-          headers,
-          signal,
-          redirect: 'manual',
-          cache: 'no-store',
-        }),
-      )
+      for (;;) {
+        signal.throwIfAborted()
+        try {
+          return await boundedText(
+            await this.fetcher(this.endpoint, {
+              method,
+              headers,
+              signal,
+              redirect: 'manual',
+              cache: 'no-store',
+            }),
+          )
+        } catch (error) {
+          if (!(error instanceof KeptReadRefused) || !error.retryMs || rateRetries >= 2) throw error
+          rateRetries++
+          await waitForRetry(error.retryMs, signal)
+        }
+      }
     }
     const snapshot = parseKeptReadSnapshot(await get('POST'))
     try {
@@ -247,7 +300,7 @@ export class KeptRoomClient {
         try {
           raw = await get('GET', snapshot.session, cursor)
         } catch (err) {
-          if (signal?.aborted) throw err
+          if (signal?.aborted || err instanceof KeptReadRefused) throw err
           raw = await get('GET', snapshot.session, cursor)
         }
         const page = parseKeptReadPage(raw, after, snapshot.tail)

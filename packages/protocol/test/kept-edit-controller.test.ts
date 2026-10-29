@@ -410,3 +410,44 @@ it('review: edit persisted while an idle send is completing is sent', async () =
   await c.close()
   outbox.close()
 })
+
+it.each([
+  [1024, 1],
+  [1023, 8193],
+  [1023, 16384],
+])(
+  'rejects a whole replacement beyond outbox capacity (%i existing, %i characters)',
+  async (existing, length) => {
+    const { outbox, sender, opts } = await setup()
+    const encoding = await import('lib0/encoding')
+    const sync = await import('y-protocols/sync')
+    const { encodeMessage, MessageType } = await import('../src/message.ts')
+    const doc = new Y.Doc()
+    const encoder = encoding.createEncoder()
+    sync.writeUpdate(encoder, Y.encodeStateAsUpdate(doc))
+    const message = encodeMessage(MessageType.Sync, encoding.toUint8Array(encoder))
+    for (let i = 0; i < existing; i++) await outbox.enqueue(link, roomId, sender, message)
+    const controller = await KeptEditController.open(opts)
+    try {
+      await expect(controller.replace(0, 0, 'x'.repeat(length))).rejects.toThrow('outbox capacity')
+      expect(controller.text()).toBe('')
+      await controller.close()
+      expect(await outbox.operations(link, roomId, sender)).toHaveLength(existing)
+      const reopened = await KeptEditController.open(opts)
+      expect(reopened.text()).toBe('')
+      if (existing === 1023) {
+        await reopened.replace(0, 0, 'ok')
+        await expect(reopened.replace(2, 2, '!')).rejects.toThrow('outbox capacity')
+        await reopened.replace(2, 2, '')
+        expect(reopened.text()).toBe('ok')
+      }
+      await reopened.close()
+      expect(await outbox.operations(link, roomId, sender)).toHaveLength(1024)
+    } finally {
+      await controller.close().catch(() => {})
+      outbox.close()
+      doc.destroy()
+    }
+  },
+  30000,
+)
