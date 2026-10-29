@@ -387,3 +387,30 @@ it('rolls back both bindings when their transaction aborts', async () => {
   )
   outbox.close()
 })
+it('review: concurrent different pairs commit only one binding', async () => {
+  const { edit, comment, read, outbox, editSender, commentSender } = await setup()
+  const other = await outbox.createSender(comment, fixture.roomId)
+  const candidate = { textState: read.textState, commentsState: read.commentsState }
+  const results = await Promise.allSettled([
+    outbox.stageBootstrapPair(edit, comment, read.checkpoint, candidate, {
+      editSender,
+      commentSender,
+    }),
+    outbox.stageBootstrapPair(edit, comment, read.checkpoint, candidate, {
+      editSender,
+      commentSender: other,
+    }),
+  ])
+  expect(results.filter((x) => x.status === 'fulfilled')).toHaveLength(1)
+  const binding = await outbox.bootstrapState(edit, fixture.roomId, editSender)
+  const winning = binding.checkpoint.pair.commentSender
+  expect([commentSender, other]).toContain(winning)
+  expect(
+    (await outbox.bootstrapState(comment, fixture.roomId, winning)).checkpoint.pair.editSender,
+  ).toBe(editSender)
+  const losing = winning === other ? commentSender : other
+  await expect(outbox.bootstrapState(comment, fixture.roomId, losing)).rejects.toThrow(
+    'unavailable',
+  )
+  outbox.close()
+})
