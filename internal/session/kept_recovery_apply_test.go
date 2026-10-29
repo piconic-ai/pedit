@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -384,5 +385,72 @@ func TestKeptRecoverySeparatelyBoundsBaselineAndTail(t *testing.T) {
 	}
 	if got := readFile(t, f.opts.File); got != "external edit" {
 		t.Fatalf("disk changed: %q", got)
+	}
+}
+
+// Each peer inserts at the same position in the baseline. Integrating these
+// siblings makes ygo scan a growing conflict list despite the small wire size.
+func concurrentRecoveryUpdates(t *testing.T, baseline []byte, start, count int) []byte {
+	t.Helper()
+	updates := make([][]byte, 0, count)
+	for i := start; i < start+count; i++ {
+		doc := crdt.New(crdt.WithClientID(crdt.ClientID(uint64(1<<40) + uint64(i))))
+		if err := crdt.ApplyUpdateV1(doc, baseline, nil); err != nil {
+			t.Fatal(err)
+		}
+		var update []byte
+		doc.OnUpdate(func(b []byte, _ any) { update = bytes.Clone(b) })
+		value := doc.GetText("content")
+		doc.Transact(func(tx *crdt.Transaction) { value.Insert(tx, 0, "x", nil) })
+		updates = append(updates, update)
+		doc.Destroy()
+	}
+	merged, err := crdt.MergeUpdatesV1(updates...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return merged
+}
+
+func TestKeptRecoveryBoundsConflictWorkAcrossRecords(t *testing.T) {
+	f := newRecoveryFixture(t)
+	baseline, err := protocol.KeptTextWork(f.checkpoint.text, false)
+	if err != nil || baseline != 1 {
+		t.Fatalf("baseline work: %d %v", baseline, err)
+	}
+	first := concurrentRecoveryUpdates(t, f.checkpoint.text, 1, 600)
+	second := concurrentRecoveryUpdates(t, f.checkpoint.text, 601, 423)
+	extra := concurrentRecoveryUpdates(t, f.checkpoint.text, 1024, 1)
+	frames := [][]byte{f.frame(t, f.keys, 1, 1, first), f.frame(t, f.keys, 2, 1, second)}
+	if len(first)+len(second) >= protocol.MaxFrameBytes {
+		t.Fatal("test does not represent compact adversarial updates")
+	}
+	s, err := startKeptRecovery(context.Background(), f.opts, f.checkpoint, f.ledger, f.keys, f.context, frames)
+	if err != nil {
+		t.Fatalf("accepted boundary rejected: %v", err)
+	}
+	_ = s.Stop()
+	frames = append(frames, f.frame(t, f.keys, 3, 1, extra))
+	if _, err := startKeptRecovery(context.Background(), f.opts, f.checkpoint, f.ledger, f.keys, f.context, frames); err == nil || !strings.Contains(err.Error(), "work exceeded") {
+		t.Fatalf("excess work accepted: %v", err)
+	}
+	if len(f.ledger.Snapshot()) != 0 || readFile(t, f.opts.File) != "external edit" {
+		t.Fatal("rejected update changed original state")
+	}
+}
+
+func TestKeptRecoveryBoundsCheckpointConflictWork(t *testing.T) {
+	f := newRecoveryFixture(t)
+	updates := concurrentRecoveryUpdates(t, f.checkpoint.text, 1, maxRecoveryTextWork)
+	combined, err := crdt.MergeUpdatesV1(f.checkpoint.text, updates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.checkpoint.text = combined
+	if _, err = startKeptRecovery(context.Background(), f.opts, f.checkpoint, f.ledger, f.keys, f.context, nil); err == nil || !strings.Contains(err.Error(), "work exceeded") {
+		t.Fatalf("oversized checkpoint work accepted: %v", err)
+	}
+	if readFile(t, f.opts.File) != "external edit" {
+		t.Fatal("rejected checkpoint changed original file")
 	}
 }

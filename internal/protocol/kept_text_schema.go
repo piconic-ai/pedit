@@ -9,6 +9,13 @@ func CheckKeptTextState(state []byte) error { return checkKeptSchema(state, kept
 func CheckKeptTextUpdate(update []byte) error {
 	return checkKeptSchemaWithStart(update, keptTextItem, false, true)
 }
+
+// KeptTextWork counts encoded structs and potential delete boundary splits.
+// The caller must include the baseline and all applied updates in its budget.
+func KeptTextWork(update []byte, incremental bool) (uint64, error) {
+	return measureKeptSchema(update, keptTextItem, false, incremental)
+}
+
 func keptTextItem(r *keptSchemaReader) error {
 	info, err := r.d.ReadUint8()
 	if err != nil || info&0x20 != 0 || (info&31 != 1 && info&31 != 4) {

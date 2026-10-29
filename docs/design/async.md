@@ -519,3 +519,10 @@ disconnect a reader when the socket limit is full, and an arriving editor can
 disconnect a reader or commenter. When the configured writer limit is full,
 an editor can disconnect a commenter to make room. Read and socket requests
 use the highest admission tier available in the link.
+
+The internal host recovery replay accepts at most 1,024 text work units across
+the checkpoint and all newly applied tail records. Each encoded struct costs
+one unit; each delete range costs two for possible boundary splits. This
+conservative limit bounds the size of conflict lists before applying an update.
+A fragmented but valid document can exceed the limit and is then left
+unapplied; the relay history and local file remain unchanged.

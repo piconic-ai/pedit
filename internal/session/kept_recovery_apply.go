@@ -12,6 +12,10 @@ import (
 	ysync "github.com/reearth/ygo/sync"
 )
 
+// Each text struct can scan the existing sequence, and each deletion can split
+// two existing structs. Bound the cumulative encoded work before applying it.
+const maxRecoveryTextWork = 1024
+
 var keptAttachment = regexp.MustCompile(`assets/[0-9a-f]{32}\.(png|jpg|gif|webp)`)
 
 // startKeptRecovery builds an isolated candidate before creating a held,
@@ -47,8 +51,12 @@ func startKeptRecovery(ctx context.Context, opts Options, checkpoint recoveryChe
 	text, comments := crdt.New(), crdt.New()
 	defer text.Destroy()
 	defer comments.Destroy()
-	if err := protocol.CheckKeptTextState(checkpoint.text); err != nil {
+	work, err := protocol.KeptTextWork(checkpoint.text, false)
+	if err != nil {
 		return nil, err
+	}
+	if work > maxRecoveryTextWork {
+		return nil, errors.New("recovery text work exceeded")
 	}
 	if err := crdt.ApplyUpdateV1(text, checkpoint.text, nil); err != nil {
 		return nil, err
@@ -65,7 +73,7 @@ func startKeptRecovery(ctx context.Context, opts Options, checkpoint recoveryChe
 	if keptAttachment.MatchString(text.GetText("content").ToString()) {
 		return nil, errors.New("recovery attachments unavailable")
 	}
-	r := keptReplayer{text: text, comments: comments, ledger: ledger, keys: keys, context: recordContext, metaID: checkpoint.metaID}
+	r := keptReplayer{text: text, comments: comments, ledger: ledger, keys: keys, context: recordContext, metaID: checkpoint.metaID, textWork: work}
 	for _, frame := range frames {
 		if err := r.apply(frame); err != nil {
 			return nil, err
@@ -85,6 +93,7 @@ type keptReplayer struct {
 	context        protocol.KeptRecordContext
 	metaID         uint64
 	total          int
+	textWork       uint64
 }
 
 func (r *keptReplayer) apply(frame []byte) error {
@@ -119,6 +128,9 @@ func (r *keptReplayer) apply(frame []byte) error {
 	if err = checkRecoveryUpdate(doc, update, isComments); err != nil {
 		return err
 	}
+	if err = r.chargeTextWork(update, isComments); err != nil {
+		return err
+	}
 	next, err := r.ledger.Commit(plan, protocol.KeptApplied)
 	if err != nil {
 		return err
@@ -133,6 +145,21 @@ func (r *keptReplayer) apply(frame []byte) error {
 		return err
 	}
 	r.ledger = next
+	return nil
+}
+
+func (r *keptReplayer) chargeTextWork(update []byte, comments bool) error {
+	if comments {
+		return nil
+	}
+	work, err := protocol.KeptTextWork(update, true)
+	if err != nil {
+		return err
+	}
+	if work > maxRecoveryTextWork-r.textWork {
+		return errors.New("recovery text work exceeded")
+	}
+	r.textWork += work
 	return nil
 }
 

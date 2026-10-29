@@ -8,10 +8,12 @@ import (
 var errKeptSchema = errors.New("unsupported recovery state")
 
 type keptSchemaReader struct {
-	d     *encoding.Decoder
-	input []byte
-	work  uint64
-	clock uint64
+	d            *encoding.Decoder
+	input        []byte
+	work         uint64
+	clock        uint64
+	structs      uint64
+	deleteRanges uint64
 }
 
 func (r *keptSchemaReader) uint() (uint64, error) {
@@ -73,6 +75,7 @@ func (r *keptSchemaReader) client(seen map[uint64]bool, item func(*keptSchemaRea
 		return errKeptSchema
 	}
 	seen[id] = true
+	r.structs += count
 	r.clock = 0
 	clock, err := r.uint()
 	if err != nil || (!allowStart && clock != 0) {
@@ -99,6 +102,7 @@ func (r *keptSchemaReader) deletions() (uint64, error) {
 		if err != nil {
 			return 0, err
 		}
+		r.deleteRanges += count
 		for range count {
 			if err = r.id(); err != nil {
 				return 0, err
@@ -111,28 +115,33 @@ func checkKeptSchema(input []byte, item func(*keptSchemaReader) error, comments 
 	return checkKeptSchemaWithStart(input, item, comments, false)
 }
 func checkKeptSchemaWithStart(input []byte, item func(*keptSchemaReader) error, comments, allowStart bool) error {
+	_, err := measureKeptSchema(input, item, comments, allowStart)
+	return err
+}
+
+func measureKeptSchema(input []byte, item func(*keptSchemaReader) error, comments, allowStart bool) (uint64, error) {
 	if len(input) == 0 || len(input) > MaxFrameBytes {
-		return errKeptSchema
+		return 0, errKeptSchema
 	}
 	r := &keptSchemaReader{d: encoding.NewDecoder(input), input: input}
 	clients, err := r.count(false)
 	if err != nil {
-		return errKeptSchema
+		return 0, errKeptSchema
 	}
 	seen := map[uint64]bool{}
 	for range clients {
 		if r.client(seen, item, allowStart) != nil {
-			return errKeptSchema
+			return 0, errKeptSchema
 		}
 	}
 	deletes, err := r.deletions()
 	if err != nil || r.d.Remaining() != 0 {
-		return errKeptSchema
+		return 0, errKeptSchema
 	}
 	if comments && uint64(len(input))+112*r.work+32*(clients+deletes)+2 > MaxFrameBytes-(4<<10) {
-		return errKeptSchema
+		return 0, errKeptSchema
 	}
-	return nil
+	return r.structs + 2*r.deleteRanges, nil
 }
 
 func (r *keptSchemaReader) advance(n uint64) error {
