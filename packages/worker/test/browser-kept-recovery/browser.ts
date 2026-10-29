@@ -104,9 +104,10 @@ async function run() {
         throw Error('unsafe pending status')
       const firstEdit = editor.view.state.doc.toString()
       editor.view.dispatch({ changes: { from: editor.view.state.doc.length, insert: ' SECOND' } })
+      editor.view.dispatch({ changes: { from: editor.view.state.doc.length, insert: ' THIRD' } })
       if (
         editor.draft.hidden ||
-        editor.draft.value !== `${firstEdit} SECOND` ||
+        editor.draft.value !== `${firstEdit} SECOND THIRD` ||
         editor.view.state.doc.toString() !== firstEdit
       )
         throw Error('concurrent input was not preserved as a draft')
@@ -127,6 +128,9 @@ async function run() {
         throw Error('rejected input lost')
       if (editor.view.state.doc.toString() !== controller.text())
         throw Error('rejected edit was not reverted')
+      editor.view.dispatch({ changes: { from: editor.view.state.doc.length, insert: ' AFTER' } })
+      if (!editor.draft.value.endsWith(`${rejected} AFTER`))
+        throw Error('input after capacity rejection was lost')
       editor.destroy()
       await controller.close()
       const ops = await outbox.operations(link, fixture.roomId, sender)
@@ -150,12 +154,18 @@ async function run() {
       Y.applyUpdate(remoteDoc, state)
       const vector = Y.encodeStateVector(remoteDoc)
       remoteDoc.getText('content').insert(remoteDoc.getText('content').length, ' REMOTE')
-      await remoteController.applyRemote(Y.encodeStateAsUpdate(remoteDoc, vector))
-      await remoteController.replace(
-        remoteController.text().length,
-        remoteController.text().length,
-        ' LOCAL',
-      )
+      const remoteEditor = new TestKeptEditor(remoteController)
+      await remoteEditor.applyRemote(Y.encodeStateAsUpdate(remoteDoc, vector))
+      if (!remoteEditor.view.state.doc.toString().endsWith(' REMOTE'))
+        throw Error('remote update not displayed')
+      remoteEditor.view.dispatch({
+        changes: { from: remoteEditor.view.state.doc.length, insert: ' LOCAL' },
+      })
+      for (let i = 0; i < 200 && !remoteController.text().endsWith(' REMOTE LOCAL'); i++)
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      if (!remoteController.text().endsWith(' REMOTE LOCAL'))
+        throw Error('local edit removed remote content')
+      remoteEditor.destroy()
       await remoteController.close()
       remoteDoc.destroy()
       remoteBox.close()

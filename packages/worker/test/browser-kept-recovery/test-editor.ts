@@ -1,4 +1,4 @@
-import { Annotation, Compartment, EditorState } from '@codemirror/state'
+import { Annotation, ChangeSet, Compartment, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import type {
   KeptEditController,
@@ -22,9 +22,11 @@ export class TestKeptEditor {
   readonly draft = document.createElement('textarea')
   private readonly writable = new Compartment()
   private busy = false
+  private draftChanges: ChangeSet | undefined
   constructor(private readonly controller: KeptEditController) {
     this.status.setAttribute('role', 'status')
     this.draft.hidden = true
+    this.draft.readOnly = true
     const root = document.querySelector('#editor')!
     root.appendChild(this.status)
     root.appendChild(this.draft)
@@ -35,9 +37,17 @@ export class TestKeptEditor {
         extensions: [
           this.writable.of(EditorState.readOnly.of(false)),
           EditorState.transactionFilter.of((transaction) => {
-            if (!transaction.docChanged || !this.busy || transaction.annotation(internal))
+            if (
+              !transaction.docChanged ||
+              (!this.busy && this.draft.hidden) ||
+              transaction.annotation(internal)
+            )
               return transaction
-            this.draft.value = transaction.newDoc.toString()
+            if (this.draft.hidden) this.draftChanges = undefined
+            const previous = this.draftChanges ?? ChangeSet.empty(transaction.startState.doc.length)
+            const mapped = transaction.changes.map(previous)
+            this.draftChanges = previous.compose(mapped)
+            this.draft.value = this.draftChanges.apply(transaction.startState.doc).toString()
             this.draft.hidden = false
             this.setStatus('failed')
             return []
@@ -78,6 +88,11 @@ export class TestKeptEditor {
     } catch {
       if (this.draft.hidden) this.draft.value = desired
       this.draft.hidden = false
+      const original = this.controller.text()
+      this.draftChanges = ChangeSet.of(
+        { from: 0, to: original.length, insert: this.draft.value },
+        original.length,
+      )
       this.setStatus('failed')
       this.view.dispatch({
         changes: { from: 0, to: this.view.state.doc.length, insert: this.controller.text() },
@@ -86,6 +101,25 @@ export class TestKeptEditor {
     } finally {
       this.busy = false
       this.view.dispatch({ effects: this.writable.reconfigure(EditorState.readOnly.of(false)) })
+    }
+  }
+  async applyRemote(update: Uint8Array): Promise<void> {
+    if (this.busy) throw new Error('edit in progress')
+    this.busy = true
+    try {
+      await this.controller.applyRemote(update)
+      const next = this.controller.text()
+      this.view.dispatch({
+        changes: { from: 0, to: this.view.state.doc.length, insert: next },
+        annotations: internal.of(true),
+      })
+      if (!this.draft.hidden)
+        this.draftChanges = ChangeSet.of(
+          { from: 0, to: next.length, insert: this.draft.value },
+          next.length,
+        )
+    } finally {
+      this.busy = false
     }
   }
   destroy(): void {
