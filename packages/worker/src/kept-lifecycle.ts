@@ -1,5 +1,6 @@
 import { DurableLog } from './durable-log.ts'
 import { KeptAdmission } from './kept-admission.ts'
+import { KeptBlobCleanup } from './kept-blob-cleanup.ts'
 import {
   closeKeptLifetime,
   hostLeaves,
@@ -12,7 +13,7 @@ import {
 } from './kept-lifetime.ts'
 import { ADMISSION_KEY } from './room-storage.ts'
 
-const LIFETIME_KEY = 'keptLifetime'
+export const LIFETIME_KEY = 'keptLifetime'
 export type KeepPolicy = {
   requestedSeconds: number
   roomMaxSeconds: number | null
@@ -41,6 +42,20 @@ function sameTransition(expected: KeptLifetime, current: KeptLifetime): boolean 
 export class KeptLifecycle {
   private readonly admission: KeptAdmission
   private lastObserved = 0
+  static async observeAlarm(
+    state: DurableObjectState,
+    namespace: Pick<Env['ROOM'], 'idFromName'>,
+    alarmSeconds: number,
+    maintenanceClosed: () => boolean,
+  ): Promise<KeptLifetime> {
+    return new KeptLifecycle(
+      state,
+      namespace,
+      { requestedSeconds: 1, roomMaxSeconds: null, maxKeepSeconds: null, alarmSeconds },
+      Date.now,
+      maintenanceClosed,
+    ).observe()
+  }
   constructor(
     private readonly state: DurableObjectState,
     namespace: Pick<Env['ROOM'], 'idFromName'>,
@@ -91,6 +106,17 @@ export class KeptLifecycle {
   async resume(roomId: string, hostToken: string): Promise<KeptLifetime> {
     await this.admission.authorizeHost(roomId, hostToken)
     return this.update((current, now) => hostReturns(this.required(current), now))
+  }
+
+  async reconcileHost(isPresent: () => boolean): Promise<KeptLifetime> {
+    return this.update((current, now) => {
+      const observed = observeKeptLifetime(this.required(current), now)
+      if (observed.host === 'closed') return observed
+      if (isPresent()) return observed.host === 'away' ? hostReturns(observed, now) : observed
+      return observed.host === 'connected'
+        ? hostLeaves(observed, now, this.policy.maxKeepSeconds)
+        : observed
+    })
   }
 
   async close(roomId: string, hostToken: string): Promise<KeptLifetime> {
@@ -155,6 +181,7 @@ export class KeptLifecycle {
         if (state.host === 'closed') {
           DurableLog.clear(storage)
           storage.kv.delete(ADMISSION_KEY)
+          await KeptBlobCleanup.closeForLifetime(storage)
         } else {
           const deadline = keptNextAlarm(state, this.policy.alarmSeconds)
           const old = await storage.getAlarm()

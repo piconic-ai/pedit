@@ -25,7 +25,15 @@ import {
 import { MAX_FRAME_BYTES } from '@pedit/protocol/frame'
 import { RELAY_BYTE_RATE, RELAY_MESSAGE_RATE } from '@pedit/protocol/pace'
 import { DurableLog } from './durable-log.ts'
-import { KEPT_ADMISSION_KEY } from './kept-admission.ts'
+import { KEPT_ADMISSION_KEY, KeptAdmission } from './kept-admission.ts'
+import { KeptAppendRate, keptAppend } from './kept-append.ts'
+import { KeptBlobCleanup } from './kept-blob-cleanup.ts'
+import type { KeepPolicy } from './kept-lifecycle.ts'
+import { KeptLifecycle } from './kept-lifecycle.ts'
+import { keptRoomBlob } from './kept-room-blobs.ts'
+import { initializeKeptRoom } from './kept-room-initialize.ts'
+import { keptRoomRead } from './kept-room-read.ts'
+import { KEPT_POLICY_KEY, scheduleKeptAlarmRetry } from './kept-transport.ts'
 import { ADMISSION_KEY } from './room-storage.ts'
 
 // Shared browser code brings DOM's SubtleCrypto into this program. Augment it
@@ -161,6 +169,7 @@ export function maintenance(env: { MAINTENANCE?: string }): Maintenance {
 const BLOB_SESSION_KEY = 'blobSession'
 
 const HOST_TAG = 'host'
+const KEPT_HOST_TAG = 'kept-host'
 // A guest admitted with the reader token: a comment-only or read-only link.
 const READER_TAG = 'reader'
 const BLOB_PATH = /\/blobs\/([A-Za-z0-9_-]{22})$/
@@ -205,6 +214,7 @@ interface Usage {
 export class Room extends DurableObject<Env> {
   // Blob ids being uploaded right now, so two uploads of one id cannot race.
   private readonly uploading = new Set<string>()
+  private readonly keptUploading = new Map<string, 'host' | 'editor'>()
   // What each connection may still send. In memory only: a room that wakes
   // from hibernation starts everyone with a full allowance, which is fine.
   private readonly allowances = new WeakMap<WebSocket, Allowance>()
@@ -219,6 +229,9 @@ export class Room extends DurableObject<Env> {
   private generation = 0
   // Host connections between the start of fetch and the accept or refusal.
   private hostHandshakes = 0
+  private keptHostHandshakes = 0
+  private keptInitializations = { active: 0 }
+  private readonly keptAppendRate = new KeptAppendRate()
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
@@ -227,8 +240,65 @@ export class Room extends DurableObject<Env> {
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(RELAY_PING, RELAY_PONG))
   }
 
+  private keptBlobLimits() {
+    const l = limits(this.env)
+    return {
+      count: Math.min(l.quotaCount, 1024),
+      blobBytes: Math.min(l.blobBytes + BLOB_OVERHEAD, 10 * 1024 * 1024),
+      quotaBytes: Math.min(l.quotaBytes, 100 * 1024 * 1024),
+    }
+  }
+
   override async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname
+    const keptWrite = /^\/internal\/kept\/([A-Za-z0-9_-]{22})\/append$/.exec(path)
+    if (keptWrite?.[1])
+      return keptAppend(
+        request,
+        this.ctx,
+        this.env,
+        keptWrite[1],
+        this.keptAppendRate,
+        () => maintenance(this.env as { MAINTENANCE?: string }) === 'closed',
+      )
+    const keptSocket = /^\/internal\/kept\/([A-Za-z0-9_-]{22})\/host$/.exec(path)
+    if (keptSocket?.[1]) return this.keptHostSocket(request, keptSocket[1])
+    const keptInit = /^\/internal\/kept\/([A-Za-z0-9_-]{22})\/initialize$/.exec(path)
+    if (keptInit?.[1]) {
+      const roomSeconds = limits(this.env).roomSeconds
+      return initializeKeptRoom(
+        request,
+        this.ctx,
+        this.env,
+        keptInit[1],
+        Number.isFinite(roomSeconds) ? roomSeconds : null,
+        () => maintenance(this.env as { MAINTENANCE?: string }) !== 'none',
+        this.keptInitializations,
+      )
+    }
+    const keptRead = /^\/internal\/kept\/([A-Za-z0-9_-]{22})\/read$/.exec(path)
+    if (keptRead?.[1])
+      return keptRoomRead(
+        request,
+        this.ctx,
+        this.env,
+        keptRead[1],
+        () => maintenance(this.env as { MAINTENANCE?: string }) === 'closed',
+      )
+    const keptBlob = /^\/internal\/kept\/([A-Za-z0-9_-]{22})\/blobs\/([A-Za-z0-9_-]{22})$/.exec(
+      path,
+    )
+    if (keptBlob?.[1] && keptBlob[2])
+      return keptRoomBlob(
+        request,
+        this.ctx,
+        this.env,
+        keptBlob[1],
+        keptBlob[2],
+        this.keptBlobLimits(),
+        this.keptUploading,
+        () => maintenance(this.env as { MAINTENANCE?: string }) === 'closed',
+      )
     if (this.ctx.storage.kv.get(KEPT_ADMISSION_KEY) !== undefined)
       return new Response('room protocol unavailable', { status: 403 })
     const blob = BLOB_PATH.exec(path)?.[1]
@@ -236,6 +306,10 @@ export class Room extends DurableObject<Env> {
     // Only a connection goes on: a blob path the pattern missed is not one.
     if (path.includes('/blobs/')) return new Response('invalid blob id', { status: 400 })
 
+    return this.connectLegacy(request)
+  }
+
+  private async connectLegacy(request: Request): Promise<Response> {
     if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
       return new Response('expected a WebSocket upgrade', { status: 426 })
     }
@@ -423,6 +497,14 @@ export class Room extends DurableObject<Env> {
    * still needed and can run twice.
    */
   override async alarm(): Promise<void> {
+    if (this.ctx.storage.kv.get(KEPT_ADMISSION_KEY) !== undefined) {
+      try {
+        await this.keptAlarm()
+      } catch {
+        await scheduleKeptAlarmRetry(this.ctx.storage)
+      }
+      return
+    }
     if (this.expired()) {
       await this.expire()
       return
@@ -453,7 +535,43 @@ export class Room extends DurableObject<Env> {
     await this.ctx.storage.setAlarm(this.nextAlarm())
   }
 
+  private async keptAlarm(): Promise<void> {
+    const policy = this.ctx.storage.kv.get<KeepPolicy>(KEPT_POLICY_KEY)
+    if (policy) {
+      const lifecycle = this.keptLifecycle(policy)
+      const current = this.keptHostHandshakes
+        ? await lifecycle.observe()
+        : await lifecycle.reconcileHost(() => this.ctx.getWebSockets(KEPT_HOST_TAG).length > 0)
+      if (current.host === 'closed') {
+        for (const socket of this.ctx.getWebSockets(KEPT_HOST_TAG))
+          safeClose(socket, ROOM_CLOSED, 'room closed')
+        await this.sweepKeptBlobs()
+      }
+      return
+    }
+    const current = await KeptLifecycle.observeAlarm(
+      this.ctx,
+      this.env.ROOM,
+      ALARM_INTERVAL_MS / 1000,
+      () => maintenance(this.env as { MAINTENANCE?: string }) === 'closed',
+    )
+    if (current.host === 'closed') await this.sweepKeptBlobs()
+  }
+
+  private async sweepKeptBlobs(): Promise<void> {
+    if (
+      this.ctx.storage.sql
+        .exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'kept_blob_state'")
+        .toArray().length
+    )
+      await new KeptBlobCleanup(this.ctx, this.env.BLOBS, this.keptBlobLimits()).sweep()
+  }
+
   override async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    if (this.ctx.getTags(ws).includes(KEPT_HOST_TAG)) {
+      safeClose(ws, 1003, 'unsupported')
+      return
+    }
     if (typeof message === 'string') {
       this.closePeer(ws, 1003, 'binary frames only')
       return
@@ -498,6 +616,14 @@ export class Room extends DurableObject<Env> {
     wasClean: boolean,
   ): Promise<void> {
     safeClose(ws, code, reason)
+    if (this.ctx.getTags(ws).includes(KEPT_HOST_TAG)) {
+      const policy = this.ctx.storage.kv.get<KeepPolicy>(KEPT_POLICY_KEY)
+      if (policy)
+        await this.keptLifecycle(policy).reconcileHost(() =>
+          this.ctx.getWebSockets(KEPT_HOST_TAG).some((other) => other !== ws),
+        )
+      return
+    }
     if (this.isHost(ws))
       this.log('host closed', { code, wasClean, otherHosts: this.hosts(ws).length })
     await this.closeIfHostLeft(ws, code)
@@ -505,8 +631,56 @@ export class Room extends DurableObject<Env> {
 
   override async webSocketError(ws: WebSocket): Promise<void> {
     safeClose(ws, 1011, 'error')
+    if (this.ctx.getTags(ws).includes(KEPT_HOST_TAG)) {
+      const policy = this.ctx.storage.kv.get<KeepPolicy>(KEPT_POLICY_KEY)
+      if (policy)
+        await this.keptLifecycle(policy).reconcileHost(() =>
+          this.ctx.getWebSockets(KEPT_HOST_TAG).some((other) => other !== ws),
+        )
+      return
+    }
     if (this.isHost(ws)) this.log('host errored', { otherHosts: this.hosts(ws).length })
     await this.closeIfHostLeft(ws, 1011)
+  }
+
+  private keptLifecycle(policy: KeepPolicy): KeptLifecycle {
+    return new KeptLifecycle(
+      this.ctx,
+      this.env.ROOM,
+      policy,
+      Date.now,
+      () => maintenance(this.env as { MAINTENANCE?: string }) === 'closed',
+    )
+  }
+
+  private async keptHostSocket(request: Request, roomId: string): Promise<Response> {
+    if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket')
+      return new Response(null, { status: 426 })
+    const host = /^Host ([A-Za-z0-9_-]{43})$/.exec(request.headers.get('Authorization') ?? '')?.[1]
+    if (!host) return new Response(null, { status: 403 })
+    this.keptHostHandshakes++
+    try {
+      await new KeptAdmission(this.ctx, this.env.ROOM).authorizeHost(roomId, host)
+      const policy = this.ctx.storage.kv.get<KeepPolicy>(KEPT_POLICY_KEY)
+      if (!policy) return new Response(null, { status: 403 })
+      if (this.full(true, 'editor')) return new Response('room is full', { status: 429 })
+      const pair = new WebSocketPair()
+      this.ctx.acceptWebSocket(pair[1], [KEPT_HOST_TAG])
+      try {
+        const state = await this.keptLifecycle(policy).reconcileHost(
+          () => this.ctx.getWebSockets(KEPT_HOST_TAG).length > 0,
+        )
+        if (state.host === 'closed') throw new Error('room closed')
+      } catch {
+        safeClose(pair[1], ROOM_CLOSED, 'room closed')
+        return new Response(null, { status: 403 })
+      }
+      return new Response(null, { status: 101, webSocket: pair[0] })
+    } catch {
+      return new Response(null, { status: 403 })
+    } finally {
+      this.keptHostHandshakes--
+    }
   }
 
   // Closes one connection on the relay's own account.

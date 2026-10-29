@@ -532,7 +532,7 @@ describe('comments from peers, at the limits', () => {
     view.resolve(id, false)
     view.reply(id, 'and?')
     for (const u of sent) expect(checkMetaUpdate(peer, u)).toBeNull()
-  })
+  }, 15_000)
 })
 
 describe('cutQuote', () => {

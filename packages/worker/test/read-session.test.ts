@@ -222,7 +222,7 @@ describe('durable read sessions', () => {
       const log = new DurableLog(state.storage, limits)
       await log.initialize('one', bytes(0))
       const reads = []
-      for (let i = 0; i < 64; i++) reads.push(await log.beginRead())
+      for (let i = 0; i < 40; i++) reads.push(await log.beginRead())
       await expect(log.beginRead()).rejects.toBeInstanceOf(ReadSessionFullError)
       state.storage.sql.exec('UPDATE durable_reads SET expires = 0 WHERE id = ?', reads[0]!.session)
       await expect(log.readPage(reads[0]!.session, reads[0]!.cursor)).rejects.toBeInstanceOf(

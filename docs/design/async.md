@@ -238,6 +238,49 @@ missing response as confirmation.
 The internal prototype closes its durable log and admission on expiry, close or
 maintenance, but it does not remove R2 attachments. It must not be exposed
 until real socket lifecycle and attachment cleanup are integrated and tested.
+The Room alarm dispatches kept admission to the internal lifetime observer,
+including after eviction, so a hostless kept room does not enter v5 cleanup.
+The internal initialization path stores admission, the initial away lifetime,
+checkpoint, policy and alarm in one transaction. It tracks authenticated host
+sockets using a separate tag and reconciles their presence on alarms and close.
+These internal paths are not routed by the public Worker. Attachment cleanup,
+independent retry discovery, guest sockets and public routes remain unconnected.
+
+The separate kept attachment cleanup primitive uses `kept/<object-id>/`, so
+the existing `rooms/` age rule does not apply to it. Every PUT reserves a
+bounded count and byte quota in Durable Object storage and syncs it before
+calling R2. A failed or interrupted PUT remains uncertain. After close, each
+sweep schedules another alarm before reading or deleting R2 objects. It removes
+a confirmed reservation only if the PUT completed before the sweep took its
+reservation snapshot.
+An uncertain reservation remains indefinitely and prevents a completed result;
+later sweeps delete any object it produces. This depends on R2's strong
+read-after-write and list consistency.
+
+This primitive is not connected to the room or its lifecycle. The room must
+atomically mark attachments closed with room expiry, route alarms to the sweep,
+authorize every PUT, and enforce its own policy before using it. Its deployment
+must check that no lifecycle rule covers `kept/`. An interrupted PUT can leave
+a reservation and periodic cleanup forever; the service needs an operational
+policy for those retained markers and for alarm failures. The prototype cannot
+prove a PUT with an ambiguous outcome has stopped.
+
+An internal Room fetch path exposes a fixed checkpoint and tail to an
+authenticated host or tier capability. It is not routed by the public Worker.
+The response contains base64 ciphertext, with no key or plaintext; clients
+must request a new fixed read after the tail to catch up. The read path does
+not provide durable client cursors or live delivery. The older internal
+transport initialize method still commits admission separately from lifetime
+and checkpoint; it must not be used for public initialization.
+
+An internal Room append endpoint accepts editor or commenter capabilities and
+stores bounded opaque ciphertext at the current epoch. Exact retransmissions
+return the same sequence. Each capability tier has a shared in-memory rate
+allowance and at most eight simultaneous bodies; the allowance resets on
+Durable Object eviction. Body reads have a 30-second timeout and reject more
+than 16,384 stream chunks, including empty chunks. This may reject a valid body
+delivered in unusually small fragments. Recipients must still verify signatures
+and operation permissions. The public Worker does not expose this endpoint.
 
 ## Verification before release
 
@@ -284,3 +327,55 @@ host saves the results and the covered log is removed.
   close commands, chunking, limits, and the exact transaction and recovery steps. Prove
   their ordering against disconnects, compaction and external file changes
   before implementing the protocol.
+
+Read sessions reserve eight of the 64 slots for each higher tier: commenter,
+editor and host. A higher tier can preempt the oldest session of the lowest
+lower tier when its capacity is full; preempted participants must restart.
+Existing host sessions retain host priority during migration. Older non-host
+sessions are treated as reader sessions. A tier can still exhaust its own
+capacity with unfinished sessions; they expire after five minutes.
+The internal initialization path reads `KEEP_MAX_SECONDS`. Production and
+preview configuration set it to 604800 seconds; an unset value is unlimited
+for self-hosting. A configured value must be a positive safe integer; invalid
+configuration refuses initialization. The requested duration is clamped to
+the configured limit and `X-Pedit-Keep-Seconds` in the successful response
+reports the applied value. Durations that cannot produce a safe timestamp are
+rejected. The selected policy is persisted with the room; a later configuration
+change does not silently change it. An authenticated retry uses the saved
+policy and reports its applied duration even when the current limit changes;
+a different checkpoint, capability set, or effective duration is rejected.
+This internal path is not public yet.
+
+The internal Room blob prototype accepts encrypted uploads only from an
+editor or host capability and permits encrypted reads to all authorized tiers.
+It checks the kept lifetime before and after R2 operations and enforces a
+bounded request body, concurrent uploads, and persisted count and byte quota.
+A kept lifecycle close marks the blob state closed and arms cleanup in the
+same Durable Object transaction that closes the log. The Room alarm then sweeps
+the kept prefix, including after eviction. The internal route is not exposed by
+the Worker and does not enable kept rooms for users.
+
+An ambiguous or late R2 PUT remains reserved and must be swept again. This
+prototype has no independent registry or cron: alarms have finite automatic
+retry and may cease to run after repeated failures. Consequently it does not
+ensure eventual deletion or bound orphan retention. Cleanup stops its retry alarm
+only after an empty listing and removal of all completed reservations; any
+unresolved reservation keeps the alarm armed. The configured lifecycle
+must not expire active kept data, especially for unlimited self-hosted rooms;
+no deployment or R2 lifecycle change is made here. R2 operation deadlines, rate
+limits, independent scheduling, and full cross-operation recovery must be
+resolved before enabling this path.
+
+Kept upload request bodies have a 30-second deadline and a bounded chunk count.
+At most three editor uploads can be in progress, leaving one of four slots for
+the authenticated host. A request already sent to R2 may still remain in
+flight after that body deadline; a pending reservation is retained, and an
+in-flight upload of the same ID can still block another upload of that ID.
+
+A completed ID may be retried only with byte-identical ciphertext, after
+comparing the R2 object and syncing its reservation. Different bytes or an
+ambiguous reservation return 409 without replacing the object. Existing web uploads use random AES-GCM IVs,
+so the same plaintext can produce different ciphertext under the same hash ID.
+A future v6 uploader must retain its ciphertext for retry, or fetch the existing
+object, decrypt it, and check the expected plaintext hash before reusing it.
+The relay cannot establish plaintext equality from ciphertext alone.
