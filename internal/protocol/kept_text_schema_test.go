@@ -1,6 +1,8 @@
 package protocol
 
 import (
+	"encoding/binary"
+	"strings"
 	"testing"
 
 	"github.com/reearth/ygo/crdt"
@@ -66,5 +68,51 @@ func TestKeptTextStateAcceptsDeletedText(t *testing.T) {
 	doc.Transact(func(tx *crdt.Transaction) { text.Delete(tx, 0, 7) })
 	if err := CheckKeptTextState(crdt.EncodeStateAsUpdateV1(doc, nil)); err != nil {
 		t.Fatalf("deleted plain text: %v", err)
+	}
+}
+
+func TestKeptTextStateBoundsConcurrentStructuralWork(t *testing.T) {
+	makeState := func(count int) []byte {
+		state := binary.AppendUvarint(nil, uint64(count))
+		for i := 1; i <= count; i++ {
+			state = binary.AppendUvarint(state, 1)
+			state = binary.AppendUvarint(state, uint64(i))
+			state = append(state, 0, 4, 1, 7)
+			state = append(state, []byte("content")...)
+			state = append(state, 1, 'a')
+		}
+		return append(state, 0)
+	}
+	if err := CheckKeptTextState(makeState(1024)); err != nil {
+		t.Fatalf("state at structural limit rejected: %v", err)
+	}
+	oversized := makeState(1025)
+	if err := CheckKeptTextState(oversized); err == nil {
+		t.Fatal("accepted too many concurrent text structs")
+	}
+	if validKeptYjsUpdate(oversized, true) {
+		t.Fatal("accepted excessive text work for checkpoint application")
+	}
+	deletions := func(count int) []byte {
+		state := []byte{0, 1, 1}
+		state = binary.AppendUvarint(state, uint64(count))
+		for i := 0; i < count; i++ {
+			state = binary.AppendUvarint(state, uint64(i))
+			state = append(state, 1)
+		}
+		return state
+	}
+	if err := CheckKeptTextState(deletions(512)); err != nil {
+		t.Fatalf("deletions at structural limit rejected: %v", err)
+	}
+	if err := CheckKeptTextState(deletions(513)); err == nil {
+		t.Fatal("accepted excessive deletion ranges")
+	}
+	doc := crdt.New()
+	defer doc.Destroy()
+	text := doc.GetText("content")
+	doc.Transact(func(tx *crdt.Transaction) { text.Insert(tx, 0, strings.Repeat("a", 4096), nil) })
+	if err := CheckKeptTextState(crdt.EncodeStateAsUpdateV1(doc, nil)); err != nil {
+		t.Fatalf("ordinary long text rejected: %v", err)
 	}
 }

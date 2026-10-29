@@ -8,10 +8,12 @@ import (
 var errKeptSchema = errors.New("unsupported recovery state")
 
 type keptSchemaReader struct {
-	d     *encoding.Decoder
-	input []byte
-	work  uint64
-	clock uint64
+	d            *encoding.Decoder
+	input        []byte
+	work         uint64
+	clock        uint64
+	structs      uint64
+	deleteRanges uint64
 }
 
 func (r *keptSchemaReader) uint() (uint64, error) {
@@ -73,6 +75,7 @@ func (r *keptSchemaReader) client(seen map[uint64]bool, item func(*keptSchemaRea
 		return errKeptSchema
 	}
 	seen[id] = true
+	r.structs += count
 	r.clock = 0
 	clock, err := r.uint()
 	if err != nil || clock != 0 {
@@ -98,6 +101,7 @@ func (r *keptSchemaReader) deletions() (uint64, error) {
 		if err != nil {
 			return 0, err
 		}
+		r.deleteRanges += count
 		for range count {
 			if err = r.id(); err != nil {
 				return 0, err
@@ -123,6 +127,9 @@ func checkKeptSchema(input []byte, item func(*keptSchemaReader) error, comments 
 	}
 	deletes, err := r.deletions()
 	if err != nil || r.d.Remaining() != 0 {
+		return errKeptSchema
+	}
+	if !comments && r.structs+2*r.deleteRanges > 1024 {
 		return errKeptSchema
 	}
 	if comments && uint64(len(input))+112*r.work+32*(clients+deletes)+2 > MaxFrameBytes-(4<<10) {

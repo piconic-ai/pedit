@@ -1,3 +1,4 @@
+import * as encoding from 'lib0/encoding'
 import { describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
 import vector from '../../testdata/kept-text-payload-vectors.json'
@@ -52,4 +53,42 @@ it('rejects a BOM-prefixed root name', () => {
   const doc = new Y.Doc()
   doc.getText('\ufeffcontent').insert(0, 'hidden')
   expect(checkKeptTextState(Y.encodeStateAsUpdate(doc))).toBe(false)
+})
+
+it('bounds concurrent text structs without limiting ordinary text length', () => {
+  const state = (count: number) => {
+    const e = encoding.createEncoder()
+    encoding.writeVarUint(e, count)
+    for (let id = 1; id <= count; id++) {
+      encoding.writeVarUint(e, 1)
+      encoding.writeVarUint(e, id)
+      encoding.writeVarUint(e, 0)
+      encoding.writeUint8(e, 4)
+      encoding.writeVarUint(e, 1)
+      encoding.writeVarString(e, 'content')
+      encoding.writeVarString(e, 'a')
+    }
+    encoding.writeVarUint(e, 0)
+    return encoding.toUint8Array(e)
+  }
+  expect(checkKeptTextState(state(1024))).toBe(true)
+  expect(checkKeptTextState(state(1025))).toBe(false)
+  const deletions = (count: number) => {
+    const e = encoding.createEncoder()
+    encoding.writeVarUint(e, 0)
+    encoding.writeVarUint(e, 1)
+    encoding.writeVarUint(e, 1)
+    encoding.writeVarUint(e, count)
+    for (let i = 0; i < count; i++) {
+      encoding.writeVarUint(e, i)
+      encoding.writeVarUint(e, 1)
+    }
+    return encoding.toUint8Array(e)
+  }
+  expect(checkKeptTextState(deletions(512))).toBe(true)
+  expect(checkKeptTextState(deletions(513))).toBe(false)
+  const doc = new Y.Doc()
+  doc.getText('content').insert(0, 'a'.repeat(4096))
+  expect(checkKeptTextState(Y.encodeStateAsUpdate(doc))).toBe(true)
+  doc.destroy()
 })

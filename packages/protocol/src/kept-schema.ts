@@ -5,6 +5,8 @@ export class KeptSchemaReader {
   readonly decoder: decoding.Decoder
   work = 0
   clock = 0
+  structs = 0
+  deleteRanges = 0
   advance(n: number): void {
     if (n > 1024 || this.work > 1024 - n) throw new Error('comments too large')
     this.work += n
@@ -97,6 +99,7 @@ function client(r: KeptSchemaReader, seen: Set<number>, item: (r: KeptSchemaRead
     id = r.uint()
   if (seen.has(id) || r.uint() !== 0) throw new Error('invalid client')
   seen.add(id)
+  r.structs += count
   r.clock = 0
   for (let i = 0; i < count; i++) item(r)
 }
@@ -105,6 +108,7 @@ function deletions(r: KeptSchemaReader): number {
   for (let i = 0; i < n; i++) {
     r.uint()
     const count = r.count(false)
+    r.deleteRanges += count
     for (let j = 0; j < count; j++) r.id()
   }
   return n
@@ -123,6 +127,7 @@ export function checkKeptSchema(
     const deleted = deletions(r)
     return (
       r.remaining() === 0 &&
+      (comments || r.structs + 2 * r.deleteRanges <= 1024) &&
       (!comments ||
         input.length + 112 * r.work + 32 * (clients + deleted) + 2 <= MAX_FRAME_BYTES - 4096)
     )
