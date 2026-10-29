@@ -1,0 +1,61 @@
+[
+  {
+    "name": "inline",
+    "source": "![cat](assets/0123456789abcdef0123456789abcdef.png)",
+    "lookups": ["assets/0123456789abcdef0123456789abcdef.png"]
+  },
+  {
+    "name": "entity slash",
+    "source": "![](assets&#47;0123456789abcdef0123456789abcdef.png)",
+    "lookups": ["assets/0123456789abcdef0123456789abcdef.png"]
+  },
+  {
+    "name": "escaped slash",
+    "source": "![](assets\\/0123456789abcdef0123456789abcdef.png)",
+    "lookups": ["assets/0123456789abcdef0123456789abcdef.png"]
+  },
+  {
+    "name": "reference definition",
+    "source": "![cat][image]\n\n[image]: assets/0123456789abcdef0123456789abcdef.png",
+    "lookups": ["assets/0123456789abcdef0123456789abcdef.png"]
+  },
+  {
+    "name": "code",
+    "source": "`![](assets/0123456789abcdef0123456789abcdef.png)`\n\n```\n![](assets/0123456789abcdef0123456789abcdef.png)\n```",
+    "lookups": []
+  },
+  {
+    "name": "escaped marker",
+    "source": "\\![](assets/0123456789abcdef0123456789abcdef.png)",
+    "lookups": []
+  },
+  {
+    "name": "configured directory",
+    "source": "![](images/0123456789abcdef0123456789abcdef.png)",
+    "lookups": ["images/0123456789abcdef0123456789abcdef.png"]
+  },
+  {
+    "name": "percent slash",
+    "source": "![](assets%2F0123456789abcdef0123456789abcdef.png)",
+    "lookups": ["assets%2F0123456789abcdef0123456789abcdef.png"]
+  },
+  { "name": "external image", "source": "![](https://example.com/image.png)", "lookups": [] },
+  {
+    "name": "frontmatter",
+    "source": "---\nimage: '![](assets/0123456789abcdef0123456789abcdef.png)'\n---\ntext",
+    "lookups": []
+  },
+  {
+    "name": "raw HTML",
+    "source": "<img src=\"assets/0123456789abcdef0123456789abcdef.png\">",
+    "lookups": []
+  },
+  {
+    "name": "two references",
+    "source": "![](assets/0123456789abcdef0123456789abcdef.png) ![](assets/fedcba9876543210fedcba9876543210.jpg)",
+    "lookups": [
+      "assets/0123456789abcdef0123456789abcdef.png",
+      "assets/fedcba9876543210fedcba9876543210.jpg"
+    ]
+  }
+]
