@@ -62,7 +62,7 @@ func captureReadEvidence(ctx context.Context, store *hoststate.Store, room strin
 	if err != nil {
 		return "", err
 	}
-	keys, signer, err := credentials.Keys()
+	keys, _, err := credentials.Keys()
 	if err != nil {
 		return "", err
 	}
@@ -71,9 +71,26 @@ func captureReadEvidence(ctx context.Context, store *hoststate.Store, room strin
 	if err != nil {
 		return "", err
 	}
-	entries, err := makeEvidenceEntries(read, baseline.Checkpoint)
+	raw, err := buildReadEvidence(credentials, read)
 	if err != nil {
 		return "", err
+	}
+	return publishReadEvidence(store, credentials, raw)
+}
+
+func buildReadEvidence(credentials hoststate.Credentials, read protocol.KeptReadInspection) ([]byte, error) {
+	room := credentials.RoomID
+	baseline, err := loadKeptInitial(credentials)
+	if err != nil {
+		return nil, err
+	}
+	keys, signer, err := credentials.Keys()
+	if err != nil {
+		return nil, err
+	}
+	entries, err := makeEvidenceEntries(read, baseline.Checkpoint)
+	if err != nil {
+		return nil, err
 	}
 	var metaID uint64
 	for _, f := range read.Checkpoint.Manifest {
@@ -84,26 +101,26 @@ func captureReadEvidence(ctx context.Context, store *hoststate.Store, room strin
 	cp := recoveryCheckpoint{text: read.Checkpoint.Documents[0], comments: read.Checkpoint.Documents[metaID], metaID: metaID}
 	replayed, err := replayKeptRecovery(cp, read.Checkpoint.Ledger, keys, protocol.KeptRecordContext{RoomID: room, Epoch: baseline.Epoch, Generation: 1}, read.Frames)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	ledger, err := protocol.EncodeKeptLedger(replayed.ledger)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	e := recoveryEvidence{Version: 1, Room: room, Epoch: baseline.Epoch, Generation: 1, Cutoff: read.Snapshot.Cutoff, Tail: read.Snapshot.Tail, Checkpoint: bytes.Clone(baseline.Checkpoint), Entries: entries, Text: replayed.text, Comments: replayed.comments, MetadataID: metaID, Ledger: ledger, TailStatus: "unverified"}
 	message, err := evidenceMessage(e)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	e.Signature = ed25519.Sign(signer, message)
 	raw, err := json.Marshal(e)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if _, err = verifyReadEvidence(credentials, raw); err != nil {
-		return "", err
+		return nil, err
 	}
-	return publishReadEvidence(store, credentials, raw)
+	return raw, nil
 }
 
 func publishReadEvidence(store *hoststate.Store, credentials hoststate.Credentials, raw []byte) (string, error) {

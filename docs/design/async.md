@@ -539,3 +539,14 @@ Reopening or exporting a held recovery candidate also checks the text and
 comments work limits before applying either Yjs state. Candidate files are
 private local inspections, not authenticated checkpoints; exceeding either
 limit rejects the candidate without modifying the original file.
+
+The internal host observer retains its last verified observation in a private
+macOS-only slot before publishing it to the caller. On restart it verifies the
+host signature and replays the checkpoint and records again. A replacement must
+preserve the previously observed record prefix; a stale or conflicting slot
+fails closed. Failed synchronization leaves the publication uncertain and
+requires reopening the observer. The slot is bounded to 16 MiB and is separate
+from retained recovery candidates. It does not prove that the relay supplied
+unseen records, detect rollback of the entire private store, verify attachment
+inventory, authorize a cut, or write the original file. Directory synchronization
+is attempted, but power-loss durability of rename is not guaranteed on macOS.

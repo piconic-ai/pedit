@@ -289,6 +289,50 @@ func TestLiveKeptHostObserver(t *testing.T) {
 	if before.tail != after.tail || !bytes.Equal(before.text, after.text) || !bytes.Equal(before.comments, after.comments) || len(before.receipts) != len(after.receipts) {
 		t.Fatal("invalid update changed candidate")
 	}
+	if err = observer.Disconnect(); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = hoststate.Open(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	observer, err = newKeptHostObserver(store, room, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer observer.Disconnect()
+	afterRestart := observer.Snapshot()
+	if afterRestart.tail != before.tail || !bytes.Equal(afterRestart.text, before.text) || !bytes.Equal(afterRestart.comments, before.comments) {
+		t.Fatal("last valid candidate lost on restart")
+	}
+	if err = observer.Connect(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err = observer.Refresh(ctx); err == nil {
+		t.Fatal("accepted invalid tail after restart")
+	}
+	if !bytes.Equal(observer.Snapshot().text, before.text) {
+		t.Fatal("invalid tail replaced restored candidate")
+	}
+	rawEvidence, err := store.LoadObserver(room)
+	if err != nil {
+		t.Fatal(err)
+	}
+	damaged := bytes.Clone(rawEvidence)
+	damaged[len(damaged)/2] ^= 1
+	if err = store.SaveObserver(room, rawEvidence, damaged); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = newKeptHostObserver(store, room, client); err == nil {
+		t.Fatal("accepted damaged evidence")
+	}
+	if err = store.SaveObserver(room, damaged, rawEvidence); err != nil {
+		t.Fatal(err)
+	}
 	if err = host.CloseRoom(ctx); err != nil {
 		t.Fatal(err)
 	}
