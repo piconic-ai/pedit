@@ -1,3 +1,4 @@
+import { undoDepth } from '@codemirror/commands'
 import * as Y from 'yjs'
 import { deriveKeptRoomKeys, parseKeptFragment } from '../../../protocol/src/kept-access.ts'
 import {
@@ -184,10 +185,57 @@ async function run() {
       Y.applyUpdate(remoteDoc, state)
       const vector = Y.encodeStateVector(remoteDoc)
       remoteDoc.getText('content').insert(remoteDoc.getText('content').length, ' REMOTE')
-      const remoteEditor = new TestKeptEditor(remoteController)
+      let remoteEditor = new TestKeptEditor(remoteController)
       await remoteEditor.applyRemote(Y.encodeStateAsUpdate(remoteDoc, vector))
       if (!remoteEditor.view.state.doc.toString().endsWith(' REMOTE'))
         throw Error('remote update not displayed')
+      remoteEditor.view.contentDOM.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'z',
+          metaKey: /Mac|iPhone|iPad/.test(navigator.platform),
+          ctrlKey: !/Mac|iPhone|iPad/.test(navigator.platform),
+          bubbles: true,
+        }),
+      )
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      if (
+        !remoteEditor.view.state.doc.toString().endsWith(' REMOTE') ||
+        !remoteController.text().endsWith(' REMOTE')
+      )
+        throw Error('undo reversed remote content')
+      if ((await remoteBox.operations(link, fixture.roomId, remoteSender)).length !== 0)
+        throw Error('undo resent remote content')
+      const remoteText = remoteController.text()
+      remoteEditor.view.dispatch({
+        changes: [
+          { from: 0, insert: 'first' },
+          { from: remoteText.length, insert: 'last' },
+        ],
+      })
+      for (let i = 0; i < 200 && remoteEditor.draft.hidden; i++)
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      if (remoteEditor.draft.hidden || remoteEditor.view.state.doc.toString() !== remoteText)
+        throw Error('failed edit rollback did not retain remote content')
+      if (undoDepth(remoteEditor.view.state) !== 0) throw Error('rollback entered undo history')
+      const rejectedDraft = remoteEditor.draft.value
+      remoteEditor.view.contentDOM.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'z',
+          metaKey: /Mac|iPhone|iPad/.test(navigator.platform),
+          ctrlKey: !/Mac|iPhone|iPad/.test(navigator.platform),
+          bubbles: true,
+        }),
+      )
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      if (
+        remoteEditor.view.state.doc.toString() !== remoteText ||
+        remoteController.text() !== remoteText ||
+        remoteEditor.draft.value !== rejectedDraft ||
+        (await remoteBox.operations(link, fixture.roomId, remoteSender)).length !== 0
+      )
+        throw Error('undo after rollback changed remote content or draft')
+      remoteEditor.destroy()
+      remoteEditor = new TestKeptEditor(remoteController)
       remoteEditor.view.dispatch({
         changes: { from: remoteEditor.view.state.doc.length, insert: ' LOCAL' },
       })

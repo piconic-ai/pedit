@@ -1,4 +1,4 @@
-import { Annotation, ChangeSet, Compartment, EditorState } from '@codemirror/state'
+import { Annotation, ChangeSet, Compartment, EditorState, Transaction } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import type {
   KeptEditController,
@@ -164,7 +164,7 @@ export class TestKeptEditor {
       this.setStatus('failed')
       this.view.dispatch({
         changes: { from: 0, to: this.view.state.doc.length, insert: this.controller.text() },
-        annotations: internal.of(true),
+        annotations: [internal.of(true), Transaction.addToHistory.of(false)],
       })
     } finally {
       this.busy = false
@@ -181,7 +181,7 @@ export class TestKeptEditor {
       const next = this.controller.text()
       this.view.dispatch({
         changes: { from: 0, to: this.view.state.doc.length, insert: next },
-        annotations: internal.of(true),
+        annotations: [internal.of(true), Transaction.addToHistory.of(false)],
       })
     } finally {
       this.busy = false
