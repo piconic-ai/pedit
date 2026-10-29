@@ -128,6 +128,17 @@ export class KeptTransport {
   }
 
   async alarm() {
-    return this.lifecycle.observe()
+    try {
+      return await this.lifecycle.observe()
+    } catch {
+      const storage = this.state.storage
+      await storage.transaction(async () => {
+        const retry = Date.now() + 60_000
+        const scheduled = await storage.getAlarm()
+        if (scheduled === null || retry < scheduled) await storage.setAlarm(retry)
+      })
+      await storage.sync()
+      return undefined
+    }
   }
 }

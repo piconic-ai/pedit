@@ -113,7 +113,7 @@ describe('kept lifecycle integration', () => {
       expect(left.keepUntil).toBe(initial + 200_000)
       now = left.keepUntil
       await expect(t.append(c.editor, 'one', bytes(2))).rejects.toThrow()
-      expect((await t.alarm()).host).toBe('closed')
+      expect((await t.alarm())?.host).toBe('closed')
       expect(state.storage.kv.get(ADMISSION_KEY)).toBeUndefined()
       expect(state.storage.sql.exec('SELECT * FROM durable_log').toArray()).toEqual([])
       await expect(t.initialize(r.id, r.host, c, 'one', bytes(0))).rejects.toThrow()
@@ -152,7 +152,7 @@ describe('kept lifecycle integration', () => {
         const pending = t.append(c.editor, 'one', bytes(7))
         await hashing
         now = left.keepUntil
-        expect((await t.alarm()).host).toBe('closed')
+        expect((await t.alarm())?.host).toBe('closed')
         resume()
         await expect(pending).rejects.toThrow()
         expect(state.storage.sql.exec('SELECT * FROM durable_log').toArray()).toEqual([])
@@ -197,7 +197,7 @@ describe('kept lifecycle integration', () => {
         const pending = t.append(c.editor, 'one', bytes(7))
         await syncing
         now = left.keepUntil
-        expect((await t.alarm()).host).toBe('closed')
+        expect((await t.alarm())?.host).toBe('closed')
         resume()
         await expect(pending).rejects.toThrow()
         expect(state.storage.sql.exec('SELECT * FROM durable_log').toArray()).toEqual([])
@@ -313,7 +313,7 @@ describe('kept lifecycle integration', () => {
       await expect(t.close(r.id, c.editor)).rejects.toThrow('invalid host credentials')
       expect(state.storage.sql.exec('SELECT * FROM durable_log').toArray()).toHaveLength(1)
       expect((await t.close(r.id, r.host)).host).toBe('closed')
-      expect((await t.alarm()).host).toBe('closed')
+      expect((await t.alarm())?.host).toBe('closed')
       await expect(t.resume(r.id, r.host)).rejects.toThrow()
       expect(state.storage.sql.exec('SELECT * FROM durable_log').toArray()).toEqual([])
     })
@@ -559,19 +559,65 @@ describe('kept lifecycle integration', () => {
       const left = await t.leave(r.id, r.host)
       if (left.host !== 'away') throw new Error('expected away')
       now = left.keepUntil
+      await state.storage.deleteAlarm()
       const spy = vi.spyOn(DurableLog, 'clear').mockImplementationOnce(() => {
         throw new Error('cleanup failed')
       })
       try {
-        await expect(t.alarm()).rejects.toThrow('cleanup failed')
+        await expect(t.alarm()).resolves.toBeUndefined()
+        expect(await state.storage.getAlarm()).not.toBeNull()
       } finally {
         spy.mockRestore()
       }
       expect(state.storage.kv.get<{ host: string }>('keptLifetime')?.host).toBe('closed')
       expect(state.storage.sql.exec('SELECT * FROM durable_log').toArray()).toHaveLength(1)
-      expect((await t.alarm()).host).toBe('closed')
+      expect((await t.alarm())?.host).toBe('closed')
       expect(state.storage.sql.exec('SELECT * FROM durable_log').toArray()).toHaveLength(0)
       expect(state.storage.kv.get(ADMISSION_KEY)).toBeUndefined()
+    })
+  })
+
+  it('schedules a new wakeup after a clock rollback consumes the alarm', async () => {
+    const r = await room(),
+      c = capabilities()
+    const initial = Date.now() + 300_000
+    let now = initial
+    await runInDurableObject(r.stub, async (_: Room, state) => {
+      const t = new KeptTransport(state, env.ROOM, { bytes: 100, frames: 10 }, policy, () => now)
+      await t.initialize(r.id, r.host, c, 'one', bytes(0))
+      await t.leave(r.id, r.host)
+      now = initial + 1_000
+      await t.status(r.id, r.host)
+      now = initial
+      await state.storage.deleteAlarm()
+      await expect(t.alarm()).resolves.toBeUndefined()
+      expect(await state.storage.getAlarm()).not.toBeNull()
+      await expect(t.beginRead(c.reader)).rejects.toThrow('clock moved backwards')
+      now = initial + 81_000
+      await state.storage.deleteAlarm()
+      expect((await t.alarm())?.host).toBe('closed')
+    })
+  })
+
+  it('propagates retry scheduling failures to the alarm platform', async () => {
+    const r = await room(),
+      c = capabilities()
+    let now = Date.now() + 300_000
+    await runInDurableObject(r.stub, async (_: Room, state) => {
+      const t = new KeptTransport(state, env.ROOM, { bytes: 100, frames: 10 }, policy, () => now)
+      await t.initialize(r.id, r.host, c, 'one', bytes(0))
+      await t.leave(r.id, r.host)
+      now--
+      await state.storage.deleteAlarm()
+      const spy = vi
+        .spyOn(state.storage, 'setAlarm')
+        .mockRejectedValueOnce(new Error('retry alarm failed'))
+      try {
+        await expect(t.alarm()).rejects.toThrow('retry alarm failed')
+      } finally {
+        spy.mockRestore()
+      }
+      expect(await state.storage.getAlarm()).toBeNull()
     })
   })
 
