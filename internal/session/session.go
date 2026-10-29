@@ -222,7 +222,7 @@ func start(ctx context.Context, opts Options, recovery *recoveryCheckpoint) (*Se
 			return nil, errors.New("invalid recovery checkpoint")
 		}
 		if err = protocol.CheckKeptTextState(recovery.text); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("unsupported recovery text state: %w", err)
 		}
 		if err = applyRecoveryText(doc, recovery.text); err != nil {
 			return nil, err
