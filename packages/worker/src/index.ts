@@ -116,9 +116,15 @@ function isLoopback(hostname: string): boolean {
 // fragment across it. 308 keeps the method of anything but a GET or HEAD.
 app.use('*', async (c, next) => {
   const url = new URL(c.req.url)
-  if (url.pathname === '/internal/kept' || url.pathname.startsWith('/internal/kept/')) {
+  let path: string
+  try {
+    path = decodeURIComponent(url.pathname)
+  } catch {
+    return new Response(null, { status: 400 })
+  }
+  if (path === '/internal/kept' || path.startsWith('/internal/kept/')) {
     if (c.env.KEEP_PUBLIC_V6 !== '1') return new Response(null, { status: 404 })
-    if (url.search) return new Response(null, { status: 400 })
+    if (path !== url.pathname || url.search || url.hash) return new Response(null, { status: 400 })
   }
   if (url.protocol !== 'http:' || isLoopback(url.hostname)) return next()
   url.protocol = 'https:'

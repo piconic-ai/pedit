@@ -61,6 +61,31 @@ it('enforces origin, id, method, query and rate before forwarding', async () => 
   expect(insecure.status).toBe(400)
   expect(insecure.headers.get('Location')).toBeNull()
   expect(await insecure.text()).not.toContain('hidden')
+  for (const path of [
+    `/%69nternal/kept/${id}/read?secret=sentinel`,
+    `/internal%2fkept/${id}/read?secret=sentinel`,
+    `/%69nternal/kept/${id}/read#sentinel`,
+    `/%69nternal/kept/${id}/read%ff?secret=sentinel`,
+  ]) {
+    const response = await app.fetch(
+      new Request(`http://relay.example${path}`),
+      active(),
+      createExecutionContext(),
+    )
+    expect(response.status).toBe(400)
+    expect(response.headers.get('Location')).toBeNull()
+    expect(await response.text()).not.toContain('sentinel')
+  }
+  expect((await request(`/%69nternal/kept/${id}/read`, { method: 'POST' })).status).toBe(400)
+  expect(
+    (
+      await request(
+        `/%69nternal/kept/${id}/read`,
+        { method: 'POST' },
+        { ...env, KEEP_PUBLIC_V6: '' },
+      )
+    ).status,
+  ).toBe(404)
   expect((await request('/internal/kept/not-an-id/read', { method: 'POST' })).status).toBe(400)
   expect((await request(`${base}/toString`)).status).toBe(400)
   expect((await request(`${base}/append`, { method: 'GET' })).status).toBe(405)
