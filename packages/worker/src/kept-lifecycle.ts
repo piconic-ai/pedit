@@ -1,5 +1,5 @@
 import { DurableLog } from './durable-log.ts'
-import { KeptAdmission } from './kept-admission.ts'
+import { KEPT_ADMISSION_KEY, KeptAdmission } from './kept-admission.ts'
 import { KeptBlobCleanup } from './kept-blob-cleanup.ts'
 import {
   closeKeptLifetime,
@@ -14,6 +14,7 @@ import {
 import { ADMISSION_KEY } from './room-storage.ts'
 
 export const LIFETIME_KEY = 'keptLifetime'
+export const CLOSE_RECEIPT_KEY = 'keptCloseReceipt'
 export type KeepPolicy = {
   requestedSeconds: number
   roomMaxSeconds: number | null
@@ -124,6 +125,42 @@ export class KeptLifecycle {
     return this.update((current, now) => closeKeptLifetime(this.required(current), now))
   }
 
+  // Internal-only close with an authenticated durable retry receipt.
+  async closeWithReceipt(roomId: string, hostToken: string): Promise<KeptLifetime> {
+    await this.admission.authenticateHost(roomId, hostToken)
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(hostToken))
+    const existing = this.state.storage.kv.get<ArrayBuffer>(CLOSE_RECEIPT_KEY)
+    if (existing !== undefined) {
+      const current = this.closedReceipt(digest)
+      await this.state.storage.sync()
+      this.closedReceipt(digest)
+      return current
+    }
+    await this.admission.authorizeHost(roomId, hostToken)
+    return this.update(
+      (current, now) => closeKeptLifetime(this.required(current), now),
+      false,
+      digest,
+    )
+  }
+
+  private closedReceipt(digest: ArrayBuffer): KeptLifetime {
+    const stored = this.state.storage.kv.get<ArrayBuffer>(CLOSE_RECEIPT_KEY)
+    const raw = this.state.storage.kv.get(LIFETIME_KEY)
+    if (
+      !(stored instanceof ArrayBuffer) ||
+      stored.byteLength !== digest.byteLength ||
+      !crypto.subtle.timingSafeEqual(stored, digest) ||
+      raw === undefined ||
+      this.state.storage.kv.get(ADMISSION_KEY) !== undefined ||
+      this.state.storage.kv.get(KEPT_ADMISSION_KEY) === undefined
+    )
+      throw new Error('invalid close receipt')
+    const current = restoreKeptLifetime(raw)
+    if (current.host !== 'closed') throw new Error('invalid close receipt')
+    return current
+  }
+
   async observe(): Promise<KeptLifetime> {
     return this.update((current, now) => {
       const state = this.required(current)
@@ -147,6 +184,7 @@ export class KeptLifecycle {
   private async update(
     change: (current: KeptLifetime | undefined, now: number) => KeptLifetime,
     preserveObservation = false,
+    closeReceipt?: ArrayBuffer,
   ): Promise<KeptLifetime> {
     const storage = this.state.storage
     const wallTime = this.now()
@@ -172,13 +210,17 @@ export class KeptLifecycle {
         const raw = storage.kv.get(LIFETIME_KEY)
         const current = raw === undefined ? undefined : restoreKeptLifetime(raw)
         if (storage.kv.get(ADMISSION_KEY) === undefined) {
-          if (current?.host === 'closed') return current
+          if (current?.host === 'closed') {
+            if (closeReceipt) return this.closedReceipt(closeReceipt)
+            return current
+          }
           throw new Error('room admission closed')
         }
         const state = this.maintenanceClosed()
           ? closeKeptLifetime(this.required(current), now)
           : change(current, now)
         if (state.host === 'closed') {
+          if (closeReceipt) storage.kv.put(CLOSE_RECEIPT_KEY, closeReceipt)
           DurableLog.clear(storage)
           storage.kv.delete(ADMISSION_KEY)
           await KeptBlobCleanup.closeForLifetime(storage)

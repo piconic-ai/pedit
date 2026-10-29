@@ -112,3 +112,13 @@ The experiment does not claim ownership of a pending freeze and does not abort,
 commit, delete records, write local files, or provide a public route. If a later
 step fails, the returned result distinguishes the paths of any published read
 evidence and frozen observation. Tests use a test-only Worker route.
+
+An internal-only retained-close RPC stores a full host-token digest alongside
+the closed lifetime and cleanup obligation in the same transaction. A retry
+checks the token's room binding, the digest and closed state, then synchronizes
+before returning. The HTTP close route and CLI do not use this RPC. A closed
+result reports attachment cleanup as complete, pending, or untracked; pending
+includes a failed or incomplete sweep, and untracked is not a deletion claim.
+A close response can be lost, and an error before a durable receipt is confirmed
+remains uncertain. This operation closes the room and discards its relay log;
+it does not prove that guest edits were recovered locally.

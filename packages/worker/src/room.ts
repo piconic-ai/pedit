@@ -773,6 +773,39 @@ export class Room extends DurableObject<Env> {
     }
   }
 
+  // Internal RPC only. The public HTTP close route does not expose this API.
+  async closeRetainedInternal(
+    roomId: string,
+    hostToken: string,
+  ): Promise<{
+    state: 'closed'
+    cleanup: 'complete' | 'pending' | 'untracked'
+  }> {
+    const policy = this.ctx.storage.kv.get<KeepPolicy>(KEPT_POLICY_KEY)
+    if (!policy) throw new Error('close unavailable')
+    await this.keptLifecycle(policy).closeWithReceipt(roomId, hostToken)
+    for (const socket of [
+      ...this.ctx.getWebSockets(KEPT_HOST_TAG),
+      ...this.ctx.getWebSockets(KEPT_GUEST_TAG),
+    ])
+      safeClose(socket, ROOM_CLOSED, 'room closed')
+    const exists =
+      this.ctx.storage.sql
+        .exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'kept_blob_state'")
+        .toArray().length > 0
+    if (!exists) return { state: 'closed', cleanup: 'untracked' }
+    try {
+      const complete = await new KeptBlobCleanup(
+        this.ctx,
+        this.env.BLOBS,
+        this.keptBlobLimits(),
+      ).sweep()
+      return { state: 'closed', cleanup: complete ? 'complete' : 'pending' }
+    } catch {
+      return { state: 'closed', cleanup: 'pending' }
+    }
+  }
+
   private async closeKeptRoom(request: Request, roomId: string): Promise<Response> {
     if (request.method !== 'POST') return new Response(null, { status: 405 })
     const host = /^Host ([A-Za-z0-9_-]{43})$/.exec(request.headers.get('Authorization') ?? '')?.[1]
