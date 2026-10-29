@@ -182,3 +182,17 @@ evidence and metadata, and synchronizes the private journal directory. A
 renamed or deleted parent directory may make artifacts undiscoverable, and a
 noncooperative editor can race any observation. Two-file publication, rollback,
 cut and ACK remain unimplemented. Only macOS has this internal journal.
+
+The macOS stage experiment supports only an existing text file and existing
+metadata file in private, owned local APFS directories. Files must be 0600
+with explicit empty ACLs; directories must be 0700 with explicit empty ACLs.
+It creates private staged files and hardlinks to the old inodes without
+replacing either original. A signed receipt records the new inode identities;
+restart verifies every artifact and its bytes, then syncs both directories.
+Without a receipt, artifact names remain discoverable from the signed journal
+but their ownership and completeness are uncertain: they are never adopted or
+deleted automatically. A `prepared` result is only an observation, not a
+commit or authorization to exchange, cut, or acknowledge. Missing metadata,
+other filesystems, and platforms without this implementation fail closed.
+External directory moves and later noncooperative writes can invalidate that
+observation; power-loss rename durability is not guaranteed.
