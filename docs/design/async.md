@@ -534,3 +534,8 @@ boundary splits. This conservative limit bounds conflict lists before applying
 an update. A fragmented but valid document can exceed the limit and is then
 left unapplied; the relay history and local file remain unchanged. This is a Go
 resource limit, not a change to the shared wire format.
+
+Reopening or exporting a held recovery candidate also checks the text and
+comments work limits before applying either Yjs state. Candidate files are
+private local inspections, not authenticated checkpoints; exceeding either
+limit rejects the candidate without modifying the original file.

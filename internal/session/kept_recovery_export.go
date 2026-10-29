@@ -35,6 +35,9 @@ type recoveryExport struct {
 // exportVerifiedRecovery retains the authenticated replay without reading or
 // opening the local file. The result remains an unverified-tail inspection.
 func exportVerifiedRecovery(store *hoststate.Store, room, path string, cp recoveryCheckpoint) (string, error) {
+	if _, _, err := recoveryCheckpointWork(cp.text, cp.comments); err != nil {
+		return "", err
+	}
 	text := crdt.New()
 	defer text.Destroy()
 	if err := crdt.ApplyUpdateV1(text, cp.text, nil); err != nil {
@@ -76,7 +79,7 @@ func (c *keptRecoveryCandidate) exportRecoveryCandidate(store *hoststate.Store, 
 		s.Client.Do(func() {
 			out.TextYjs = crdt.EncodeStateAsUpdateV1(s.Doc, nil)
 			out.CommentsYjs = crdt.EncodeStateAsUpdateV1(s.meta.doc, nil)
-			if snapshotErr = protocol.CheckKeptTextState(out.TextYjs); snapshotErr != nil {
+			if _, _, snapshotErr = recoveryCheckpointWork(out.TextYjs, out.CommentsYjs); snapshotErr != nil {
 				return
 			}
 			if p := s.Doc.PendingStats(); p.Items != 0 || p.DeleteRanges != 0 {
@@ -156,7 +159,7 @@ func openRecoveryExport(ctx context.Context, opts Options, store *hoststate.Stor
 	if err != nil || candidate.Path != sharedPath(root, opts.File) {
 		return nil, errors.New("recovery file mismatch")
 	}
-	if err = protocol.CheckKeptTextState(candidate.TextYjs); err != nil {
+	if _, _, err = recoveryCheckpointWork(candidate.TextYjs, candidate.CommentsYjs); err != nil {
 		return nil, err
 	}
 	text := crdt.New()

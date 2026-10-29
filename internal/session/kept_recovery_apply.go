@@ -16,6 +16,18 @@ import (
 // two existing structs. Bound the cumulative encoded work before applying it.
 const maxRecoveryTextWork = protocol.MaxKeptYjsWork
 
+func recoveryCheckpointWork(text, comments []byte) (uint64, uint64, error) {
+	textWork, err := protocol.KeptTextWork(text, false)
+	if err != nil || textWork > maxRecoveryTextWork {
+		return 0, 0, errors.New("recovery text work exceeded or invalid")
+	}
+	commentsWork, err := protocol.KeptCommentsWork(comments, false)
+	if err != nil || commentsWork > maxRecoveryTextWork {
+		return 0, 0, errors.New("recovery comments work exceeded or invalid")
+	}
+	return textWork, commentsWork, nil
+}
+
 var keptAttachment = regexp.MustCompile(`assets/[0-9a-f]{32}\.(png|jpg|gif|webp)`)
 
 // replayKeptRecovery builds an isolated candidate without opening local files. The caller must authenticate the checkpoint, provide
@@ -51,19 +63,12 @@ func replayKeptRecovery(checkpoint recoveryCheckpoint, ledger protocol.KeptLedge
 	text, comments := crdt.New(), crdt.New()
 	defer text.Destroy()
 	defer comments.Destroy()
-	work, err := protocol.KeptTextWork(checkpoint.text, false)
+	work, commentsWork, err := recoveryCheckpointWork(checkpoint.text, checkpoint.comments)
 	if err != nil {
 		return nil, err
 	}
-	if work > maxRecoveryTextWork {
-		return nil, errors.New("recovery work exceeded")
-	}
-	if err := crdt.ApplyUpdateV1(text, checkpoint.text, nil); err != nil {
+	if err = crdt.ApplyUpdateV1(text, checkpoint.text, nil); err != nil {
 		return nil, err
-	}
-	commentsWork, err := protocol.KeptCommentsWork(checkpoint.comments, false)
-	if err != nil || commentsWork > maxRecoveryTextWork {
-		return nil, errors.New("recovery comments work exceeded")
 	}
 	if err := meta.CheckRecoveryUpdate(comments, checkpoint.comments); err != nil {
 		return nil, err

@@ -223,7 +223,7 @@ func initialContent(doc *crdt.Doc, file, initial string, recovery *recoveryCheck
 	if isCanvas(file) || len(recovery.text) == 0 || len(recovery.text) > protocol.MaxFrameBytes || len(recovery.comments) == 0 || len(recovery.comments) > protocol.MaxFrameBytes {
 		return nil, errors.New("invalid recovery checkpoint")
 	}
-	if err := protocol.CheckKeptTextState(recovery.text); err != nil {
+	if _, _, err := recoveryCheckpointWork(recovery.text, recovery.comments); err != nil {
 		return nil, fmt.Errorf("unsupported recovery text state: %w", err)
 	}
 	if err := applyRecoveryText(doc, recovery.text); err != nil {
