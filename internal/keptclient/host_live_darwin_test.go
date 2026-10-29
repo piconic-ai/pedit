@@ -5,6 +5,7 @@ package keptclient
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -358,5 +359,98 @@ func TestLiveHostInitializationRace(t *testing.T) {
 				t.Fatalf("relay state = %q; initialization should not close it", state.Host)
 			}
 		})
+	}
+}
+
+func TestLiveHostMaximumTail(t *testing.T) {
+	live := os.Getenv("PEDIT_TEST_LIVE_ROOM")
+	if live == "" {
+		t.Skip("requires test Worker")
+	}
+	target, err := url.Parse(live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{25}, 32))
+	sum := sha256.Sum256([]byte(token))
+	room := base64.RawURLEncoding.EncodeToString(sum[:])[:22]
+	c := hoststate.Credentials{Version: 1, Origin: "https://example.test", RoomID: room, HostToken: token, Generation: 1}
+	copy(c.HostSeed[:], bytes.Repeat([]byte{7}, 32))
+	copy(c.EditSecret[:], bytes.Repeat([]byte{3}, 32))
+	store, err := hoststate.Open(filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err = store.Save(c); err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Transport: testForward{target, room}}
+	host, err := Open(store, room, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile("../../packages/testdata/kept-text-payload-vectors.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vector struct{ Payload string }
+	if err = json.Unmarshal(data, &vector); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(vector.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, private, err := c.Keys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var epoch [32]byte
+	for i := range epoch {
+		epoch[i] = 5
+	}
+	cp, err := protocol.SealKeptCheckpoint(keys, private, protocol.KeptCheckpointContext{RoomID: room, Epoch: epoch, Generation: 1}, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if _, err = host.Initialize(ctx, epoch, cp, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	sender := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{11}, 32))
+	cert, err := protocol.CreateKeptSenderCertificate(keys, sender.Public().(ed25519.PublicKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	records := make([]string, 1024)
+	for i := range records {
+		b, e := protocol.SealKeptRecord(keys, protocol.KeptRecordContext{RoomID: room, Epoch: epoch, Generation: 1}, sender, cert, uint64(i+1), []byte("operation"))
+		if e != nil {
+			t.Fatal(e)
+		}
+		records[i] = base64.StdEncoding.EncodeToString(b)
+	}
+	body, err := json.Marshal(map[string]any{"token": keys.EditAdmission, "epoch": hex.EncodeToString(epoch[:]), "records": records})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, live+"/__test/populate", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Test-Room", room)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 204 {
+		t.Fatalf("populate: %d", res.StatusCode)
+	}
+	inspection, err := host.Inspect(ctx, nil)
+	if err != nil || len(inspection.Records) != 1024 {
+		t.Fatalf("inspect %d records: %v", len(inspection.Records), err)
 	}
 }

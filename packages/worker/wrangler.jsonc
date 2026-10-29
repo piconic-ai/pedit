@@ -62,7 +62,9 @@
       "namespace_id": "1001",
       "simple": { "limit": 20, "period": 60 }
     },
-    { "name": "CONNECTION_LIMIT", "namespace_id": "1002", "simple": { "limit": 60, "period": 60 } }
+    { "name": "CONNECTION_LIMIT", "namespace_id": "1002", "simple": { "limit": 60, "period": 60 } },
+    { "name": "KEPT_PAGE_LIMIT", "namespace_id": "1003", "simple": { "limit": 120, "period": 60 } },
+    { "name": "KEPT_APPEND_LIMIT", "namespace_id": "1004", "simple": { "limit": 120, "period": 60 } }
   ],
   // Worker Previews: every push to a branch other than `release` makes (or
   // updates) that branch's Preview via Cloudflare Workers Builds, whose
@@ -94,7 +96,9 @@
         "name": "CONNECTION_LIMIT",
         "namespace_id": "1012",
         "simple": { "limit": 60, "period": 60 }
-      }
+      },
+      { "name": "KEPT_PAGE_LIMIT", "namespace_id": "1013", "simple": { "limit": 120, "period": 60 } },
+      { "name": "KEPT_APPEND_LIMIT", "namespace_id": "1014", "simple": { "limit": 120, "period": 60 } }
     ],
     // Per-Preview logs and traces: Cloudflare dashboard → `edit` Worker →
     // Previews → <branch> → Observability. (`wrangler tail` can't target
@@ -131,7 +135,9 @@
           "name": "CONNECTION_LIMIT",
           "namespace_id": "1022",
           "simple": { "limit": 60, "period": 60 }
-        }
+        },
+        { "name": "KEPT_PAGE_LIMIT", "namespace_id": "1023", "simple": { "limit": 120, "period": 60 } },
+        { "name": "KEPT_APPEND_LIMIT", "namespace_id": "1024", "simple": { "limit": 120, "period": 60 } }
       ]
     }
   }

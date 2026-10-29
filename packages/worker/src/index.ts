@@ -83,6 +83,8 @@ type Bindings = Omit<Env, 'ROOM_CREATION_LIMIT' | 'CONNECTION_LIMIT'> & {
   CONNECTION_LIMIT?: RateLimit
   MAINTENANCE?: string
   KEEP_PUBLIC_V6?: string
+  KEPT_PAGE_LIMIT?: RateLimit
+  KEPT_APPEND_LIMIT?: RateLimit
   // Where the Markdown preview may load images and videos from (docs/self-hosting.md).
   MEDIA_SOURCES?: string
 }
@@ -228,10 +230,21 @@ async function keptRate(
   env: Bindings,
   action: string,
 ): Promise<Response | undefined> {
-  if (!env.CONNECTION_LIMIT || !env.ROOM_CREATION_LIMIT) return new Response(null, { status: 503 })
+  if (
+    !env.CONNECTION_LIMIT ||
+    !env.ROOM_CREATION_LIMIT ||
+    !env.KEPT_PAGE_LIMIT ||
+    !env.KEPT_APPEND_LIMIT
+  )
+    return new Response(null, { status: 503 })
+  const limiter =
+    action === 'append'
+      ? env.KEPT_APPEND_LIMIT
+      : action === 'read' && request.method === 'GET'
+        ? env.KEPT_PAGE_LIMIT
+        : env.CONNECTION_LIMIT
   try {
-    if (await overLimit(env.CONNECTION_LIMIT, request, 'v6 request'))
-      return new Response(null, { status: 429 })
+    if (await overLimit(limiter, request, 'v6 request')) return new Response(null, { status: 429 })
     if (
       action === 'initialize' &&
       (await overLimit(env.ROOM_CREATION_LIMIT, request, 'v6 initialize'))

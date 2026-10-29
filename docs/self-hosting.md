@@ -175,7 +175,9 @@ to write one, and the rules the relay checks.
 
 The v6 retained-room Worker routes are disabled by default. Setting
 `KEEP_PUBLIC_V6` to `1` enables the internal-protocol bridge at
-`/internal/kept/`; it requires both rate-limit bindings above. The relay still
-checks room capabilities and receives encrypted data. This switch does not
+`/internal/kept/`; it requires the `ROOM_CREATION_LIMIT`, `CONNECTION_LIMIT`,
+`KEPT_PAGE_LIMIT`, and `KEPT_APPEND_LIMIT` rate-limit bindings. Page reads and
+appends have separate per-IP budgets so they cannot exhaust the control-request
+budget. The relay still checks room capabilities and receives encrypted data. This switch does not
 connect the CLI or editor, and does not make host recovery, local saving, or
 acknowledgement complete. Leave it unset for ordinary pedit sessions.

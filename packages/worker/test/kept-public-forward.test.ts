@@ -1,8 +1,9 @@
-import { createExecutionContext, evictDurableObject } from 'cloudflare:test'
+import { createExecutionContext, evictDurableObject, runInDurableObject } from 'cloudflare:test'
 import { env } from 'cloudflare:workers'
 import { MAX_FRAME_BYTES } from '@pedit/protocol/frame'
 import { expect, it, vi } from 'vitest'
 import app from '../src/index.ts'
+import { KeptTransport } from '../src/kept-transport.ts'
 import { roomIdFor } from '../src/room-identity.ts'
 
 const token = () =>
@@ -322,4 +323,104 @@ it('keeps maintenance and the public v5 route unchanged', async () => {
   const legacy = await request('/api/rooms', { method: 'POST' }, { ...env, KEEP_PUBLIC_V6: '' })
   expect(legacy.status).toBe(201)
   await legacy.arrayBuffer()
+})
+
+it('review: configured public limit permits a maximum sized read', async () => {
+  const host = token(),
+    id = await roomIdFor(host),
+    caps = { editor: token(), commenter: token(), reader: token() }
+  const room = env.ROOM.get(env.ROOM.idFromName(id))
+  await runInDurableObject(room, async (_, state) => {
+    const t = new KeptTransport(
+      state,
+      env.ROOM,
+      { bytes: 10000, frames: 1100 },
+      { requestedSeconds: 60, roomMaxSeconds: null, maxKeepSeconds: null, alarmSeconds: 60 },
+    )
+    await t.initialize(id, host, caps, 'epoch', Uint8Array.of(1).buffer)
+    for (let i = 0; i < 1024; i++)
+      await t.append(caps.editor, 'epoch', Uint8Array.of(i >> 8, i & 255).buffer)
+  })
+  let controls = 0,
+    pages = 0,
+    appends = 0
+  const limit = (f: () => boolean) =>
+    ({ limit: async () => ({ success: f() }) }) as unknown as RateLimit
+  const bindings = {
+    ...active(),
+    CONNECTION_LIMIT: limit(() => ++controls <= 60),
+    KEPT_PAGE_LIMIT: limit(() => ++pages <= 120),
+    KEPT_APPEND_LIMIT: limit(() => ++appends <= 120),
+  }
+  const path = `/internal/kept/${id}/read`
+  const authorization = { Authorization: `Bearer ${caps.reader}` }
+  const response = await request(path, { method: 'POST', headers: authorization }, bindings)
+  expect(response.status).toBe(200)
+  let { session, cursor } = await response.json<{ session: string; cursor: string }>()
+  let next: string | null = cursor
+  while (next) {
+    cursor = next
+    const page = await request(
+      path,
+      {
+        method: 'GET',
+        headers: {
+          ...authorization,
+          'X-Pedit-Read-Session': session,
+          'X-Pedit-Read-Cursor': cursor,
+        },
+      },
+      bindings,
+    )
+    expect(page.status).toBe(200)
+    ;({ next } = await page.json<{ next: string | null }>())
+  }
+  const finish = await request(
+    path,
+    {
+      method: 'DELETE',
+      headers: { ...authorization, 'X-Pedit-Read-Session': session, 'X-Pedit-Read-Cursor': cursor },
+    },
+    bindings,
+  )
+  expect(finish.status).toBe(204)
+  expect(controls).toBe(2)
+  expect(pages).toBe(64)
+  expect(appends).toBe(0)
+  await evictDurableObject(room, { webSockets: 'close' })
+}, 30000)
+
+it('keeps page, append and control budgets independent and fails closed', async () => {
+  const id = await roomIdFor(token())
+  const fake = {
+    idFromName: () => ({}),
+    get: () => ({ fetch: async () => new Response(null, { status: 204 }) }),
+  } as unknown as Env['ROOM']
+  const allow = { limit: async () => ({ success: true }) } as unknown as RateLimit
+  const deny = { limit: async () => ({ success: false }) } as unknown as RateLimit
+  const bindings = {
+    ...active(),
+    ROOM: fake,
+    CONNECTION_LIMIT: allow,
+    KEPT_PAGE_LIMIT: deny,
+    KEPT_APPEND_LIMIT: deny,
+  }
+  const path = `/internal/kept/${id}`
+  expect((await request(`${path}/read`, { method: 'GET' }, bindings)).status).toBe(429)
+  expect((await request(`${path}/append`, { method: 'POST' }, bindings)).status).toBe(429)
+  expect((await request(`${path}/read`, { method: 'POST' }, bindings)).status).toBe(204)
+  expect((await request(`${path}/read`, { method: 'DELETE' }, bindings)).status).toBe(204)
+  expect(
+    (await request(`${path}/read`, { method: 'POST' }, { ...bindings, KEPT_PAGE_LIMIT: undefined }))
+      .status,
+  ).toBe(503)
+  expect(
+    (
+      await request(
+        `${path}/read`,
+        { method: 'POST' },
+        { ...bindings, KEPT_APPEND_LIMIT: undefined },
+      )
+    ).status,
+  ).toBe(503)
 })
