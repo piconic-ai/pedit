@@ -20,3 +20,8 @@ not establish completeness against a malicious relay or exercise the product UI.
 The earlier unpublished experimental database format from commit 67d6d8f is
 not migrated. This test uses disposable profiles; do not use that experimental
 store for data that must be retained.
+
+The test-only page also mounts CodeMirror against the kept controller. It
+checks pending, failure, and relay-receipt wording, keeps rejected input in a
+copyable draft, and restores the editor when the controller rejects an edit.
+This harness is not the product UI and does not enable a public v6 route.

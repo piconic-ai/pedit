@@ -37,7 +37,7 @@ export default {
     const u = new URL(req.url)
     if (u.pathname === '/')
       return new Response(
-        '<button id="run">Run phase</button><p id="status">Ready</p><script src="/bundle.js"></script>',
+        '<button id="run">Run phase</button><p id="status">Ready</p><main id="editor"></main><script src="/bundle.js"></script>',
         { headers: { 'content-type': 'text/html' } },
       )
     if (u.pathname === '/bundle.js')

@@ -8,6 +8,7 @@ import { KeptOutbox } from '../../../protocol/src/kept-outbox.ts'
 import { KeptRoomClient } from '../../../protocol/src/kept-room-client.ts'
 import fixture from '../../../testdata/kept-read-interop.json'
 import shared from '../../../testdata/kept-recovery-wire.json'
+import { TestKeptEditor } from './test-editor.ts'
 
 const status = document.querySelector('#status')!
 const link = parseKeptFragment(fixture.fragment)!
@@ -59,6 +60,7 @@ async function run() {
         }
         return enqueue(...args)
       }
+      let editor: TestKeptEditor | undefined
       const controller = await KeptEditController.open({
         url: location.origin,
         link,
@@ -68,6 +70,7 @@ async function run() {
         baseline: state,
         onStatus: (value) => {
           current = value
+          editor?.setStatus(value)
         },
         fetch: async (url, init) => {
           const response = await fetch(url, init)
@@ -90,14 +93,41 @@ async function run() {
         rejectedSecond = true
       }
       if (!rejectedSecond) throw Error('concurrent writer admitted')
-      await controller.replace(controller.text().length, controller.text().length, ' CRASH-EDIT')
-      if (((): KeptEditStatus => current)() !== 'pending')
-        throw Error('edit not immediately pending')
+      editor = new TestKeptEditor(controller)
+      editor.view.dispatch({
+        changes: { from: editor.view.state.doc.length, insert: ' CRASH-EDIT' },
+      })
+      if (
+        !editor.status.textContent?.includes('pending') ||
+        !editor.status.textContent?.includes('deadline are unconfirmed')
+      )
+        throw Error('unsafe pending status')
+      const firstEdit = editor.view.state.doc.toString()
+      editor.view.dispatch({ changes: { from: editor.view.state.doc.length, insert: ' SECOND' } })
+      if (
+        editor.draft.hidden ||
+        editor.draft.value !== `${firstEdit} SECOND` ||
+        editor.view.state.doc.toString() !== firstEdit
+      )
+        throw Error('concurrent input was not preserved as a draft')
+      editor.draft.hidden = true
+      editor.draft.value = ''
+      editor.setStatus('pending')
       await untilStatus(() => current, 'failed')
       if ((await outbox.operations(link, fixture.roomId, sender)).length !== 0)
         throw Error('storage failure unexpectedly persisted edit')
       void controller.retry()
       await untilStatus(() => current, 'failed')
+      if (!editor.status.textContent?.includes('unconfirmed')) throw Error('unsafe failure status')
+      const rejected = 'x'.repeat(1_100_000)
+      editor.view.dispatch({ changes: { from: editor.view.state.doc.length, insert: rejected } })
+      for (let i = 0; i < 200 && editor.draft.hidden; i++)
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      if (editor.draft.hidden || !editor.draft.value.endsWith(rejected))
+        throw Error('rejected input lost')
+      if (editor.view.state.doc.toString() !== controller.text())
+        throw Error('rejected edit was not reverted')
+      editor.destroy()
       await controller.close()
       const ops = await outbox.operations(link, fixture.roomId, sender)
       if (ops[0]?.acknowledged !== false) throw Error('unexpected ack')
@@ -176,6 +206,7 @@ async function run() {
       (c) => c.charCodeAt(0),
     )
     let current: KeptEditStatus = 'idle'
+    let editor: TestKeptEditor | undefined
     const controller = await KeptEditController.open({
       url: location.origin,
       link,
@@ -185,11 +216,20 @@ async function run() {
       baseline: state,
       onStatus: (value) => {
         current = value
+        editor?.setStatus(value)
       },
     })
     if (!controller.text().endsWith(' CRASH-EDIT'))
       throw Error('controller failed to restore local edit')
+    editor = new TestKeptEditor(controller)
+    editor.setStatus(current)
     await untilStatus(() => current, 'relay-accepted')
+    if (
+      !editor.status.textContent?.includes('Relay receipt') ||
+      !editor.status.textContent?.includes('deadline are unconfirmed')
+    )
+      throw Error('unsafe relay receipt status')
+    editor.destroy()
     await controller.close()
     outbox.close()
     const reopened = await KeptOutbox.open(dbName)
