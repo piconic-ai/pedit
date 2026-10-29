@@ -161,7 +161,7 @@ try {
   browser = startChrome(retryPort, url + 'retry')
   const second = await until(() => status(retryPort, 'retry'), 'recovery')
   if (!second.startsWith('PASS:')) throw new Error(`Unexpected recovery: ${second}`)
-  console.log(second)
+  console.log('%s', second)
 } catch (error) {
   console.error(error, '\nWorker log:\n', workerLog, '\nChrome log:\n', chromeLog)
   process.exitCode = 1
