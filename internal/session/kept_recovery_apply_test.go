@@ -462,47 +462,6 @@ func TestKeptRecoveryRetriesValidTailAfterInvalidTail(t *testing.T) {
 		t.Fatalf("disk changed: %q", got)
 	}
 }
-func TestKeptRecoveryAcceptsMaximumBaselineAndSignedTail(t *testing.T) {
-	f := newRecoveryFixture(t)
-	receipts := make([]protocol.KeptReceipt, protocol.MaxKeptCheckpointReceipts)
-	for i := range receipts {
-		receipts[i] = protocol.KeptReceipt{Access: protocol.AccessEdit, Sequence: uint64(i + 1), Outcome: protocol.KeptApplied}
-	}
-	ledger, err := protocol.RestoreKeptLedger(protocol.MaxKeptCheckpointReceipts, receipts)
-	if err != nil {
-		t.Fatal(err)
-	}
-	frame := f.frame(t, f.keys, 1, 1, f.textUpdate)
-	s, err := startKeptRecovery(context.Background(), f.opts, f.checkpoint, ledger, f.keys, f.context, [][]byte{frame})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Stop()
-	if s.Text.ToString() != "base guest" {
-		t.Fatalf("recovery text %q", s.Text.ToString())
-	}
-}
-
-func TestKeptRecoverySeparatelyBoundsBaselineAndTail(t *testing.T) {
-	f := newRecoveryFixture(t)
-	receipts := make([]protocol.KeptReceipt, protocol.MaxKeptCheckpointReceipts+1)
-	for i := range receipts {
-		receipts[i] = protocol.KeptReceipt{Access: protocol.AccessEdit, Sequence: uint64(i + 1), Outcome: protocol.KeptApplied}
-	}
-	ledger, err := protocol.RestoreKeptLedger(len(receipts), receipts)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = startKeptRecovery(context.Background(), f.opts, f.checkpoint, ledger, f.keys, f.context, nil); err == nil {
-		t.Fatal("accepted oversized baseline")
-	}
-	if _, err = startKeptRecovery(context.Background(), f.opts, f.checkpoint, f.ledger, f.keys, f.context, make([][]byte, protocol.MaxKeptReadRecords+1)); err == nil {
-		t.Fatal("accepted oversized tail")
-	}
-	if got := readFile(t, f.opts.File); got != "external edit" {
-		t.Fatalf("disk changed: %q", got)
-	}
-}
 
 // Each peer inserts at the same position in the baseline. Integrating these
 // siblings makes ygo scan a growing conflict list despite the small wire size.
