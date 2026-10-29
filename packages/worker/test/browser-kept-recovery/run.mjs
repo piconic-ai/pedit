@@ -1,10 +1,10 @@
 import { spawn } from 'node:child_process'
-import { createRequire } from 'node:module'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
+import net from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import net from 'node:net'
 
 const dir = dirname(fileURLToPath(import.meta.url))
 const workerDir = resolve(dir, '../..')

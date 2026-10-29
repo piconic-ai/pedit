@@ -1,7 +1,10 @@
 import * as Y from 'yjs'
 import { deriveKeptRoomKeys, parseKeptFragment } from '../../../protocol/src/kept-access.ts'
+import {
+  KeptEditController,
+  type KeptEditStatus,
+} from '../../../protocol/src/kept-edit-controller.ts'
 import { KeptOutbox } from '../../../protocol/src/kept-outbox.ts'
-import { KeptEditController, type KeptEditStatus } from '../../../protocol/src/kept-edit-controller.ts'
 import { KeptRoomClient } from '../../../protocol/src/kept-room-client.ts'
 import fixture from '../../../testdata/kept-read-interop.json'
 import shared from '../../../testdata/kept-recovery-wire.json'
@@ -42,17 +45,30 @@ async function run() {
       })
       if (!response.ok) throw Error(`setup ${response.status}`)
       const sender = await outbox.createSender(link, fixture.roomId)
-      const state = Uint8Array.from(atob(shared.textState.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0))
+      const state = Uint8Array.from(
+        atob(shared.textState.replace(/-/g, '+').replace(/_/g, '/')),
+        (c) => c.charCodeAt(0),
+      )
       let current: KeptEditStatus = 'idle'
       const enqueue = outbox.enqueue.bind(outbox)
       let rejectPersistence = true
       outbox.enqueue = async (...args) => {
-        if (rejectPersistence) { rejectPersistence = false; throw Error('simulated storage failure') }
+        if (rejectPersistence) {
+          rejectPersistence = false
+          throw Error('simulated storage failure')
+        }
         return enqueue(...args)
       }
       const controller = await KeptEditController.open({
-        url: location.origin, link, context, sender, outbox, baseline: state,
-        onStatus: (value) => { current = value },
+        url: location.origin,
+        link,
+        context,
+        sender,
+        outbox,
+        baseline: state,
+        onStatus: (value) => {
+          current = value
+        },
         fetch: async (url, init) => {
           const response = await fetch(url, init)
           if (!response.ok) throw Error(`append ${response.status}`)
@@ -61,11 +77,22 @@ async function run() {
       })
       let rejectedSecond = false
       try {
-        await KeptEditController.open({url: location.origin, link, context, sender, outbox, baseline: state, onStatus: () => {}})
-      } catch { rejectedSecond = true }
+        await KeptEditController.open({
+          url: location.origin,
+          link,
+          context,
+          sender,
+          outbox,
+          baseline: state,
+          onStatus: () => {},
+        })
+      } catch {
+        rejectedSecond = true
+      }
       if (!rejectedSecond) throw Error('concurrent writer admitted')
       await controller.replace(controller.text().length, controller.text().length, ' CRASH-EDIT')
-      if (current !== 'pending') throw Error('edit not immediately pending')
+      if (((): KeptEditStatus => current)() !== 'pending')
+        throw Error('edit not immediately pending')
       await untilStatus(() => current, 'failed')
       if ((await outbox.operations(link, fixture.roomId, sender)).length !== 0)
         throw Error('storage failure unexpectedly persisted edit')
@@ -77,37 +104,88 @@ async function run() {
       outbox.close()
       const remoteBox = await KeptOutbox.open(`${dbName}-remote`)
       const remoteSender = await remoteBox.createSender(link, fixture.roomId)
-      const remoteController = await KeptEditController.open({url: location.origin, link, context, sender: remoteSender, outbox: remoteBox, baseline: state, onStatus: () => {}, fetch: async () => { throw Error('offline') }})
+      const remoteController = await KeptEditController.open({
+        url: location.origin,
+        link,
+        context,
+        sender: remoteSender,
+        outbox: remoteBox,
+        baseline: state,
+        onStatus: () => {},
+        fetch: async () => {
+          throw Error('offline')
+        },
+      })
       const remoteDoc = new Y.Doc()
       Y.applyUpdate(remoteDoc, state)
       const vector = Y.encodeStateVector(remoteDoc)
       remoteDoc.getText('content').insert(remoteDoc.getText('content').length, ' REMOTE')
       await remoteController.applyRemote(Y.encodeStateAsUpdate(remoteDoc, vector))
-      await remoteController.replace(remoteController.text().length, remoteController.text().length, ' LOCAL')
+      await remoteController.replace(
+        remoteController.text().length,
+        remoteController.text().length,
+        ' LOCAL',
+      )
       await remoteController.close()
       remoteDoc.destroy()
       remoteBox.close()
       // Keep a writer lock held until the harness kills Chrome.
       const crashBox = await KeptOutbox.open(dbName)
-      await KeptEditController.open({url: location.origin, link, context, sender, outbox: crashBox, baseline: state, onStatus: () => {}, fetch: async () => { throw Error('offline') }})
+      await KeptEditController.open({
+        url: location.origin,
+        link,
+        context,
+        sender,
+        outbox: crashBox,
+        baseline: state,
+        onStatus: () => {},
+        fetch: async () => {
+          throw Error('offline')
+        },
+      })
       status.textContent = 'PENDING: response lost after Room accepted'
       return
     }
     const remoteBox = await KeptOutbox.open(`${dbName}-remote`)
     const [remoteSender] = await remoteBox.senders(link, fixture.roomId)
     if (!remoteSender) throw Error('missing remote recovery sender')
-    const remoteState = Uint8Array.from(atob(shared.textState.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0))
-    const remoteController = await KeptEditController.open({url: location.origin, link, context, sender: remoteSender, outbox: remoteBox, baseline: remoteState, onStatus: () => {}, fetch: async () => { throw Error('offline') }})
-    if (!remoteController.text().endsWith(' REMOTE LOCAL')) throw Error('remote dependency not restored')
+    const remoteState = Uint8Array.from(
+      atob(shared.textState.replace(/-/g, '+').replace(/_/g, '/')),
+      (c) => c.charCodeAt(0),
+    )
+    const remoteController = await KeptEditController.open({
+      url: location.origin,
+      link,
+      context,
+      sender: remoteSender,
+      outbox: remoteBox,
+      baseline: remoteState,
+      onStatus: () => {},
+      fetch: async () => {
+        throw Error('offline')
+      },
+    })
+    if (!remoteController.text().endsWith(' REMOTE LOCAL'))
+      throw Error('remote dependency not restored')
     await remoteController.close()
     remoteBox.close()
     const [sender] = await outbox.senders(link, fixture.roomId)
     if (!sender) throw Error('missing sender')
-    const state = Uint8Array.from(atob(shared.textState.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0))
+    const state = Uint8Array.from(
+      atob(shared.textState.replace(/-/g, '+').replace(/_/g, '/')),
+      (c) => c.charCodeAt(0),
+    )
     let current: KeptEditStatus = 'idle'
     const controller = await KeptEditController.open({
-      url: location.origin, link, context, sender, outbox, baseline: state,
-      onStatus: (value) => { current = value },
+      url: location.origin,
+      link,
+      context,
+      sender,
+      outbox,
+      baseline: state,
+      onStatus: (value) => {
+        current = value
+      },
     })
     if (!controller.text().endsWith(' CRASH-EDIT'))
       throw Error('controller failed to restore local edit')

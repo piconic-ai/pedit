@@ -86,12 +86,17 @@ export class KeptOutboxSender {
     let item: Awaited<ReturnType<KeptOutbox['prepare']>>
     for (;;) {
       const operations = await this.options.outbox.operations(
-        this.link, this.context.roomId, this.options.sender,
+        this.link,
+        this.context.roomId,
+        this.options.sender,
       )
       const next = operations.find((op) => !op.acknowledged)
       if (!next) return { status: 'idle' }
       item = await this.options.outbox.prepare(
-        this.link, this.context, this.options.sender, next.sequence,
+        this.link,
+        this.context,
+        this.options.sender,
+        next.sequence,
       )
       if (!item.acknowledged) break
     }
