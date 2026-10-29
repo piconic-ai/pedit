@@ -3,12 +3,14 @@
 package session
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/piconic-ai/pedit/internal/hoststate"
@@ -335,5 +337,42 @@ func TestRecoveryStagesRejectModifiedCandidateAndPreservePaths(t *testing.T) {
 	view, err := inspectRecoveryStages(store, room, result.Receipt)
 	if err == nil || view.State != "uncertain" || view.Recovery.MetadataStage != result.Recovery.MetadataStage || view.Recovery.TextRetained != result.Recovery.TextRetained {
 		t.Fatal("modified candidate accepted", err)
+	}
+}
+
+func TestRecoveryStagesRejectFIFO(t *testing.T) {
+	if dir := os.Getenv("PEDIT_FIFO_STORE"); dir != "" {
+		store, err := hoststate.Open(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer store.Close()
+		view, err := inspectRecoveryStages(store, os.Getenv("PEDIT_FIFO_ROOM"), os.Getenv("PEDIT_FIFO_RECEIPT"))
+		if err == nil || view.State != "uncertain" {
+			t.Fatal("FIFO accepted", err)
+		}
+		return
+	}
+	store, room, journal, _ := stageFixture(t)
+	defer store.Close()
+	result, err := prepareRecoveryStages(store, room, journal, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Remove(result.Recovery.TextStage); err != nil {
+		t.Fatal(err)
+	}
+	if err = unix.Mkfifo(result.Recovery.TextStage, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	child := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestRecoveryStagesRejectFIFO$")
+	child.Env = append(os.Environ(), "PEDIT_FIFO_STORE="+filepath.Dir(result.Receipt), "PEDIT_FIFO_ROOM="+room, "PEDIT_FIFO_RECEIPT="+result.Receipt)
+	if output, err := child.CombinedOutput(); err != nil {
+		t.Fatalf("FIFO inspection did not fail promptly: %v %s", err, output)
 	}
 }

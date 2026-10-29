@@ -226,7 +226,7 @@ func prepareStageFile(dir *os.File, name string, data []byte, hook func(string))
 }
 
 func retainStageOriginal(dir *os.File, name, retained string, expected recoveryObjectID, baseline []byte, hook func(string)) error {
-	fd, err := unix.Openat(int(dir.Fd()), name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	fd, err := unix.Openat(int(dir.Fd()), name, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return err
 	}
@@ -249,7 +249,7 @@ func retainStageOriginal(dir *os.File, name, retained string, expected recoveryO
 	if hook != nil {
 		hook("retained-linked")
 	}
-	retainedFD, err := unix.Openat(int(dir.Fd()), retained, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	retainedFD, err := unix.Openat(int(dir.Fd()), retained, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return err
 	}
@@ -374,7 +374,7 @@ func readRecoveryStageReceipt(store *hoststate.Store, room, path string, credent
 }
 
 func inspectPreparedStage(dir *os.File, name string, expected recoveryObjectID, want []byte, retained bool) error {
-	fd, err := unix.Openat(int(dir.Fd()), name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	fd, err := unix.Openat(int(dir.Fd()), name, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return err
 	}
