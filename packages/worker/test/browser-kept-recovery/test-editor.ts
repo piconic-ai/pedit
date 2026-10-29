@@ -15,6 +15,18 @@ const labels: Record<KeptEditStatus, string> = {
     'Changes could not be sent or stored. Relay history, host save and deadline are unconfirmed.',
 }
 
+function difference(before: string, after: string): ChangeSet {
+  let from = 0
+  while (from < before.length && from < after.length && before[from] === after[from]) from++
+  let to = before.length,
+    end = after.length
+  while (to > from && end > from && before[to - 1] === after[end - 1]) {
+    to--
+    end--
+  }
+  return ChangeSet.of({ from, to, insert: after.slice(from, end) }, before.length)
+}
+
 // Test-only entry: no public route or product editor is enabled by this harness.
 export class TestKeptEditor {
   readonly view: EditorView
@@ -89,10 +101,7 @@ export class TestKeptEditor {
       if (this.draft.hidden) this.draft.value = desired
       this.draft.hidden = false
       const original = this.controller.text()
-      this.draftChanges = ChangeSet.of(
-        { from: 0, to: original.length, insert: this.draft.value },
-        original.length,
-      )
+      this.draftChanges = difference(original, this.draft.value)
       this.setStatus('failed')
       this.view.dispatch({
         changes: { from: 0, to: this.view.state.doc.length, insert: this.controller.text() },
@@ -113,11 +122,7 @@ export class TestKeptEditor {
         changes: { from: 0, to: this.view.state.doc.length, insert: next },
         annotations: internal.of(true),
       })
-      if (!this.draft.hidden)
-        this.draftChanges = ChangeSet.of(
-          { from: 0, to: next.length, insert: this.draft.value },
-          next.length,
-        )
+      if (!this.draft.hidden) this.draftChanges = difference(next, this.draft.value)
     } finally {
       this.busy = false
     }
