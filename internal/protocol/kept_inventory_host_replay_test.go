@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/reearth/ygo/crdt"
@@ -149,6 +150,55 @@ func TestInventoryHostReplayRejectsUntrustedModesAndLegacy(t *testing.T) {
 		})
 	}
 }
+func TestInventoryHostReplayChecksNormalizedCheckpointReference(t *testing.T) {
+	f := newInventoryHostTest(t)
+	doc := crdt.New()
+	defer doc.Destroy()
+	text := doc.GetText("content")
+	path := f.vector.Additions[0]
+	encoded := strings.Replace(path, "/", "&#47;", 1)
+	doc.Transact(func(tx *crdt.Transaction) { text.Insert(tx, 0, "![]("+encoded+")", nil) })
+	f.payload.Documents[0] = crdt.EncodeStateAsUpdateV1(doc, nil)
+	if _, err := ReplaySignedKeptInventory(f.keys, f.context, f.checkpoint(t), nil); err == nil {
+		t.Fatal("accepted undeclared normalized reference")
+	}
+	f.payload.Attachments = []string{path}
+	if _, err := ReplaySignedKeptInventory(f.keys, f.context, f.checkpoint(t), nil); err != nil {
+		t.Fatal("rejected declared normalized reference", err)
+	}
+}
+
+func TestInventoryHostReplayChecksNormalizedUpdateReference(t *testing.T) {
+	f := newInventoryHostTest(t)
+	doc := crdt.New()
+	defer doc.Destroy()
+	text := doc.GetText("content")
+	path := f.vector.Additions[0]
+	encoded := strings.Replace(path, "/", `\/`, 1)
+	doc.Transact(func(tx *crdt.Transaction) { text.Insert(tx, 0, "![]("+encoded+")", nil) })
+	update := base64.StdEncoding.EncodeToString(crdt.EncodeStateAsUpdateV1(doc, nil))
+	cp := f.checkpoint(t)
+	if _, err := ReplaySignedKeptInventory(f.keys, f.context, cp, [][]byte{f.frame(t, 1, update, nil)}); err == nil {
+		t.Fatal("accepted undeclared normalized update reference")
+	}
+	if _, err := ReplaySignedKeptInventory(f.keys, f.context, cp, [][]byte{f.frame(t, 1, update, []string{path})}); err != nil {
+		t.Fatal("rejected declared normalized update reference", err)
+	}
+}
+
+func TestInventoryHostReplayRejectsUnsupportedReferenceSyntax(t *testing.T) {
+	f := newInventoryHostTest(t)
+	doc := crdt.New()
+	defer doc.Destroy()
+	text := doc.GetText("content")
+	doc.Transact(func(tx *crdt.Transaction) { text.Insert(tx, 0, "![image][ref]\n\n[ref]: "+f.vector.Additions[0], nil) })
+	f.payload.Documents[0] = crdt.EncodeStateAsUpdateV1(doc, nil)
+	f.payload.Attachments = []string{f.vector.Additions[0]}
+	if _, err := ReplaySignedKeptInventory(f.keys, f.context, f.checkpoint(t), nil); err == nil {
+		t.Fatal("accepted unsupported reference-style image")
+	}
+}
+
 func TestInventoryHostReplayRejectsUndeclaredAndSequenceConflict(t *testing.T) {
 	f := newInventoryHostTest(t)
 	cp := f.checkpoint(t)

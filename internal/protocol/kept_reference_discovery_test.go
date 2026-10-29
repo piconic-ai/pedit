@@ -21,9 +21,9 @@ func TestConservativeReferencesCoverRendererLookups(t *testing.T) {
 		t.Fatal(err)
 	}
 	accepted := map[string]bool{
-		"inline": true, "entity slash": false, "escaped slash": false,
+		"inline": true, "entity slash": true, "escaped slash": true,
 		"reference definition": false, "code": true, "escaped marker": true,
-		"configured directory": false, "percent slash": false, "external image": false,
+		"configured directory": true, "percent slash": false, "external image": false,
 		"frontmatter": true, "raw HTML": true, "two references": true,
 	}
 	for _, item := range cases {
@@ -32,7 +32,11 @@ func TestConservativeReferencesCoverRendererLookups(t *testing.T) {
 			if !known {
 				t.Fatal("case needs an acceptance expectation")
 			}
-			paths, err := conservativeKeptReferences(item.Source)
+			directory := "assets"
+			if item.Name == "configured directory" {
+				directory = "images"
+			}
+			paths, err := DiscoverKeptReferenceCandidates(item.Source, directory)
 			if (err == nil) != want {
 				t.Fatalf("acceptance = %v, want %v: %v", err == nil, want, err)
 			}
@@ -40,7 +44,7 @@ func TestConservativeReferencesCoverRendererLookups(t *testing.T) {
 				return
 			}
 			for _, path := range item.Lookups {
-				if !keptAssetPath.MatchString(path) || !slices.Contains(paths.possible, path) {
+				if !slices.Contains(paths.PossiblePaths(), path) {
 					t.Fatalf("renderer reference %q was missed", path)
 				}
 			}
@@ -50,23 +54,36 @@ func TestConservativeReferencesCoverRendererLookups(t *testing.T) {
 
 func TestConservativeReferencesFailClosed(t *testing.T) {
 	path := "assets/0123456789abcdef0123456789abcdef.png"
-	paths, err := conservativeKeptReferences("before ![](" + path + ") after ![](" + path + ")")
-	if err != nil || !slices.Equal(paths.possible, []string{path}) {
+	paths, err := DiscoverKeptReferenceCandidates("before ![]("+path+") after ![]("+path+")", "assets")
+	if err != nil || !slices.Equal(paths.PossiblePaths(), []string{path}) {
 		t.Fatalf("canonical references: %v %v", paths, err)
 	}
 	second := "assets/fedcba9876543210fedcba9876543210.jpg"
-	paths, err = conservativeKeptReferences("![second](" + second + ") ![first](" + path + ")")
-	if err != nil || !slices.Equal(paths.possible, []string{path, second}) {
+	paths, err = DiscoverKeptReferenceCandidates("![second]("+second+") ![first]("+path+")", "assets")
+	if err != nil || !slices.Equal(paths.PossiblePaths(), []string{path, second}) {
 		t.Fatalf("sorted references: %v %v", paths, err)
 	}
-	for _, source := range []string{"wow!", "![cat *italic*](" + path + ")", "![](assets&#47;0123456789abcdef0123456789abcdef.png)", "![](images/0123456789abcdef0123456789abcdef.png)"} {
-		if _, err := conservativeKeptReferences(source); err == nil {
+	for _, source := range []string{"wow!", "![cat *italic*](" + path + ")", "![](assets&#x2f;0123456789abcdef0123456789abcdef.png)", "![](images/0123456789abcdef0123456789abcdef.png)"} {
+		if _, err := DiscoverKeptReferenceCandidates(source, "assets"); err == nil {
 			t.Fatalf("accepted unsupported source %q", source)
 		}
 	}
 	for _, source := range []string{string([]byte{0xff}), strings.Repeat("x", MaxFrameBytes+1), strings.Repeat("![]("+path+")", MaxKeptInventoryPaths+1)} {
-		if paths, err := conservativeKeptReferences(source); err == nil || paths.possible != nil {
+		if paths, err := DiscoverKeptReferenceCandidates(source, "assets"); err == nil || paths.PossiblePaths() != nil {
 			t.Fatal("accepted invalid or over-limit input")
 		}
+	}
+	for _, directory := range []string{"", ".", "..", "assets/sub", "日本語", strings.Repeat("a", 256)} {
+		if _, err := DiscoverKeptReferenceCandidates("text", directory); err == nil {
+			t.Fatalf("accepted unsafe directory %q", directory)
+		}
+	}
+	if _, err := DiscoverKeptReferenceCandidates("text", strings.Repeat("a", 255)); err != nil {
+		t.Fatal("rejected maximum-length directory", err)
+	}
+	copy := paths.PossiblePaths()
+	copy[0] = "changed"
+	if paths.PossiblePaths()[0] != path {
+		t.Fatal("caller changed candidate paths")
 	}
 }

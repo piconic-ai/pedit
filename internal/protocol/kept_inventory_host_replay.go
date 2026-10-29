@@ -95,6 +95,9 @@ func newInventoryHostReplay(keys *KeptRoomKeys, context KeptCheckpointContext, p
 	if p := doc.PendingStats(); p.Items != 0 || p.DeleteRanges != 0 {
 		return nil, 0, errInventoryObservation
 	}
+	if !inventoryCoversText(doc, payload.Attachments) {
+		return nil, 0, errInventoryObservation
+	}
 	ok = true
 	return &inventoryHostReplay{keys: keys, context: KeptRecordContext{RoomID: context.RoomID, Epoch: context.Epoch, Generation: context.Generation}, doc: doc, inventory: append([]string{}, payload.Attachments...), ledger: ledger, work: work}, metadataID, nil
 }
@@ -156,7 +159,13 @@ func mergeInventoryPaths(current, additions []string) []string {
 	return current[:n]
 }
 func inventoryCoversText(doc *crdt.Doc, inventory []string) bool {
-	for _, p := range keptAssetReference.FindAllString(doc.GetText("content").ToString(), -1) {
+	text := doc.GetText("content").ToString()
+	candidates, err := DiscoverKeptReferenceCandidates(text, "assets")
+	if err != nil {
+		return false
+	}
+	paths := append(candidates.PossiblePaths(), keptAssetReference.FindAllString(text, -1)...)
+	for _, p := range paths {
 		if _, ok := sort.Find(len(inventory), func(i int) int { return bytes.Compare([]byte(p), []byte(inventory[i])) }); !ok {
 			return false
 		}
