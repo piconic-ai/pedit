@@ -15,18 +15,6 @@ const labels: Record<KeptEditStatus, string> = {
     'Changes could not be sent or stored. Relay history, host save and deadline are unconfirmed.',
 }
 
-function difference(before: string, after: string): ChangeSet {
-  let from = 0
-  while (from < before.length && from < after.length && before[from] === after[from]) from++
-  let to = before.length,
-    end = after.length
-  while (to > from && end > from && before[to - 1] === after[end - 1]) {
-    to--
-    end--
-  }
-  return ChangeSet.of({ from, to, insert: after.slice(from, end) }, before.length)
-}
-
 // Test-only entry: no public route or product editor is enabled by this harness.
 export class TestKeptEditor {
   readonly view: EditorView
@@ -38,7 +26,6 @@ export class TestKeptEditor {
   constructor(private readonly controller: KeptEditController) {
     this.status.setAttribute('role', 'status')
     this.draft.hidden = true
-    this.draft.readOnly = true
     const root = document.querySelector('#editor')!
     root.appendChild(this.status)
     root.appendChild(this.draft)
@@ -57,10 +44,17 @@ export class TestKeptEditor {
               return transaction
             if (this.draft.hidden) this.draftChanges = undefined
             const previous = this.draftChanges ?? ChangeSet.empty(transaction.startState.doc.length)
-            const mapped = transaction.changes.map(previous)
+            const edits: { from: number; to: number; insert: string }[] = []
+            transaction.changes.iterChanges((from, to, _fromB, _toB, inserted) => {
+              const start = previous.mapPos(from, from === to ? 1 : -1)
+              const end = previous.mapPos(to, 1)
+              edits.push({ from: start, to: end, insert: inserted.toString() })
+            })
+            const mapped = ChangeSet.of(edits, previous.newLength)
             this.draftChanges = previous.compose(mapped)
             this.draft.value = this.draftChanges.apply(transaction.startState.doc).toString()
             this.draft.hidden = false
+            queueMicrotask(() => this.draft.focus())
             this.setStatus('failed')
             return []
           }),
@@ -71,7 +65,7 @@ export class TestKeptEditor {
             this.busy = true
             this.setStatus('pending')
             queueMicrotask(() => {
-              void this.apply(desired)
+              void this.apply(desired, update.changes)
             })
           }),
         ],
@@ -82,9 +76,9 @@ export class TestKeptEditor {
   setStatus(value: KeptEditStatus): void {
     this.status.textContent = this.draft.hidden
       ? labels[value]
-      : 'An edit could not be applied. Copy it from the draft field. Relay history, host save and deadline are unconfirmed.'
+      : 'An edit could not be applied. Continue editing or copy it in the draft field. Relay history, host save and deadline are unconfirmed.'
   }
-  private async apply(desired: string): Promise<void> {
+  private async apply(desired: string, changes: ChangeSet): Promise<void> {
     this.view.dispatch({ effects: this.writable.reconfigure(EditorState.readOnly.of(true)) })
     const before = this.controller.text()
     let from = 0
@@ -98,10 +92,14 @@ export class TestKeptEditor {
     try {
       await this.controller.replace(from, a, desired.slice(from, b))
     } catch {
-      if (this.draft.hidden) this.draft.value = desired
+      if (this.draft.hidden) {
+        this.draft.value = desired
+        this.draftChanges = changes
+      } else {
+        this.draftChanges = changes.compose(this.draftChanges ?? ChangeSet.empty(changes.newLength))
+      }
       this.draft.hidden = false
-      const original = this.controller.text()
-      this.draftChanges = difference(original, this.draft.value)
+      this.draft.focus()
       this.setStatus('failed')
       this.view.dispatch({
         changes: { from: 0, to: this.view.state.doc.length, insert: this.controller.text() },
@@ -109,11 +107,13 @@ export class TestKeptEditor {
       })
     } finally {
       this.busy = false
-      this.view.dispatch({ effects: this.writable.reconfigure(EditorState.readOnly.of(false)) })
+      this.view.dispatch({
+        effects: this.writable.reconfigure(EditorState.readOnly.of(!this.draft.hidden)),
+      })
     }
   }
   async applyRemote(update: Uint8Array): Promise<void> {
-    if (this.busy) throw new Error('edit in progress')
+    if (this.busy || !this.draft.hidden) throw new Error('edit or draft in progress')
     this.busy = true
     try {
       await this.controller.applyRemote(update)
@@ -122,7 +122,6 @@ export class TestKeptEditor {
         changes: { from: 0, to: this.view.state.doc.length, insert: next },
         annotations: internal.of(true),
       })
-      if (!this.draft.hidden) this.draftChanges = difference(next, this.draft.value)
     } finally {
       this.busy = false
     }

@@ -121,7 +121,12 @@ async function run() {
       await untilStatus(() => current, 'failed')
       if (!editor.status.textContent?.includes('unconfirmed')) throw Error('unsafe failure status')
       const rejected = 'x'.repeat(1_100_000)
-      editor.view.dispatch({ changes: { from: editor.view.state.doc.length, insert: rejected } })
+      editor.view.dispatch({
+        changes: [
+          { from: 0, to: 1, insert: 'Z' },
+          { from: editor.view.state.doc.length, insert: rejected },
+        ],
+      })
       for (let i = 0; i < 200 && editor.draft.hidden; i++)
         await new Promise((resolve) => setTimeout(resolve, 20))
       if (editor.draft.hidden || !editor.draft.value.endsWith(rejected))
@@ -129,16 +134,27 @@ async function run() {
       if (editor.view.state.doc.toString() !== controller.text())
         throw Error('rejected edit was not reverted')
       const base = editor.view.state.doc.toString()
-      editor.view.dispatch({ changes: { from: 0, to: 1 } })
-      if (editor.draft.value !== base.slice(1) + rejected)
-        throw Error('draft dropped first-character deletion')
       editor.view.dispatch({ changes: { from: 1, to: 3 } })
-      if (editor.draft.value !== base.slice(3) + rejected)
-        throw Error('draft dropped selection deletion')
+      if (editor.draft.value !== 'Z' + base.slice(3) + rejected)
+        throw Error('draft dropped middle selection deletion')
+      editor.view.dispatch({ changes: { from: 0, to: 1, insert: 'Q' } })
+      if (editor.draft.value !== 'Q' + base.slice(3) + rejected)
+        throw Error('overlapping replacement lost')
+      editor.view.dispatch({ changes: { from: 0, to: 1 } })
+      if (editor.draft.value !== base.slice(3) + rejected) throw Error('overlapping deletion lost')
       editor.view.dispatch({ changes: { from: editor.view.state.doc.length, insert: ' AFTER' } })
       editor.view.dispatch({ changes: { from: editor.view.state.doc.length, insert: ' MORE' } })
       if (editor.draft.value !== base.slice(3) + rejected + ' AFTER MORE')
         throw Error('input after capacity rejection was lost')
+      editor.draft.setRangeText(
+        ' DIRECT',
+        editor.draft.value.length,
+        editor.draft.value.length,
+        'end',
+      )
+      if (!editor.draft.value.endsWith(' AFTER MORE DIRECT'))
+        throw Error('draft is not directly editable')
+      if (!editor.view.state.readOnly) throw Error('editor remained writable with unresolved draft')
       editor.destroy()
       await controller.close()
       const ops = await outbox.operations(link, fixture.roomId, sender)
