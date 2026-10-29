@@ -169,6 +169,112 @@ func applyRecoveryText(doc *crdt.Doc, update []byte) (err error) {
 	return crdt.ApplyUpdateV1(doc, update, nil)
 }
 
+func initialContent(doc *crdt.Doc, file, initial string, recovery *recoveryCheckpoint) (content, error) {
+	var shared content
+	var err error
+	if recovery == nil {
+		shared, err = newContent(doc, file, initial)
+	} else {
+		if isCanvas(file) || len(recovery.text) == 0 || len(recovery.text) > protocol.MaxFrameBytes || len(recovery.comments) == 0 || len(recovery.comments) > protocol.MaxFrameBytes {
+			return nil, errors.New("invalid recovery checkpoint")
+		}
+		if err = protocol.CheckKeptTextState(recovery.text); err != nil {
+			return nil, fmt.Errorf("unsupported recovery text state: %w", err)
+		}
+		if err = applyRecoveryText(doc, recovery.text); err != nil {
+			return nil, err
+		}
+		if pending := doc.PendingStats(); pending.Items != 0 || pending.DeleteRanges != 0 {
+			return nil, errors.New("incomplete recovery checkpoint")
+		}
+		comments := crdt.New()
+		if err = meta.CheckUpdate(comments, recovery.comments); err != nil {
+			return nil, err
+		}
+		shared = &textContent{doc: doc, text: doc.GetText("content")}
+		if !utf8.ValidString(shared.render()) {
+			return nil, errors.New("invalid recovery text")
+		}
+	}
+	return shared, err
+}
+
+func initialAwareness(doc *crdt.Doc, opts Options, shared content, recovery *recoveryCheckpoint) *awareness.Awareness {
+	aw := awareness.New(uint64(doc.ClientID()))
+	name := opts.Name
+	if name == "" {
+		name = "host"
+	}
+	user := map[string]any{"name": name}
+	if opts.Avatar != "" {
+		user["avatar"] = opts.Avatar
+	}
+	state := map[string]any{
+		"role": "host",
+		"name": name,
+		"user": user,
+		"file": filepath.Base(opts.File),
+		// Browsers let people paste images only when the host says it saves them.
+		"attachments": map[string]any{"dir": attach.Dir, "maxBytes": attach.MaxBytes},
+	}
+	if recovery != nil {
+		delete(state, "attachments")
+	}
+	if _, ok := shared.(*canvasContent); ok {
+		state["format"] = formatCanvas
+	}
+	aw.SetLocalState(state)
+	return aw
+}
+
+func (s *Session) startAttachments(opts Options, initial string) {
+	if s.recovery == nil {
+		s.attachments = attach.New(attach.Options{
+			File:            opts.File,
+			Root:            s.bound.Dir(),
+			InitialDocument: initial,
+			Server:          s.server,
+			Room:            s.roomID,
+			// Without the host token: blobs are for everyone in the room.
+			Header:     opts.Header,
+			HTTPClient: opts.HTTPClient,
+			Keys:       s.blobKeys,
+			Send:       s.Client.SendAttachment,
+			OnSaved: func(path string) {
+				s.notices.imageSaved()
+				if opts.OnSaved != nil {
+					opts.OnSaved(path)
+				}
+			},
+			OnSaveError: s.notices.imageError,
+			OnError:     s.opts.OnError,
+		})
+	}
+
+}
+
+func (s *Session) startRuntime(opts Options, recovery *recoveryCheckpoint) error {
+	s.stopAlive = keepAlive(s.awareness)
+	s.notices.start()
+	s.startMeta()
+	if recovery != nil && s.meta == nil {
+		s.notices.stop()
+		s.stopAlive()
+		s.Client.Destroy()
+		s.awareness.Destroy()
+		return errors.New("cannot open recovery comments")
+	}
+	s.Client.Connect()
+
+	if opts.Watch && recovery == nil {
+		if err := s.watch(); err != nil {
+			_ = s.Stop()
+			return err
+		}
+	}
+	return nil
+}
+
 func Start(ctx context.Context, opts Options) (*Session, error) {
 	return start(ctx, opts, nil)
 }
@@ -214,31 +320,7 @@ func start(ctx context.Context, opts Options, recovery *recoveryCheckpoint) (*Se
 	}()
 	// Before creating a room, so a canvas that is not valid fails right away.
 	doc := crdt.New()
-	var shared content
-	if recovery == nil {
-		shared, err = newContent(doc, opts.File, initial)
-	} else {
-		if isCanvas(opts.File) || len(recovery.text) == 0 || len(recovery.text) > protocol.MaxFrameBytes || len(recovery.comments) == 0 || len(recovery.comments) > protocol.MaxFrameBytes {
-			return nil, errors.New("invalid recovery checkpoint")
-		}
-		if err = protocol.CheckKeptTextState(recovery.text); err != nil {
-			return nil, fmt.Errorf("unsupported recovery text state: %w", err)
-		}
-		if err = applyRecoveryText(doc, recovery.text); err != nil {
-			return nil, err
-		}
-		if pending := doc.PendingStats(); pending.Items != 0 || pending.DeleteRanges != 0 {
-			return nil, errors.New("incomplete recovery checkpoint")
-		}
-		comments := crdt.New()
-		if err = meta.CheckUpdate(comments, recovery.comments); err != nil {
-			return nil, err
-		}
-		shared = &textContent{doc: doc, text: doc.GetText("content")}
-		if !utf8.ValidString(shared.render()) {
-			return nil, errors.New("invalid recovery text")
-		}
-	}
+	shared, err := initialContent(doc, opts.File, initial, recovery)
 	if err != nil {
 		return nil, err
 	}
@@ -266,30 +348,7 @@ func start(ctx context.Context, opts Options, recovery *recoveryCheckpoint) (*Se
 	}
 	wsURL := "ws" + strings.TrimPrefix(server, "http") + "/api/rooms/" + room.ID + "/ws"
 
-	aw := awareness.New(uint64(doc.ClientID()))
-	name := opts.Name
-	if name == "" {
-		name = "host"
-	}
-	user := map[string]any{"name": name}
-	if opts.Avatar != "" {
-		user["avatar"] = opts.Avatar
-	}
-	state := map[string]any{
-		"role": "host",
-		"name": name,
-		"user": user,
-		"file": filepath.Base(opts.File),
-		// Browsers let people paste images only when the host says it saves them.
-		"attachments": map[string]any{"dir": attach.Dir, "maxBytes": attach.MaxBytes},
-	}
-	if recovery != nil {
-		delete(state, "attachments")
-	}
-	if _, ok := shared.(*canvasContent); ok {
-		state["format"] = formatCanvas
-	}
-	aw.SetLocalState(state)
+	aw := initialAwareness(doc, opts, shared, recovery)
 	blobKeys, err := protocol.DeriveBlobKeys(keys.FrameKey)
 	if err != nil {
 		return nil, err
@@ -363,28 +422,7 @@ func start(ctx context.Context, opts Options, recovery *recoveryCheckpoint) (*Se
 	}
 	s.client = s.Client
 	s.sendCanvas = s.Client.SendCanvas
-	if recovery == nil {
-		s.attachments = attach.New(attach.Options{
-			File:            opts.File,
-			Root:            bound.Dir(),
-			InitialDocument: initial,
-			Server:          server,
-			Room:            room.ID,
-			// Without the host token: blobs are for everyone in the room.
-			Header:     opts.Header,
-			HTTPClient: opts.HTTPClient,
-			Keys:       blobKeys,
-			Send:       s.Client.SendAttachment,
-			OnSaved: func(path string) {
-				s.notices.imageSaved()
-				if opts.OnSaved != nil {
-					opts.OnSaved(path)
-				}
-			},
-			OnSaveError: s.notices.imageError,
-			OnError:     onError,
-		})
-	}
+	s.startAttachments(opts, initial)
 
 	doc.OnUpdate(func(_ []byte, origin any) {
 		// Both come in under the client's lock, so the doc can be read here.
@@ -393,24 +431,10 @@ func start(ctx context.Context, opts Options, recovery *recoveryCheckpoint) (*Se
 		}
 	})
 	aw.OnChange(func(awareness.ChangeEvent) { s.reportPeople(opts.OnPeople) })
-	s.stopAlive = keepAlive(aw)
-	s.notices.start()
-	s.startMeta()
-	if recovery != nil && s.meta == nil {
-		s.notices.stop()
-		s.stopAlive()
-		s.Client.Destroy()
-		aw.Destroy()
-		return nil, errors.New("cannot open recovery comments")
+	if err = s.startRuntime(opts, recovery); err != nil {
+		return nil, err
 	}
-	s.Client.Connect()
 
-	if opts.Watch && recovery == nil {
-		if err := s.watch(); err != nil {
-			_ = s.Stop()
-			return nil, err
-		}
-	}
 	// Session owns the directory handles from here.
 	bound, project = nil, nil
 	return s, nil
