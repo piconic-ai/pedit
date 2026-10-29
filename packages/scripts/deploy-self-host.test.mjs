@@ -128,7 +128,7 @@ test('every deployment counts its rate limits apart', () => {
   for (const [deployment, limits] of Object.entries(deployments)) {
     assert.deepEqual(
       limits.map((l) => l.name).sort(),
-      ['CONNECTION_LIMIT', 'ROOM_CREATION_LIMIT'],
+      ['CONNECTION_LIMIT', 'KEPT_APPEND_LIMIT', 'KEPT_PAGE_LIMIT', 'ROOM_CREATION_LIMIT'],
       deployment,
     )
     for (const { namespace_id: id } of limits) {
