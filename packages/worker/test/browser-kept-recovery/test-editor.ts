@@ -44,6 +44,15 @@ export class TestKeptEditor {
               return transaction
             if (this.draft.hidden) this.draftChanges = undefined
             const previous = this.draftChanges ?? ChangeSet.empty(transaction.startState.doc.length)
+            if (
+              !this.draft.hidden &&
+              (previous.length !== transaction.startState.doc.length ||
+                previous.apply(transaction.startState.doc).toString() !== this.draft.value)
+            ) {
+              this.status.textContent =
+                'Editor change ignored. Continue editing the draft; host save and deadline are unconfirmed.'
+              return []
+            }
             const edits: { from: number; to: number; insert: string }[] = []
             transaction.changes.iterChanges((from, to, _fromB, _toB, inserted) => {
               const start = previous.mapPos(from, from === to ? 1 : -1)

@@ -155,6 +155,12 @@ async function run() {
       if (!editor.draft.value.endsWith(' AFTER MORE DIRECT'))
         throw Error('draft is not directly editable')
       if (!editor.view.state.readOnly) throw Error('editor remained writable with unresolved draft')
+      const editedDraft = editor.draft.value
+      editor.view.dispatch({ changes: { from: 0, to: 1, insert: 'IGNORED' } })
+      if (editor.draft.value !== editedDraft || editor.view.state.doc.toString() !== base)
+        throw Error('programmatic editor change erased direct draft edits')
+      if (!editor.status.textContent?.includes('ignored'))
+        throw Error('rejected transaction was not reported')
       editor.destroy()
       await controller.close()
       const ops = await outbox.operations(link, fixture.roomId, sender)
