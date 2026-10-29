@@ -148,7 +148,9 @@ export class TestKeptEditor {
         !edit ||
         splitPair(edit.from) ||
         splitPair(edit.to) ||
-        new TextDecoder().decode(new TextEncoder().encode(edit.insert)) !== edit.insert
+        new TextDecoder('utf-8', { ignoreBOM: true }).decode(
+          new TextEncoder().encode(edit.insert),
+        ) !== edit.insert
       )
         throw new Error('unsupported edit')
       await this.controller.replace(edit.from, edit.to, edit.insert)

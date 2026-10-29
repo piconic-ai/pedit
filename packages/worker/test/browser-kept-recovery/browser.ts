@@ -267,6 +267,26 @@ async function run() {
       for (let i = 0; i < 200 && !remoteController.text().endsWith(' REMOTE LOCAL'); i++)
         await new Promise((resolve) => setTimeout(resolve, 20))
       if (!remoteController.text().endsWith(' REMOTE LOCAL')) throw Error('local edit not restored')
+      remoteEditor.view.dispatch({ changes: { from: 0, insert: '\uFEFF' } })
+      for (let i = 0; i < 200 && !remoteController.text().startsWith('\uFEFF'); i++)
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      if (!remoteController.text().startsWith('\uFEFF') || !remoteEditor.draft.hidden)
+        throw Error('valid leading BOM was rejected')
+      const beforeInvalid = remoteController.text()
+      remoteEditor.view.dispatch({
+        changes: { from: remoteEditor.view.state.doc.length, insert: '\uD800' },
+      })
+      for (let i = 0; i < 200 && remoteEditor.draft.hidden; i++)
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      if (
+        remoteEditor.draft.hidden ||
+        !remoteEditor.draft.value.endsWith('\uD800') ||
+        remoteController.text() !== beforeInvalid ||
+        remoteEditor.view.state.doc.toString() !== beforeInvalid
+      )
+        throw Error('unpaired surrogate was not rejected into draft')
+      remoteEditor.destroy()
+      remoteEditor = new TestKeptEditor(remoteController)
       remoteEditor.view.contentDOM.dispatchEvent(
         new CompositionEvent('compositionstart', { bubbles: true }),
       )
@@ -349,8 +369,11 @@ async function run() {
         throw Error('offline')
       },
     })
-    if (!remoteController.text().endsWith(' REMOTE LOCAL拼音😁'))
-      throw Error('remote dependency not restored')
+    if (
+      !remoteController.text().startsWith('\uFEFF') ||
+      !remoteController.text().endsWith(' REMOTE LOCAL拼音😁')
+    )
+      throw Error('remote dependency or BOM not restored')
     await remoteController.close()
     remoteBox.close()
     const [sender] = await outbox.senders(link, fixture.roomId)
