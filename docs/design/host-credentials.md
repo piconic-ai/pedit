@@ -162,3 +162,13 @@ metadata fields, and conflict handling for a changed or malformed local sidecar.
 A clock, an unchanged byte comparison, or this intent does not establish that a
 noncooperative editor has finished writing. File and directory sync are
 attempted, but power-loss durability of rename is not claimed.
+
+The internal metadata proposal accepts only text anchors whose endpoints still
+resolve to their original live Yjs items. Unknown thread or message fields,
+missing required fields, invalid IDs or values, excessive size, and positions
+that cannot be resolved cause failure; no comment or message is silently
+omitted. Cells, canvas nodes, and deleted or otherwise ambiguous anchor items
+remain unsupported. Unknown top-level metadata fields are preserved. This
+proposal is bound to a revalidated intent and is returned in memory only; it
+is not a metadata save, tail completeness proof, relay cut, or ACK. External
+editors may still change files immediately after the identity check.

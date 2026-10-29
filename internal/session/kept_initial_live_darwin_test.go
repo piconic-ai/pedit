@@ -237,6 +237,10 @@ func TestLiveKeptInitial(t *testing.T) {
 	if err != nil || string(intentView.NewText) != "initial file guest" || intentView.MetadataStatus != "not-generated" {
 		t.Fatal("live recovery intent", err)
 	}
+	retainedView, proposal, proposalErr := recoveryMetadata(store, room, intentPaths.IntentPath)
+	if proposalErr == nil || proposal != nil || retainedView.Paths != intentPaths {
+		t.Fatal("incomplete guest comment was not retained as a conflict", proposalErr)
+	}
 	if err = store.Close(); err != nil {
 		t.Fatal(err)
 	}
