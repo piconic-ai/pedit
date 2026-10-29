@@ -2,9 +2,53 @@ import { readBoundedBody } from './bounded-body.ts'
 import { KeptAdmission } from './kept-admission.ts'
 import { KeptBlobCleanup, KeptBlobConflictError, type KeptBlobLimits } from './kept-blob-cleanup.ts'
 import { KeptLifecycle } from './kept-lifecycle.ts'
+import { type KeptSweepShard, keptShardName } from './kept-sweep-shard.ts'
 
 const MAX_UPLOADS = 4
 const MAX_GUEST_UPLOADS = MAX_UPLOADS - 1
+const REGISTRATION_TIMEOUT_MS = 1000
+export type SweepRegistration = { pending?: Promise<void>; timedOut?: boolean }
+class SweepRegistryUnavailableError extends Error {}
+
+async function registerSweep(
+  registry: DurableObjectNamespace<KeptSweepShard>,
+  roomId: string,
+  gate: SweepRegistration,
+): Promise<void> {
+  if (gate.timedOut) throw new SweepRegistryUnavailableError('sweep registration unavailable')
+  if (!gate.pending) {
+    let pending: Promise<void>
+    try {
+      pending = registry.getByName(keptShardName(roomId)).register(roomId)
+    } catch {
+      throw new SweepRegistryUnavailableError('sweep registration unavailable')
+    }
+    gate.pending = pending
+    const clear = () => {
+      if (gate.pending === pending) {
+        gate.pending = undefined
+        gate.timedOut = false
+      }
+    }
+    void pending.then(clear, clear)
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      gate.pending,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          gate.timedOut = true
+          reject(new Error('sweep registration timed out'))
+        }, REGISTRATION_TIMEOUT_MS)
+      }),
+    ])
+  } catch {
+    throw new SweepRegistryUnavailableError('sweep registration unavailable')
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 async function getBlob(
   bucket: R2Bucket,
@@ -40,6 +84,7 @@ export async function keptRoomBlob(
   limits: KeptBlobLimits,
   uploading: Map<string, 'host' | 'editor'>,
   maintenanceClosed: () => boolean,
+  registration: SweepRegistration,
 ): Promise<Response> {
   if (env.ROOM.idFromName(room).toString() !== state.id.toString())
     return new Response(null, { status: 404 })
@@ -82,7 +127,11 @@ export async function keptRoomBlob(
       if (!data.length) throw new Error('missing blob')
       await active()
       const cleanup = new KeptBlobCleanup(state, env.BLOBS, limits, () => life.assertOpen())
-      await cleanup.put(id, data)
+      const registry = (env as Env & { KEPT_SWEEP?: DurableObjectNamespace<KeptSweepShard> })
+        .KEPT_SWEEP
+      if (!registry) throw new SweepRegistryUnavailableError('kept sweep registry unavailable')
+      const roomId = state.id.toString()
+      await cleanup.put(id, data, () => registerSweep(registry, roomId, registration))
       await active()
       return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } })
     } finally {
@@ -91,7 +140,12 @@ export async function keptRoomBlob(
   } catch (error) {
     if (authorized) await life.observe().catch(() => {})
     return new Response(null, {
-      status: error instanceof KeptBlobConflictError ? 409 : 403,
+      status:
+        error instanceof KeptBlobConflictError
+          ? 409
+          : error instanceof SweepRegistryUnavailableError
+            ? 503
+            : 403,
       headers: { 'Cache-Control': 'no-store' },
     })
   }

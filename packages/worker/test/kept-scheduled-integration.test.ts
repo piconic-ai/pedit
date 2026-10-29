@@ -1,0 +1,513 @@
+import { createExecutionContext, runInDurableObject, waitOnExecutionContext } from 'cloudflare:test'
+import { env } from 'cloudflare:workers'
+import { expect, it } from 'vitest'
+import worker from '../src/index.ts'
+import { type KeptSweepShard, keptShardName } from '../src/kept-sweep-shard.ts'
+import { KeptTransport } from '../src/kept-transport.ts'
+import { roomIdFor } from '../src/room-identity.ts'
+
+const token = () =>
+  btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '')
+const registry = (env as Env & { KEPT_SWEEP: DurableObjectNamespace<KeptSweepShard> }).KEPT_SWEEP
+const blob = 'blob000000000000000001'
+async function scheduled() {
+  const ctx = createExecutionContext()
+  worker.scheduled({} as ScheduledController, env, ctx)
+  await waitOnExecutionContext(ctx)
+}
+
+it('rediscovers a closed room and retires only after its encrypted attachment is deleted', async () => {
+  const host = token(),
+    id = await roomIdFor(host),
+    caps = { editor: token(), commenter: token(), reader: token() }
+  const room = env.ROOM.get(env.ROOM.idFromName(id)),
+    roomId = room.id.toString()
+  const transport = (state: DurableObjectState) =>
+    new KeptTransport(
+      state,
+      env.ROOM,
+      { bytes: 100, frames: 10 },
+      { requestedSeconds: 60, roomMaxSeconds: null, maxKeepSeconds: null, alarmSeconds: 60 },
+    )
+  await runInDurableObject(room, async (_, state) => {
+    await transport(state).initialize(id, host, caps, 'epoch', Uint8Array.of(1).buffer)
+  })
+  const put = await room.fetch(`https://room/internal/kept/${id}/blobs/${blob}`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${caps.editor}` },
+    body: Uint8Array.of(3),
+  })
+  expect(put.status).toBe(204)
+  const key = `kept/${roomId}/${blob}`
+  const shard = registry.getByName(keptShardName(roomId))
+  const entry = await shard.next()
+  expect(entry?.id).toBe(roomId)
+  await scheduled()
+  expect(await env.BLOBS.head(key)).not.toBeNull()
+  expect((await shard.next())?.id).toBe(roomId)
+  await runInDurableObject(room, async (_, state) => {
+    await transport(state).close(id, host)
+  })
+  // Do not run the room's alarm: the independent Worker must rediscover it.
+  await scheduled()
+  expect(await env.BLOBS.head(key)).toBeNull()
+  expect(await shard.next()).toBeNull()
+})
+
+it('does not retire a new registration using an earlier sweep generation', async () => {
+  const roomId = env.ROOM.idFromName(crypto.randomUUID()).toString()
+  const shard = registry.getByName(keptShardName(roomId))
+  await shard.register(roomId)
+  const before = await shard.next()
+  expect(before?.id).toBe(roomId)
+  await shard.register(roomId)
+  await shard.retire(roomId, before!.generation)
+  const after = await shard.next()
+  expect(after?.id).toBe(roomId)
+  expect(after!.generation).toBeGreaterThan(before!.generation)
+  await shard.retire(roomId, after!.generation)
+  expect(await shard.next()).toBeNull()
+})
+
+it('retains an uncertain PUT for future sweeps even after R2 is empty', async () => {
+  const host = token(),
+    id = await roomIdFor(host),
+    caps = { editor: token(), commenter: token(), reader: token() }
+  const room = env.ROOM.get(env.ROOM.idFromName(id)),
+    roomId = room.id.toString()
+  const shard = registry.getByName(keptShardName(roomId))
+  await shard.register(roomId)
+  const transport = (state: DurableObjectState) =>
+    new KeptTransport(
+      state,
+      env.ROOM,
+      { bytes: 100, frames: 10 },
+      { requestedSeconds: 60, roomMaxSeconds: null, maxKeepSeconds: null, alarmSeconds: 60 },
+    )
+  await runInDurableObject(room, async (_, state) => {
+    await transport(state).initialize(id, host, caps, 'epoch', Uint8Array.of(1).buffer)
+    const actual = env.BLOBS
+    const bucket = new Proxy(actual, {
+      get(target, prop) {
+        if (prop === 'put')
+          return async (...args: Parameters<R2Bucket['put']>) => {
+            await target.put(...args)
+            throw new Error('unknown result')
+          }
+        const value = Reflect.get(target, prop, target)
+        return typeof value === 'function' ? value.bind(target) : value
+      },
+    })
+    const { KeptBlobCleanup } = await import('../src/kept-blob-cleanup.ts')
+    const cleanup = new KeptBlobCleanup(state, bucket, { count: 5, blobBytes: 95, quotaBytes: 100 })
+    await expect(cleanup.put(blob, Uint8Array.of(9))).rejects.toThrow('unknown result')
+    await transport(state).close(id, host)
+  })
+  await scheduled()
+  expect(await env.BLOBS.head(`kept/${roomId}/${blob}`)).toBeNull()
+  expect((await shard.next())?.id).toBe(roomId)
+  await scheduled()
+  expect((await shard.next())?.id).toBe(roomId)
+})
+
+it('removes a reserved-but-unsent upload when registry registration fails', async () => {
+  const room = env.ROOM.get(env.ROOM.idFromName(crypto.randomUUID()))
+  await runInDurableObject(room, async (_, state) => {
+    const { KeptBlobCleanup } = await import('../src/kept-blob-cleanup.ts')
+    const cleanup = new KeptBlobCleanup(state, env.BLOBS, { count: 1, blobBytes: 8, quotaBytes: 8 })
+    await expect(
+      cleanup.put(blob, Uint8Array.of(1), async () => {
+        throw new Error('registry full')
+      }),
+    ).rejects.toThrow('registry full')
+    expect(state.storage.sql.exec('SELECT * FROM kept_blob_puts').toArray()).toHaveLength(0)
+    expect(await env.BLOBS.head(`kept/${state.id.toString()}/${blob}`)).toBeNull()
+  })
+})
+
+it('frees bounded capacity only after matching retirement', async () => {
+  const stub = env.ROOM.get(env.ROOM.idFromName(crypto.randomUUID()))
+  await runInDurableObject(stub, async (_, state) => {
+    const { KeptSweepRegistry } = await import('../src/kept-sweep-registry.ts')
+    const r = new KeptSweepRegistry(state.storage, 1)
+    const first = '1'.repeat(64),
+      second = '2'.repeat(64)
+    await r.register(first)
+    await expect(r.register(second)).rejects.toThrow('registry capacity reached')
+    const selected = await r.next()
+    expect(selected?.id).toBe(first)
+    await r.retire(first, selected!.generation)
+    await r.register(second)
+    expect((await r.next())?.id).toBe(second)
+  })
+})
+
+it('recovers after the room alarm fails to delete an expired room attachment', async () => {
+  const host = token(),
+    id = await roomIdFor(host),
+    caps = { editor: token(), commenter: token(), reader: token() }
+  const room = env.ROOM.get(env.ROOM.idFromName(id)),
+    roomId = room.id.toString()
+  const transport = (state: DurableObjectState) =>
+    new KeptTransport(
+      state,
+      env.ROOM,
+      { bytes: 100, frames: 10 },
+      { requestedSeconds: 60, roomMaxSeconds: null, maxKeepSeconds: null, alarmSeconds: 60 },
+    )
+  await runInDurableObject(room, async (_, state) => {
+    await transport(state).initialize(id, host, caps, 'epoch', Uint8Array.of(1).buffer)
+  })
+  const put = await room.fetch(`https://room/internal/kept/${id}/blobs/${blob}`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${caps.editor}` },
+    body: Uint8Array.of(3),
+  })
+  expect(put.status).toBe(204)
+  await runInDurableObject(room, async (instance, state) => {
+    await transport(state).close(id, host)
+    const original = instance['env']
+    const bucket = new Proxy(original.BLOBS, {
+      get(target, prop) {
+        if (prop === 'delete')
+          return async () => {
+            throw new Error('injected R2 failure')
+          }
+        const value = Reflect.get(target, prop, target)
+        return typeof value === 'function' ? value.bind(target) : value
+      },
+    })
+    instance['env'] = { ...original, BLOBS: bucket }
+    try {
+      await state.storage.deleteAlarm()
+      await expect(instance.alarm()).resolves.toBeUndefined()
+      expect(await state.storage.getAlarm()).not.toBeNull()
+    } finally {
+      instance['env'] = original
+    }
+  })
+  expect(await env.BLOBS.head(`kept/${roomId}/${blob}`)).not.toBeNull()
+  await scheduled()
+  expect(await env.BLOBS.head(`kept/${roomId}/${blob}`)).toBeNull()
+  expect(await registry.getByName(keptShardName(roomId)).next()).toBeNull()
+})
+
+it('continues to another room when delivery for one room times out', async () => {
+  const first = env.ROOM.idFromName(crypto.randomUUID())
+  let second: DurableObjectId
+  do {
+    second = env.ROOM.idFromName(crypto.randomUUID())
+  } while (keptShardName(first.toString()) !== keptShardName(second.toString()))
+  const ids = [first, second].sort((a, b) => a.toString().localeCompare(b.toString()))
+  const stalled = ids[0]!.toString(),
+    succeeds = ids[1]!.toString()
+  const shard = registry.getByName(keptShardName(stalled))
+  await shard.register(stalled)
+  await shard.register(succeeds)
+  let completed = 0
+  const rooms = new Proxy(env.ROOM, {
+    get(target, key) {
+      if (key === 'get')
+        return (id: DurableObjectId) => ({
+          sweepKeptAttachments: async () => {
+            if (id.toString() === stalled) await new Promise<void>(() => {})
+            if (id.toString() === succeeds) completed++
+            return true
+          },
+        })
+      const value = Reflect.get(target, key, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+  const { scheduledKeptSweep } = await import('../src/kept-scheduled.ts')
+  await scheduledKeptSweep({ ...env, ROOM: rooms })
+  expect(completed).toBe(1)
+  const entry = await shard.next()
+  expect(entry?.id).toBe(stalled)
+})
+
+it('safely retires a reservation whose registration was interrupted before any PUT', async () => {
+  const room = env.ROOM.get(env.ROOM.idFromName(crypto.randomUUID()))
+  await runInDurableObject(room, async (_, state) => {
+    const { KeptBlobCleanup } = await import('../src/kept-blob-cleanup.ts')
+    const cleanup = new KeptBlobCleanup(state, env.BLOBS, { count: 1, blobBytes: 8, quotaBytes: 8 })
+    let enter!: () => void, release!: () => void
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve
+    })
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const pending = cleanup.put(blob, Uint8Array.of(1), async () => {
+      enter()
+      await gate
+    })
+    await entered
+    await cleanup.close()
+    expect(await cleanup.sweep()).toBe(true)
+    release()
+    await expect(pending).rejects.toThrow('closed')
+    expect(state.storage.sql.exec('SELECT * FROM kept_blob_puts').toArray()).toHaveLength(0)
+    expect(await env.BLOBS.head(`kept/${state.id.toString()}/${blob}`)).toBeNull()
+  })
+})
+
+it('releases the upload slot if registry RPC never finishes', async () => {
+  const host = token(),
+    id = await roomIdFor(host),
+    caps = { editor: token(), commenter: token(), reader: token() }
+  const room = env.ROOM.get(env.ROOM.idFromName(id))
+  const transport = (state: DurableObjectState) =>
+    new KeptTransport(
+      state,
+      env.ROOM,
+      { bytes: 100, frames: 10 },
+      { requestedSeconds: 60, roomMaxSeconds: null, maxKeepSeconds: null, alarmSeconds: 60 },
+    )
+  await runInDurableObject(room, async (instance, state) => {
+    await transport(state).initialize(id, host, caps, 'epoch', Uint8Array.of(1).buffer)
+    const original = instance['env']
+    let release!: () => void
+    let registrations = 0
+    const pending = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const fake = {
+      getByName: () => ({
+        register: () => {
+          registrations++
+          return pending
+        },
+      }),
+    }
+    instance['env'] = { ...original, KEPT_SWEEP: fake } as unknown as Env
+    const request = () =>
+      new Request(`https://room/internal/kept/${id}/blobs/${blob}`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${caps.editor}` },
+        body: Uint8Array.of(3),
+      })
+    try {
+      expect((await instance.fetch(request())).status).toBe(503)
+      expect(state.storage.sql.exec('SELECT * FROM kept_blob_puts').toArray()).toHaveLength(0)
+      expect((await instance.fetch(request())).status).toBe(503)
+      expect(registrations).toBe(1)
+    } finally {
+      instance['env'] = original
+    }
+    release()
+    await pending
+    expect((await instance.fetch(request())).status).toBe(204)
+  })
+}, 5000)
+
+it('stops a shard after a next RPC times out on each scheduled invocation', async () => {
+  const { scheduledKeptSweep } = await import('../src/kept-scheduled.ts')
+  let calls = 0
+  const shardName = 'a'
+  const namespace = new Proxy(registry, {
+    get(target, property) {
+      if (property === 'getByName')
+        return (name: string) =>
+          name === shardName
+            ? {
+                next: () => {
+                  calls++
+                  return new Promise(() => {})
+                },
+              }
+            : target.getByName(name)
+      const value = Reflect.get(target, property, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+  await scheduledKeptSweep({ ...env, KEPT_SWEEP: namespace })
+  expect(calls).toBe(1)
+  await scheduledKeptSweep({ ...env, KEPT_SWEEP: namespace })
+  expect(calls).toBe(2)
+}, 5000)
+
+it('coalesces a stalled storage next and fails closed until it resolves', async () => {
+  const shard = registry.getByName(`review-${crypto.randomUUID()}`)
+  await runInDurableObject(shard, async (instance) => {
+    let calls = 0,
+      release!: () => void
+    const pending = new Promise<null>((resolve) => {
+      release = () => resolve(null)
+    })
+    Object.defineProperty(instance, 'registry', {
+      value: {
+        next: () => {
+          calls++
+          return pending
+        },
+      },
+    })
+    const first = instance.next()
+    const second = instance.next()
+    const result = await Promise.allSettled([first, second])
+    expect(result.every((r) => r.status === 'rejected')).toBe(true)
+    expect(calls).toBe(1)
+    await expect(instance.next()).rejects.toThrow('registry unavailable')
+    expect(calls).toBe(1)
+    release()
+    await pending
+    expect(await instance.next()).toBeNull()
+    expect(calls).toBe(2)
+  })
+}, 5000)
+
+it('stops a shard when retirement RPC times out', async () => {
+  const { scheduledKeptSweep } = await import('../src/kept-scheduled.ts')
+  const id = env.ROOM.idFromName(crypto.randomUUID()).toString(),
+    name = keptShardName(id)
+  let nextCalls = 0,
+    retireCalls = 0
+  const namespace = new Proxy(registry, {
+    get(target, property) {
+      if (property === 'getByName')
+        return (value: string) =>
+          value === name
+            ? {
+                next: async () => {
+                  nextCalls++
+                  return { id, generation: 1 }
+                },
+                retire: () => {
+                  retireCalls++
+                  return new Promise<void>(() => {})
+                },
+              }
+            : target.getByName(value)
+      const result = Reflect.get(target, property, target)
+      return typeof result === 'function' ? result.bind(target) : result
+    },
+  })
+  const rooms = new Proxy(env.ROOM, {
+    get(target, property) {
+      if (property === 'get') return () => ({ sweepKeptAttachments: async () => true })
+      const result = Reflect.get(target, property, target)
+      return typeof result === 'function' ? result.bind(target) : result
+    },
+  })
+  await scheduledKeptSweep({ ...env, KEPT_SWEEP: namespace, ROOM: rooms })
+  expect(nextCalls).toBe(1)
+  expect(retireCalls).toBe(1)
+}, 5000)
+
+it('limits stalled retirement operations until the original call resolves', async () => {
+  const shard = registry.getByName(`retire-review-${crypto.randomUUID()}`)
+  await runInDurableObject(shard, async (instance) => {
+    let calls = 0
+    let release!: () => void
+    const pending = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const attempted: string[] = []
+    Object.defineProperty(instance, 'registry', {
+      value: {
+        retire: (id: string) => {
+          calls++
+          attempted.push(id)
+          return pending
+        },
+      },
+    })
+    const first = instance.retire('a'.repeat(64), 1)
+    const second = instance.retire('b'.repeat(64), 2)
+    const third = instance.retire('c'.repeat(64), 3)
+    const results = await Promise.allSettled([first, second, third])
+    expect(results.every((result) => result.status === 'rejected')).toBe(true)
+    expect(calls).toBe(1)
+    expect(attempted).toEqual(['a'.repeat(64)])
+    await expect(instance.retire('b'.repeat(64), 2)).rejects.toThrow('registry unavailable')
+    expect(calls).toBe(1)
+    release()
+    await pending
+    await instance.retire('b'.repeat(64), 2)
+    expect(calls).toBe(2)
+    expect(attempted).toEqual(['a'.repeat(64), 'b'.repeat(64)])
+  })
+}, 5000)
+
+it('limits stalled register across all shard operations without sharing results', async () => {
+  const shard = registry.getByName(`register-review-${crypto.randomUUID()}`)
+  await runInDurableObject(shard, async (instance) => {
+    let calls = 0,
+      release!: () => void
+    const pending = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const attempted: string[] = []
+    Object.defineProperty(instance, 'registry', {
+      value: {
+        register: (id: string) => {
+          calls++
+          attempted.push(id)
+          return pending
+        },
+        retire: () => {
+          calls++
+          return Promise.resolve()
+        },
+        next: () => {
+          calls++
+          return Promise.resolve(null)
+        },
+      },
+    })
+    const first = instance.register('a'.repeat(64))
+    const other = instance.register('b'.repeat(64))
+    const retire = instance.retire('c'.repeat(64), 3)
+    const read = instance.next()
+    const results = await Promise.allSettled([first, other, retire, read])
+    expect(results.every((result) => result.status === 'rejected')).toBe(true)
+    expect(calls).toBe(1)
+    expect(attempted).toEqual(['a'.repeat(64)])
+    await expect(instance.register('b'.repeat(64))).rejects.toThrow('registry unavailable')
+    await expect(instance.next()).rejects.toThrow('registry unavailable')
+    expect(calls).toBe(1)
+    release()
+    await pending
+    await instance.register('b'.repeat(64))
+    expect(await instance.next()).toBeNull()
+    await instance.retire('c'.repeat(64), 3)
+    expect(attempted).toEqual(['a'.repeat(64), 'b'.repeat(64)])
+    expect(calls).toBe(4)
+  })
+}, 5000)
+
+it('refuses later RPC invocations until a stalled shard operation settles', async () => {
+  const name = `rpc-recovery-${crypto.randomUUID()}`
+  const shard = () => registry.getByName(name)
+  await runInDurableObject(shard(), (instance) => {
+    let release!: () => void
+    const pending = new Promise<null>((resolve) => {
+      release = () => resolve(null)
+    })
+    Object.defineProperty(instance, 'registry', {
+      value: {
+        next: () => pending,
+        register: () => Promise.resolve(),
+      },
+    })
+    Object.defineProperty(instance, 'testRelease', { value: release })
+  })
+  await runInDurableObject(shard(), async (instance) => {
+    await expect(instance.next()).rejects.toThrow('registry timed out')
+  })
+  await runInDurableObject(shard(), async (instance) => {
+    await expect(instance.register('a'.repeat(64))).rejects.toThrow('registry unavailable')
+  })
+  await runInDurableObject(shard(), (instance) => {
+    const release = Reflect.get(instance, 'testRelease')
+    if (typeof release !== 'function') throw new Error('missing release')
+    release()
+  })
+  await runInDurableObject(shard(), async (instance) => {
+    await instance.register('a'.repeat(64))
+  })
+})

@@ -1,6 +1,10 @@
 import { checkProtocolVersion } from '@pedit/protocol/admission'
 import { RELAY_BUSY, RELAY_MAINTENANCE } from '@pedit/protocol/close'
 import { Hono } from 'hono'
+import { scheduledKeptSweep } from './kept-scheduled.ts'
+
+export { KeptSweepShard } from './kept-sweep-shard.ts'
+
 import { embedSourcesFor, mediaSourcesFrom, scriptHashes, servePage } from './page.ts'
 import { HOST_HEADER, maintenance, refuse } from './room.ts'
 import { roomIdFor } from './room-identity.ts'
@@ -185,4 +189,9 @@ app.notFound((c) =>
   c.req.path.startsWith('/api/') ? c.text('404 Not Found', 404) : servePage(c.req.raw, c.env),
 )
 
-export default app
+export default {
+  fetch: app.fetch,
+  scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): void {
+    ctx.waitUntil(scheduledKeptSweep(env))
+  },
+}

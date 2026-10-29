@@ -48,7 +48,23 @@ export class KeptBlobCleanup {
     )
   }
 
-  async put(id: string, content: Uint8Array): Promise<void> {
+  private assertUnsentActive(id: string, phase: -1 | 0): Promise<void> | undefined {
+    try {
+      if (this.closed()) throw new Error('kept room is closed')
+      this.assertActive()
+    } catch (error) {
+      this.storage.sql.exec('DELETE FROM kept_blob_puts WHERE id = ? AND completed = ?', id, phase)
+      return this.storage.sync().then(() => {
+        throw error
+      })
+    }
+  }
+
+  async put(
+    id: string,
+    content: Uint8Array,
+    register: () => Promise<void> = async () => {},
+  ): Promise<void> {
     if (!BLOB_ID.test(id) || content.length === 0 || content.length > this.limits.blobBytes)
       throw new Error('invalid kept blob')
     const data = Uint8Array.from(content)
@@ -70,7 +86,7 @@ export class KeptBlobCleanup {
       if (usage.count >= this.limits.count || usage.bytes + data.length > this.limits.quotaBytes)
         throw new Error('kept blob capacity reached')
       this.storage.sql.exec(
-        'INSERT INTO kept_blob_puts (id, completed, bytes) VALUES (?, 0, ?)',
+        'INSERT INTO kept_blob_puts (id, completed, bytes) VALUES (?, -1, ?)',
         id,
         data.length,
       )
@@ -91,18 +107,25 @@ export class KeptBlobCleanup {
       return
     }
     await this.storage.sync()
-    if (this.closed()) {
-      this.storage.sql.exec('DELETE FROM kept_blob_puts WHERE id = ?', id)
-      await this.storage.sync()
-      throw new Error('kept room is closed')
-    }
     try {
-      this.assertActive()
+      await register()
     } catch (error) {
-      this.storage.sql.exec('DELETE FROM kept_blob_puts WHERE id = ?', id)
+      this.storage.sql.exec('DELETE FROM kept_blob_puts WHERE id = ? AND completed = -1', id)
       await this.storage.sync()
       throw error
     }
+    const beforeSending = this.assertUnsentActive(id, -1)
+    if (beforeSending) await beforeSending
+    const sending = this.storage.sql
+      .exec(
+        'UPDATE kept_blob_puts SET completed = 0 WHERE id = ? AND completed = -1 RETURNING id',
+        id,
+      )
+      .toArray()
+    if (!sending.length) throw new Error('kept upload no longer reserved')
+    await this.storage.sync()
+    const beforePut = this.assertUnsentActive(id, 0)
+    if (beforePut) await beforePut
     await this.bucket.put(this.prefix + id, data)
     this.storage.sql.exec('UPDATE kept_blob_puts SET completed = 1 WHERE id = ?', id)
     await this.storage.sync()
@@ -162,6 +185,7 @@ export class KeptBlobCleanup {
     }
     if (!empty) return false
     const complete = await this.storage.transaction(async () => {
+      this.storage.sql.exec('DELETE FROM kept_blob_puts WHERE completed = -1')
       for (const row of finished)
         this.storage.sql.exec('DELETE FROM kept_blob_puts WHERE id = ? AND completed = 1', row.id)
       const count = this.storage.sql

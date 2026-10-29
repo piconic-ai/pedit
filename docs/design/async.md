@@ -379,3 +379,91 @@ so the same plaintext can produce different ciphertext under the same hash ID.
 A future v6 uploader must retain its ciphertext for retry, or fetch the existing
 object, decrypt it, and check the expected plaintext hash before reusing it.
 The relay cannot establish plaintext equality from ciphertext alone.
+
+### Restricted text checkpoint payload
+
+The Go and browser checkpoint codecs accept one plain-text document and its
+separate comments document, with a matching two-entry manifest and a ledger.
+They reject additional files, canvas content, and payloads marked with present
+or unverified attachments. Encoders require the caller to attest that the
+attachment inventory is complete and empty. A text scan rejects known local
+asset references, but it cannot prove that all attachment formats or sources
+are absent; callers must establish that independently before recovery or ACK.
+
+Both codecs structurally validate complete Yjs V1 snapshots before applying
+them. Text accepts only the supported plain-text root and rejects standalone
+GC structures whose root cannot be established. Comments accept the supported
+map-only form and bounded values. Comment snapshots conservatively cap total
+Yjs clocks at 1024 and apply an encoded-size budget that includes per-clock
+and per-client overhead. They reject undefined, bigint, non-finite floats,
+negative zero, and `__proto__` keys in Any objects, whose meaning or JSON
+representation can differ between Go and JavaScript. Both codecs reject unknown
+roots, incomplete updates, trailing bytes, noncanonical integers, unsafe
+JavaScript integers, and malformed UTF-8. This is structural validation, not semantic validation
+of every comment or proof that the ledger and documents were captured
+atomically. Callers must authenticate the enclosing checkpoint and enforce
+comment semantics and resource limits before accepting it. The codec is not
+connected to a public route or an active recovery flow.
+
+The Go and browser tests share `kept-schema-mutations.json` and
+`kept-schema-generated-mutations.json`. Regenerate the latter from the repository
+root with `go run ./packages/testdata/cmd/kept-schema-mutations`; both test
+suites check the same results, alongside the Go and browser payload fixtures.
+
+### Experimental independent attachment sweep
+
+An experimental test-only sweep registry registers a room before its R2 PUT.
+The Room first persists an unsent reservation, then registers its Durable
+Object ID, then persists the transition to a possibly in-flight PUT before
+calling R2. A closed room may discard an unsent reservation, including one
+whose pending registry RPC later returns: that PUT checks the reservation again
+and never starts. A PUT that may have reached R2 remains unresolved until its
+completion is known; an empty listing does not prove such a PUT has stopped.
+
+Each registry shard keeps at most 100,000 room IDs. Registration fails closed
+when full; it does not start a new PUT. The scheduled worker visits at most 16
+rooms per shard per invocation, and advances its persistent cursor even if a
+room fails. A closed room is retired only after its R2 prefix is empty and all
+possibly in-flight reservations have resolved. Retirement is conditional on a
+monotonic registration generation, so an old sweep cannot erase a concurrent
+new registration. Uncertain PUTs can remain registered forever and eventually
+exhaust capacity; this implementation does not claim a bounded deletion time.
+Retry delay depends on the number of registered rooms and scheduled invocations.
+A delivery timeout does not cancel a Durable Object RPC. The Room coalesces
+concurrent sweep calls so a stalled operation is not repeatedly started by the
+same Room instance. A stalled registration also leaves its RPC in flight;
+after its timeout, the Room fails subsequent registration attempts closed until
+that RPC settles or the Room instance is evicted. No further PUT is started.
+Each scheduled invocation stops a shard after a failed or timed-out registry
+read or retirement. A shard accepts at most one storage operation across
+registration, reads, and retirement; other operations fail closed while it is
+unresolved. Different room registrations and retirement results are never
+shared. A transport that stalls before the
+RPC reaches the shard is limited to one attempt per invocation, but cannot be
+coalesced across different scheduled invocations by this design.
+
+The registry binding and cron are configured only by tests; the internal upload
+path fails closed without the binding. Enabling kept rooms requires a production
+binding, migration, schedule, capacity monitoring, and an operational policy for
+uncertain PUTs. No age-based R2 lifecycle is applied to live kept attachments.
+Registration failures return 503 after authorization; the v6 attachment client
+retries that status with the same ciphertext within its existing deadline. A
+403 remains a refusal and is not retried as a transient registry failure.
+
+The separate v6 `KeptAttachmentClient` derives the blob ID from plaintext,
+keeps one encrypted body for a network retry, and uses the editor capability to
+upload. On a 409 it reads with the reader capability, decrypts the existing
+ciphertext, checks the expected content hash, and compares the complete bytes
+before reporting reuse. A missing, oversized, corrupt, or different object is an
+error. The client does not announce the image, edit a document, or make the
+internal Worker route public. Each upload has a 30-second overall deadline, which callers may shorten or
+cancel. Callers must retain the local attachment until their document state is
+durable. A timeout cannot guarantee an already submitted PUT stopped. Cleanup
+and independent orphan scheduling remain separate prerequisites.
+
+
+When an upload conflicts but the existing blob is not yet visible, the v6
+client retries the same ciphertext with a delay until the overall deadline. It only
+reports reuse after reading, decrypting, and checking the existing plaintext.
+Timeout leaves the result unresolved and never implies a
+successful upload.
