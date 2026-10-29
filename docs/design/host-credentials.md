@@ -144,3 +144,21 @@ file write, relay cut or acknowledgement. Outputs are private macOS-only
 artifacts; an interrupted publication can leave orphan outputs. After any
 uncertain sync the caller must retain returned paths and revalidate. Complete
 store rollback and power-loss durability remain outside this guarantee.
+
+An internal recovery intent binds a verified bundle and evidence to the signed
+initial text and metadata bytes and records the observed project, directory,
+text and metadata identities. Creating or opening it does not write the source
+or contact the relay. It checks that the current text and metadata still match
+the baseline, and rechecks identities after restart. A conflict leaves the
+signed intent and bundle available; their paths are inspection references, not
+proof that a later path lookup is unchanged. Reopening resynchronizes the
+private store directory before validating an uncertain publication. This is a
+macOS-only prepared proposal and does not authorize an exchange, cut, or ACK.
+
+The comments output in a bundle remains inspection JSON. Before writing actual
+`.pedit/meta`, recovery still needs a lossless conversion from comments Yjs,
+anchor validation against the matching text state, preservation of unknown
+metadata fields, and conflict handling for a changed or malformed local sidecar.
+A clock, an unchanged byte comparison, or this intent does not establish that a
+noncooperative editor has finished writing. File and directory sync are
+attempted, but power-loss durability of rename is not claimed.

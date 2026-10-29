@@ -138,3 +138,31 @@ func TestRecoveryOutputProcessInterruption(t *testing.T) {
 		})
 	}
 }
+
+func TestSyncCandidateDirectoryRetriesUncertainPublication(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	c := credentials()
+	if err = s.Save(c); err != nil {
+		t.Fatal(err)
+	}
+	s.syncDirHook = func() error { return errors.New("sync") }
+	path, err := s.PublishCandidate(c.RoomID, []byte("complete"))
+	if err == nil || path == "" {
+		t.Fatal("expected uncertain publication")
+	}
+	if err = s.SyncCandidateDirectory(); err == nil {
+		t.Fatal("failed sync reported success")
+	}
+	s.syncDirHook = nil
+	if err = s.SyncCandidateDirectory(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := s.ReadCandidate(c.RoomID, path)
+	if err != nil || string(raw) != "complete" {
+		t.Fatal("published bytes unavailable", err)
+	}
+}

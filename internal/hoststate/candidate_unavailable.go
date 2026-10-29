@@ -13,3 +13,5 @@ func (s *Store) PublishRecoveryOutput(string, RecoveryOutputKind, []byte) (strin
 func (s *Store) ReadRecoveryOutput(string, RecoveryOutputKind, string) ([]byte, error) {
 	return nil, ErrUnavailable
 }
+
+func (s *Store) SyncCandidateDirectory() error { return ErrUnavailable }

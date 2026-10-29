@@ -229,6 +229,38 @@ func TestLiveKeptInitial(t *testing.T) {
 	if err != nil || string(bundle.Text) != "initial file guest" || !bytes.Contains(bundle.Comments, []byte("guest quote")) || bundle.TailStatus != "unverified" || bundle.AttachmentStatus != "unverified" || bundle.CommentsFormat != "inspection-json" || bundle.TextPath != artifacts.Text || bundle.CommentsPath != artifacts.Comments || bundle.EvidencePath != evidencePath {
 		t.Fatal("invalid recovery bundle", err)
 	}
+	intentPaths, err := prepareRecoveryIntent(store, room, artifacts.Manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intentView, err := openRecoveryIntent(store, room, intentPaths.IntentPath)
+	if err != nil || string(intentView.NewText) != "initial file guest" || intentView.MetadataStatus != "not-generated" {
+		t.Fatal("live recovery intent", err)
+	}
+	if err = store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	intentChild := exec.Command(os.Args[0], "-test.run=^TestLiveRecoveryIntentChild$")
+	intentChild.Env = append(os.Environ(), "PEDIT_LIVE_INTENT_STORE="+stateDir, "PEDIT_LIVE_INTENT_ROOM="+room, "PEDIT_LIVE_INTENT_PATH="+intentPaths.IntentPath)
+	if output, e := intentChild.CombinedOutput(); e != nil {
+		t.Fatalf("live intent restart: %v %s", e, output)
+	}
+	store, err = hoststate.Open(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	currentHost, err := keptclient.Open(store, room, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentRead, err := currentHost.Inspect(ctx, nil)
+	if err != nil || len(currentRead.Records) != 2 {
+		t.Fatalf("intent changed relay records: %v", err)
+	}
+	if data, e := os.ReadFile(file); e != nil || string(data) != "initial file" {
+		t.Fatal("intent changed source", e)
+	}
 	for _, path := range []string{artifacts.Evidence, artifacts.Text, artifacts.Comments, artifacts.Manifest} {
 		original, e := os.ReadFile(path)
 		if e != nil {
@@ -640,5 +672,21 @@ func TestOpenReadEvidenceChild(t *testing.T) {
 	b, err := openRecoveryBundle(store, os.Getenv("PEDIT_EVIDENCE_ROOM"), os.Getenv("PEDIT_BUNDLE_PATH"))
 	if err != nil || string(b.Text) != "initial file guest" || !bytes.Contains(b.Comments, []byte("guest quote")) {
 		t.Fatalf("fresh bundle: %v", err)
+	}
+}
+
+func TestLiveRecoveryIntentChild(t *testing.T) {
+	path := os.Getenv("PEDIT_LIVE_INTENT_STORE")
+	if path == "" {
+		t.Skip("live intent subprocess only")
+	}
+	store, err := hoststate.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	view, err := openRecoveryIntent(store, os.Getenv("PEDIT_LIVE_INTENT_ROOM"), os.Getenv("PEDIT_LIVE_INTENT_PATH"))
+	if err != nil || string(view.NewText) != "initial file guest" || view.MetadataStatus != "not-generated" {
+		t.Fatal("live intent unavailable after restart", err)
 	}
 }

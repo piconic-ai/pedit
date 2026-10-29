@@ -202,7 +202,19 @@ func readVerifiedRecoveryOutput(store *hoststate.Store, room string, kind hostst
 // openRecoveryBundle returns verified bytes, not a promise that paths cannot
 // later be replaced. It does not establish a complete tail or attachment list.
 func openRecoveryBundle(store *hoststate.Store, room, path string) (recoveryBundleView, error) {
-	var result recoveryBundleView
+	verified, err := verifyRecoveryBundle(store, room, path)
+	return verified.view, err
+}
+
+type verifiedRecoveryBundle struct {
+	view        recoveryBundleView
+	manifest    recoveryBundleManifest
+	evidence    recoveryEvidence
+	credentials hoststate.Credentials
+}
+
+func verifyRecoveryBundle(store *hoststate.Store, room, path string) (verifiedRecoveryBundle, error) {
+	var result verifiedRecoveryBundle
 	if store == nil {
 		return result, errInvalidRecoveryBundle
 	}
@@ -234,5 +246,5 @@ func openRecoveryBundle(store *hoststate.Store, room, path string) (recoveryBund
 	if err != nil || !reflect.DeepEqual(credentials, latest) {
 		return result, errInvalidRecoveryBundle
 	}
-	return recoveryBundleView{Text: text, Comments: comments, TextPath: m.TextPath, CommentsPath: m.CommentsPath, EvidencePath: m.EvidencePath, ManifestPath: path, TailStatus: m.TailStatus, AttachmentStatus: m.AttachmentStatus, CommentsFormat: m.CommentsFormat}, nil
+	return verifiedRecoveryBundle{view: recoveryBundleView{Text: text, Comments: comments, TextPath: m.TextPath, CommentsPath: m.CommentsPath, EvidencePath: m.EvidencePath, ManifestPath: path, TailStatus: m.TailStatus, AttachmentStatus: m.AttachmentStatus, CommentsFormat: m.CommentsFormat}, manifest: m, evidence: e, credentials: credentials}, nil
 }

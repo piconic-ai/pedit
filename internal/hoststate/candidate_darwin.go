@@ -192,3 +192,10 @@ func (s *Store) ListCandidates(room string) ([]string, error) {
 	}
 	return paths, nil
 }
+
+// SyncCandidateDirectory retries synchronization after an uncertain publication.
+func (s *Store) SyncCandidateDirectory() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.syncDir()
+}

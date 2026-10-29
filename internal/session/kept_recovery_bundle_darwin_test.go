@@ -14,12 +14,21 @@ import (
 	"github.com/piconic-ai/pedit/internal/protocol"
 )
 
-func emptyBundleFixture(t *testing.T) (*hoststate.Store, string, string, string) {
+func emptyBundleFixture(t *testing.T, metadata ...string) (*hoststate.Store, string, string, string) {
 	t.Helper()
 	dir := t.TempDir()
 	file := filepath.Join(dir, "empty.md")
 	if err := os.WriteFile(file, nil, 0600); err != nil {
 		t.Fatal(err)
+	}
+	if len(metadata) > 0 {
+		metaPath := filepath.Join(dir, ".pedit", "meta", "empty.md.json")
+		if err := os.MkdirAll(filepath.Dir(metaPath), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(metaPath, []byte(metadata[0]), 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	initial, err := captureKeptInitial(file, dir, protocol.KeptAttachmentsNone)
 	if err != nil {
