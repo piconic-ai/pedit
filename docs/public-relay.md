@@ -14,6 +14,11 @@ It runs the latest release, deployed from this repository
 
 ## What it keeps
 
+The relay is not permanent storage. Its design permits keeping room content
+only as ciphertext while the room is open. Once the host has taken in changes,
+the relay's copies can be deleted without losing them. The current release
+keeps no document frames, as described below.
+
 - **Document text: none.** Frames are relayed and never stored.
 - **Encrypted images**, in R2. They can be uploaded only while the room's host
   is connected, and the room deletes them when the host leaves. A deletion

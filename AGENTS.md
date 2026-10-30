@@ -5,7 +5,7 @@ A CLI that lets you co-edit a local text file with other people, right now.
 The service and its CLI are both named `pedit`; it is served at edit.piconic.ai.
 
 ## Principles
-- The host's local file is the source of truth. The server never sees plaintext. The only content it keeps is encrypted attachments (R2), and only while the room's host is connected; the room deletes them when the host leaves. No permanent storage, no public URLs.
+- The host's local file is the source of truth. The server never sees plaintext. It keeps room content only as ciphertext, and only while a room is open. The host may close the room; the relay may also close it at its configured limit or for maintenance. Anything on the server can be deleted without loss once the host has taken it in. No public URLs.
 - Updates are end-to-end encrypted with a key held in the URL fragment; the server only relays ciphertext.
 - Never send the key to the server (not in requests, logs, or error reports).
 - No auth or AI features. Comments (#121) follow `docs/design/comments.md`: they never go into the shared file.
