@@ -2,7 +2,7 @@ import { checkProtocolVersion } from '@pedit/protocol/admission'
 import { RELAY_BUSY, RELAY_MAINTENANCE } from '@pedit/protocol/close'
 import { Hono } from 'hono'
 import { embedSourcesFor, mediaSourcesFrom, scriptHashes, servePage } from './page.ts'
-import { HOST_HEADER, maintenance, refuse } from './room.ts'
+import { HOST_HEADER, KEEP_HEADER, maintenance, refuse } from './room.ts'
 
 export { maintenance, Room } from './room.ts'
 export { embedSourcesFor, mediaSourcesFrom, scriptHashes, servePage }
@@ -100,6 +100,7 @@ const CLOSED_FOR_MAINTENANCE = 'This relay is closed for maintenance. Try again 
 // one the client offered, or it never sees the close.
 function offeredProtocol(request: Request): string | undefined {
   const version = checkProtocolVersion(request.headers.get('Sec-WebSocket-Protocol'))
+  if (version.result === 'current') return `pedit-v${version.version}`
   return 'offered' in version ? version.offered : undefined
 }
 
@@ -182,14 +183,18 @@ app.get('/api/rooms/:id/ws', async (c) => {
     return refuse(RELAY_BUSY, 'too many connections from your network', offeredProtocol(c.req.raw))
   }
 
-  // Never trust a role header coming from outside.
+  // Never trust a role header coming from outside. The keep is the host's to
+  // ask for, so it goes on only with a host token that checked out.
   const headers = new Headers(c.req.raw.headers)
   headers.delete(HOST_HEADER)
+  headers.delete(KEEP_HEADER)
   const auth = c.req.header('Authorization')
   if (auth) {
     const token = /^Bearer (\S+)$/.exec(auth)?.[1]
     if (!token || (await roomIdFor(token)) !== id) return c.text('invalid host token', 403)
     headers.set(HOST_HEADER, '1')
+    const keep = c.req.header(KEEP_HEADER)
+    if (keep !== undefined) headers.set(KEEP_HEADER, keep)
   }
 
   const room = c.env.ROOM.get(c.env.ROOM.idFromName(id))

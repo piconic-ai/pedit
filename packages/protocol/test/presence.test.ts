@@ -13,7 +13,7 @@ import {
   type RoomKeys,
   SENDER_BYTES,
 } from '../src/index.ts'
-import { answer, editKeys, lowerKeys, Relay, sealFrame } from '../src/testing.ts'
+import { answer, editKeys, lowerKeys, Relay, wireFrame } from '../src/testing.ts'
 
 const clients: RoomClient[] = []
 afterEach(async () => {
@@ -90,18 +90,18 @@ describe('presence', () => {
     const read = await lowerKeys(keys, 'read')
     const comment = await lowerKeys(keys, 'comment')
     peer.send(
-      await sealFrame(read, sender(1), 1, stateFor(hostId, MAX_WIRE_CLOCK, { file: 'evil.md' })),
+      await wireFrame(read, sender(1), 1, stateFor(hostId, MAX_WIRE_CLOCK, { file: 'evil.md' })),
     )
-    peer.send(await sealFrame(read, sender(1), 2, stateFor(hostId + 1, MAX_WIRE_CLOCK + 1, {})))
+    peer.send(await wireFrame(read, sender(1), 2, stateFor(hostId + 1, MAX_WIRE_CLOCK + 1, {})))
     await vi.waitFor(() => expect(newcomer.awareness.getStates().get(hostId)).toBeDefined())
 
     join(relay, keys, { role: 'host', file: 'notes.md' }, {}, hostDoc)
     const file = () => newcomer.awareness.getStates().get(hostId)?.file
     await vi.waitFor(() => expect(file()).toBe('notes.md'))
 
-    peer.send(await sealFrame(read, sender(1), 3, stateFor(hostId, MAX_WIRE_CLOCK, null)))
-    peer.send(await sealFrame(comment, sender(2), 1, answer(newcomer)))
-    peer.send(await sealFrame(comment, sender(2), 2, stateFor(hostId, 9, { file: 'evil.md' })))
+    peer.send(await wireFrame(read, sender(1), 3, stateFor(hostId, MAX_WIRE_CLOCK, null)))
+    peer.send(await wireFrame(comment, sender(2), 1, answer(newcomer)))
+    peer.send(await wireFrame(comment, sender(2), 2, stateFor(hostId, 9, { file: 'evil.md' })))
     await vi.waitFor(() =>
       expect(errors.filter((e) => e instanceof NotAllowedError)).toHaveLength(3),
     )
@@ -127,16 +127,16 @@ describe('presence', () => {
     }
     const several = encoding.createEncoder()
     encoding.writeVarUint8Array(several, encoding.toUint8Array(update))
-    peer.send(await sealFrame(keys, sender(1), 1, answer(me)))
+    peer.send(await wireFrame(keys, sender(1), 1, answer(me)))
     peer.send(
-      await sealFrame(
+      await wireFrame(
         keys,
         sender(1),
         2,
         encodeMessage(MessageType.Awareness, encoding.toUint8Array(several)),
       ),
     )
-    peer.send(await sealFrame(keys, sender(1), 3, stateFor(me.doc.clientID, 99, null)))
+    peer.send(await wireFrame(keys, sender(1), 3, stateFor(me.doc.clientID, 99, null)))
     await vi.waitFor(() => expect(errors).toHaveLength(2))
     expect(me.awareness.getLocalState()).toEqual({ name: 'me' })
     expect(me.awareness.getStates().size).toBe(1)
@@ -158,7 +158,7 @@ describe('presence', () => {
     const ids = Array.from({ length: MAX_UNSIGNED + 36 }, (_, i) => 1000 + i)
     let counter = 0
     const send = async (id: number, clock: number, state: unknown) =>
-      peer.send(await sealFrame(read, sender(1), ++counter, stateFor(id, clock, state)))
+      peer.send(await wireFrame(read, sender(1), ++counter, stateFor(id, clock, state)))
     for (const id of ids) await send(id, 1, null)
     for (const id of ids) await send(id, 2, { name: 'r' })
     await vi.waitFor(() =>
@@ -190,7 +190,7 @@ describe('presence', () => {
     const hostId = hostDoc.clientID
     const state = { role: 'host', file: 'notes.md' }
     const read = await lowerKeys(keys, 'read')
-    peer.send(await sealFrame(read, sender(1), 1, stateFor(hostId, 1, state)))
+    peer.send(await wireFrame(read, sender(1), 1, stateFor(hostId, 1, state)))
     await vi.waitFor(() => expect(newcomer.accessOf(hostId)).toBe('read'))
     const changes: number[] = []
     newcomer.awareness.on('change', () => changes.push(1))

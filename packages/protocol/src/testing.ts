@@ -9,6 +9,7 @@ import { encrypt } from './cipher.ts'
 import { MESSAGE_TOO_BIG, RELAY_BUSY, ROOM_CLOSED, ROOM_FULL } from './close.ts'
 import { encodeFrame } from './frame.ts'
 import { encodeFresh, NONCE_BYTES } from './fresh.ts'
+import { Kind, withKind } from './kinds.ts'
 import { encodeMessage, MessageType } from './message.ts'
 import type { Rate } from './pace.ts'
 import type { RoomClient, SocketLike } from './room.ts'
@@ -49,6 +50,16 @@ export async function sealFrame(
   const header = encodeFrame(sender, counter, new Uint8Array())
   const body = keys.signer ? await signMessage(keys.signer, header, message) : message
   return encrypt(keys.frameKey, encodeFrame(sender, counter, body))
+}
+
+/** A sealed frame as it travels in protocol version 6: a live message (kind 0). */
+export async function wireFrame(
+  keys: RoomKeys,
+  sender: Uint8Array,
+  counter: number,
+  message: Uint8Array,
+): Promise<Uint8Array> {
+  return withKind(Kind.Live, await sealFrame(keys, sender, counter, message))
 }
 
 /**
@@ -174,7 +185,8 @@ export class FakeSocket implements SocketLike {
     readonly isHost: boolean,
   ) {}
   send(data: Uint8Array) {
-    if (this.relay.opts.maxFrame !== undefined && data.length > this.relay.opts.maxFrame) {
+    // The kind byte is not part of the frame.
+    if (this.relay.opts.maxFrame !== undefined && data.length - 1 > this.relay.opts.maxFrame) {
       this.close(MESSAGE_TOO_BIG)
       return
     }

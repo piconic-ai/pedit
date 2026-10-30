@@ -13,6 +13,15 @@ type KeptText = {
   tail: number
   cutoff: number
 }
+/** The most a kept log holds: bytes, and entries. */
+export const KEPT_LOG_BYTES = 4 * MAX_FRAME_BYTES
+export const KEPT_LOG_ENTRIES = 10000
+/** The log table, created when a room first needs it. */
+export function ensureKeptLog(storage: DurableObjectStorage): void {
+  storage.sql.exec(
+    'CREATE TABLE IF NOT EXISTS kept_text_log (id INTEGER PRIMARY KEY, body BLOB NOT NULL, sender TEXT NOT NULL)',
+  )
+}
 const encode = (data: Uint8Array) => {
   let text = ''
   for (let i = 0; i < data.length; i += 8192)
@@ -275,9 +284,7 @@ async function initialize(
       storage.kv.get('openedAt') !== undefined
     )
       throw new Error('room already initialized')
-    storage.sql.exec(
-      'CREATE TABLE IF NOT EXISTS kept_text_log (id INTEGER PRIMARY KEY, body BLOB NOT NULL, sender TEXT NOT NULL)',
-    )
+    ensureKeptLog(storage)
     storage.kv.put('keptText', state)
     const deadline = Math.min(state.until, state.total ?? Infinity),
       old = await storage.getAlarm()
@@ -299,7 +306,7 @@ async function appendUpdate(request: Request, storage: DurableObjectStorage): Pr
         'SELECT coalesce(sum(length(body)), 0) AS bytes, count(*) AS count FROM kept_text_log',
       )
       .one()
-    if (usage.bytes + data.length > 4 * MAX_FRAME_BYTES || usage.count >= 10000)
+    if (usage.bytes + data.length > KEPT_LOG_BYTES || usage.count >= KEPT_LOG_ENTRIES)
       throw new Error('room log full')
     const state = { ...current, tail: current.tail + 1 }
     storage.sql.exec(

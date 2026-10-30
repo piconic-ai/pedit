@@ -16,6 +16,13 @@
     "RELAY_PING": "pedit ping",
     "RELAY_PONG": "pedit pong"
   },
+  "relayTextsV6": {
+    "KEPT": "kept",
+    "KEEP": "keep",
+    "CHECKPOINT": "checkpoint",
+    "CHECKPOINT_REFUSED": "checkpoint refused",
+    "LOG_FULL": "log full"
+  },
   "expiredReasons": [
     { "seconds": 86400, "reason": "the room reached its time limit of 86400 seconds" },
     { "seconds": 90, "reason": "the room reached its time limit of 90 seconds" }

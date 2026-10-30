@@ -16,7 +16,8 @@ describe('close codes', () => {
     const exported = Object.fromEntries(
       Object.entries(close).filter(([, value]) => typeof value === 'string'),
     )
-    expect(exported).toEqual(vectors.signals)
+    // The texts of protocol version 6 are the Go side's to adopt (#344).
+    expect(exported).toEqual({ ...vectors.signals, ...vectors.relayTextsV6 })
   })
 
   it('writes and reads the reason of an expired room', () => {

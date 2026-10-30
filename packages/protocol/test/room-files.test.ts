@@ -20,7 +20,7 @@ import {
   type RoomKeys,
   SENDER_BYTES,
 } from '../src/index.ts'
-import { editKeys, Relay, sealFrame } from '../src/testing.ts'
+import { editKeys, Relay, wireFrame } from '../src/testing.ts'
 
 const clients: RoomClient[] = []
 afterEach(async () => {
@@ -248,7 +248,7 @@ describe('RoomClient with several files', () => {
       ),
     ]
     for (const [i, m] of frames.entries()) {
-      newer.send(await sealFrame(key, sender, i + 1, m))
+      newer.send(await wireFrame(key, sender, i + 1, m))
     }
     const a = join(relay, key)
     a.addFile(1, file('after'))

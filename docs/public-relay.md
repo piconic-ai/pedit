@@ -50,6 +50,16 @@ room's link can fetch them. The bucket needs a second lifecycle rule expiring
 `kept/` after 8 days (the public cap on keeping is seven) as a backstop for a
 deletion that failed; the operator adds it by hand, as the release deploy only
 manages the `rooms/` rule.
+A live room whose host asked to keep it (protocol version 6, `X-Pedit-Keep`)
+stores the same ciphertext when the host leaves on purpose or does not return
+within the grace period: the host's latest encrypted snapshot, and a log of the
+encrypted, editor-signed entries that peers write meanwhile, in the room's SQLite
+storage, under the same limits (4 MiB, 10,000 entries). The peers stay connected
+and the relay tells them the room is kept until a time, at most the relay's
+keep cap after the host left. It deletes the snapshot, the log and the room's
+images, which are stored under `kept/` for such a room, when that time passes or
+when the host closes the room, and the room ID is not opened again. Without a
+snapshot, or without a keep, the room ends when the host leaves, as above.
 The relay learns ciphertext sizes, request times, and opaque sender identifiers
 and counts. It receives no plaintext or URL-fragment key. A relay can still
 withhold or replay data; a signature does not prove freshness or availability.

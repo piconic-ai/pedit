@@ -52,6 +52,7 @@ import {
   RESEND_EVERY_MS,
   SETTLE_AFTER_MS,
 } from './fresh.ts'
+import { Kind, splitKind, withKind } from './kinds.ts'
 import {
   decodeMessage,
   encodeMessage,
@@ -362,8 +363,12 @@ export class RoomClient {
         if (this.status === 'waiting') this.setStatus('connected')
         return
       }
-      const data = toBytes(ev.data)
-      if (!data) return
+      const bytes = toBytes(ev.data)
+      // Version 6: a live frame has kind 0. The other kinds are for clients
+      // that keep a room while its host is away; this one ignores them.
+      const split = bytes && splitKind(bytes)
+      if (!split || split.kind !== Kind.Live) return
+      const data = split.payload
       this.receiveChain = this.receiveChain
         .then(() => this.receive(data))
         .catch((error) => this.opts.onError?.(error))
@@ -923,7 +928,7 @@ export class RoomClient {
           this.opts.keys.frameKey,
           encodeFrame(this.sender, counter, signed),
         )
-        if (socket.readyState === OPEN) socket.send(data)
+        if (socket.readyState === OPEN) socket.send(withKind(Kind.Live, data))
       })
       .catch((error) => this.opts.onError?.(error))
   }
