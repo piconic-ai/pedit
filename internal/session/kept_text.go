@@ -102,9 +102,7 @@ func RunKeptText(ctx context.Context, opts KeptTextOptions, ready func(string, i
 	if e := h.prepare(ctx, opts); e != nil {
 		return e
 	}
-	if n := h.pruneExpired(ctx); n > 0 && opts.OnPruned != nil {
-		opts.OnPruned(n)
-	}
+	h.pruneExpired(ctx, opts.OnPruned)
 	if e := h.openFiles(); e != nil {
 		return e
 	}
@@ -112,14 +110,7 @@ func RunKeptText(ctx context.Context, opts KeptTextOptions, ready func(string, i
 	if e := h.restore(); e != nil {
 		return e
 	}
-	defer func() {
-		// The relay says the room is gone, so it holds no entries to take in.
-		// Keep the record while a journaled write is still pending.
-		gone := errors.Is(runErr, errKeptGone) || (errors.Is(runErr, errKeptMissing) && h.state.Initialized)
-		if gone && h.nothingPending() && os.Remove(h.path) == nil && opts.OnEnded != nil {
-			opts.OnEnded()
-		}
-	}()
+	defer func() { h.dropEndedRecord(runErr, opts.OnEnded) }()
 	if e := h.connect(ctx); e != nil {
 		return e
 	}
@@ -721,7 +712,7 @@ func (h *keptTextHost) nothingPending() bool {
 // pruneExpired removes records of other rooms in this project whose deadline is
 // past, the host has nothing left to write, and the relay confirms the room is
 // gone. Anything unparsable, unconfirmed or uncertain is kept.
-func (h *keptTextHost) pruneExpired(ctx context.Context) int {
+func (h *keptTextHost) pruneExpired(ctx context.Context, notify func(int)) {
 	paths, _ := filepath.Glob(filepath.Join(h.dir, "*.json"))
 	removed := 0
 	for _, path := range paths {
@@ -741,5 +732,16 @@ func (h *keptTextHost) pruneExpired(ctx context.Context) int {
 			removed++
 		}
 	}
-	return removed
+	if removed > 0 && notify != nil {
+		notify(removed)
+	}
+}
+
+// dropEndedRecord removes this room's record when the relay says the room is
+// gone, so it holds no entries to take in. A journaled write still pending keeps it.
+func (h *keptTextHost) dropEndedRecord(err error, notify func()) {
+	gone := errors.Is(err, errKeptGone) || (errors.Is(err, errKeptMissing) && h.state.Initialized)
+	if gone && h.nothingPending() && os.Remove(h.path) == nil && notify != nil {
+		notify()
+	}
 }
