@@ -16,10 +16,10 @@ It runs the latest release, deployed from this repository
 
 The relay is not permanent storage. Its design permits keeping room content
 only as ciphertext while the room is open. Once the host has taken in changes,
-the relay's copies can be deleted without losing them. The current release
-keeps no document frames, as described below.
+the relay's copies can be deleted without losing them. Live rooms relay frames
+without storing them. Kept rooms store ciphertext as described below.
 
-- **Document text: none.** Frames are relayed and never stored.
+- **Plaintext document text: none.** Live-room frames are relayed and never stored.
 - **Encrypted images**, in R2. They can be uploaded only while the room's host
   is connected, and the room deletes them when the host leaves. A deletion
   that fails is logged and not tried again; a bucket rule expires leftovers
@@ -32,6 +32,17 @@ keeps no document frames, as described below.
   again. The Durable Object's storage keeps 30 days of history for
   point-in-time recovery
   ([Cloudflare](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/#pitr-point-in-time-recovery-api)).
+
+With `--keep`, the relay stores an encrypted text snapshot and a bounded log
+of encrypted, editor-signed Yjs updates in the room's SQLite storage. A host
+truncates the log only after saving the edits locally. Guests can read and
+edit while the host is away. The relay deletes the snapshot and log at the
+keep deadline or total room limit. A marker prevents reuse of the closed room.
+The relay learns ciphertext sizes, request times, and opaque sender identifiers
+and counts. It receives no plaintext or URL-fragment key. A relay can still
+withhold or replay data; a signature does not prove freshness or availability.
+
+The following disconnect behavior describes live rooms without `--keep`.
 
 A host whose connection drops, rather than one ending the session with
 Ctrl+C, gets two minutes to come back: meanwhile the room keeps its guests,
@@ -189,21 +200,33 @@ To report a vulnerability instead, see [SECURITY.md](../SECURITY.md).
 | One image | 5 MiB before encryption |
 | Images of a session | 50 MiB encrypted, 500 images |
 | Image uploads at once, per room | 4 |
-| New rooms | 20 a minute from one network |
+| Room creation requests | 20 a minute from one network |
 | WebSocket connections | 60 a minute from one network |
 | One message | 1 MiB |
 | Messages from one connection | Bursts of 1,000 messages and 32 MiB, then 200 messages and 1 MiB a second |
 | Session length | 24 hours from the host's first connection |
+| Kept room after departure | Up to 7 days; the CLI reports any clamp |
+| Kept room total life | At least the effective keep duration; measured from publication |
+| Kept text snapshot | 1 MiB of ciphertext for all files together; at most 64 text files, fixed when the room opens |
+| Kept text log | 4 MiB of encrypted editing history before the host checkpoints; a 10,000-entry abuse guard also applies |
+| Kept room requests | 1,200 a minute from one network |
+
+Kept guests batch pending edits once per second. The 4 MiB budget measures
+encrypted update history, including signatures and encryption overhead, rather
+than keystrokes or final document size. Repeated replacements and deletions
+also use this budget; after it fills, the host must resume and checkpoint
+before more edits can be retained. Each encrypted entry is at most 1 MiB.
 
 The values are `vars` and `ratelimits` in `packages/worker/wrangler.jsonc` and
-the constants in `packages/worker/src/room.ts`. A network is one IP address,
+the constants in `packages/worker/src/room.ts` and `kept-text.ts`. A network is one IP address,
 or for IPv6 one /64. Rate limits are counted per Cloudflare location and are
 approximate ([Cloudflare](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/)).
-The new-room limit counts `POST /api/rooms` requests. The relay derives a
+The new-room limit counts `POST /api/rooms` and kept-room initialization requests. The relay derives a
 room's ID from its host token without remembering which tokens it issued, so a
-client can make its own and skip that limit; every client is still held to the
-connection limit. A guest over the rate limits is disconnected and
-reconnects; a host over them ends the session. A room ends 24 hours after its
+live client can make its own and skip that creation request; WebSocket clients
+are still held to the connection limit. Kept-room initialization cannot skip
+its creation limit. A guest over the rate limits is disconnected and
+reconnects; a host over them ends the session. A live room ends 24 hours after its
 host first connected, even if the host is still connected or has reconnected
 since: everyone is disconnected and its link stops working. Running pedit
 again starts a new room with a new link. A pedit released before this limit

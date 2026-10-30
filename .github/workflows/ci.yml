@@ -142,4 +142,4 @@ jobs:
           go-version-file: go.mod
 
       - name: Go test (configuration ownership)
-        run: go test -run "Config|Owner|SID" ./cmd/pedit
+        run: go test -run "Config|Owner|SID|KeepWindows" ./cmd/pedit

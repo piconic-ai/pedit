@@ -21,8 +21,6 @@ import { AlwaysLoad, followOtherTabs } from './alwaysload.ts'
 import {
   type Appearance,
   applyText,
-  fontSizeRange,
-  LINE_HEIGHT,
   loadAppearance,
   pageColors,
   resolveTheme,
@@ -65,12 +63,12 @@ import {
   sanitizeUser,
   selectionTint,
 } from './room.ts'
-import type { SettingsModel } from './settings.ts'
+import { lineWrapping, settingsModel } from './settings-model.ts'
 import { COPIED, shareLinks } from './share.ts'
 import { Splitter } from './splitter.ts'
 import { Store } from './store.ts'
 import { describeError, TableErrors, TableView } from './table.ts'
-import { fallbackTheme, loadTheme, readerTheme, THEMES, ThemeSwitcher } from './themes.ts'
+import { fallbackTheme, loadTheme, readerTheme, ThemeSwitcher } from './themes.ts'
 import { NARROW_QUERY, type ViewMode, ViewSwitch } from './view.ts'
 import { trackViewport } from './viewport.ts'
 import { loadVimMode, VimToggle, vimExtension } from './vim.ts'
@@ -136,96 +134,6 @@ function loadStartTheme(id: string): Promise<LoadedTheme> {
     (extension) => ({ id, extension }),
     () => fallbackTheme(id),
   )
-}
-
-function lineWrapping(on: boolean): Extension {
-  return on ? EditorView.lineWrapping : []
-}
-
-/**
- * The settings panel's model: what it shows, and what each control does to
- * the editor and the page. A change that fails puts the control back.
- */
-function settingsModel(
-  editor: EditorView,
-  themes: ThemeSwitcher,
-  wrapMode: Compartment,
-  vim: VimToggle,
-  alwaysLoad: AlwaysLoad,
-  initial: Appearance,
-  fontMode: Compartment,
-  /** Other editors on the page, which take the same reader theme. */
-  fontFollowers: readonly { view: EditorView; compartment: Compartment }[] = [],
-): SettingsModel {
-  const prefersDark = matchMedia(DARK_QUERY)
-  let current = initial
-  const update = (next: Appearance) => {
-    current = next
-    saveAppearance(next)
-  }
-  const fontSizes = fontSizeRange(CSS.supports('-webkit-touch-callout', 'none'))
-  const theme = new Store(themes.id)
-  const fontSize = new Store(Math.max(fontSizes.min, initial.fontSize))
-  const lineHeight = new Store(initial.lineHeight)
-  const wrap = new Store(initial.wrap)
-  const vimOn = new Store(vim.on)
-
-  const showTheme = async () => {
-    const id = resolveTheme(current, prefersDark.matches)
-    theme.set(id)
-    if (id !== themes.id && !(await themes.set(id))) theme.set(themes.id)
-    applyPalette(pageColors(current, themes.id))
-  }
-  // Until the reader picks a theme, the default one follows the OS. Picking is one-way by
-  // design: there is one theme, and no "follow the system" entry to go back to (#30).
-  prefersDark.addEventListener('change', () => void showTheme())
-
-  const setText = (next: Appearance) => {
-    update(next)
-    applyText(current)
-    // A CSS variable change alone does not make CodeMirror remeasure line
-    // heights, so the gutter would drift out of sync with the text (see
-    // readerTheme's doc comment in themes.ts). Every editor gets the same
-    // instance, so the next call alternates for all of them.
-    const reader = readerTheme()
-    editor.dispatch({ effects: fontMode.reconfigure(reader) })
-    for (const f of fontFollowers) f.view.dispatch({ effects: f.compartment.reconfigure(reader) })
-  }
-  return {
-    themes: THEMES,
-    theme,
-    setTheme: (id) => {
-      update({ ...current, theme: id })
-      void showTheme()
-    },
-    fontSizeRange: fontSizes,
-    fontSize,
-    setFontSize: (size) => {
-      fontSize.set(size)
-      setText({ ...current, fontSize: size })
-    },
-    lineHeightRange: LINE_HEIGHT,
-    lineHeight,
-    setLineHeight: (height) => {
-      lineHeight.set(height)
-      setText({ ...current, lineHeight: height })
-    },
-    wrap,
-    setWrap: (on) => {
-      wrap.set(on)
-      update({ ...current, wrap: on })
-      editor.dispatch({ effects: wrapMode.reconfigure(lineWrapping(on)) })
-    },
-    vim: vimOn,
-    setVim: (on) => {
-      vimOn.set(on)
-      void vim.set(on).then((ok) => {
-        if (!ok) vimOn.set(vim.on)
-      })
-    },
-    alwaysLoad: alwaysLoad.ids,
-    forgetAlwaysLoad: (id) => alwaysLoad.forget(id),
-  }
 }
 
 /** A file of the room this page has opened, with what edits it. */
@@ -575,16 +483,17 @@ async function joinRoom(
   render(header, 'Header', {
     file: fileName,
     status: roomStatus,
-    people,
-    narrow: isNarrow,
+    participants: { people, narrow: isNarrow },
     view,
     settings,
-    commentCounts: openCounts.counts,
-    files,
-    current,
-    commentable,
-    commentsOpen: panel.open,
-    onToggleComments: () => panel.toggle(),
+    comments: {
+      counts: openCounts.counts,
+      files,
+      current,
+      commentable,
+      open: panel.open,
+      onToggle: () => panel.toggle(),
+    },
     access: keys.access,
     onShare: (button: HTMLElement) => {
       const at = button.getBoundingClientRect()
@@ -1011,6 +920,11 @@ async function start(): Promise<void> {
   // If the theme could not load, the page matches the default theme the editor falls back to.
   applyPalette(pageColors(appearance, loaded.id))
   keepDroppedFiles()
+  if (new URLSearchParams(location.search).get('keep') === '1') {
+    const { joinKeptText } = await import('./kept-text.ts')
+    await joinKeptText(app, room.id, room.key, loaded.extension, appearance, loaded.id)
+    return
+  }
   await joinRoom(room.id, room.key, me, appearance, loaded)
 }
 

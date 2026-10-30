@@ -80,6 +80,19 @@ change. A crash can lose changes still in memory, in transit, or waiting for a
 save; failed or slow disk writes can extend that window. Ctrl+C flushes pending
 changes and closes the room. Running `pedit` again creates a new link.
 
+For asynchronous text review, run `pedit --keep 7d notes.md` or
+`pedit --keep 7d notes.md todo.md` to share several text files in one room. The relay caps
+this duration and pedit reports the effective value. Ctrl+C leaves the room
+open and prints its deadline. Browser guests can keep editing while you are
+away. In the same project, run `pedit --resume <link>` to merge their edits
+back into the original files. Resume information stays in a private 0600 record under
+`pedit/keep/` in your user configuration directory, outside the project. Keep
+that record until the review ends. This mode shares a fixed set of text files, without comments or attachments.
+The browser uses the same file tabs as a live room. The encrypted snapshot for
+all files together must fit within 1 MiB; log updates have a separate byte budget. Changes made directly to the local
+file while away are preserved and stop automatic recovery. These two host
+commands currently require Unix file permissions and are unavailable on Windows.
+
 Collaborators who would rather stay in their own editor join from the command
 line instead. Given the link, `pedit` mirrors the shared file to a temporary
 copy and keeps it in sync both ways until they leave or the host closes the
@@ -279,8 +292,9 @@ Edits in the opposite direction follow the same process.
 - **End-to-end encryption.** Document updates and pasted images are encrypted
   on your devices. The relay receives ciphertext; the key stays in the link's
   `#fragment` and is never sent to the server.
-- **Local files, temporary sessions.** The relay does not store document text,
-  and attempts to delete encrypted images when the host leaves
+- **Local files, temporary sessions.** The relay never stores plaintext. Kept
+  rooms retain encrypted text until their deadline. Live rooms attempt to
+  delete encrypted images when the host leaves
   ([what the public relay keeps](docs/public-relay.md#what-it-keeps)).
 - **Private local copies.** On Unix, new CLI join copies and saved attachments
   use owner-only permissions, further restricted by your umask. Updates retain
