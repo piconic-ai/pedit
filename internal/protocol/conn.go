@@ -77,7 +77,9 @@ func DialWebSocket(ctx context.Context, url string, header http.Header) (Conn, e
 	}
 	c.SetReadLimit(readLimit)
 	ctx, stop := context.WithCancel(context.Background())
-	w := &wsConn{c: c, stop: stop, pong: make(chan struct{}, 1)}
+	// The intervals are read once, here: tests change them between dials,
+	// and a keepAlive of an earlier connection may still be ending.
+	w := &wsConn{c: c, stop: stop, pong: make(chan struct{}, 1), interval: pingInterval, timeout: pingTimeout}
 	go w.keepAlive(ctx)
 	return w, nil
 }
@@ -101,12 +103,14 @@ type wsConn struct {
 	stop context.CancelFunc
 	// pong gets the room's answers, from the read loop.
 	pong chan struct{}
+	// interval and timeout are pingInterval and pingTimeout when dialled.
+	interval, timeout time.Duration
 }
 
 // keepAlive pings the room until ctx is done or a ping goes unanswered. A
 // pong is read by the Client's read loop, which always runs.
 func (w *wsConn) keepAlive(ctx context.Context) {
-	ticker := time.NewTicker(pingInterval)
+	ticker := time.NewTicker(w.interval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -123,7 +127,7 @@ func (w *wsConn) keepAlive(ctx context.Context) {
 }
 
 func (w *wsConn) ping(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, pingTimeout)
+	ctx, cancel := context.WithTimeout(ctx, w.timeout)
 	defer cancel()
 	// An answer to an earlier ping that came late does not count.
 	select {
