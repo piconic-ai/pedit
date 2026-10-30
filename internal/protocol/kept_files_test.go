@@ -35,7 +35,8 @@ func TestKeptBundlePairsMetaDocsAndCapsTextFilesOnly(t *testing.T) {
 
 func TestValidateKeptDocUpdateNamesTheRoot(t *testing.T) {
 	doc := crdt.New()
-	doc.Transact(func(tx *crdt.Transaction) { doc.GetMap("comments").Set(tx, "t1", "x") })
+	comments := doc.GetMap("comments")
+	doc.Transact(func(tx *crdt.Transaction) { comments.Set(tx, "t1", "x") })
 	update := crdt.EncodeStateAsUpdateV1(doc, nil)
 	if err := ValidateKeptDocUpdate(update, KeptCommentsRoot); err != nil {
 		t.Fatal("comments root refused:", err)

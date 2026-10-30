@@ -57,6 +57,11 @@ type keptTextDocument struct {
 	// root is the doc's one root type: "content" (or unset) for a text file,
 	// protocol.KeptCommentsRoot for the comments doc paired with one.
 	root string
+	// tracker follows the anchors of the comments paired with a text file
+	// through every change to its text, so a position whose character a guest
+	// deletes is still placed; paired is the comments doc's text file.
+	tracker *meta.Tracker
+	paired  *keptTextDocument
 }
 type keptTextMeta struct {
 	Seconds int64 `json:"keepSeconds"`
@@ -270,6 +275,7 @@ func (h *keptTextHost) restore() error {
 			}
 		}
 	}
+	h.followComments()
 	h.republish = true
 	if e := h.mergeLocalEdits(); e != nil {
 		return e
@@ -485,8 +491,16 @@ func (h *keptTextDocument) applyUpdate(update []byte) error {
 		candidate.Destroy()
 		return e
 	}
+	if h.tracker != nil {
+		// The doc stays, so its tracker sees the change.
+		candidate.Destroy()
+		return crdt.ApplyUpdateV1(h.doc, update, nil)
+	}
 	h.doc.Destroy()
 	h.doc = candidate
+	if h.paired != nil && h.paired.tracker != nil {
+		h.paired.tracker.Learn(h.doc)
+	}
 	return nil
 }
 
@@ -510,6 +524,12 @@ func (h *keptTextDocument) pruneIncomplete(base []byte, accepted [][]byte) (int,
 		accepted = complete
 		h.doc.Destroy()
 		h.doc = crdt.New(crdt.WithGC(false))
+		// The anchors cannot be followed through a rebuilt doc: the next save
+		// places them on the text as it is.
+		if h.tracker != nil {
+			h.tracker.Close()
+			h.tracker = nil
+		}
 		if e := h.apply(h.doc, base); e != nil {
 			return skipped, e
 		}

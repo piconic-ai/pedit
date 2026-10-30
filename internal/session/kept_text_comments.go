@@ -82,6 +82,19 @@ func attachKeptMeta(project string, file *keptTextFileState) error {
 	return nil
 }
 
+// followComments makes each text file with comments follow its anchors from
+// here on, before any edit can delete the character one points at.
+func (h *keptTextHost) followComments() {
+	for _, file := range h.state.Files {
+		if file.Meta == nil {
+			continue
+		}
+		text, comments := h.files[file.ID], h.files[file.Meta.ID]
+		comments.paired, text.tracker = text, meta.NewTracker(text.doc)
+		text.tracker.Learn(comments.doc)
+	}
+}
+
 // attachKeptMetas pairs each file with its comments doc, then checks that the
 // whole snapshot fits.
 func attachKeptMetas(project string, files []keptTextFileState) error {
@@ -138,9 +151,12 @@ func (h *keptTextHost) metaPending(file *keptTextFileState) (*string, error) {
 		parsed.Path = prev.Path
 		prev = parsed
 	}
-	doc := h.files[m.ID].doc
-	tracker := meta.NewTracker(h.files[file.ID].doc)
-	defer tracker.Close()
+	doc, content := h.files[m.ID].doc, h.files[file.ID]
+	tracker := content.tracker
+	if tracker == nil {
+		tracker = meta.NewTracker(content.doc)
+		defer tracker.Close()
+	}
 	tracker.Learn(doc)
 	read := meta.Read(doc, prev, tracker)
 	if m.Text == "" && len(read.Comments) == 0 {

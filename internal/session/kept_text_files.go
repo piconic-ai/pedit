@@ -189,6 +189,9 @@ func (h *keptTextHost) entries() []keptEntry {
 }
 func (h *keptTextHost) closeFiles() {
 	for _, file := range h.files {
+		if file.tracker != nil {
+			file.tracker.Close()
+		}
 		file.doc.Destroy()
 		if file.bound != nil {
 			file.bound.Close()
