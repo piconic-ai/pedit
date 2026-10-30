@@ -51,15 +51,17 @@
     <h2>Logs</h2>
     <p>
       The service logs requests with Cloudflare Workers Logs, kept for 7 days. A log entry has the time
-      and path of a request (the path contains the room ID), its status, and the details Cloudflare
-      adds, which include country, city, postal code, coordinates and network of the request.
-      Events in a room, including each relayed message, are logged with their time. The content of the
-      messages is encrypted and is not logged.
+      and path of a request (the path contains the room ID) and its status. Looking at an entry, it
+      also keeps your IP address, your browser&rsquo;s user agent, the country, city, postal code, coordinates
+      and time zone Cloudflare derives from the IP address, the network (ASN and organization), and
+      details of the TLS connection such as its version, cipher and client fingerprints. Events in a
+      room, including each relayed message, are logged with their time. The content of the messages is
+      encrypted and is not logged.
     </p>
     <p>
-      Not yet confirmed: whether these logs also keep the client&rsquo;s IP address, and which request
-      headers they keep, in particular two tokens that cannot decrypt anything. This page will be
-      updated when it is confirmed.
+      Not yet confirmed: whether the entries for WebSocket and image requests also keep two tokens that
+      cannot decrypt anything (the host token and the admission token). This page will be updated when
+      it is confirmed.
     </p>
 
     <h2>Cloudflare</h2>
@@ -71,9 +73,11 @@
 
     <h2>In your browser</h2>
     <p>
-      The editor&rsquo;s own code sets no cookies and loads no analytics or tracking scripts. Not yet
-      confirmed: whether Cloudflare features on the <code>piconic.ai</code> zone add a cookie or script of
-      their own. The editor keeps in your browser&rsquo;s local storage only the name you typed and display
+      The editor&rsquo;s own code sets no cookies and loads no analytics or tracking scripts. The responses
+      we looked at (the home page and room creation) set no cookie. Cloudflare inserts its Web Analytics
+      script tag into the page; the page&rsquo;s Content-Security-Policy allows scripts only from the service
+      itself, so a browser should not load it. Cloudflare also adds Network Error Logging headers: if
+      your browser cannot reach the service, it may report the failure to Cloudflare. The editor keeps in your browser&rsquo;s local storage only the name you typed and display
       preferences, never a room ID, key or document content. Your browser history keeps the full link,
       key included.
     </p>

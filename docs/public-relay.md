@@ -64,10 +64,14 @@ include country, city, postal code, coordinates and network (ASN)
 ([Workers Logs](https://developers.cloudflare.com/workers/observability/logs/workers-logs/#invocation-logs),
 [`cf` properties](https://developers.cloudflare.com/workers/runtime-apis/request/#incomingrequestcfproperties),
 [query builder](https://developers.cloudflare.com/workers/observability/query-builder/)).
-Which request headers this relay's logs keep is not yet confirmed, in
-particular whether they keep the host token (`Authorization`) or the admission
-token (`Sec-WebSocket-Protocol`, `X-Pedit-Admission`). Neither token can
-decrypt anything.
+A logged request (checked on `POST /api/rooms`) keeps the client's IP address
+(`cf-connecting-ip`, `x-real-ip`), the `user-agent`, `accept`, `accept-encoding` and
+`host` headers, and the `cf` properties: country, city, postal code,
+coordinates, time zone, ASN and organization, and TLS version, cipher and
+client fingerprints. Whether the entries for `GET /api/rooms/:id/ws` and the
+blob routes also keep the host token (`Authorization`) or the admission token
+(`Sec-WebSocket-Protocol`, `X-Pedit-Admission`) is not yet confirmed. Neither
+token can decrypt anything.
 <!-- TODO(operator): confirm in the dashboard that webSocketMessage events of the Room Durable Object appear as invocation logs, and whether they name the room. If per-frame logs are not wanted, set observability.logs.invocation_logs to false or lower head_sampling_rate, and update the comment in wrangler.jsonc. -->
 The room ID is in the path; the key never reaches the relay. The Worker's own
 log lines are `rate limited <route>`, without the address,
@@ -86,15 +90,20 @@ connected and how long ago the host first came.
 This relay runs on Workers Paid, where Workers Logs keeps logs for 7 days
 ([pricing](https://developers.cloudflare.com/workers/observability/logs/workers-logs/#pricing),
 [Cloudflare Observability pricing](https://developers.cloudflare.com/observability/pricing/)).
-<!-- TODO(operator): open an invocation log of each route in the dashboard (POST /api/rooms, GET /api/rooms/:id/ws as host and as guest, GET and PUT /api/rooms/:id/blobs/:blobId) and list the fields actually kept. Check especially that no Authorization value (host token), Sec-WebSocket-Protocol value or X-Pedit-Admission value (admission token) is kept, and whether the client IP is. Tail Workers redact only headers whose names contain auth, key, secret, token or jwt, which Sec-WebSocket-Protocol and X-Pedit-Admission do not. Turn off invocation_logs, or correct this page, if they are kept. Then replace the sentence "Which request headers this relay's logs keep is not yet confirmed ..." in the first paragraph of this section with what the logs were found to keep. -->
+<!-- TODO(operator): open an invocation log of GET /api/rooms/:id/ws (host and guest) and GET and PUT /api/rooms/:id/blobs/:blobId, and check that no Authorization value (host token), Sec-WebSocket-Protocol value or X-Pedit-Admission value (admission token) is kept. Tail Workers redact only headers whose names contain auth, key, secret, token or jwt, which Sec-WebSocket-Protocol and X-Pedit-Admission do not. Turn off invocation_logs, or correct this page, if they are kept. Then replace the last two sentences of the first paragraph of this section and the matching paragraph of web/public/privacy.html. -->
 
 ## In your browser
 
 The editor's own code sets no cookies and loads no analytics or tracking
-scripts. Whether Cloudflare features on the piconic.ai zone add a cookie or
-script of their own, such as the bot-protection cookie `__cf_bm` or a Web
-Analytics beacon, is not yet confirmed.
-<!-- TODO(operator): confirm that no Cloudflare zone feature adds a cookie or a script the repository does not contain: Web Analytics, Zaraz, or Bot Fight Mode / Bot Management (__cf_bm cookie). Then replace the sentence 'Whether Cloudflare features on the piconic.ai zone add ...' with what was found, or drop it if nothing is added. -->
+scripts. The home page and `POST /api/rooms` were checked and set no cookie.
+Cloudflare inserts its Web Analytics script tag
+(`static.cloudflareinsights.com/beacon.min.js`) into the page; the page's
+Content-Security-Policy allows scripts only from the relay itself, so a browser
+should not load it (inferred from the policy, not yet seen in a browser
+console). Responses also carry Network Error Logging headers (`nel`,
+`report-to`, `success_fraction` 0): if a browser cannot reach the relay, it may
+report the failure to Cloudflare.
+<!-- TODO(operator): decide whether to switch off the automatic Web Analytics insertion for piconic.ai in the dashboard, and check in a browser that the beacon is blocked and that no cookie (such as __cf_bm) is set on the WebSocket and asset requests. Then update this paragraph and web/public/privacy.html. -->
 The editor keeps in `localStorage` only the name you typed (`pedit:name`) and
 display preferences: appearance, theme colours, the last Markdown and CSV view,
 Vim mode and the split position (`pedit:appearance`, `pedit:palette`,
