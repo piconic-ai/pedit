@@ -21,7 +21,35 @@ as the file's last written text, so the later write and log truncation follow
 the usual order. A file that cannot be read, is not UTF-8 or exceeds the frame
 limit is not merged and is refused as an external change, preserving it.
 Repeated Yjs text updates are idempotent. This path is separate from the live
-nonce handshake and never accepts canvas, comment or attachment operations.
+nonce handshake and never accepts canvas or attachment operations.
+
+### Comments in kept rooms
+
+Each text file inside the project also gets a paired comments doc (root map
+`comments`), with its own stable file ID (1024 plus the file's ID, kept in the
+record) and the path `.pedit/meta/<path>.json` as its pairing name in the
+snapshot, as in a live room's manifest (`metaPath`). Signed log entries target
+it by that ID exactly like a text file's; a root other than `comments`, an
+update that fails the live room's comment checks (`meta.CheckUpdate`,
+`checkMetaUpdate`), and unknown IDs are skipped and counted. A file outside the
+project, or whose pairing path cannot be listed, has no comments doc. The Worker
+stays an opaque relay.
+
+On `--keep`, an existing `.pedit/meta/<path>.json` is loaded into the doc,
+anchors re-found by their saved text; a file pedit cannot read stops `--keep`
+and is left alone. On `--resume`, after the text writes of the same file, the
+doc is rendered with the live room's code (`meta.Read`, `meta.Render`, anchors
+placed on the merged text, keys of a newer pedit kept) and written through the
+same journal as the text: a pending text is recorded before any write, the file
+is created only once there is a thread, never removed, never written over a file
+changed outside pedit, and replaying the log writes nothing twice. Browsers show
+the live room's comment panel on the doc; a thread or reply made while the host
+is away is a log entry like an edit, and a read link only reads. Older browsers
+list the paired doc as an extra, empty text tab (it has no text, and
+they skip updates to it).
+
+Limits: the 1 MiB encrypted snapshot includes the comments docs; the 64-file cap
+counts text files only (the bundle holds at most 128 entries).
 Signatures authenticate editor access, not freshness. A relay can withhold
 unseen updates or serve an older snapshot to a new guest. Expiry deletes the
 room's active ciphertext. The interop test exercises publication, departure,

@@ -907,3 +907,19 @@ export function shortTime(iso: string, now = new Date()): string {
 export function fullTime(iso: string): string {
   return full.format(new Date(iso))
 }
+
+/** The editor's selection as a comment's target: text, if any is selected. */
+export function textTarget(s: { from: number; to: number }): CommentTarget | null {
+  return s.to > s.from ? { kind: 'text', from: s.from, to: s.to } : null
+}
+
+/** Whether two comment targets are the same. */
+export function sameTarget(a: CommentTarget | null, b: CommentTarget | null): boolean {
+  if (a === null || b === null || a.kind !== b.kind) return a === b
+  if (a.kind === 'text' && b.kind === 'text') return a.from === b.from && a.to === b.to
+  if (a.kind === 'node' && b.kind === 'node') return a.id === b.id
+  if (a.kind !== 'cells' || b.kind !== 'cells') return false
+  const same = (x: { row: number; col: number }, y: { row: number; col: number }) =>
+    x.row === y.row && x.col === y.col
+  return same(a.from, b.from) && same(a.to, b.to)
+}

@@ -13,6 +13,9 @@ type Captured = {
   doc?: Y.Doc
   status?: Readable<string>
   skipped?: Readable<number>
+  comments?: Readable<{ start(from: number, to: number, body: string): string | null } | null>
+  locked?: Readable<boolean>
+  panel?: HTMLElement
   editor?: { state: EditorState; destroyed: boolean }
 }
 const captured = vi.hoisted(() => {
@@ -41,6 +44,8 @@ vi.mock('@barefootjs/client/runtime', async (load) => ({
       onReady?: (parts: unknown) => void
       status?: Readable<string>
       skipped?: Readable<number>
+      comments?: Captured['comments']
+      locked?: Readable<boolean>
     },
   ) => {
     if (component === 'Layout')
@@ -50,12 +55,16 @@ vi.mock('@barefootjs/client/runtime', async (load) => ({
         files: document.createElement('div'),
         main: document.createElement('main'),
         source: document.createElement('div'),
-        comments: document.createElement('div'),
+        comments: (captured.panel = document.createElement('div')),
         preview: document.createElement('article'),
         splitter: document.createElement('div'),
       })
     if (component === 'Header') captured.status = props.status
     if (component === 'KeptTextNotice') captured.skipped = props.skipped
+    if (component === 'CommentsPanel') {
+      captured.comments = props.comments
+      captured.locked = props.locked
+    }
   },
 }))
 vi.mock('@codemirror/view', async (load) => {
@@ -69,6 +78,8 @@ vi.mock('@codemirror/view', async (load) => {
       static domEventHandlers = real.EditorView.domEventHandlers
       static lineWrapping = real.EditorView.lineWrapping
       static editable = real.EditorView.editable
+      static decorations = real.EditorView.decorations
+      static updateListener = real.EditorView.updateListener
       scrollDOM = document.createElement('div')
       requestMeasure() {}
       state: EditorState
@@ -93,6 +104,7 @@ vi.mock('y-codemirror.next', async (load) => ({
 }))
 vi.mock('../src/components/Header.tsx', () => ({}))
 vi.mock('../src/components/KeptTextNotice.tsx', () => ({}))
+vi.mock('../src/components/CommentsPanel.tsx', () => ({}))
 const { joinKeptText } = await import('../src/kept-text.ts')
 const room = 'AAECAwQFBgcICQoLDA0ODw',
   fragment = 'A'.repeat(43)
@@ -102,6 +114,8 @@ beforeEach(() => {
   captured.doc = undefined
   captured.status = undefined
   captured.editor = undefined
+  captured.comments = undefined
+  captured.locked = undefined
   vi.stubGlobal('crypto', webcrypto)
   vi.stubGlobal('matchMedia', () => ({
     matches: false,
@@ -296,4 +310,81 @@ it('distinguishes a relay-held update from a host checkpoint', async () => {
   cutoff = 1
   await vi.advanceTimersByTimeAsync(1000)
   await vi.waitFor(() => expect(captured.status?.get()).toBe('synced'))
+})
+
+/** notes.md ("hello") with its paired comments doc, as a bundle snapshot. */
+async function commentedSnapshot() {
+  const link = parseFragment(fragment)
+  if (!link) throw new Error('fixture link')
+  const keys: RoomKeys = await deriveRoomKeys(link, room)
+  if (!keys.signer) throw new Error('fixture signer')
+  const text = new Y.Doc(),
+    comments = new Y.Doc()
+  text.getText('content').insert(0, 'hello')
+  comments.getMap('comments')
+  const utf8 = new TextEncoder(),
+    files = [
+      { id: 0, path: 'notes.md', update: Y.encodeStateAsUpdate(text) },
+      { id: 1024, path: '.pedit/meta/notes.md.json', update: Y.encodeStateAsUpdate(comments) },
+    ]
+  const body: number[] = [0, files.length]
+  const u32 = (n: number) => body.push(n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255)
+  for (const file of files) {
+    const path = utf8.encode(file.path)
+    u32(file.id)
+    body.push(0, path.length, ...path)
+    u32(file.update.length)
+    for (const byte of file.update) body.push(byte)
+  }
+  const domain = utf8.encode('pedit kept files snapshot v1\0'),
+    message = Uint8Array.from([...domain, ...body]),
+    signature = new Uint8Array(await crypto.subtle.sign('Ed25519', keys.signer.key, message)),
+    encrypted = await encrypt(keys.frameKey, Uint8Array.from([...message, ...signature]))
+  return btoa(String.fromCharCode(...encrypted))
+}
+const stubRoom = (encrypted: string, posts: Uint8Array[] = []) =>
+  vi.stubGlobal(
+    'fetch',
+    vi.fn<typeof fetch>(async (_, init) => {
+      if (init?.method === 'POST') {
+        posts.push(new Uint8Array(await new Response(init.body).arrayBuffer()))
+        return Response.json({})
+      }
+      return response(encrypted)
+    }),
+  )
+
+it('shows the comments of a kept file in the panel', async () => {
+  stubRoom(await commentedSnapshot())
+  await joinKeptText(document.createElement('div'), room, fragment, [])
+  expect(captured.comments?.get()).not.toBeNull()
+  expect(captured.panel?.hidden).toBe(false)
+  expect(captured.locked?.get()).toBe(false)
+})
+
+it('queues a thread started while the host is away and flushes it as an entry of the comments doc', async () => {
+  const posts: Uint8Array[] = []
+  stubRoom(await commentedSnapshot(), posts)
+  await joinKeptText(document.createElement('div'), room, fragment, [])
+  expect(captured.comments?.get()?.start(0, 5, 'Which one?')).not.toBeNull()
+  expect(captured.status?.get()).toBe('saving')
+  await vi.advanceTimersByTimeAsync(1000)
+  await vi.waitFor(() => expect(posts).toHaveLength(1))
+  expect(captured.client?.getDoc(1024)?.getMap('comments').size).toBe(1)
+  expect(captured.doc?.getText('content').toString()).toBe('hello')
+})
+
+it('keeps comments read-only on a read link', async () => {
+  const posts: Uint8Array[] = []
+  stubRoom(await commentedSnapshot(), posts)
+  const link = parseFragment(fragment)
+  const edit = link ? await deriveRoomKeys(link, room) : undefined
+  const read = edit?.fragments.read
+  if (!read) throw new Error('fixture read link')
+  await joinKeptText(document.createElement('div'), room, read, [])
+  expect(captured.comments?.get()).not.toBeNull()
+  expect(captured.locked?.get()).toBe(true)
+  expect(captured.comments?.get()?.start(0, 5, 'No')).toBeNull()
+  await vi.advanceTimersByTimeAsync(2000)
+  expect(posts).toHaveLength(0)
 })
