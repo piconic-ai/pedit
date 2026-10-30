@@ -524,31 +524,39 @@ func (h *keptTextDocument) pruneIncomplete(base []byte, accepted [][]byte) (int,
 		}
 		skipped += len(accepted) - len(complete)
 		accepted = complete
-		h.doc.Destroy()
-		h.doc = crdt.New(crdt.WithGC(false))
-		// The rebuilt doc needs a tracker of its own, from the base on.
-		followed := h.tracker != nil
-		if followed {
-			h.tracker.Close()
-			h.tracker = nil
-		}
-		if e := h.apply(h.doc, base); e != nil {
+		if e := h.rebuild(base, accepted); e != nil {
 			return skipped, e
-		}
-		if followed {
-			h.tracker = meta.NewTracker(h.doc)
-			h.tracker.Learn(h.comments.doc)
-		}
-		for _, frame := range accepted {
-			if e := h.applyUpdate(frame); e != nil {
-				return skipped, e
-			}
-			if followed {
-				h.tracker.Learn(h.comments.doc)
-			}
 		}
 	}
 	return skipped, nil
+}
+
+// rebuild makes the doc again from base and the accepted updates. A doc whose
+// anchors are followed gets a tracker of its own, from the base on.
+func (h *keptTextDocument) rebuild(base []byte, accepted [][]byte) error {
+	h.doc.Destroy()
+	h.doc = crdt.New(crdt.WithGC(false))
+	followed := h.tracker != nil
+	if followed {
+		h.tracker.Close()
+		h.tracker = nil
+	}
+	if e := h.apply(h.doc, base); e != nil {
+		return e
+	}
+	if followed {
+		h.tracker = meta.NewTracker(h.doc)
+		h.tracker.Learn(h.comments.doc)
+	}
+	for _, frame := range accepted {
+		if e := h.applyUpdate(frame); e != nil {
+			return e
+		}
+		if followed {
+			h.tracker.Learn(h.comments.doc)
+		}
+	}
+	return nil
 }
 func (h *keptTextDocument) frameIntegrated(projection, frame []byte) bool {
 	candidate := crdt.New()
