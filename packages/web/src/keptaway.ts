@@ -32,6 +32,7 @@ export class AwayView {
   /** Whether the relay has not logged all of this page's edits. */
   pending = false
   #status: RoomStatus = 'connecting'
+  #closedByHost = false
   readonly #keptUntil: () => number
 
   constructor(keptUntil: () => number) {
@@ -40,6 +41,7 @@ export class AwayView {
 
   show(status: RoomStatus, closedByHost = false): void {
     this.#status = status
+    this.#closedByHost = closedByHost
     const byHost = status === 'closed' && closedByHost
     this.hostClosed.set(byHost)
     this.header.set(byHost ? 'host-closed' : status === 'kept' && this.pending ? 'saving' : status)
@@ -50,7 +52,7 @@ export class AwayView {
 
   setPending(pending: boolean): void {
     this.pending = pending
-    this.show(this.#status)
+    this.show(this.#status, this.#closedByHost)
   }
 
   /** A `beforeunload` listener: asks before leaving edits the relay has not logged. */

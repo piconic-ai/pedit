@@ -100,6 +100,10 @@ describe('editing while the host is away', () => {
     x.set('closed', true)
     expect(x.button.dataset.status).toBe('host-closed')
     expect(x.banner.textContent).toContain('The host closed the room')
+    // A late acknowledgement of a kept edit redraws the header with the reason kept.
+    x.away.setPending(false)
+    expect(x.button.dataset.status).toBe('host-closed')
+    expect(x.away.hostClosed.get()).toBe(true)
   })
 
   it('asks before the page is closed with edits the relay has not logged', () => {

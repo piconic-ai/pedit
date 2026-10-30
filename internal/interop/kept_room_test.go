@@ -67,8 +67,8 @@ func (g *roomGuest) until(what string, cond func(roomState) bool) roomState {
 }
 
 // editAway makes the guest write one text edit and one comment thread, and
-// waits until the relay has kept both.
-func (g *roomGuest) editAway() {
+// waits until the relay has logged both.
+func (g *roomGuest) editAway(r *keptRoom, link string) {
 	g.t.Helper()
 	g.until("the room to be kept", func(s roomState) bool { return s.Status == "kept" && s.Replayed })
 	g.send(`{"append":"edited away\n"}`)
@@ -76,6 +76,9 @@ func (g *roomGuest) editAway() {
 	g.until("the relay to keep the edits", func(s roomState) bool {
 		return s.Sync == "kept" && strings.Contains(s.Text, "edited away") && len(s.Threads) == 1
 	})
+	// The sync label can describe the first edit while the second is still
+	// being sealed: the relay's own log says both are kept.
+	prototest.WaitFor(g.t, 15*time.Second, func() bool { return r.logEntries(link) >= 2 }, "both edits in the relay's log")
 }
 
 type keptRoom struct {
@@ -218,7 +221,7 @@ func TestKeptRoomEndToEnd(t *testing.T) {
 	if out := host.stop(t); !strings.Contains(out, "Room stays open until") {
 		t.Fatalf("Ctrl+C did not say how long the room stays:\n%s", out)
 	}
-	first.editAway()
+	first.editAway(r, link)
 	if r.logEntries(link) < 2 {
 		t.Fatalf("the relay holds %d entries", r.logEntries(link))
 	}
@@ -271,7 +274,7 @@ func TestKeptRoomWhenTheHostDrops(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The relay waits its grace (2s in the test relay), then keeps the room.
-	guest.editAway()
+	guest.editAway(r, link)
 	resumed := r.pedit("--resume")
 	resumed.link(t)
 	r.takenIn(link, guest)
