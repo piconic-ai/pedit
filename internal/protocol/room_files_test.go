@@ -13,6 +13,7 @@ import (
 	"github.com/piconic-ai/pedit/internal/protocol"
 	"github.com/piconic-ai/pedit/internal/protocol/prototest"
 	"github.com/reearth/ygo/crdt"
+	ysync "github.com/reearth/ygo/sync"
 )
 
 // fileText is a text file's doc, as a room that shares several keeps it.
@@ -246,14 +247,32 @@ func TestResyncsFilesAfterAReconnect(t *testing.T) {
 
 func TestFileStateFrameBytesIsWhatIsSent(t *testing.T) {
 	relay := prototest.NewRelay(false)
-	p := join(t, relay, protocol.GenerateKey(), joinOpts{})
+	key := protocol.GenerateKey()
+	p := join(t, relay, key, joinOpts{})
 	prototest.WaitFor(t, wait, func() bool { return p.Status() == protocol.StatusConnected }, "connected")
 	before := len(relay.Frames())
 	f := newFileText(strings.Repeat("z", 5000))
 	addFile(t, p, 300, f)
-	prototest.WaitFor(t, wait, func() bool { return len(relay.Frames()) >= before+2 }, "the file's handshake")
-	// The frames are the file's SyncStep1, then its whole state.
-	if got, want := len(relay.Frames()[before+1]), protocol.FileStateFrameBytes(300, f.doc); got != want {
+	// The peer sends its connecting frames after its status changes, so some
+	// may come after before: find the file's state by what its frame carries.
+	open := signedMessage(t, key)
+	var state []byte
+	prototest.WaitFor(t, wait, func() bool {
+		for _, frame := range relay.Frames()[before:] {
+			typ, payload, ok := open(frame)
+			if !ok || typ != protocol.MessageFiles {
+				continue
+			}
+			m, err := protocol.DecodeFiles(payload)
+			if err == nil && m.Kind == protocol.FilesDoc && m.File == 300 && m.Type == protocol.MessageSync &&
+				len(m.Payload) > 0 && m.Payload[0] == ysync.MsgSyncStep2 {
+				state = frame
+				return true
+			}
+		}
+		return false
+	}, "the file's state")
+	if got, want := len(state), protocol.FileStateFrameBytes(300, f.doc); got != want {
 		t.Fatalf("the state went as a frame of %d bytes, FileStateFrameBytes says %d", got, want)
 	}
 }
