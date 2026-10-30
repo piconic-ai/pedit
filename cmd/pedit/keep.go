@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -29,6 +31,84 @@ func parseKeepDuration(value string) (time.Duration, error) {
 	}
 	return duration, nil
 }
+
+// applyConfigKeep makes `pedit <file>` keep its room when .pedit/config.yaml
+// sets keep: and the command line does not say otherwise.
+func applyConfigKeep(opts *commandArgs) error {
+	if opts.File == "" || opts.Keep > 0 || opts.KeepOff || opts.Room != "" || opts.Template != "" || opts.Directory != "" {
+		return nil
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	cfg, err := loadConfig(cwd)
+	if err != nil || cfg.Keep == "" {
+		return err
+	}
+	opts.Keep, err = parseKeepDuration(cfg.Keep)
+	return err
+}
+
+// formatKeep prints a keep time in its largest whole unit: 7d, 12h, 90m, 45s.
+func formatKeep(seconds int64) string {
+	for _, u := range []struct {
+		n    int64
+		unit string
+	}{{86400, "d"}, {3600, "h"}, {60, "m"}} {
+		if seconds%u.n == 0 {
+			return fmt.Sprintf("%d%s", seconds/u.n, u.unit)
+		}
+	}
+	return fmt.Sprintf("%ds", seconds)
+}
+
+// printKeepHint tells how to come back; others is whether this project has
+// another kept room, which makes a bare --resume ambiguous.
+func printKeepHint(w io.Writer, room string, others bool) {
+	resume := "pedit --resume"
+	if others {
+		resume += " " + room
+	}
+	fmt.Fprintf(w, "Leave with Ctrl+C. To take in the edits later, run in this directory:\n  %s\n", resume)
+}
+
+func describeKept(r session.KeptTextRecord) string {
+	until := "unknown"
+	if r.Until > 0 {
+		until = time.UnixMilli(r.Until).Format(time.RFC3339)
+	}
+	return fmt.Sprintf("%s  %s  until %s", r.Room, strings.Join(r.Paths, ", "), until)
+}
+
+// pickKept chooses the room for a bare --resume. It returns the room ID, or an
+// exit code when there is nothing to resume or no way to ask.
+func pickKept(records []session.KeptTextRecord, in io.Reader, interactive bool, stdout, stderr io.Writer) (string, int) {
+	switch len(records) {
+	case 0:
+		fmt.Fprintln(stderr, "pedit: no kept room to resume in this project")
+		return "", 1
+	case 1:
+		return records[0].Room, 0
+	}
+	sort.SliceStable(records, func(i, j int) bool { return records[i].Until < records[j].Until })
+	for i, r := range records {
+		fmt.Fprintf(stdout, "%d) %s\n", i+1, describeKept(r))
+	}
+	if !interactive {
+		fmt.Fprintln(stderr, "pedit: several kept rooms in this project; pass a room ID: pedit --resume <room>")
+		return "", 1
+	}
+	fmt.Fprintf(stdout, "Which one? [1-%d] ", len(records))
+	line, _ := bufio.NewReader(in).ReadString('\n')
+	n, err := strconv.Atoi(strings.TrimSpace(line))
+	if err != nil || n < 1 || n > len(records) {
+		fmt.Fprintln(stderr, "pedit: not a choice; pass a room ID: pedit --resume <room>")
+		return "", 1
+	}
+	return records[n-1].Room, 0
+}
+
 func runKeep(opts commandArgs, stdout, stderr io.Writer) int {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -39,6 +119,18 @@ func runKeep(opts commandArgs, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintln(stderr, "pedit:", err)
 		return 1
+	}
+	if opts.ResumeAny {
+		records, err := session.ListKeptText(cfg.root)
+		if err != nil {
+			fmt.Fprintln(stderr, "pedit:", err)
+			return 1
+		}
+		room, code := pickKept(records, os.Stdin, isTerminal(os.Stdin), stdout, stderr)
+		if code != 0 {
+			return code
+		}
+		opts.Resume = room
 	}
 	server := cfg.Server
 	if opts.Resume != "" {
@@ -57,10 +149,12 @@ func runKeep(opts commandArgs, stdout, stderr io.Writer) int {
 	}, func(link string, seconds, until int64) {
 		fmt.Fprintln(stdout, link)
 		if opts.Keep > time.Duration(seconds)*time.Second {
-			fmt.Fprintf(stdout, "Relay capped keep time to %ds.\n", seconds)
+			fmt.Fprintf(stdout, "Relay capped keep time to %s.\n", formatKeep(seconds))
 		} else {
-			fmt.Fprintf(stdout, "Room keep time: %ds.\n", seconds)
+			fmt.Fprintf(stdout, "Room keep time: %s.", formatKeep(seconds))
 		}
+		fmt.Fprintf(stdout, " Room stays open until %s.\n", time.UnixMilli(until).Format(time.RFC3339))
+		printKeepHint(stdout, keptRoomOf(link), otherKeptRooms(cfg.root, keptRoomOf(link)))
 	}, func(until int64) {
 		fmt.Fprintf(stdout, "Room stays open until %s.\n", time.UnixMilli(until).Format(time.RFC3339))
 	})
@@ -69,4 +163,19 @@ func runKeep(opts commandArgs, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+func keptRoomOf(link string) string {
+	room, _, _ := strings.Cut(link[strings.Index(link, "/r/")+3:], "?")
+	return room
+}
+
+func otherKeptRooms(project, room string) bool {
+	records, _ := session.ListKeptText(project)
+	for _, r := range records {
+		if r.Room != room {
+			return true
+		}
+	}
+	return false
 }

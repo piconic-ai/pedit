@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -18,7 +19,9 @@ import (
 type config struct {
 	Server string `yaml:"server"`
 	Output string `yaml:"output"`
-	root   string
+	// Keep is a duration like --keep: share files in a kept room by default.
+	Keep string `yaml:"keep"`
+	root string
 }
 
 const initialConfig = `server: https://edit.piconic.ai
@@ -83,6 +86,11 @@ func decodeConfig(path string, data []byte, c *config) error {
 	u, err := url.Parse(c.Server)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return fmt.Errorf("%s: server must be an http or https URL", path)
+	}
+	if c.Keep != "" {
+		if _, err := parseKeepDuration(c.Keep); err != nil {
+			return fmt.Errorf("%s: keep: %w", path, err)
+		}
 	}
 	return nil
 }
@@ -327,9 +335,13 @@ func templateName(name string) string {
 }
 
 type commandArgs struct {
-	Keep   time.Duration
-	Resume string
-	File   string
+	Keep time.Duration
+	// KeepOff is --keep 0: no kept room this run, whatever the configuration says.
+	KeepOff bool
+	// Resume is a share link or room ID; ResumeAny is --resume without a value.
+	Resume    string
+	ResumeAny bool
+	File      string
 	// More are further files to share in the same room.
 	More []string
 	// Room is a share link to join instead of a file to share.
@@ -353,8 +365,12 @@ func parseArgs(args []string) (commandArgs, error) {
 		switch option {
 		case "--keep", "--resume":
 			if !hasValue {
+				value = optionValue(args, i+1)
+				if value == "" && option == "--resume" {
+					err = opts.setResumeAny()
+					break
+				}
 				i++
-				value = optionValue(args, i)
 			}
 			err = opts.setKeptOption(option, value)
 		case "-t", "--template", "-d", "--directory":
@@ -386,19 +402,33 @@ func (o *commandArgs) setKeptOption(option, value string) error {
 		return errors.New(option + " requires a value")
 	}
 	if option == "--keep" {
-		if o.Keep != 0 {
+		if o.Keep != 0 || o.KeepOff {
 			return errors.New("specify keep once")
+		}
+		if value == "0" {
+			o.KeepOff = true
+			return nil
 		}
 		keep, err := parseKeepDuration(value)
 		o.Keep = keep
 		return err
 	}
-	if o.Resume != "" {
+	if o.Resume != "" || o.ResumeAny {
 		return errors.New("specify resume once")
 	}
 	o.Resume = value
 	return nil
 }
+
+func (o *commandArgs) setResumeAny() error {
+	if o.Resume != "" || o.ResumeAny {
+		return errors.New("specify resume once")
+	}
+	o.ResumeAny = true
+	return nil
+}
+
+var roomIDArg = regexp.MustCompile(`^[A-Za-z0-9_-]{22}$`)
 
 // optionValue is the argument at i given as an option's value, or "" when
 // there is none: past the end, or another option.
@@ -472,11 +502,13 @@ func (o *commandArgs) addArg(arg string, hasValue bool) error {
 
 // check rejects combinations that are each fine alone.
 func (o *commandArgs) check() error {
-	if o.Keep > 0 && (o.File == "" || o.Room != "" || o.Template != "" || o.Directory != "" || o.Resume != "") {
+	resuming := o.Resume != "" || o.ResumeAny
+	if (o.Keep > 0 || o.KeepOff) && (o.File == "" || o.Room != "" || o.Template != "" || o.Directory != "" || resuming) {
 		return errors.New("--keep shares existing text files")
 	}
-	if o.Resume != "" && (!isShareLink(o.Resume) || o.File != "" || o.Room != "" || o.Template != "" || o.Directory != "") {
-		return errors.New("--resume requires only a share link")
+	if resuming && (o.Resume != "" && !isShareLink(o.Resume) && !roomIDArg.MatchString(o.Resume) ||
+		o.File != "" || o.Room != "" || o.Template != "" || o.Directory != "") {
+		return errors.New("--resume takes only a room ID or a share link, or nothing")
 	}
 
 	if o.File != "" && o.Directory != "" {
