@@ -82,9 +82,11 @@ Options:
   -t, --template <name>  Use a template filename or type (csv, canvas, md)
   --<name>              Template shorthand (for example, --canvas)
   -d, --directory <dir>  Save a new file here (overrides config output)
-  --keep <duration>     Keep text files open after leaving (for example 7d; 0 turns off keep from config)
-  --resume [room|link]  Resume a kept room hosted from this project
+  --keep <duration>     Keep the room open after you leave (for example 7d), so guests can
+                        go on editing; 0 turns off keep from config
+  --resume [room|link]  Take up a kept room again: your files get what was written meanwhile
   --close [room|link]   Take in a kept room's edits, then close it for good
+  --keep-polling <duration>  The older kept room that you take in by polling the relay
   -h, --help             Show this help
   -v, --version          Show the version
 
@@ -121,8 +123,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "pedit:", err)
 		return 1
 	}
-	if opts.Keep > 0 || opts.Resume != "" || opts.ResumeAny {
-		return runKeep(opts, stdout, stderr)
+	if code, done := routeKept(&opts, stdout, stderr); done {
+		return code
 	}
 	out := newUI(stdout, isTerminal(stdout), os.Getenv("NO_COLOR") != "")
 	latest := startUpdateCheck(getVersion(), out.tty)
@@ -201,8 +203,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 	out.resumable = resumable
 	var ended atomic.Value // the final protocol.Status, once the server turned us away
 	shown := func(path string) string { return shownPath(path, file, arg, cwd) }
+	more, later := splitMore(opts)
 	s, err := start(ctx, signIn, session.Options{
-		File: file,
+		File:      file,
+		More:      more,
+		Keep:      opts.Keep,
+		Resume:    opts.Resume,
+		OnKeep:    func(seconds int64) { out.keeping(seconds, opts.Keep) },
+		OnSkipped: func(n int) { out.above(fmt.Sprintf("Skipped %d invalid updates.", n)) },
+		OnImageError: func(path string, err error) {
+			out.above(fmt.Sprintf("Could not save an image of %s: %v", path, err))
+		},
 		Root: cwd,
 		// Where .pedit/config.yaml is, or cwd: comments live beside it.
 		Project: cfg.root,
@@ -229,7 +240,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return startFailed(out, stderr, err)
 	}
-	if err := addFiles(s, opts.More); err != nil {
+	if err := addFiles(s, later); err != nil {
 		fmt.Fprintln(stderr, "pedit:", err)
 		_ = s.Stop()
 		return 1
@@ -253,10 +264,51 @@ func run(args []string, stdout, stderr io.Writer) int {
 		<-signals
 		os.Exit(130)
 	}()
-	code := finish(out, stderr, arg, scratch, s.Stop)
 	st, _ := ended.Load().(protocol.Status)
+	code := leave(out, stderr, s, arg, scratch, st == "", cfg.root)
 	code = max(code, hostEnded(out, arg, st, s.Client.TimeLimit(), selfUpgradeCommand))
 	notifyUpdate(out, latest)
+	return code
+}
+
+// routeKept runs the kept modes that are not a live session: the polling one,
+// closing, and resuming a polling room. A room kept by the relay while its host
+// is away is taken up as a live session, with its files set from the record.
+func routeKept(opts *commandArgs, stdout, stderr io.Writer) (code int, done bool) {
+	if opts.Polling {
+		return runKeep(*opts, stdout, stderr), true
+	}
+	if opts.Resume == "" && !opts.ResumeAny {
+		return 0, false
+	}
+	live, code := chooseResume(opts, stdout, stderr)
+	if code != 0 {
+		return code, true
+	}
+	if opts.Close || !live {
+		return runKeep(*opts, stdout, stderr), true
+	}
+	return 0, false
+}
+
+// splitMore tells which of the files after the first start with the room and
+// which are added once it runs. The record of a kept room lists all its files.
+func splitMore(opts commandArgs) (start, later []string) {
+	if opts.Keep > 0 || opts.Resume != "" {
+		return opts.More, nil
+	}
+	return nil, opts.More
+}
+
+// leave saves the files and leaves the room. For a room the relay keeps, and
+// that the user left (stopped), it says until when and how to take it up.
+func leave(out *ui, stderr io.Writer, s *session.Session, arg string, scratch, stopped bool, project string) int {
+	kept := func() bool { return stopped && !s.KeptUntil().IsZero() }
+	code := finish(out, stderr, arg, scratch, s.Stop, kept)
+	if kept() {
+		room := keptRoomOf(s.URL)
+		out.keptHint(s.KeptUntil(), room, otherKeptRooms(project, room))
+	}
 	return code
 }
 
@@ -523,14 +575,18 @@ func displayPath(path string) string {
 
 // finish saves the file and closes the room. It points to a scratch file
 // only once it is saved, so a failed save never reads as a safe one.
-func finish(out *ui, stderr io.Writer, arg string, scratch bool, stop func() error) int {
+func finish(out *ui, stderr io.Writer, arg string, scratch bool, stop func() error, kept func() bool) int {
 	out.stopLive()
 	out.saving(arg)
 	if err := stop(); err != nil {
 		fmt.Fprintf(stderr, "pedit: could not save %s: %v\n", arg, err)
 		return 1
 	}
-	out.saved(arg)
+	if kept != nil && kept() {
+		out.savedKept(arg)
+	} else {
+		out.saved(arg)
+	}
 	if scratch {
 		out.scratch(arg)
 	}

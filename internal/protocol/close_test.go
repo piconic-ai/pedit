@@ -10,6 +10,7 @@ import (
 type closeVectors struct {
 	Codes          map[string]int    `json:"codes"`
 	Signals        map[string]string `json:"signals"`
+	RelayTextsV6   map[string]string `json:"relayTextsV6"`
 	ExpiredReasons []struct {
 		Seconds int    `json:"seconds"`
 		Reason  string `json:"reason"`
@@ -73,6 +74,25 @@ func TestRelaySignalsMatchTheSharedVectors(t *testing.T) {
 	for name, text := range have {
 		if v.Signals[name] != text {
 			t.Errorf("%s = %q, vectors say %q", name, text, v.Signals[name])
+		}
+	}
+}
+
+func TestRelayTextsOfVersion6MatchTheSharedVectors(t *testing.T) {
+	v := loadCloseVectors(t)
+	have := map[string]string{
+		"KEPT":               Kept,
+		"KEEP":               Keep,
+		"CHECKPOINT":         Checkpoint,
+		"CHECKPOINT_REFUSED": CheckpointRefused,
+		"LOG_FULL":           LogFull,
+	}
+	if len(v.RelayTextsV6) != len(have) {
+		t.Errorf("vectors name %d texts, this test %d", len(v.RelayTextsV6), len(have))
+	}
+	for name, text := range have {
+		if v.RelayTextsV6[name] != text {
+			t.Errorf("%s = %q, vectors say %q", name, text, v.RelayTextsV6[name])
 		}
 	}
 }

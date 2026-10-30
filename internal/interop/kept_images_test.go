@@ -60,7 +60,7 @@ func TestKeptImagesRoundTrip(t *testing.T) {
 	if err := os.WriteFile(notes, []byte("hello"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	host := keptCommand(t, project, binary, "--keep", "7d", "notes.md")
+	host := keptCommand(t, project, binary, "--keep-polling", "7d", "notes.md")
 	link := host.link(t)
 	script := filepath.Join(root, "internal/interop/testdata/kept-text.mjs")
 	guest := keptCommand(t, project, "node", script, dir, link)

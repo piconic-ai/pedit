@@ -96,7 +96,18 @@ func (s *Session) openMeta(f *sharedFile) (*metaFile, string) {
 	if _, ok := f.content.(*textContent); ok {
 		m.tracker = meta.NewTracker(f.doc)
 	}
-	meta.Load(m.doc, m.file, m.tracker)
+	if state := s.resumed.metaOf(f.file); state != nil {
+		// The doc its guests hold, as for a text file (newContent).
+		if err := crdt.ApplyUpdateV1(m.doc, state, nil); err != nil {
+			m.close()
+			return nil, "its saved comments cannot be restored"
+		}
+		if m.tracker != nil {
+			m.tracker.Learn(m.doc)
+		}
+	} else {
+		meta.Load(m.doc, m.file, m.tracker)
+	}
 	// Every peer refuses comments larger: they could not take the state.
 	if meta.DocSize(m.doc) > meta.MaxDocBytes {
 		m.close()

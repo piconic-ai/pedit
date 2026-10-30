@@ -64,7 +64,7 @@ func TestAdmissionToken(t *testing.T) {
 	join(t, relay, key, joinOpts{header: header})
 	prototest.WaitFor(t, wait, func() bool { return len(relay.Headers()) > 0 }, "handshake")
 	got := relay.Headers()[0]
-	if got.Get("Sec-WebSocket-Protocol") != protocol.SocketProtocol+", "+protocol.AdmissionProtocolPrefix+token {
+	if got.Get("Sec-WebSocket-Protocol") != protocol.SocketProtocols+", "+protocol.AdmissionProtocolPrefix+token {
 		t.Fatal("admission missing from handshake")
 	}
 	if got.Get("Cf-Access-Token") != "access-token" || header.Get("Sec-WebSocket-Protocol") != "" {
@@ -95,7 +95,7 @@ func TestHostRegistersTheReadersToken(t *testing.T) {
 	join(t, relay, key, joinOpts{link: lowerLink(t, key, protocol.AccessComment)})
 	prototest.WaitFor(t, wait, func() bool { return len(relay.Headers()) == 2 }, "both handshakes")
 	offered := func(h http.Header) string {
-		return strings.TrimPrefix(h.Get("Sec-WebSocket-Protocol"), protocol.SocketProtocol+", "+protocol.AdmissionProtocolPrefix)
+		return strings.TrimPrefix(h.Get("Sec-WebSocket-Protocol"), protocol.SocketProtocols+", "+protocol.AdmissionProtocolPrefix)
 	}
 	// The two handshakes may arrive in either order.
 	hostHeader, commenterHeader := relay.Headers()[0], relay.Headers()[1]

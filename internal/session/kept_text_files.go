@@ -56,19 +56,28 @@ func prepareKeptFiles(opts KeptTextOptions) ([]keptTextFileState, error) {
 	}
 	return files, nil
 }
+
+// keptPath is the path a kept file is known by in the room: its name, or with
+// several files its path in the project, which they must all be inside.
+func keptPath(project, absolute string, multi bool) (string, error) {
+	if !multi {
+		return filepath.Base(absolute), nil
+	}
+	relative, e := filepath.Rel(project, absolute)
+	if e != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", errors.New("kept files must be inside the project")
+	}
+	return filepath.ToSlash(relative), nil
+}
 func readKeptSource(path, project string, id uint32, multi bool) (keptTextFileState, os.FileInfo, error) {
 	file := keptTextFileState{ID: id}
 	absolute, e := filepath.Abs(path)
 	if e != nil {
 		return file, nil, e
 	}
-	file.File, file.Path = absolute, filepath.Base(absolute)
-	if multi {
-		relative, e := filepath.Rel(project, absolute)
-		if e != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-			return file, nil, errors.New("kept files must be inside the project")
-		}
-		file.Path = filepath.ToSlash(relative)
+	file.File = absolute
+	if file.Path, e = keptPath(project, absolute, multi); e != nil {
+		return file, nil, e
 	}
 	if protocol.CheckPath(file.Path) != nil {
 		return file, nil, errors.New("invalid kept file path")

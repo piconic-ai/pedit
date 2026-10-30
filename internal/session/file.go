@@ -107,7 +107,7 @@ func (f *sharedFile) stop() {
 func (f *sharedFile) syncFromDisk() {
 	// Nobody edits while the host is away: nobody would save it. What
 	// changed is merged once the host is back (Session.resumeFromDisk).
-	if f.client != nil && f.client.Status() == protocol.StatusWaiting {
+	if f.client != nil && f.client.Status().HostAway() {
 		return
 	}
 	changed := false

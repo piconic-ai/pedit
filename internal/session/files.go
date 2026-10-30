@@ -51,11 +51,20 @@ func openShared(file string) (*filewriter.BoundFile, string, error) {
 }
 
 // newContent loads a file into doc, as text or as a canvas.
-func newContent(doc *crdt.Doc, file, initial string) (content, error) {
+func newContent(doc *crdt.Doc, file, initial string, state []byte) (content, error) {
 	if isCanvas(file) {
 		return newCanvasContent(doc, file, initial)
 	}
-	return newTextContent(doc, initial), nil
+	if state == nil {
+		return newTextContent(doc, initial), nil
+	}
+	// A kept room taken in again: the doc is the one its guests hold, not a
+	// new one with the same text, which would double it when they sync.
+	text := doc.GetText("content")
+	if err := crdt.ApplyUpdateV1(doc, state, nil); err != nil || text.ToString() != initial {
+		return nil, fmt.Errorf("%s changed after pedit took in the kept room; run pedit --resume again", file)
+	}
+	return &textContent{doc: doc, text: text}, nil
 }
 
 // tooLarge reports a file whose state does not fit the frame it is sent in.
@@ -99,7 +108,7 @@ func (s *Session) AddFile(file string) (protocol.FileEntry, error) {
 		return protocol.FileEntry{}, err
 	}
 	doc := crdt.New()
-	c, err := newContent(doc, file, initial)
+	c, err := newContent(doc, file, initial, s.resumed.stateOf(file))
 	if err != nil {
 		_ = bound.Close()
 		return protocol.FileEntry{}, err
@@ -188,6 +197,9 @@ func (s *Session) canShare(file string) (string, error) {
 	}
 	if s.roomID == "" {
 		return "", errors.New("a joined room shares only the host's files")
+	}
+	if s.away != nil {
+		return "", errors.New("a kept room shares the files it started with")
 	}
 	files := s.files()
 	if len(files) >= MaxFiles {

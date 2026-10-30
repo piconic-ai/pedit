@@ -42,12 +42,19 @@ type KeptTextOptions struct {
 	// OnImageError reports an image a kept text refers to that could not be
 	// saved beside its file (once per image and file).
 	OnImageError func(path string, err error)
+	// Dial connects to the relay, to take in a live room (kept_away_resume.go).
+	Dial protocol.Dialer
 }
 type keptTextState struct {
 	Project, Origin, Fragment, HostToken string
 	Keep, Until                          int64 // Until: relay deadline in Unix ms; 0 if unknown
 	Files                                []keptTextFileState
 	Initialized                          bool
+	// Socket marks the record of a live room kept by the relay while the host
+	// is away (kept_away.go); without it the room is a polling one, kept over
+	// HTTP. After is the last entry of the relay's log this host took in.
+	Socket bool   `json:",omitempty"`
+	After  uint64 `json:",omitempty"`
 }
 type keptTextFileState struct {
 	ID         uint32
@@ -76,18 +83,19 @@ type keptTextMeta struct {
 	Seconds int64 `json:"keepSeconds"`
 	Until   int64 `json:"keepUntil"`
 }
+type keptTextEntry struct {
+	ID   uint64 `json:"id"`
+	Body []byte `json:"body"`
+}
 type keptTextRead struct {
-	Snapshot []byte `json:"snapshot"`
-	Entries  []struct {
-		ID   uint64 `json:"id"`
-		Body []byte `json:"body"`
-	} `json:"entries"`
-	Tail      uint64 `json:"tail"`
-	Cutoff    uint64 `json:"cutoff"`
-	HostAway  bool   `json:"hostAway"`
-	KeepUntil int64  `json:"keepUntil"`
-	ETag      string `json:"-"`
-	Unchanged bool   `json:"-"`
+	Snapshot  []byte          `json:"snapshot"`
+	Entries   []keptTextEntry `json:"entries"`
+	Tail      uint64          `json:"tail"`
+	Cutoff    uint64          `json:"cutoff"`
+	HostAway  bool            `json:"hostAway"`
+	KeepUntil int64           `json:"keepUntil"`
+	ETag      string          `json:"-"`
+	Unchanged bool            `json:"-"`
 }
 
 var errKeptGone = errors.New("kept room expired")
@@ -120,6 +128,9 @@ type keptTextHost struct {
 	imagesFailed bool      // some image could not be saved at the last try
 	imageRetryAt time.Time // when an unchanged sync tries those again
 	closed       bool      // the relay has closed the room
+	// socket: the entries come over the host's WebSocket, not by polling, and
+	// the host holds the room's state from its record when after is 0.
+	socket bool
 }
 
 // RunKeptText keeps the relay open when the host leaves. Source changes made
@@ -133,6 +144,9 @@ func RunKeptText(ctx context.Context, opts KeptTextOptions, ready func(string, i
 		return e
 	}
 	h.pruneExpired(ctx, opts.OnPruned)
+	if h.state.Socket {
+		return closeLive(ctx, opts)
+	}
 	if e := h.openFiles(); e != nil {
 		return e
 	}
@@ -230,7 +244,7 @@ func (h *keptTextHost) resume(opts KeptTextOptions, directory string) error {
 		h.room = opts.Resume
 	} else {
 		u, e := url.Parse(opts.Resume)
-		if e != nil || u.User != nil || u.RawQuery != "keep=1" ||
+		if e != nil || u.User != nil || (u.RawQuery != "keep=1" && u.RawQuery != "") ||
 			(u.Scheme != "http" && u.Scheme != "https") ||
 			!strings.HasPrefix(u.Path, "/r/") {
 			return errors.New("invalid resume link")
@@ -243,7 +257,8 @@ func (h *keptTextHost) resume(opts KeptTextOptions, directory string) error {
 	if e := readKeptState(filepath.Join(directory, h.room+".json"), &h.state); e != nil {
 		return e
 	}
-	if (!byID && opts.Resume != h.state.Origin+"/r/"+h.room+"?keep=1#"+h.state.Fragment) ||
+	link := h.state.Origin + "/r/" + h.room
+	if (!byID && opts.Resume != link+"?keep=1#"+h.state.Fragment && !(h.state.Socket && opts.Resume == link+"#"+h.state.Fragment)) ||
 		(opts.Server != "" && strings.TrimRight(opts.Server, "/") != h.state.Origin) {
 		return errors.New("resume link differs from saved host state")
 	}
@@ -359,9 +374,24 @@ func (h *keptTextHost) sync(ctx context.Context) error {
 	if e := h.trackDeadline(read.KeepUntil); e != nil {
 		return e
 	}
+	frame, e := h.intake(ctx, read)
+	if e != nil || frame == nil {
+		return e
+	}
+	_, e = keptTextRequest(ctx, h.client, &h.state, h.room, "POST", "/checkpoint", frame, http.Header{"X-Pedit-Cutoff": {strconv.FormatUint(read.Tail, 10)}}, &h.meta)
+	if e == nil {
+		h.checkpointed(read.Tail)
+	}
+	return e
+}
+
+// intake takes in what the relay sent: it applies the entries, writes the
+// files with their comments and images, and returns the snapshot to checkpoint
+// at read.Tail, or nil if nothing changed and no checkpoint is due.
+func (h *keptTextHost) intake(ctx context.Context, read keptTextRead) ([]byte, error) {
 	before := h.skipped
 	if e := h.applyRead(read); e != nil {
-		return e
+		return nil, e
 	}
 	h.etag = read.ETag
 	if h.skipped != before && h.onSkipped != nil {
@@ -369,39 +399,43 @@ func (h *keptTextHost) sync(ctx context.Context) error {
 	}
 	if (read.Unchanged || len(read.Entries) == 0) && h.unchanged() && !h.republish {
 		h.after = read.Tail
-		return h.retryImages(ctx)
+		return nil, h.retryImages(ctx)
 	}
+	return h.persist(ctx)
+}
+
+// persist journals the documents as they are, saves the images they refer to
+// and the files, and returns the snapshot to checkpoint.
+func (h *keptTextHost) persist(ctx context.Context) ([]byte, error) {
 	frame, e := h.snapshot()
 	if e != nil {
-		return e
+		return nil, e
 	}
 	for i := range h.state.Files {
 		file := &h.state.Files[i]
 		doc := h.files[file.ID].doc
 		next := doc.GetText("content").ToString()
 		if !utf8.ValidString(next) {
-			return errors.New("invalid kept UTF-8 text")
+			return nil, errors.New("invalid kept UTF-8 text")
 		}
 		file.State, file.Pending = crdt.EncodeStateAsUpdateV1(doc, nil), &next
 		if e := h.syncMeta(file); e != nil {
-			return e
+			return nil, e
 		}
 	}
 	if e := h.journalAndSaveImages(ctx); e != nil {
-		return e
+		return nil, e
 	}
-	if e := h.finishWrites(); e != nil {
-		return e
+	return frame, h.finishWrites()
+}
+
+// checkpointed notes that the relay holds the state and drops its log up to tail.
+func (h *keptTextHost) checkpointed(tail uint64) {
+	h.after, h.republish = tail, false
+	h.snapshotNames = map[uint32]string{}
+	for _, entry := range h.entries() {
+		h.snapshotNames[entry.ID] = entry.Path
 	}
-	_, e = keptTextRequest(ctx, h.client, &h.state, h.room, "POST", "/checkpoint", frame, http.Header{"X-Pedit-Cutoff": {strconv.FormatUint(read.Tail, 10)}}, &h.meta)
-	if e == nil {
-		h.after, h.republish = read.Tail, false
-		h.snapshotNames = map[uint32]string{}
-		for _, entry := range h.entries() {
-			h.snapshotNames[entry.ID] = entry.Path
-		}
-	}
-	return e
 }
 
 // leave tells the relay the host is away, unless the room was just closed.
@@ -466,7 +500,7 @@ func (h *keptTextHost) applyRead(read keptTextRead) error {
 			return e
 		}
 		previous = max(previous, read.Cutoff)
-	} else if h.after == 0 || read.Cutoff > h.after {
+	} else if (h.after == 0 && !h.socket) || read.Cutoff > h.after {
 		return errors.New("missing kept snapshot")
 	}
 	return h.applyEntries(read, previous)
@@ -891,7 +925,9 @@ func (h *keptTextHost) trackDeadline(until int64) error {
 type KeptTextRecord struct {
 	Room  string
 	Paths []string // display paths of the shared files
+	Files []string // their absolute paths on disk
 	Until int64    // relay deadline in Unix ms; 0 if unknown
+	Live  bool     // a live room kept by the relay (--keep), not a polling one
 }
 
 // ListKeptText returns the resume records of project, soonest deadline first.
@@ -913,9 +949,10 @@ func ListKeptText(project string) ([]KeptTextRecord, error) {
 		if !keptTextRoomID.MatchString(room) || readKeptState(path, &s) != nil || !s.Initialized {
 			continue
 		}
-		r := KeptTextRecord{Room: room, Until: s.Until}
+		r := KeptTextRecord{Room: room, Until: s.Until, Live: s.Socket}
 		for _, f := range s.Files {
 			r.Paths = append(r.Paths, f.Path)
+			r.Files = append(r.Files, f.File)
 		}
 		records = append(records, r)
 	}

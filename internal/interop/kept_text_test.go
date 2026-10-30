@@ -61,7 +61,17 @@ func keptCommand(t *testing.T, directory string, args ...string) *keptProcess {
 		close(p.lines)
 	}()
 	go func() { p.done <- cmd.Wait() }()
-	t.Cleanup(func() { cancel(); cmd.Process.Kill(); input.Close(); log.Close() })
+	t.Cleanup(func() {
+		cancel()
+		cmd.Process.Kill()
+		input.Close()
+		// A process still writing into a temporary directory fails its removal.
+		select {
+		case <-p.done:
+		case <-time.After(5 * time.Second):
+		}
+		log.Close()
+	})
 	return p
 }
 func (p *keptProcess) line(t *testing.T) string {
@@ -196,7 +206,7 @@ func TestKeptTextVerticalSlice(t *testing.T) {
 	git("init", "-q")
 	git("add", "-f", ".pedit/config.yaml", "日本語😀.md")
 	beforeProjectState := git("status", "--porcelain", "--", ".pedit")
-	host := keptCommand(t, project, binary, "--keep", "7d", "日本語😀.md")
+	host := keptCommand(t, project, binary, "--keep-polling", "7d", "日本語😀.md")
 	link := host.link(t)
 	if !strings.Contains(host.line(t), "capped keep time to 1m") {
 		t.Fatal("relay keep cap was not reported")
@@ -310,7 +320,7 @@ func TestKeptTextVerticalSlice(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(project, "expire.md"), []byte("expires"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	expiring := keptCommand(t, project, binary, "--keep", "1s", "expire.md")
+	expiring := keptCommand(t, project, binary, "--keep-polling", "1s", "expire.md")
 	expiredLink := expiring.link(t)
 	expiring.line(t)
 	checkURL, _ := url.Parse(expiredLink)
@@ -378,7 +388,7 @@ func TestKeptMultipleFilesRoundTrip(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	host := keptCommand(t, project, binary, "--keep", "7d", "notes.md", "todo.md")
+	host := keptCommand(t, project, binary, "--keep-polling", "7d", "notes.md", "todo.md")
 	link := host.link(t)
 	script := filepath.Join(root, "internal/interop/testdata/kept-text.mjs")
 	guest := keptCommand(t, project, "node", script, dir, link)

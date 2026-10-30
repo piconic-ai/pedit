@@ -62,6 +62,26 @@ type Options struct {
 	// OnError is called with errors nobody can act on, or that clear by
 	// themselves, such as a dropped connection.
 	OnError func(error)
+
+	// Keep asks the relay to keep the room open for this long after the host
+	// leaves on purpose (docs/design/rooms-away.md), and has Start write the
+	// record that --resume takes the room up again by. More are the files to
+	// share with the first, so the record lists them all.
+	Keep time.Duration
+	More []string
+	// Resume is the ID of a room Keep left a record of in Project: Start
+	// takes in what was written while the host was away, then goes on
+	// sharing the record's files in that room. File, More and Server are
+	// the record's.
+	Resume string
+	// OnKeep is called with the seconds the relay keeps the room, which may be
+	// less than asked, or 0 if it cannot keep it (it speaks version 5).
+	OnKeep func(seconds int64)
+	// OnSkipped is called with how many entries guests wrote that were
+	// refused, in all; OnImageError with an image of a replayed edit that
+	// could not be saved.
+	OnSkipped    func(int)
+	OnImageError func(path string, err error)
 }
 
 type Session struct {
@@ -108,6 +128,11 @@ type Session struct {
 	stopOnce sync.Once
 	stopErr  error
 
+	// away keeps the room for the host's return, if it asked for that.
+	away *keepAway
+	// resumed is what taking in a kept room left, while Start runs.
+	resumed *resumed
+
 	// Test seams, called during Stop.
 	beforeDestroy    func()
 	beforeFinalWrite func(attempt int)
@@ -145,6 +170,12 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 		return nil, err
 	}
 	opts.Root = root
+	res, err := beginKeep(ctx, &opts)
+	if err != nil {
+		return nil, err
+	}
+	// Left on purpose, so that the relay keeps the room, if Start fails.
+	defer func() { res.abandon() }()
 	project, noProject := openProject(opts.Project)
 	defer func() {
 		if project != nil {
@@ -165,7 +196,7 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 	}()
 	// Before creating a room, so a canvas that is not valid fails right away.
 	doc := crdt.New()
-	shared, err := newContent(doc, opts.File, initial)
+	shared, err := newContent(doc, opts.File, initial, res.stateOf(opts.File))
 	if err != nil {
 		return nil, err
 	}
@@ -178,11 +209,10 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 	}
 
 	server := strings.TrimRight(opts.Server, "/")
-	room, err := createRoom(ctx, opts.HTTPClient, server, opts.Header)
+	room, key, err := openRoom(ctx, opts, server, res)
 	if err != nil {
 		return nil, err
 	}
-	key := protocol.GenerateEditSecret()
 	rawKey, err := protocol.DecodeKey(key)
 	if err != nil {
 		return nil, err
@@ -194,26 +224,7 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 	wsURL := "ws" + strings.TrimPrefix(server, "http") + "/api/rooms/" + room.ID + "/ws"
 
 	aw := awareness.New(uint64(doc.ClientID()))
-	name := opts.Name
-	if name == "" {
-		name = "host"
-	}
-	user := map[string]any{"name": name}
-	if opts.Avatar != "" {
-		user["avatar"] = opts.Avatar
-	}
-	state := map[string]any{
-		"role": "host",
-		"name": name,
-		"user": user,
-		"file": filepath.Base(opts.File),
-		// Browsers let people paste images only when the host says it saves them.
-		"attachments": map[string]any{"dir": attach.Dir, "maxBytes": attach.MaxBytes},
-	}
-	if _, ok := shared.(*canvasContent); ok {
-		state["format"] = formatCanvas
-	}
-	aw.SetLocalState(state)
+	aw.SetLocalState(hostAwareness(opts, shared))
 	blobKeys, err := protocol.DeriveBlobKeys(keys.FrameKey)
 	if err != nil {
 		return nil, err
@@ -242,6 +253,7 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 		roomID:    room.ID,
 		blobKeys:  blobKeys,
 		nextID:    1,
+		resumed:   res,
 	}
 	s.opts.OnError = onError
 	s.Writer = filewriter.New(opts.File, initial, filewriter.Options{
@@ -251,13 +263,7 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 		OnWritten:        s.notices.written,
 		OnExternalChange: s.scheduleSyncFromDisk,
 	})
-	header := opts.Header.Clone()
-	if header == nil {
-		header = http.Header{}
-	}
-	// Marks us as the host: the room closes for everyone once we leave, and
-	// waits a while for us when we drop.
-	header.Set("Authorization", "Bearer "+room.HostToken)
+	header, dial := hostHeader(opts, room.HostToken, res)
 	s.Client, err = protocol.NewClient(protocol.ClientOptions{
 		URL:       wsURL,
 		RoomID:    room.ID,
@@ -266,8 +272,10 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 		Awareness: aw,
 		Header:    header,
 		Host:      true,
-		Dial:      opts.Dial,
-		OnStatus:  opts.OnStatus,
+		Dial:      dial,
+		OnKind:    s.onKind,
+		OnText:    s.onText,
+		OnStatus:  s.onStatus,
 		OnError:   onError,
 		// Set below, before the client connects.
 		OnAttachment:     func(m protocol.Attachment) { s.attachments.Handle(m) },
@@ -312,6 +320,10 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 	s.stopAlive = keepAlive(aw)
 	s.notices.start()
 	s.startMeta()
+	if err := s.keepOpen(&opts, room.HostToken, key, res); err != nil {
+		_ = s.Stop()
+		return nil, err
+	}
 	s.Client.Connect()
 
 	if opts.Watch {
@@ -321,8 +333,32 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 		}
 	}
 	// Session owns the directory handles from here.
-	bound, project = nil, nil
+	bound, project, res = nil, nil, nil
 	return s, nil
+}
+
+// hostAwareness is what the host tells the room about itself.
+func hostAwareness(opts Options, shared content) map[string]any {
+	name := opts.Name
+	if name == "" {
+		name = "host"
+	}
+	user := map[string]any{"name": name}
+	if opts.Avatar != "" {
+		user["avatar"] = opts.Avatar
+	}
+	state := map[string]any{
+		"role": "host",
+		"name": name,
+		"user": user,
+		"file": filepath.Base(opts.File),
+		// Browsers let people paste images only when the host says it saves them.
+		"attachments": map[string]any{"dir": attach.Dir, "maxBytes": attach.MaxBytes},
+	}
+	if _, ok := shared.(*canvasContent); ok {
+		state["format"] = formatCanvas
+	}
+	return state
 }
 
 // displayName reads a peer's name the way the web editor does: from
@@ -578,6 +614,9 @@ func (s *Session) Stop() error {
 				_ = f.meta.saveNow(true)
 			}
 		}
+		if s.away != nil {
+			s.away.leaving()
+		}
 
 		if s.beforeDestroy != nil {
 			s.beforeDestroy()
@@ -596,6 +635,9 @@ func (s *Session) Stop() error {
 			if f.meta != nil {
 				s.stopErr = errors.Join(s.stopErr, f.meta.finish())
 			}
+		}
+		if s.away != nil {
+			s.stopErr = errors.Join(s.stopErr, s.away.finish())
 		}
 		if s.project != nil {
 			_ = s.project.Close()
