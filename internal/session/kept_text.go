@@ -113,6 +113,8 @@ type keptTextHost struct {
 	imageClient  *http.Client // nil for the default
 	onImageError func(path string, err error)
 	imageErrors  map[string]bool
+	imagesFailed bool      // some image could not be saved at the last try
+	imageRetryAt time.Time // when an unchanged sync tries those again
 }
 
 // RunKeptText keeps the relay open when the host leaves. Source changes made
@@ -364,7 +366,7 @@ func (h *keptTextHost) sync(ctx context.Context) error {
 	}
 	if (read.Unchanged || len(read.Entries) == 0) && h.unchanged() && !h.republish {
 		h.after = read.Tail
-		return nil
+		return h.retryImages(ctx)
 	}
 	frame, e := h.snapshot()
 	if e != nil {
@@ -382,10 +384,7 @@ func (h *keptTextHost) sync(ctx context.Context) error {
 			return e
 		}
 	}
-	if e := saveKeptState(h.path, h.state); e != nil {
-		return e
-	}
-	if e := h.saveImages(ctx); e != nil {
+	if e := h.journalAndSaveImages(ctx); e != nil {
 		return e
 	}
 	if e := h.finishWrites(); e != nil {

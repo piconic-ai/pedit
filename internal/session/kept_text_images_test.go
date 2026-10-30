@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/piconic-ai/pedit/internal/attach"
 	"github.com/piconic-ai/pedit/internal/protocol"
@@ -110,5 +111,52 @@ func TestKeptResumeReportsAMissingImageAndStillWritesTheText(t *testing.T) {
 	// Reported once, not at every sync.
 	if err := h.sync(context.Background()); err != nil || len(*errs) != 1 {
 		t.Fatalf("again: %v %v", err, *errs)
+	}
+}
+
+func TestKeptSyncFetchesAgainAnImageTheRelayLacked(t *testing.T) {
+	hash := protocol.ContentHash(keptPNG)
+	blobs := map[string][]byte{}
+	h, gets, _, errs := keptImageRoom(t, hash, blobs)
+	if err := h.sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// Nothing changed, and the relay has the image now: not before the retry time.
+	blobs[hash] = keptPNG
+	if err := h.sync(context.Background()); err != nil || *gets != 1 {
+		t.Fatalf("retried at once: %v, %d requests", err, *gets)
+	}
+	h.imageRetryAt = time.Time{}
+	if err := h.sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := os.ReadFile(filepath.Join(filepath.Dir(h.state.Files[0].File), "assets", hash+".png"))
+	if err != nil || !bytes.Equal(saved, keptPNG) || len(*errs) != 1 {
+		t.Fatalf("not saved on retry: %q %v errs=%v", saved, err, *errs)
+	}
+	// Done: no more requests.
+	h.imageRetryAt = time.Time{}
+	if err := h.sync(context.Background()); err != nil || *gets != 2 {
+		t.Fatalf("kept asking: %v, %d requests", err, *gets)
+	}
+}
+
+func TestKeptSyncSavesImagesThroughTheDirectoryItOpened(t *testing.T) {
+	hash := protocol.ContentHash(keptPNG)
+	h, _, _, _ := keptImageRoom(t, hash, map[string][]byte{hash: keptPNG})
+	directory := filepath.Dir(h.state.Files[0].File)
+	elsewhere := t.TempDir()
+	if err := os.Rename(directory, directory+".moved"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, directory); err != nil {
+		t.Fatal(err)
+	}
+	_ = h.sync(context.Background())
+	if _, err := os.Stat(filepath.Join(elsewhere, "assets")); err == nil {
+		t.Fatal("wrote images through the swapped path")
+	}
+	if _, err := os.Stat(filepath.Join(directory+".moved", "assets", hash+".png")); err != nil {
+		t.Fatalf("image not beside the file it was opened with: %v", err)
 	}
 }

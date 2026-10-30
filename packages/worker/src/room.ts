@@ -662,25 +662,8 @@ export class Room extends DurableObject<Env> {
       await cleaning
     } while (cleaning !== this.cleaning)
     const kept = this.kept()
-    let role: Role | null | undefined
-    if (kept) {
-      // A kept room serves its blobs whether or not its host is here; the
-      // admission tokens are the ones it keeps for its text (kept-text.ts).
-      if (await expireKeptText(this.ctx.storage, this.removeKeptBlobs))
-        return new Response('room has expired', { status: 410 })
-      const state = this.ctx.storage.kv.get<{ editor: string; reader: string }>('keptText')
-      role = token === state?.editor ? 'editor' : token === state?.reader ? 'reader' : undefined
-    } else {
-      if (this.expired()) return new Response('room has expired', { status: 410 })
-      if (this.hosts().length === 0) {
-        if (!this.hostAway()) return new Response('room is closed', { status: 410 })
-        // What was attached can still be seen; nothing new goes in.
-        if (request.method !== 'GET') return new Response('the host is away', { status: 503 })
-      }
-      // Hashed first, so the verifier is read after any await.
-      role = this.role(await sha256(token))
-    }
-    if (!role) return new Response('invalid room admission', { status: 403 })
+    const role = await this.blobRole(request.method, token, kept)
+    if (role instanceof Response) return role
     // Readers see the images; only editors add them, so nobody else can
     // take an image's place or the room's quota.
     if (request.method === 'PUT' && role !== 'editor') {
@@ -700,6 +683,27 @@ export class Room extends DurableObject<Env> {
     }
     if (request.method === 'PUT') return this.putBlob(request, key)
     return new Response('method not allowed', { status: 405, headers: { Allow: 'GET, PUT' } })
+  }
+
+  // What the token may do with the room's blobs, or the refusal.
+  private async blobRole(method: string, token: string, kept: boolean): Promise<Role | Response> {
+    const refused = () => new Response('invalid room admission', { status: 403 })
+    if (kept) {
+      // A kept room serves its blobs whether or not its host is here; the
+      // admission tokens are the ones it keeps for its text (kept-text.ts).
+      if (await expireKeptText(this.ctx.storage, this.removeKeptBlobs))
+        return new Response('room has expired', { status: 410 })
+      const state = this.ctx.storage.kv.get<{ editor: string; reader: string }>('keptText')
+      return token === state?.editor ? 'editor' : token === state?.reader ? 'reader' : refused()
+    }
+    if (this.expired()) return new Response('room has expired', { status: 410 })
+    if (this.hosts().length === 0) {
+      if (!this.hostAway()) return new Response('room is closed', { status: 410 })
+      // What was attached can still be seen; nothing new goes in.
+      if (method !== 'GET') return new Response('the host is away', { status: 503 })
+    }
+    // Hashed first, so the verifier is read after any await.
+    return this.role(await sha256(token)) ?? refused()
   }
 
   private async putBlob(request: Request, key: string): Promise<Response> {
