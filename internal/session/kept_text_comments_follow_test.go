@@ -18,6 +18,12 @@ import (
 // A guest deleting the first character of a commented selection leaves the
 // rest commented: the saved anchor follows the edit instead of keeping a stale one.
 func TestKeptCommentsFollowAGuestDeletingAnAnchorBoundary(t *testing.T) {
+	for name, withGap := range map[string]bool{"plain": false, "with an update whose dependency is missing": true} {
+		t.Run(name, func(t *testing.T) { keptCommentsFollowDeletion(t, withGap) })
+	}
+}
+
+func keptCommentsFollowDeletion(t *testing.T, withGap bool) {
 	keys, _, _, _ := keptFixFrames(t)
 	dir := t.TempDir()
 	notes := filepath.Join(dir, "notes.md")
@@ -50,11 +56,25 @@ func TestKeptCommentsFollowAGuestDeletingAnAnchorBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	entries := []any{map[string]any{"id": 1, "body": frame}}
+	if withGap {
+		// Only the second of two edits arrives: it needs the first, which is
+		// not in the log, so the batch is pruned and rebuilt.
+		vector = guest.StateVector()
+		guest.Transact(func(tx *crdt.Transaction) { text.Insert(tx, 0, "a", nil) })
+		vector = guest.StateVector()
+		guest.Transact(func(tx *crdt.Transaction) { text.Insert(tx, 1, "b", nil) })
+		gap, err := protocol.SealKeptFileUpdate(keys, 0, crdt.EncodeStateAsUpdateV1(guest, vector))
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries = append(entries, map[string]any{"id": 2, "body": gap})
+	}
 	var snapshot []byte
 	client := &http.Client{Transport: keepFixTransport(func(r *http.Request) (*http.Response, error) {
 		body := []byte(`{"keepSeconds":60,"keepUntil":1000000000000}`)
 		if r.Method == "GET" {
-			body, _ = json.Marshal(map[string]any{"snapshot": snapshot, "entries": []any{map[string]any{"id": 1, "body": frame}}, "cutoff": 0, "tail": 1})
+			body, _ = json.Marshal(map[string]any{"snapshot": snapshot, "entries": entries, "cutoff": 0, "tail": len(entries)})
 		}
 		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(bytes.NewReader(body))}, nil
 	})}
@@ -71,6 +91,9 @@ func TestKeptCommentsFollowAGuestDeletingAnAnchorBoundary(t *testing.T) {
 	}
 	if err := host.sync(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	if withGap && host.skipped != 1 {
+		t.Fatalf("the update with a missing dependency was not pruned: skipped %d", host.skipped)
 	}
 	written, _ := os.ReadFile(metaName)
 	parsed, err := meta.Parse(written)

@@ -90,7 +90,7 @@ func (h *keptTextHost) followComments() {
 			continue
 		}
 		text, comments := h.files[file.ID], h.files[file.Meta.ID]
-		comments.paired, text.tracker = text, meta.NewTracker(text.doc)
+		comments.paired, text.comments, text.tracker = text, comments, meta.NewTracker(text.doc)
 		text.tracker.Learn(comments.doc)
 	}
 }

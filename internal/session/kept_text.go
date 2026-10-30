@@ -62,6 +62,8 @@ type keptTextDocument struct {
 	// deletes is still placed; paired is the comments doc's text file.
 	tracker *meta.Tracker
 	paired  *keptTextDocument
+	// comments is the text file's comments doc.
+	comments *keptTextDocument
 }
 type keptTextMeta struct {
 	Seconds int64 `json:"keepSeconds"`
@@ -524,18 +526,25 @@ func (h *keptTextDocument) pruneIncomplete(base []byte, accepted [][]byte) (int,
 		accepted = complete
 		h.doc.Destroy()
 		h.doc = crdt.New(crdt.WithGC(false))
-		// The anchors cannot be followed through a rebuilt doc: the next save
-		// places them on the text as it is.
-		if h.tracker != nil {
+		// The rebuilt doc needs a tracker of its own, from the base on.
+		followed := h.tracker != nil
+		if followed {
 			h.tracker.Close()
 			h.tracker = nil
 		}
 		if e := h.apply(h.doc, base); e != nil {
 			return skipped, e
 		}
+		if followed {
+			h.tracker = meta.NewTracker(h.doc)
+			h.tracker.Learn(h.comments.doc)
+		}
 		for _, frame := range accepted {
 			if e := h.applyUpdate(frame); e != nil {
 				return skipped, e
+			}
+			if followed {
+				h.tracker.Learn(h.comments.doc)
 			}
 		}
 	}
