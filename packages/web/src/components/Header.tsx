@@ -9,6 +9,7 @@ import type { Readable } from '../store.ts'
 import type { ViewSwitch } from '../view.ts'
 import { CommentCount } from './FileTabs.tsx'
 import { Settings } from './Settings.tsx'
+import { ViewControls } from './ViewControls.tsx'
 
 /** How many faces the collapsed row of participants shows before "+N". */
 const MAX_FACES = 3
@@ -89,7 +90,6 @@ export function Header(props: HeaderProps) {
   const status = () => props.status.get()
   const people = () => props.people.get()
   const narrow = () => props.narrow.get()
-  const buttons = () => props.view.buttons.get()
   const [expanded, setExpanded] = createSignal(false)
   const more = createMemo(() => {
     const hidden = people().length - MAX_FACES
@@ -150,27 +150,7 @@ export function Header(props: HeaderProps) {
           </li>
         ))}
       </ul>
-      <div
-        className="view-switch"
-        role="group"
-        aria-label="View"
-        hidden={buttons().every((b) => b.hidden)}
-      >
-        {buttons().map((b) => (
-          <button
-            key={b.mode}
-            type="button"
-            data-mode={b.mode}
-            hidden={b.hidden}
-            aria-pressed={b.pressed ? 'true' : 'false'}
-            disabled={b.disabled}
-            title={b.title ?? undefined}
-            onClick={() => props.view.choose(b.mode)}
-          >
-            {b.label}
-          </button>
-        ))}
-      </div>
+      <ViewControls view={props.view} />
       {props.onShare ? (
         <button
           type="button"

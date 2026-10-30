@@ -32,7 +32,8 @@ vi.mock('@pedit/protocol/kept-text', async (load) => {
     },
   }
 })
-vi.mock('@barefootjs/client/runtime', () => ({
+vi.mock('@barefootjs/client/runtime', async (load) => ({
+  ...(await load<typeof import('@barefootjs/client/runtime')>()),
   render: (
     _container: HTMLElement,
     component: string,
@@ -48,6 +49,8 @@ vi.mock('@barefootjs/client/runtime', () => ({
         main: document.createElement('main'),
         source: document.createElement('div'),
         comments: document.createElement('div'),
+        preview: document.createElement('article'),
+        splitter: document.createElement('div'),
       })
     if (component === 'KeptTextHeader') {
       captured.status = props.status
@@ -60,9 +63,14 @@ vi.mock('@codemirror/view', async (load) => {
   return {
     ...real,
     EditorView: class {
+      static baseTheme = real.EditorView.baseTheme
+      static theme = real.EditorView.theme
+      static scrollIntoView = real.EditorView.scrollIntoView
       static domEventHandlers = real.EditorView.domEventHandlers
       static lineWrapping = real.EditorView.lineWrapping
       static editable = real.EditorView.editable
+      scrollDOM = document.createElement('div')
+      requestMeasure() {}
       state: EditorState
       destroyed = false
       constructor(options: { state: EditorState }) {
@@ -94,6 +102,12 @@ beforeEach(() => {
   captured.status = undefined
   captured.editor = undefined
   vi.stubGlobal('crypto', webcrypto)
+  vi.stubGlobal('matchMedia', () => ({
+    matches: false,
+    addEventListener() {},
+    removeEventListener() {},
+  }))
+  vi.stubGlobal('CSS', { ...CSS, supports: () => false, escape: (value: string) => value })
   vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
 })
 afterEach(() => {

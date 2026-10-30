@@ -25,7 +25,8 @@ vi.mock('@pedit/protocol/kept-text', async (load) => {
     },
   }
 })
-vi.mock('@barefootjs/client/runtime', () => ({
+vi.mock('@barefootjs/client/runtime', async (load) => ({
+  ...(await load<typeof import('@barefootjs/client/runtime')>()),
   render: (
     container: HTMLElement,
     component: string,
@@ -38,7 +39,14 @@ vi.mock('@barefootjs/client/runtime', () => ({
       comments = document.createElement('div')
     main.append(source, comments)
     container.append(header, main)
-    props.onReady?.({ header, main, source, comments })
+    props.onReady?.({
+      header,
+      main,
+      source,
+      comments,
+      preview: document.createElement('article'),
+      splitter: document.createElement('div'),
+    })
   },
 }))
 vi.mock('../src/components/KeptTextHeader.tsx', () => ({}))
@@ -51,6 +59,12 @@ beforeEach(() => {
   captured.client = undefined
   captured.doc = undefined
   vi.stubGlobal('crypto', webcrypto)
+  vi.stubGlobal('matchMedia', () => ({
+    matches: false,
+    addEventListener() {},
+    removeEventListener() {},
+  }))
+  vi.stubGlobal('CSS', { ...CSS, supports: () => false, escape: (value: string) => value })
   vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
   vi.spyOn(window, 'requestAnimationFrame').mockReturnValue(0)
 })
