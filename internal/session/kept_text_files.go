@@ -26,7 +26,14 @@ func prepareKeptFiles(opts KeptTextOptions) ([]keptTextFileState, error) {
 	files := make([]keptTextFileState, 0, len(paths))
 	infos := []os.FileInfo{}
 	names := map[string]bool{}
+	root, _ := openProject(project)
+	if root != nil {
+		defer root.Close()
+	}
 	for i, path := range paths {
+		if absolute, e := filepath.Abs(path); e == nil && keepsComments(root, absolute) {
+			return nil, errKeepsComments
+		}
 		file, info, e := readKeptSource(path, project, uint32(i), len(paths) > 1)
 		if e != nil {
 			return nil, e
@@ -98,6 +105,10 @@ func (h *keptTextHost) openFiles() error {
 	}
 	paths := map[string]bool{}
 	infos := []os.FileInfo{}
+	root, _ := openProject(h.state.Project)
+	if root != nil {
+		defer root.Close()
+	}
 	for _, file := range h.state.Files {
 		if h.files[file.ID] != nil || !filepath.IsAbs(file.File) || filepath.Clean(file.File) != file.File || protocol.CheckPath(file.Path) != nil || paths[protocol.PathKey(file.Path)] {
 			h.closeFiles()
@@ -106,6 +117,10 @@ func (h *keptTextHost) openFiles() error {
 		if e := checkKeptLocation(file, h.state.Project, len(h.state.Files) > 1); e != nil {
 			h.closeFiles()
 			return e
+		}
+		if keepsComments(root, file.File) {
+			h.closeFiles()
+			return errKeepsComments
 		}
 		info, e := os.Stat(file.File)
 		if e != nil {
