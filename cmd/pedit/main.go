@@ -82,13 +82,13 @@ Options:
   -t, --template <name>  Use a template filename or type (csv, canvas, md)
   --<name>              Template shorthand (for example, --canvas)
   -d, --directory <dir>  Save a new file here (overrides config output)
-  --keep <duration>     Keep text files open after leaving (for example 7d)
-  --resume <link>       Resume a kept room hosted from this project
+  --keep <duration>     Keep text files open after leaving (for example 7d; 0 turns off keep from config)
+  --resume [room|link]  Resume a kept room hosted from this project
   -h, --help             Show this help
   -v, --version          Show the version
 
 Configuration:
-  .pedit/config.yaml  Server and output. Templates live in .pedit/templates/.
+  .pedit/config.yaml  Server, output and keep. Templates live in .pedit/templates/.
   Created automatically on first use at a Git repository root.
   Default server: ` + defaultServer + `
 
@@ -116,7 +116,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, usage)
 		return 2
 	}
-	if opts.Keep > 0 || opts.Resume != "" {
+	if err := applyConfigKeep(&opts); err != nil {
+		fmt.Fprintln(stderr, "pedit:", err)
+		return 1
+	}
+	if opts.Keep > 0 || opts.Resume != "" || opts.ResumeAny {
 		return runKeep(opts, stdout, stderr)
 	}
 	out := newUI(stdout, isTerminal(stdout), os.Getenv("NO_COLOR") != "")

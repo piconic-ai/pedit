@@ -198,7 +198,7 @@ func TestKeptTextVerticalSlice(t *testing.T) {
 	beforeProjectState := git("status", "--porcelain", "--", ".pedit")
 	host := keptCommand(t, project, binary, "--keep", "7d", "日本語😀.md")
 	link := host.link(t)
-	if !strings.Contains(host.line(t), "60s") {
+	if !strings.Contains(host.line(t), "capped keep time to 1m") {
 		t.Fatal("relay keep cap was not reported")
 	}
 	script := filepath.Join(root, "internal/interop/testdata/kept-text.mjs")

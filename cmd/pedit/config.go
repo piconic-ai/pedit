@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -18,7 +19,9 @@ import (
 type config struct {
 	Server string `yaml:"server"`
 	Output string `yaml:"output"`
-	root   string
+	// Keep is a duration like --keep: share files in a kept room by default.
+	Keep string `yaml:"keep"`
+	root string
 }
 
 const initialConfig = `server: https://edit.piconic.ai
@@ -83,6 +86,11 @@ func decodeConfig(path string, data []byte, c *config) error {
 	u, err := url.Parse(c.Server)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return fmt.Errorf("%s: server must be an http or https URL", path)
+	}
+	if c.Keep != "" {
+		if _, err := parseKeepDuration(c.Keep); err != nil {
+			return fmt.Errorf("%s: keep: %w", path, err)
+		}
 	}
 	return nil
 }
@@ -327,9 +335,13 @@ func templateName(name string) string {
 }
 
 type commandArgs struct {
-	Keep   time.Duration
-	Resume string
-	File   string
+	Keep time.Duration
+	// KeepOff is --keep 0: no kept room this run, whatever the configuration says.
+	KeepOff bool
+	// Resume is a share link or room ID; ResumeAny is --resume without a value.
+	Resume    string
+	ResumeAny bool
+	File      string
 	// More are further files to share in the same room.
 	More []string
 	// Room is a share link to join instead of a file to share.
@@ -352,11 +364,10 @@ func parseArgs(args []string) (commandArgs, error) {
 		var err error
 		switch option {
 		case "--keep", "--resume":
-			if !hasValue {
-				i++
-				value = optionValue(args, i)
+			value, i, err = keptOptionValue(args, i, option, value, hasValue)
+			if err == nil {
+				err = opts.setKeptOption(option, value)
 			}
-			err = opts.setKeptOption(option, value)
 		case "-t", "--template", "-d", "--directory":
 			if !hasValue {
 				i++
@@ -381,24 +392,57 @@ func parseArgs(args []string) (commandArgs, error) {
 	return opts, nil
 }
 
+// keptOptionValue finds the value of --keep or --resume. A bare --resume has
+// none (the empty value) and takes no argument; a room ID may begin with "-".
+func keptOptionValue(args []string, i int, option, value string, hasValue bool) (string, int, error) {
+	if hasValue {
+		return value, i, nil
+	}
+	next := optionValue(args, i+1)
+	if option == "--resume" && i+1 < len(args) && roomIDArg.MatchString(args[i+1]) {
+		next = args[i+1]
+	}
+	if next == "" && option == "--resume" {
+		return "", i, nil
+	}
+	return next, i + 1, nil
+}
+
 func (o *commandArgs) setKeptOption(option, value string) error {
+	if value == "" && option == "--resume" && !o.ResumeAny {
+		return o.setResumeAny()
+	}
 	if value == "" {
 		return errors.New(option + " requires a value")
 	}
 	if option == "--keep" {
-		if o.Keep != 0 {
+		if o.Keep != 0 || o.KeepOff {
 			return errors.New("specify keep once")
+		}
+		if value == "0" {
+			o.KeepOff = true
+			return nil
 		}
 		keep, err := parseKeepDuration(value)
 		o.Keep = keep
 		return err
 	}
-	if o.Resume != "" {
+	if o.Resume != "" || o.ResumeAny {
 		return errors.New("specify resume once")
 	}
 	o.Resume = value
 	return nil
 }
+
+func (o *commandArgs) setResumeAny() error {
+	if o.Resume != "" || o.ResumeAny {
+		return errors.New("specify resume once")
+	}
+	o.ResumeAny = true
+	return nil
+}
+
+var roomIDArg = regexp.MustCompile(`^[A-Za-z0-9_-]{22}$`)
 
 // optionValue is the argument at i given as an option's value, or "" when
 // there is none: past the end, or another option.
@@ -472,11 +516,13 @@ func (o *commandArgs) addArg(arg string, hasValue bool) error {
 
 // check rejects combinations that are each fine alone.
 func (o *commandArgs) check() error {
-	if o.Keep > 0 && (o.File == "" || o.Room != "" || o.Template != "" || o.Directory != "" || o.Resume != "") {
+	resuming := o.Resume != "" || o.ResumeAny
+	if (o.Keep > 0 || o.KeepOff) && (o.File == "" || o.Room != "" || o.Template != "" || o.Directory != "" || resuming) {
 		return errors.New("--keep shares existing text files")
 	}
-	if o.Resume != "" && (!isShareLink(o.Resume) || o.File != "" || o.Room != "" || o.Template != "" || o.Directory != "") {
-		return errors.New("--resume requires only a share link")
+	if resuming && (o.Resume != "" && !isShareLink(o.Resume) && !roomIDArg.MatchString(o.Resume) ||
+		o.File != "" || o.Room != "" || o.Template != "" || o.Directory != "") {
+		return errors.New("--resume takes only a room ID or a share link, or nothing")
 	}
 
 	if o.File != "" && o.Directory != "" {

@@ -84,8 +84,12 @@ For asynchronous text review, run `pedit --keep 7d notes.md` or
 `pedit --keep 7d notes.md todo.md` to share several text files in one room. The relay caps
 this duration and pedit reports the effective value. Ctrl+C leaves the room
 open and prints its deadline. Browser guests can keep editing while you are
-away. In the same project, run `pedit --resume <link>` to merge their edits
-back into the original files. Resume information stays in a private 0600 record under
+away. In the same project, run `pedit --resume` to merge their edits
+back into the original files: with one kept room it resumes that room, with several it lists them
+and asks which (or pass the room ID, `pedit --resume <room>`; the full link still works, quoted in
+zsh because of the `?`). After `--keep` opens the room, pedit prints this command. To keep every room you
+share, set `keep: 7d` in `.pedit/config.yaml` (same syntax as `--keep`; `--keep` on the command line wins and
+`--keep 0` turns it off for one run). Resume information stays in a private 0600 record under
 `pedit/keep/` in your user configuration directory, outside the project. pedit
 removes that record once the room is over (when `--resume` finds the relay room expired, and at the next
 `--keep` or `--resume` in the same project for rooms past their deadline), never while a write is pending or the relay may still hold
@@ -255,6 +259,7 @@ Run `pedit` at a Git repository root to create `.pedit/config.yaml` and
 ```yaml
 server: https://edit.piconic.ai
 output: notes
+keep: 7d   # optional: pedit <file> then behaves as pedit --keep 7d <file>
 ```
 
 Add your own template files directly to `.pedit/templates/`:

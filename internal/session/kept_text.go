@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -227,20 +228,25 @@ func (h *keptTextHost) prepare(ctx context.Context, opts KeptTextOptions) error 
 }
 
 func (h *keptTextHost) resume(opts KeptTextOptions, directory string) error {
-	u, e := url.Parse(opts.Resume)
-	if e != nil || u.User != nil || u.RawQuery != "keep=1" ||
-		(u.Scheme != "http" && u.Scheme != "https") ||
-		!strings.HasPrefix(u.Path, "/r/") {
-		return errors.New("invalid resume link")
-	}
-	h.room = strings.TrimPrefix(u.Path, "/r/")
-	if !keptTextRoomID.MatchString(h.room) {
-		return errors.New("invalid resume room")
+	byID := keptTextRoomID.MatchString(opts.Resume)
+	if byID {
+		h.room = opts.Resume
+	} else {
+		u, e := url.Parse(opts.Resume)
+		if e != nil || u.User != nil || u.RawQuery != "keep=1" ||
+			(u.Scheme != "http" && u.Scheme != "https") ||
+			!strings.HasPrefix(u.Path, "/r/") {
+			return errors.New("invalid resume link")
+		}
+		h.room = strings.TrimPrefix(u.Path, "/r/")
+		if !keptTextRoomID.MatchString(h.room) {
+			return errors.New("invalid resume room")
+		}
 	}
 	if e := readKeptState(filepath.Join(directory, h.room+".json"), &h.state); e != nil {
 		return e
 	}
-	if opts.Resume != h.state.Origin+"/r/"+h.room+"?keep=1#"+h.state.Fragment ||
+	if (!byID && opts.Resume != h.state.Origin+"/r/"+h.room+"?keep=1#"+h.state.Fragment) ||
 		(opts.Server != "" && strings.TrimRight(opts.Server, "/") != h.state.Origin) {
 		return errors.New("resume link differs from saved host state")
 	}
@@ -836,4 +842,40 @@ func (h *keptTextHost) trackDeadline(until int64) error {
 	}
 	h.state.Until = until
 	return saveKeptState(h.path, h.state)
+}
+
+// KeptTextRecord summarizes a resume record of a project, without its secrets.
+type KeptTextRecord struct {
+	Room  string
+	Paths []string // display paths of the shared files
+	Until int64    // relay deadline in Unix ms; 0 if unknown
+}
+
+// ListKeptText returns the resume records of project, soonest deadline first.
+// Records that cannot be parsed are left out.
+func ListKeptText(project string) ([]KeptTextRecord, error) {
+	project, e := filepath.Abs(project)
+	if e != nil {
+		return nil, errors.New("invalid kept project")
+	}
+	directory, e := keptTextDirectory(filepath.Clean(project))
+	if e != nil {
+		return nil, e
+	}
+	paths, _ := filepath.Glob(filepath.Join(directory, "*.json"))
+	var records []KeptTextRecord
+	for _, path := range paths {
+		room := strings.TrimSuffix(filepath.Base(path), ".json")
+		var s keptTextState
+		if !keptTextRoomID.MatchString(room) || readKeptState(path, &s) != nil || !s.Initialized {
+			continue
+		}
+		r := KeptTextRecord{Room: room, Until: s.Until}
+		for _, f := range s.Files {
+			r.Paths = append(r.Paths, f.Path)
+		}
+		records = append(records, r)
+	}
+	sort.SliceStable(records, func(i, j int) bool { return records[i].Until < records[j].Until })
+	return records, nil
 }
