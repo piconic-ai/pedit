@@ -89,8 +89,10 @@ back into the original files. Resume information stays in a private 0600 record 
 `pedit/keep/` in your user configuration directory, outside the project. Keep
 that record until the review ends. This mode shares a fixed set of text files, without comments or attachments.
 The browser uses the same file tabs as a live room. The encrypted snapshot for
-all files together must fit within 1 MiB; log updates have a separate byte budget. Changes made directly to the local
-file while away are preserved and stop automatic recovery. These two host
+all files together must fit within 1 MiB; log updates have a separate byte budget. Changes made directly to a local
+file while away are merged with the guests' edits on resume, the way a live room
+merges a save from another editor. A file that cannot be read or is not valid
+UTF-8 is preserved and stops automatic recovery. These two host
 commands currently require Unix file permissions and are unavailable on Windows.
 
 Collaborators who would rather stay in their own editor join from the command

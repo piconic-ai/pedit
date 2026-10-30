@@ -21,6 +21,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/piconic-ai/pedit/internal/filewriter"
+	"github.com/piconic-ai/pedit/internal/merge"
 	"github.com/piconic-ai/pedit/internal/protocol"
 	"github.com/reearth/ygo/crdt"
 )
@@ -243,10 +244,42 @@ func (h *keptTextHost) restore() error {
 			return errors.New("invalid saved kept document")
 		}
 	}
+	if e := h.mergeLocalEdits(); e != nil {
+		return e
+	}
 	if _, e := h.snapshot(); e != nil {
 		return e
 	}
 	return h.finishWrites()
+}
+
+// mergeLocalEdits folds edits made to a source file while the host was away
+// into its checkpoint document, as host edits, the way a live room merges a
+// save from another editor. The relay log is applied later by sync, so both
+// sides merge before the file is written and the log is cut. A file that
+// cannot be read, is not valid UTF-8 or is too large is left alone, and
+// finishWrites then refuses it as it always did.
+func (h *keptTextHost) mergeLocalEdits() error {
+	changed := false
+	for i := range h.state.Files {
+		file := &h.state.Files[i]
+		expected := file.Text
+		if file.Pending != nil {
+			expected = *file.Pending
+		}
+		onDisk, ok := h.files[file.ID].bound.Read()
+		if !ok || onDisk == file.Text || onDisk == expected || !utf8.ValidString(onDisk) || len(onDisk) > protocol.MaxFrameBytes {
+			continue
+		}
+		doc := h.files[file.ID].doc
+		merge.ExternalEdit(doc, doc.GetText("content"), expected, onDisk, nil)
+		file.State, file.Text, file.Pending = crdt.EncodeStateAsUpdateV1(doc, nil), onDisk, nil
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return saveKeptState(h.path, h.state)
 }
 
 func (h *keptTextHost) connect(ctx context.Context) error {
