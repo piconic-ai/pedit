@@ -364,19 +364,10 @@ func parseArgs(args []string) (commandArgs, error) {
 		var err error
 		switch option {
 		case "--keep", "--resume":
-			if !hasValue {
-				value = optionValue(args, i+1)
-				// A room ID may begin with "-".
-				if option == "--resume" && i+1 < len(args) && roomIDArg.MatchString(args[i+1]) {
-					value = args[i+1]
-				}
-				if value == "" && option == "--resume" {
-					err = opts.setResumeAny()
-					break
-				}
-				i++
+			value, i, err = keptOptionValue(args, i, option, value, hasValue)
+			if err == nil {
+				err = opts.setKeptOption(option, value)
 			}
-			err = opts.setKeptOption(option, value)
 		case "-t", "--template", "-d", "--directory":
 			if !hasValue {
 				i++
@@ -401,7 +392,26 @@ func parseArgs(args []string) (commandArgs, error) {
 	return opts, nil
 }
 
+// keptOptionValue finds the value of --keep or --resume. A bare --resume has
+// none (the empty value) and takes no argument; a room ID may begin with "-".
+func keptOptionValue(args []string, i int, option, value string, hasValue bool) (string, int, error) {
+	if hasValue {
+		return value, i, nil
+	}
+	next := optionValue(args, i+1)
+	if option == "--resume" && i+1 < len(args) && roomIDArg.MatchString(args[i+1]) {
+		next = args[i+1]
+	}
+	if next == "" && option == "--resume" {
+		return "", i, nil
+	}
+	return next, i + 1, nil
+}
+
 func (o *commandArgs) setKeptOption(option, value string) error {
+	if value == "" && option == "--resume" && !o.ResumeAny {
+		return o.setResumeAny()
+	}
 	if value == "" {
 		return errors.New(option + " requires a value")
 	}
