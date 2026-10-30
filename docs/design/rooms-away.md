@@ -113,15 +113,20 @@ The browser (`RoomClient` in `packages/protocol`, `packages/web`) speaks version
   file ID, signed and encrypted as in kept text mode (`sealKeptUpdate`, shared
   with `KeptTextClient`). It is pending, and the header says `sending`, until
   the same entry comes back as kind 4 with an ID, which acknowledges it. A
-  connection that drops keeps its pending entries and sends the unacknowledged
-  ones again after the next kind 6. Only edit links send entries; a read link
+  connection that drops keeps what it wrote: after the next kind 6 the client
+  compares each document with its copy of what the relay holds, and sends what
+  the relay lacks as new entries, whether the edit was pending or was made
+  while the browser was not connected to a kept room. Only edit links send entries; a read link
   never does, and a comment link cannot comment while the host is away. A canvas
   is not kept.
 - **Joining.** Kind 5 is opened as a kept bundle: the files it lists become the
   room's manifest, and a file the page opens later is built from it and from
   the entries since. Kind 4 entries are verified (the editors' signature, the
   kept-text checks of `trial`) and applied; one that does not hold is skipped
-  and counted, and the banner says how many. Kind 6 gives the cursor `after`.
+  and counted, and the banner says how many. Kind 6 gives the cursor `after`. A client that was live when the room
+  became kept is sent no snapshot, since the relay replays only to a peer that
+  joins: on `kept` it has heard the relay on this connection, so it
+  disconnects and joins again to get the replay.
 - **Reconnecting.** A browser cannot set `X-Pedit-After` on a WebSocket, so it
   sends the cursor as the query parameter `after=<id>` on the `/ws` URL, which
   the relay reads when the header is absent.

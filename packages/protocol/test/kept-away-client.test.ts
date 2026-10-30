@@ -104,16 +104,19 @@ async function live(keys: RoomKeys, relay: Relay, from = 0) {
 const UNTIL = 1_900_000_000_000
 
 describe('a room kept while its host is away', () => {
-  it('enters the kept status, says until when, and keeps the v5 words working', async () => {
+  it('enters the kept status and says until when; the words of a version 5 relay still wait', async () => {
     const keys = await editKeys()
     const m = await member(keys)
-    await m.say(HOST_AWAY)
-    expect(m.client.status).toBe('waiting')
     await m.say(`kept ${UNTIL}`)
     expect(m.client.status).toBe('kept')
     expect(m.client.keptUntil).toBe(UNTIL)
     await m.say(HOST_BACK)
     expect(m.client.status).toBe('connected')
+    const old = await member(keys)
+    await old.say(HOST_AWAY)
+    expect(old.client.status).toBe('waiting')
+    await old.say(HOST_BACK)
+    expect(old.client.status).toBe('connected')
   })
 
   it('sends an edit as an entry, pending until the relay logs it, and not as a live update', async () => {
@@ -204,21 +207,54 @@ describe('a room kept while its host is away', () => {
     expect(m.relay.urls.at(-1)).toBe('ws://test/room?after=7')
   })
 
-  it('sends again what the relay did not log, once it says which entries it holds', async () => {
+  it('sends what the relay lacks once it has replayed, such as edits made while disconnected', async () => {
     const keys = await editKeys()
     const m = await member(keys)
-    await m.say(`kept ${UNTIL}`)
-    m.doc.getText('content').insert(0, 'x')
+    const base = textUpdate((t) => t.insert(0, 'abc')).update
+    const replay = async () => {
+      await m.say(`kept ${UNTIL}`)
+      await m.say(
+        withKind(Kind.Replay, await sealBundle(keys, [{ id: 0, path: 'a.md', update: base }])),
+      )
+      await m.say(encodeLogEnd(0))
+    }
+    // The connection drops, and an edit is made before it is back.
     m.socket().close(1006)
-    // An edit made as the connection drops is held too.
-    m.doc.getText('content').insert(1, 'y')
+    m.doc.getText('content').insert(0, 'Y')
     await new Promise((r) => setTimeout(r, 30))
-    expect(m.client.status).toBe('connected')
-    const sent = entries(m.relay).length
+    await replay()
+    // Nothing was sent before the replay: the relay's copy comes first.
+    expect(m.doc.getText('content').toString()).toContain('abc')
+    expect(entries(m.relay)).toHaveLength(1)
+    const sent = entries(m.relay)[0]!
+    await m.say(encodeLogged(1, sent))
+    expect(m.syncs).toEqual(['pending', 'kept'])
+    // Another drop with an edit pending: the next replay has the log without it.
+    m.doc.getText('content').insert(0, 'X')
+    await settle()
+    m.socket().close(1006)
+    await new Promise((r) => setTimeout(r, 30))
+    expect(m.relay.urls.at(-1)).toBe('ws://test/room?after=1')
     await m.say(`kept ${UNTIL}`)
-    expect(entries(m.relay)).toHaveLength(sent)
-    await m.say(encodeLogEnd(0))
-    expect(entries(m.relay).length).toBe(sent + 2)
+    await m.say(encodeLogEnd(1))
+    expect(entries(m.relay)).toHaveLength(3)
+    // The relay had it all: nothing is sent again.
+    await m.say(encodeLogged(2, entries(m.relay)[2]!))
+    m.socket().close(1006)
+    await new Promise((r) => setTimeout(r, 30))
+    await m.say(`kept ${UNTIL}`)
+    await m.say(encodeLogEnd(2))
+    expect(entries(m.relay)).toHaveLength(3)
+  })
+
+  it('joins again when it was live as the room becomes kept, to be sent the snapshot and the log', async () => {
+    const m = await member(await editKeys())
+    await m.say(HOST_AWAY)
+    expect(m.relay.urls).toHaveLength(1)
+    await m.say(`kept ${UNTIL}`)
+    await new Promise((r) => setTimeout(r, 30))
+    expect(m.relay.urls).toEqual(['ws://test/room', 'ws://test/room'])
+    expect(m.client.status).toBe('connected')
   })
 
   it('goes live again on host back: every doc is synced for the host', async () => {

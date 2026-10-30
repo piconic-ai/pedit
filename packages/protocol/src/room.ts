@@ -270,6 +270,8 @@ export class RoomClient {
 
   private readonly opts: RoomClientOptions
   private readonly kept: KeptAway
+  // Whether the relay has sent anything on this connection yet.
+  private heard = false
   private socket: SocketLike | null = null
   private attempts = 0
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -316,7 +318,8 @@ export class RoomClient {
     this.doc = opts.doc
     this.awareness = opts.awareness
     this.kept = new KeptAway(opts.keys, this, {
-      docOf: (id) => (id === 0 ? { doc: this.doc, comments: false } : this.files.get(id)),
+      docs: () => [[0, { doc: this.doc, comments: false }], ...this.files],
+      entry: (id, update) => this.sendEntry(id, update),
       manifest: (files) => opts.onManifest?.(files),
       sync: (state) => opts.onKeptSync?.(state),
       skipped: (count) => opts.onKeptSkipped?.(count),
@@ -350,12 +353,15 @@ export class RoomClient {
       this.attempts = 0
       // Told again by the relay, if the room is kept.
       this.kept.active = false
+      this.heard = false
       this.greet(socket)
     }
     socket.onmessage = (ev) => {
       if (this.socket !== socket) return
+      const heard = this.heard
+      this.heard = true
       if (typeof ev.data === 'string') {
-        this.relayText(ev.data, socket)
+        this.relayText(ev.data, socket, heard)
         return
       }
       const bytes = toBytes(ev.data)
@@ -366,10 +372,7 @@ export class RoomClient {
       const { kind, payload: data } = split
       if (kind !== Kind.Live) {
         this.receiveChain = this.receiveChain
-          .then(async () => {
-            await this.kept.receive(kind, data)
-            if (kind === Kind.LogEnd) this.resendEntries(socket)
-          })
+          .then(() => this.kept.receive(kind, data))
           .catch((error) => this.opts.onError?.(error))
         return
       }
@@ -403,7 +406,7 @@ export class RoomClient {
   }
 
   /** The relay's own words: on the host, and on a room kept without it. */
-  private relayText(text: string, socket: SocketLike): void {
+  private relayText(text: string, socket: SocketLike, heard: boolean): void {
     const was = this.status
     if (text === HOST_AWAY) {
       if (was === 'connected') this.setStatus('waiting')
@@ -420,6 +423,12 @@ export class RoomClient {
       if (until === undefined) return
       this.kept.active = true
       this.kept.until = until
+      // The relay sends a peer that joins the snapshot and the log. One that
+      // was live in the room has neither: it joins again to get them.
+      if (heard) {
+        socket.close(1000, 'joining again')
+        return
+      }
       this.setStatus('kept')
     }
   }
@@ -431,11 +440,6 @@ export class RoomClient {
     const url = new URL(this.opts.url)
     url.searchParams.set('after', String(after))
     return url.toString()
-  }
-
-  /** Sends what the relay has not logged yet, after the replay told which entries it has. */
-  private resendEntries(socket: SocketLike): void {
-    for (const body of this.kept.unacknowledged()) void this.putEntry(socket, body)
   }
 
   /** Sends an update of a doc as an entry, while the room is kept. Only editors do. */

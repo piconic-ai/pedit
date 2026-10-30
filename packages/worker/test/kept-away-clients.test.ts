@@ -72,6 +72,7 @@ interface Browser {
   doc: Y.Doc
   statuses: RoomStatus[]
   syncs: string[]
+  manifests: unknown[]
   text: () => string
 }
 
@@ -80,6 +81,7 @@ function browser(room: { id: string }, keys: RoomKeys, seed?: Uint8Array): Brows
   if (seed) Y.applyUpdate(doc, seed)
   const statuses: RoomStatus[] = []
   const syncs: string[] = []
+  const manifests: unknown[] = []
   const client = new RoomClient({
     url: `ws://pedit.test/api/rooms/${room.id}/ws`,
     keys,
@@ -89,9 +91,10 @@ function browser(room: { id: string }, keys: RoomKeys, seed?: Uint8Array): Brows
     createSocket: (url, _headers, protocols) => new WorkerSocket(url, protocols ?? []),
     onStatus: (s) => statuses.push(s),
     onKeptSync: (s) => syncs.push(s),
+    onManifest: (files) => manifests.push(files),
   })
   client.connect()
-  return { client, doc, statuses, syncs, text: () => doc.getText('content').toString() }
+  return { client, doc, statuses, syncs, manifests, text: () => doc.getText('content').toString() }
 }
 
 interface Host {
@@ -142,15 +145,27 @@ describe('browsers in a room kept while its host is away', () => {
     const hostDoc = new Y.Doc()
     hostDoc.getText('content').insert(0, 'hello')
     const state = Y.encodeStateAsUpdate(hostDoc)
-    const snapshot = (update: Uint8Array) =>
-      sealBundle(keys, [{ id: 0, path: 'a.md', update }]).then((b) => withKind(Kind.Snapshot, b))
+    const notes = new Y.Doc()
+    notes.getText('content').insert(0, 'notes')
+    const files = [
+      { id: 0, path: 'a.md', update: state },
+      { id: 1, path: 'b.md', update: Y.encodeStateAsUpdate(notes) },
+    ]
     const first = await host(room, keys, { 'X-Pedit-Keep': '3600' })
-    first.ws.send(await snapshot(state))
+    first.ws.send(withKind(Kind.Snapshot, await sealBundle(keys, files)))
     const guest = browser(room, keys, state)
     await until(() => guest.client.status === 'connected')
+    // The guest hears from the host, then the host leaves.
+    first.ws.send(withKind(Kind.Live, new Uint8Array([1])))
+    await new Promise((r) => setTimeout(r, 50))
     first.ws.close(HOST_LEFT, 'bye')
-    await until(() => guest.client.status === 'kept')
+    // A guest that was live is not sent the snapshot: it joins again to get it.
+    await until(() => guest.client.status === 'kept' && guest.manifests.length > 0)
     expect(guest.client.keptUntil).toBeGreaterThan(Date.now())
+    // A file it opens only now is built from it.
+    const second = new Y.Doc()
+    guest.client.addFile(1, second)
+    expect(second.getText('content').toString()).toBe('notes')
 
     // A guest edits; the relay logs it and sends it back.
     guest.doc.getText('content').insert(5, ' world')
@@ -165,14 +180,20 @@ describe('browsers in a room kept while its host is away', () => {
     late.doc.getText('content').insert(0, '>> ')
     await until(() => guest.text() === '>> hello world')
 
-    // The host returns with what it holds: it is sent the two entries and the tail.
+    // A guest with an edit made before it was connected: the relay is sent what it lacks.
+    const offline = browser(room, keys, state)
+    offline.doc.getText('content').insert(0, '[offline] ')
+    await until(() => guest.text().includes('[offline] '))
+    await until(() => late.text().includes('[offline] '))
+
+    // The host returns with what it holds: it is sent the three entries and the tail.
     const back = await host(room, keys, { 'X-Pedit-Keep': '3600', 'X-Pedit-After': '0' })
     // (Guests that are told the host is back greet it with live frames meanwhile.)
     const replayed = () => back.binary.filter((m) => m[0] !== Kind.Live)
-    await until(() => replayed().length === 3)
-    expect(replayed().map((m) => m[0])).toEqual([Kind.Logged, Kind.Logged, Kind.LogEnd])
-    const tail = decodeUint64(replayed()[2]?.subarray(1) as Uint8Array) as number
-    expect(tail).toBe(2)
+    await until(() => replayed().length === 4)
+    expect(replayed().map((m) => m[0])).toEqual([4, 4, 4, Kind.LogEnd])
+    const tail = decodeUint64(replayed()[3]?.subarray(1) as Uint8Array) as number
+    expect(tail).toBe(3)
     // It takes them in and checkpoints.
     const merged = new Y.Doc()
     merged.getText('content').insert(0, '>> hello world')
@@ -182,17 +203,18 @@ describe('browsers in a room kept while its host is away', () => {
         await sealBundle(keys, [{ id: 0, path: 'a.md', update: Y.encodeStateAsUpdate(merged) }]),
       ),
     )
-    await until(() => back.signals.includes('checkpoint 2 2'))
+    await until(() => back.signals.includes('checkpoint 3 3'))
 
     // Everyone is live again: the guests are told, and send the host their state.
-    await until(() => guest.client.status === 'connected' && late.client.status === 'connected')
+    await until(() => [guest, late, offline].every((b) => b.client.status === 'connected'))
     const before = back.binary.length
     guest.doc.getText('content').insert(0, '!')
     await until(() => back.binary.length > before)
-    expect(replayed()).toHaveLength(3)
+    expect(replayed()).toHaveLength(4)
 
     await guest.client.destroy()
     await late.client.destroy()
+    await offline.client.destroy()
     back.ws.close()
   }, 20_000)
 })
