@@ -17,7 +17,7 @@ ignore (
 require (
 	github.com/coder/websocket v1.8.15
 	github.com/fsnotify/fsnotify v1.10.1
-	github.com/reearth/ygo v1.51.11
+	github.com/reearth/ygo v1.54.0
 	github.com/sergi/go-diff v1.4.0
 	golang.org/x/sys v0.49.0
 	golang.org/x/term v0.47.0
