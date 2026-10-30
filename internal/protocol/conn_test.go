@@ -215,3 +215,33 @@ func TestHostClientLeavesWithHostLeft(t *testing.T) {
 		}
 	}
 }
+
+// A connection keeps the ping interval it was dialled with. Tests make the
+// intervals fast between dials, while a keepAlive of an earlier connection
+// may still be ending, so keepAlive must not read the package variables.
+func TestDialWebSocketKeepsThePingIntervalItWasDialledWith(t *testing.T) {
+	pings := make(chan struct{}, 8)
+	url := relayServer(t, func(ctx context.Context, c *websocket.Conn) {
+		for {
+			typ, data, err := c.Read(ctx)
+			if err != nil {
+				return
+			}
+			if typ == websocket.MessageText && string(data) == RelayPing {
+				pings <- struct{}{}
+			}
+		}
+	})
+	conn, err := DialWebSocket(context.Background(), url, http.Header{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	// After the dial: the connection above was made with the 15-second default.
+	fastPings(t)
+	select {
+	case <-pings:
+		t.Fatal("pinged at the fast interval set after the dial")
+	case <-time.After(200 * time.Millisecond):
+	}
+}
