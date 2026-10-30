@@ -72,7 +72,13 @@ If the connection drops, keep `pedit` running. It reconnects with the same
 link and merges edits made while disconnected. The terminal keeps an offline
 notice and confirms when syncing resumes. While the host is away, the browser
 pauses editing; edits already made or still in transit merge when the host
-returns. The public relay keeps guests waiting for up to two minutes.
+returns. The public relay keeps guests waiting for up to two minutes. When the
+host asked for the room to be kept (`--keep`), the browser does not pause: the
+header says the host is away and until when, text files and their comments stay
+editable and images can be pasted, and the relay keeps each edit, which shows as
+sending until the relay has it. The host takes the edits in on its return, and
+everyone is live again. Closing the page with edits still sending asks first.
+A canvas is not kept while the host is away.
 
 Text, canvas changes, and comments save during the session, including while
 edits continue. Saves normally start about a second after the first pending

@@ -97,6 +97,13 @@ const STATUS: Record<HeaderStatus, Description> = {
     icon: CLOCK,
     tone: 'ended',
   },
+  'log-full': {
+    label: 'Room full of edits',
+    detail:
+      'The relay cannot keep more edits while the host is away. Copy your text; it stays in this browser only.',
+    icon: WARNING,
+    tone: 'warning',
+  },
   'host-closed': {
     label: 'Closed by host',
     detail:

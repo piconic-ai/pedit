@@ -84,6 +84,7 @@ import './components/Header.tsx'
 import './components/Layout.tsx'
 import './components/Notice.tsx'
 import type { LayoutParts } from './components/Layout.tsx'
+import { AwayView, isLocked } from './keptaway.ts'
 import { lockedUndo } from './lockedundo.ts'
 import './style.css'
 
@@ -194,6 +195,8 @@ async function joinRoom(
   awareness.setLocalState({ user: { ...me, color, colorLight: selectionTint(color) } })
 
   const roomStatus = new Store<RoomStatus>('connecting')
+  // What the page says while the host is away.
+  const away = new AwayView(() => client?.keptUntil ?? 0)
   const fileName = new Store<string | null>(null)
   const people = new Store<readonly Participant[]>([])
   // Each name's colour in the header, for the comments of people in the room.
@@ -246,6 +249,8 @@ async function joinRoom(
     status: roomStatus,
     timeLimit,
     text: () => (shown.canvas ? toJSON(readCanvas(shown.doc)) : shown.text.toString()),
+    keptUntil: away.until,
+    skipped: away.skipped,
     onReconnect: () => location.reload(),
   })
   // Filled in once the client exists; nothing is sent before it connects.
@@ -256,6 +261,8 @@ async function joinRoom(
   const attachments = new Attachments({
     roomId: id,
     keys: blobKeys,
+    // The relay keeps the images while the host is away, which saves them on its return.
+    kept: () => roomStatus.get() === 'kept',
     // About the file an image was added to, or the one on screen: its
     // directory on the host takes the image.
     send: (a, file = shown.id) =>
@@ -289,11 +296,15 @@ async function joinRoom(
   // Reused so switching back to Markdown does not reparse the document.
   const markdownSupport = markdown()
   const readOnly = [EditorState.readOnly.of(true), EditorView.editable.of(false)]
-  // Nobody edits while the host is away, nor once the room has ended.
-  const editLocked = () => {
-    const s = roomStatus.get()
-    return s === 'waiting' || isFinalStatus(s)
-  }
+  // Nobody edits while the host is away and the relay keeps nothing (the
+  // two minutes it waits for a host that dropped), nor once the room has
+  // ended, nor when the relay has no more room to keep edits.
+  const editLocked = () => isLocked(roomStatus.get())
+  // Only edit links write what the relay keeps while the host is away.
+  const commentsLocked = () =>
+    editLocked() || !writesComments || (roomStatus.get() === 'kept' && !writesFile)
+  // A canvas needs its host: it is not kept (#234).
+  const boardsPaused = () => ['waiting', 'kept', 'log-full'].includes(roomStatus.get())
   // Nor does anyone whose link is below edit, ever.
   const fileLocked = () => editLocked() || !writesFile
   const noImages = () =>
@@ -488,7 +499,8 @@ async function joinRoom(
   if (loadVimMode()) settings.setVim(true)
   render(header, 'Header', {
     file: fileName,
-    status: roomStatus,
+    status: away.header,
+    hostAway: away.hostAway,
     participants: { people, narrow: isNarrow },
     view,
     settings,
@@ -519,23 +531,25 @@ async function joinRoom(
     },
   })
 
-  // Nobody edits while the host is away: nobody would save it. Once the room
-  // has ended, for good.
+  // Nobody edits while the host is away and nothing keeps the edits: nobody
+  // would save them. Once the room has ended, for good.
   const setStatus = (s: RoomStatus) => {
-    const was = roomStatus.get()
+    const wasLocked = editLocked()
     roomStatus.set(s)
-    locked.set(editLocked() || !writesComments)
+    away.show(s)
+    locked.set(commentsLocked())
     if (isFinalStatus(s)) {
       editor.dispatch({ effects: editable.reconfigure(readOnly) })
       for (const f of opened.values()) {
         f.board.readOnly = true
         f.table.readOnly = true
       }
-    } else if (writesFile && (s === 'waiting') !== (was === 'waiting')) {
-      const away = s === 'waiting'
-      editor.dispatch({ effects: editable.reconfigure(away ? readOnly : []) })
+    } else if (writesFile) {
+      const away = editLocked()
+      if (away !== wasLocked)
+        editor.dispatch({ effects: editable.reconfigure(away ? readOnly : []) })
       for (const f of opened.values()) {
-        f.board.paused = away
+        f.board.paused = boardsPaused()
         f.table.readOnly = away
       }
     }
@@ -600,9 +614,9 @@ async function joinRoom(
     if (isFinalStatus(roomStatus.get())) {
       f.board.readOnly = true
       f.table.readOnly = true
-    } else if (roomStatus.get() === 'waiting') {
-      f.board.paused = true
-      f.table.readOnly = true
+    } else {
+      f.board.paused = boardsPaused()
+      f.table.readOnly = editLocked()
     }
     opened.set(entry.id, f)
     // A comments doc a forged list of files put under this id goes.
@@ -627,7 +641,7 @@ async function joinRoom(
     }
     f.comments = new CommentsView(metaDoc, f.doc, {
       name,
-      locked: () => editLocked() || !writesComments,
+      locked: commentsLocked,
       table: f.table.parsed,
       canvas: format === 'canvas',
     })
@@ -748,6 +762,10 @@ async function joinRoom(
     admissionToken: admission,
     doc,
     awareness,
+    onKeptSync: (state) => {
+      away.setPending(state === 'pending')
+    },
+    onKeptSkipped: (count) => away.skipped.set(count),
     onStatus: (s) => {
       if (s === 'expired') timeLimit.set(client?.timeLimitSeconds)
       setStatus(s)
@@ -807,6 +825,8 @@ async function joinRoom(
   setStatus('connecting')
   client.connect()
   renderPeople()
+  // Edits the relay has not logged yet are lost if the page goes.
+  window.addEventListener('beforeunload', away.warn)
   window.addEventListener('pagehide', () => void client?.destroy())
 }
 

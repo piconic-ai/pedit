@@ -341,7 +341,10 @@ export class Room extends DurableObject<Env> {
       version,
       protocol: socketProtocol(version),
       keep: keeps ? this.keepFrom(request.headers.get(KEEP_HEADER)) : undefined,
-      after: afterFrom(request.headers.get(AFTER_HEADER)),
+      // A browser cannot set a header on a WebSocket: it sends `?after=` instead.
+      after: afterFrom(
+        request.headers.get(AFTER_HEADER) ?? new URL(request.url).searchParams.get('after'),
+      ),
     }
   }
 

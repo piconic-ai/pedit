@@ -198,7 +198,7 @@ export class KeptTextClient {
       }
     }
     for (const [id, base] of bases) {
-      const result = this.entries(base, updates.get(id) ?? [])
+      const result = probeEntries(base, updates.get(id) ?? [])
       results.set(id, result.doc)
       skipped += result.skipped
     }
@@ -213,36 +213,6 @@ export class KeptTextClient {
         this.listen(id, doc)
       }
       Y.applyUpdate(doc, Y.encodeStateAsUpdate(result), this)
-    }
-  }
-  private entries(base: Y.Doc, entries: readonly Uint8Array[]): { doc: Y.Doc; skipped: number } {
-    let probe = copyDoc(base),
-      skipped = 0
-    const accepted: Uint8Array[] = []
-    try {
-      for (const update of entries) {
-        try {
-          const next = trial(probe, update)
-          probe.destroy()
-          probe = next
-          accepted.push(update)
-        } catch {
-          skipped++
-        }
-      }
-      while (incomplete(probe)) {
-        const complete = accepted.filter((update) => integrated(probe, update))
-        if (complete.length === accepted.length) complete.length = 0
-        skipped += accepted.length - complete.length
-        accepted.splice(0, accepted.length, ...complete)
-        probe.destroy()
-        probe = copyDoc(base)
-        for (const update of accepted) Y.applyUpdate(probe, update)
-      }
-      return { doc: probe, skipped }
-    } catch (error) {
-      probe.destroy()
-      throw error
     }
   }
   private notModified(response: Response): void {
@@ -293,8 +263,7 @@ export class KeptTextClient {
     })
   }
   private async prepare(count: number): Promise<{ body: Uint8Array; count: number }> {
-    const signer = this.options.keys.signer
-    if (signer?.access !== 'edit') throw new Error('edit link required')
+    if (this.options.keys.signer?.access !== 'edit') throw new Error('edit link required')
     const first = this.pending[0]
     if (!first) throw new Error('missing kept edit')
     let contiguous = 1
@@ -323,17 +292,10 @@ export class KeptTextClient {
       } else high = mid - 1
     }
     if (!update) throw new Error('kept edit too large')
-    let payload = update
-    if (domain === FILE_DOMAIN) {
-      payload = new Uint8Array(4 + update.length)
-      new DataView(payload.buffer).setUint32(0, first.id)
-      payload.set(update, 4)
+    return {
+      body: await sealKeptUpdate(this.options.keys, first.id, update, domain === FILE_DOMAIN),
+      count: fit,
     }
-    const message = join(domain, payload)
-    const signature = new Uint8Array(
-      await crypto.subtle.sign('Ed25519', signer.key, Uint8Array.from(message)),
-    )
-    return { body: await encrypt(this.options.keys.frameKey, join(message, signature)), count: fit }
   }
   close(): void {
     this.abort.abort()
@@ -391,30 +353,92 @@ export class KeptTextClient {
     if (btoa(decoded) !== value) throw new Error('invalid kept frame')
     const ciphertext = Uint8Array.from(decoded, (char) => char.charCodeAt(0))
     if (ciphertext.length > MAX_FRAME_BYTES) throw new Error('kept frame too large')
-    const plain = await decrypt(this.options.keys.frameKey, ciphertext)
-    const message = plain.subarray(0, plain.length - 64)
-    if (
-      plain.length <= 64 ||
-      !(await crypto.subtle.verify(
-        'Ed25519',
-        this.options.keys.editKey,
-        Uint8Array.from(plain.subarray(plain.length - 64)),
-        Uint8Array.from(message),
-      ))
-    )
-      throw new Error('invalid kept signature')
+    const message = await openKeptFrame(this.options.keys, ciphertext)
     return snapshot ? decodeSnapshot(message) : decodeUpdate(message)
   }
 }
-type FileUpdate = { id: number; update: Uint8Array }
-type BundleFile = FileUpdate & { path: string }
-type OpenedSnapshot =
+/** Signs and encrypts one update of a doc as a kept entry; with `file`, it names the doc by its id. */
+export async function sealKeptUpdate(
+  keys: RoomKeys,
+  id: number,
+  update: Uint8Array,
+  file = true,
+): Promise<Uint8Array> {
+  const signer = keys.signer
+  if (signer?.access !== 'edit') throw new Error('edit link required')
+  let payload = update
+  if (file) {
+    payload = new Uint8Array(4 + update.length)
+    new DataView(payload.buffer).setUint32(0, id)
+    payload.set(update, 4)
+  }
+  const message = join(file ? FILE_DOMAIN : DOMAIN, payload)
+  const signature = new Uint8Array(
+    await crypto.subtle.sign('Ed25519', signer.key, Uint8Array.from(message)),
+  )
+  return encrypt(keys.frameKey, join(message, signature))
+}
+
+/** Decrypts a kept entry or bundle and checks an editor signed it; returns the signed message. */
+export async function openKeptFrame(keys: RoomKeys, ciphertext: Uint8Array): Promise<Uint8Array> {
+  const plain = await decrypt(keys.frameKey, ciphertext)
+  const message = plain.subarray(0, plain.length - 64)
+  if (
+    plain.length <= 64 ||
+    !(await crypto.subtle.verify(
+      'Ed25519',
+      keys.editKey,
+      Uint8Array.from(plain.subarray(plain.length - 64)),
+      Uint8Array.from(message),
+    ))
+  )
+    throw new Error('invalid kept signature')
+  return message
+}
+export type FileUpdate = { id: number; update: Uint8Array }
+export type BundleFile = FileUpdate & { path: string }
+export type OpenedSnapshot =
   | { kind: 'bundle'; files: BundleFile[] }
   | { kind: 'legacy'; filename: string | null; update: Uint8Array }
+/** Applies kept entries to a copy of `base`, skipping and counting those that do not hold. */
+export function probeEntries(
+  base: Y.Doc,
+  entries: readonly Uint8Array[],
+): { doc: Y.Doc; skipped: number } {
+  let probe = copyDoc(base),
+    skipped = 0
+  const accepted: Uint8Array[] = []
+  try {
+    for (const update of entries) {
+      try {
+        const next = trial(probe, update)
+        probe.destroy()
+        probe = next
+        accepted.push(update)
+      } catch {
+        skipped++
+      }
+    }
+    while (incomplete(probe)) {
+      const complete = accepted.filter((update) => integrated(probe, update))
+      if (complete.length === accepted.length) complete.length = 0
+      skipped += accepted.length - complete.length
+      accepted.splice(0, accepted.length, ...complete)
+      probe.destroy()
+      probe = copyDoc(base)
+      for (const update of accepted) Y.applyUpdate(probe, update)
+    }
+    return { doc: probe, skipped }
+  } catch (error) {
+    probe.destroy()
+    throw error
+  }
+}
+
 function payloadFor(message: Uint8Array, domain: Uint8Array): Uint8Array | undefined {
   return domain.every((byte, i) => message[i] === byte) ? message.slice(domain.length) : undefined
 }
-function decodeUpdate(message: Uint8Array): FileUpdate {
+export function decodeUpdate(message: Uint8Array): FileUpdate {
   const payload = payloadFor(message, FILE_DOMAIN)
   if (payload) {
     if (payload.length <= 4) throw new Error('invalid kept file update')
@@ -427,7 +451,7 @@ function decodeUpdate(message: Uint8Array): FileUpdate {
   if (!legacy?.length) throw new Error('invalid kept domain')
   return { id: 0, update: legacy }
 }
-function decodeSnapshot(message: Uint8Array): OpenedSnapshot {
+export function decodeSnapshot(message: Uint8Array): OpenedSnapshot {
   const bundle = payloadFor(message, BUNDLE_DOMAIN)
   if (bundle) return { kind: 'bundle', files: decodeBundle(bundle) }
   const payload = payloadFor(message, SNAPSHOT_DOMAIN)
@@ -447,7 +471,7 @@ function decodeSnapshot(message: Uint8Array): OpenedSnapshot {
   if (!legacy?.length) throw new Error('invalid kept snapshot domain')
   return { kind: 'legacy', filename: null, update: legacy }
 }
-function mergeSnapshot(base: Y.Doc, update: Uint8Array): void {
+export function mergeSnapshot(base: Y.Doc, update: Uint8Array): void {
   const empty = declare(new Y.Doc(), kindOf(base) === 'comments')
   let snapshot: Y.Doc | undefined
   try {
@@ -550,14 +574,14 @@ function isSnapshot(value: unknown): value is Snapshot {
     )
   )
 }
-function incomplete(doc: Y.Doc): boolean {
+export function incomplete(doc: Y.Doc): boolean {
   return doc.store.pendingStructs !== null || doc.store.pendingDs !== null
 }
 /** A kept file's doc has one root: its text, or the comments paired with it. */
-function kindOf(doc: Y.Doc): 'content' | 'comments' {
+export function kindOf(doc: Y.Doc): 'content' | 'comments' {
   return doc.share.has('comments') ? 'comments' : 'content'
 }
-function declare(doc: Y.Doc, comments: boolean): Y.Doc {
+export function declare(doc: Y.Doc, comments: boolean): Y.Doc {
   if (comments) doc.getMap('comments')
   else doc.getText('content')
   return doc
@@ -567,7 +591,7 @@ function copyDoc(doc: Y.Doc): Y.Doc {
   Y.applyUpdate(copy, Y.encodeStateAsUpdate(doc))
   return copy
 }
-function trial(base: Y.Doc, update: Uint8Array): Y.Doc {
+export function trial(base: Y.Doc, update: Uint8Array): Y.Doc {
   // Anyone with the edit key may log an update: comments are checked as in a live room.
   const refusal = kindOf(base) === 'comments' ? checkMetaUpdate(base, update) : null
   if (refusal) throw new Error('invalid kept comments')

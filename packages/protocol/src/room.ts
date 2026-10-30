@@ -52,7 +52,8 @@ import {
   RESEND_EVERY_MS,
   SETTLE_AFTER_MS,
 } from './fresh.ts'
-import { Kind, splitKind, withKind } from './kinds.ts'
+import { KeptAway, type KeptSync } from './kept-away-client.ts'
+import { Kind, parseNumbers, splitKind, withKind } from './kinds.ts'
 import {
   decodeMessage,
   encodeMessage,
@@ -80,11 +81,16 @@ import { openMessage, signMessage } from './signed.ts'
  * `busy` is not: the relay turned us away for now, and the client tries again
  * later than after a drop. Nor is `waiting`: we are connected, but the host
  * dropped and the relay waits for it to come back; nobody edits meanwhile.
+ * `kept` is a room whose host is away on purpose, or for good, and which the
+ * relay keeps (docs/design/rooms-away.md): edits go to its log, until
+ * `keptUntil`. `log-full` is that room refusing edits, its log being full.
  */
 export type RoomStatus =
   | 'connecting'
   | 'connected'
   | 'waiting'
+  | 'kept'
+  | 'log-full'
   | 'disconnected'
   | 'busy'
   | 'closed'
@@ -147,6 +153,10 @@ export interface RoomClientOptions {
   /** The least a busy relay is waited out before trying again. */
   busyBackoffMs?: number
   onStatus?: (status: RoomStatus) => void
+  /** While the room is kept: whether the relay has logged all of this client's edits. */
+  onKeptSync?: (state: KeptSync) => void
+  /** How many entries of the kept room did not hold, and were left out, in all. */
+  onKeptSkipped?: (count: number) => void
   onError?: (error: unknown) => void
   onAttachment?: (attachment: Attachment) => void
   onCanvas?: (message: CanvasMessage) => void
@@ -234,6 +244,8 @@ const RESYNC_EVERY_MS = 5000
 const MANIFEST_EVERY_MS = 2000
 
 const OPEN = 1
+/** The relay's word that an entry did not fit its log. */
+const LOG_FULL = 'log full'
 
 /**
  * Keeps a Y.Doc and Awareness in sync with every other peer in a room.
@@ -257,6 +269,9 @@ export class RoomClient {
   timeLimitSeconds: number | undefined
 
   private readonly opts: RoomClientOptions
+  private readonly kept: KeptAway
+  // Whether the relay has sent anything on this connection yet.
+  private heard = false
   private socket: SocketLike | null = null
   private attempts = 0
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -302,9 +317,21 @@ export class RoomClient {
     this.opts = opts
     this.doc = opts.doc
     this.awareness = opts.awareness
+    this.kept = new KeptAway(opts.keys, this, {
+      docs: () => [[0, { doc: this.doc, comments: false }], ...this.files],
+      entry: (id, update) => this.sendEntry(id, update),
+      manifest: (files) => opts.onManifest?.(files),
+      sync: (state) => opts.onKeptSync?.(state),
+      skipped: (count) => opts.onKeptSkipped?.(count),
+    })
     this.doc.on('update', this.handleDocUpdate)
     this.awareness.on('update', this.handleAwarenessUpdate)
     this.awareness.on('change', this.handleAwarenessChange)
+  }
+
+  /** When the relay stops keeping the room, in ms since the epoch, while the host is away. */
+  get keptUntil(): number {
+    return this.kept.until
   }
 
   connect(): void {
@@ -312,7 +339,7 @@ export class RoomClient {
     this.setStatus('connecting')
     const createSocket = this.opts.createSocket ?? defaultCreateSocket
     const socket = createSocket(
-      this.opts.url,
+      this.socketUrl(),
       this.opts.headers,
       admissionProtocols(this.opts.admissionToken),
     )
@@ -324,51 +351,31 @@ export class RoomClient {
     socket.onopen = () => {
       if (this.socket !== socket) return
       this.attempts = 0
-      // The whole state goes to the room on connecting, from a peer that may
-      // write it. When it does not fit a frame, send nothing: a SyncStep1
-      // alone would have every peer answer with a state as large.
-      const edits = this.edits()
-      this.fresh.connected()
-      if (edits && this.doc.store.clients.size > 0) this.fresh.wrote()
-      const step2 = encoding.createEncoder()
-      if (edits) syncProtocol.writeSyncStep2(step2, this.doc)
-      const state = encoding.toUint8Array(step2)
-      if (frameBytes(state.length) > MAX_FRAME_BYTES) {
-        this.tooLarge(socket)
-        return
-      }
-      // Before anyone hears this client is connected, and sends once. Signers
-      // show they are live anew on every connection: what they sent while
-      // this one was down could be sent again now.
-      this.guard.forgetLive()
-      this.settled = false
-      this.settleIn(SETTLE_AFTER_MS)
-      this.setStatus('connected')
-      // First, so that peers answer it before what they send in reply.
-      this.send(MessageType.Fresh, encodeFresh({ nonce: this.fresh.renew() }))
-      this.sendSync((encoder) => syncProtocol.writeSyncStep1(encoder, this.doc))
-      if (edits) this.send(MessageType.Sync, state)
-      this.sendAwareness([this.doc.clientID])
-      if (this.manifest) this.send(MessageType.Files, this.manifest)
-      for (const [id, f] of this.files) this.syncFile(id, f.doc)
+      // Told again by the relay, if the room is kept.
+      this.kept.active = false
+      this.heard = false
+      this.greet(socket)
     }
     socket.onmessage = (ev) => {
       if (this.socket !== socket) return
-      // The relay's own word on the host, the only text it sends.
-      if (ev.data === HOST_AWAY) {
-        if (this.status === 'connected') this.setStatus('waiting')
-        return
-      }
-      if (ev.data === HOST_BACK) {
-        if (this.status === 'waiting') this.setStatus('connected')
+      const heard = this.heard
+      this.heard = true
+      if (typeof ev.data === 'string') {
+        this.relayText(ev.data, socket, heard)
         return
       }
       const bytes = toBytes(ev.data)
-      // Version 6: a live frame has kind 0. The other kinds are for clients
-      // that keep a room while its host is away; this one ignores them.
+      // Version 6: a live frame has kind 0. The other kinds are those of a
+      // room kept while its host is away (kept-away-client.ts).
       const split = bytes && splitKind(bytes)
-      if (!split || split.kind !== Kind.Live) return
-      const data = split.payload
+      if (!split) return
+      const { kind, payload: data } = split
+      if (kind !== Kind.Live) {
+        this.receiveChain = this.receiveChain
+          .then(() => this.kept.receive(kind, data))
+          .catch((error) => this.opts.onError?.(error))
+        return
+      }
       this.receiveChain = this.receiveChain
         .then(() => this.receive(data))
         .catch((error) => this.opts.onError?.(error))
@@ -396,6 +403,113 @@ export class RoomClient {
     socket.onerror = (error) => {
       this.opts.onError?.(error)
     }
+  }
+
+  /** The relay's own words: on the host, and on a room kept without it. */
+  private relayText(text: string, socket: SocketLike, heard: boolean): void {
+    const was = this.status
+    if (text === HOST_AWAY) {
+      if (was === 'connected') this.setStatus('waiting')
+    } else if (text === HOST_BACK) {
+      if (was === 'kept' || was === 'log-full') {
+        // Live again: the host reconciles by sync, so what is held goes.
+        this.kept.settle()
+        this.greet(socket)
+      } else if (was === 'waiting') this.setStatus('connected')
+    } else if (text === LOG_FULL) {
+      this.setStatus('log-full')
+    } else {
+      const until = parseNumbers('kept', text, 1)?.[0]
+      if (until === undefined) return
+      this.kept.active = true
+      this.kept.until = until
+      // The relay sends a peer that joins the snapshot and the log. One that
+      // was live in the room has neither: it joins again to get them.
+      if (heard) {
+        socket.close(1000, 'joining again')
+        return
+      }
+      this.setStatus('kept')
+    }
+  }
+
+  /** The URL to connect to: with the last log entry held, which a header cannot say in a browser. */
+  private socketUrl(): string {
+    const after = this.kept.after
+    if (after === undefined) return this.opts.url
+    const url = new URL(this.opts.url)
+    url.searchParams.set('after', String(after))
+    return url.toString()
+  }
+
+  /** Sends an update of a doc as an entry, while the room is kept. Only editors do. */
+  private sendEntry(id: number, update: Uint8Array): void {
+    if (this.opts.keys.access !== 'edit') return
+    const socket = this.socket
+    this.sendChain = this.sendChain
+      .then(async () => {
+        const open = () => socket !== null && socket.readyState === OPEN
+        const body = await this.kept.entry(id, update, open)
+        if (body && socket) await this.putEntry(socket, body)
+      })
+      .catch((error) => this.opts.onError?.(error))
+  }
+
+  private async putEntry(socket: SocketLike, body: Uint8Array): Promise<void> {
+    if (frameBytes(body.length) > MAX_FRAME_BYTES) {
+      this.tooLarge(socket)
+      return
+    }
+    await this.pace(this.pacer, body.length)
+    if (socket.readyState === OPEN) socket.send(withKind(Kind.Entry, body))
+  }
+
+  /** Waits out the pacer's allowance for a message of this size. */
+  private async pace(pacer: Pacer, bytes: number): Promise<void> {
+    const wait = pacer.take(bytes)
+    if (wait <= 0) return
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, wait)
+      this.wake = () => {
+        clearTimeout(timer)
+        resolve()
+      }
+    })
+    this.wake = null
+  }
+
+  /**
+   * Sends the room this client's state, as a peer that just connected does:
+   * to a host that returns to a room kept without it, the same.
+   */
+  private greet(socket: SocketLike): void {
+    // The whole state goes to the room on connecting, from a peer that may
+    // write it. When it does not fit a frame, send nothing: a SyncStep1
+    // alone would have every peer answer with a state as large.
+    const edits = this.edits()
+    this.fresh.connected()
+    if (edits && this.doc.store.clients.size > 0) this.fresh.wrote()
+    const step2 = encoding.createEncoder()
+    if (edits) syncProtocol.writeSyncStep2(step2, this.doc)
+    const state = encoding.toUint8Array(step2)
+    if (frameBytes(state.length) > MAX_FRAME_BYTES) {
+      this.tooLarge(socket)
+      return
+    }
+    // Before anyone hears this client is connected, and sends once. Signers
+    // show they are live anew on every connection: what they sent while
+    // this one was down could be sent again now.
+    this.guard.forgetLive()
+    this.settled = false
+    this.settleIn(SETTLE_AFTER_MS)
+    this.setStatus('connected')
+    // First, so that peers answer it before what they send in reply.
+    this.send(MessageType.Fresh, encodeFresh({ nonce: this.fresh.renew() }))
+    this.sendSync((encoder) => syncProtocol.writeSyncStep1(encoder, this.doc))
+    if (edits) this.send(MessageType.Sync, state)
+    this.sendAwareness([this.doc.clientID])
+    if (this.manifest) this.send(MessageType.Files, this.manifest)
+    for (const [id, f] of this.files) this.syncFile(id, f.doc)
   }
 
   /** Announces departure, closes the socket and stops reconnecting. */
@@ -463,6 +577,7 @@ export class RoomClient {
     if (this.files.has(id)) throw new Error(`file ${id} added twice`)
     const onUpdate = (update: Uint8Array, origin: unknown) => {
       if (origin === this || !this.writes(id)) return
+      if (this.kept.active) return this.sendEntry(id, update)
       this.fresh.wrote()
       this.sendFileSync(id, (encoder) => syncProtocol.writeUpdate(encoder, update))
     }
@@ -477,7 +592,8 @@ export class RoomClient {
       resyncAt: 0,
       resyncTimer: null,
     })
-    const open = this.status === 'connected' || this.status === 'waiting'
+    this.kept.adopt(id, doc, comments)
+    const open = ['connected', 'waiting', 'kept'].includes(this.status)
     if (this.socket?.readyState === OPEN && open) this.syncFile(id, doc)
   }
 
@@ -517,6 +633,8 @@ export class RoomClient {
     const frame = await this.readFrame(data)
     if (!frame) return
     const { access, message, vouched } = frame
+    // An editor live in a room we hold edits for: the host is here, and takes them.
+    if (vouched && access === 'edit' && !this.kept.active && this.kept.held > 0) this.kept.settle()
     if (message.type === MessageType.Fresh) {
       this.receiveFresh(frame, decodeFresh(message.payload))
       return
@@ -826,6 +944,7 @@ export class RoomClient {
 
   private handleDocUpdate = (update: Uint8Array, origin: unknown) => {
     if (origin === this || !this.edits()) return
+    if (this.kept.active) return this.sendEntry(0, update)
     this.fresh.wrote()
     this.sendSync((encoder) => syncProtocol.writeUpdate(encoder, update))
   }
@@ -911,17 +1030,7 @@ export class RoomClient {
         if (socket.readyState !== OPEN) return
         // Paced on leaving too: going over the allowance would close the
         // socket before the edits still queued reach the room.
-        const wait = pacer.take(frameBytes(payload.length))
-        if (wait > 0) {
-          await new Promise<void>((resolve) => {
-            const timer = setTimeout(resolve, wait)
-            this.wake = () => {
-              clearTimeout(timer)
-              resolve()
-            }
-          })
-          this.wake = null
-        }
+        await this.pace(pacer, frameBytes(payload.length))
         const header = encodeFrame(this.sender, counter, new Uint8Array())
         const signed = signer ? await signMessage(signer, header, message) : message
         const data = await encrypt(
