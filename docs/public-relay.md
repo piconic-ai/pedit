@@ -40,8 +40,7 @@ truncates the log only after saving the edits locally. Guests can read and
 edit while the host is away. The relay deletes the snapshot and log at the
 keep deadline or total room limit, or at once when the host runs `pedit --close`,
 which also deletes the room's images. The host does that only after saving every
-edit to its files. A marker prevents reuse of the closed room; later requests get
-HTTP 410, with a header telling a room the host closed from one that expired.
+edit to its files. A marker prevents reuse of the closed room.
 A kept room also keeps the encrypted images guests paste, in R2 under `kept/`
 instead of `rooms/`, whether or not the host is connected: they are not deleted
 when the host leaves, only when the room expires or ends, within the same
@@ -272,14 +271,13 @@ also use this budget; after it fills, the host must resume and checkpoint
 before more edits can be retained. Each encrypted entry is at most 1 MiB.
 
 The values are `vars` and `ratelimits` in `packages/worker/wrangler.jsonc` and
-the constants in `packages/worker/src/room.ts` and `kept-text.ts`. A network is one IP address,
+the constants in `packages/worker/src/room.ts` and `kept-away.ts`. A network is one IP address,
 or for IPv6 one /64. Rate limits are counted per Cloudflare location and are
 approximate ([Cloudflare](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/)).
-The new-room limit counts `POST /api/rooms` and kept-room initialization requests. The relay derives a
+The new-room limit counts `POST /api/rooms` requests. The relay derives a
 room's ID from its host token without remembering which tokens it issued, so a
 live client can make its own and skip that creation request; WebSocket clients
-are still held to the connection limit. Kept-room initialization cannot skip
-its creation limit. A guest over the rate limits is disconnected and
+are still held to the connection limit. A guest over the rate limits is disconnected and
 reconnects; a host over them ends the session. A live room ends 24 hours after its
 host first connected, even if the host is still connected or has reconnected
 since: everyone is disconnected and its link stops working. Running pedit

@@ -3,7 +3,6 @@ import { Room as ProductionRoom } from '../../../../packages/worker/src/room.ts'
 export class Room extends ProductionRoom {
   override async fetch(request: Request): Promise<Response> {
     if (new URL(request.url).pathname.startsWith('/__test/kept/')) {
-      const snapshot = this.ctx.storage.kv.get<{ snapshot: string }>('keptText')
       const exists = this.ctx.storage.sql
         .exec("SELECT name FROM sqlite_master WHERE name = 'kept_text_log'")
         .toArray().length
@@ -19,7 +18,7 @@ export class Room extends ProductionRoom {
             .exec<{ count: number }>('SELECT count(*) AS count FROM kept_text_log')
             .one().count
         : 0
-      return Response.json({ bytes: bytes + (snapshot?.snapshot.length ?? 0), entries })
+      return Response.json({ bytes, entries })
     }
     return super.fetch(request)
   }

@@ -1,13 +1,22 @@
+import { MAX_FRAME_BYTES } from '@pedit/protocol/frame'
 import { encodeLogEnd, encodeLogged, Kind, withKind } from '@pedit/protocol/kinds'
-import { ensureKeptLog, KEPT_LOG_BYTES, KEPT_LOG_ENTRIES } from './kept-text.ts'
 
 /**
  * Storage of a room that outlives its host (docs/design/rooms-away.md): the
  * host's latest snapshot, and a log of the entries editors wrote while it was
- * away. Both are ciphertext the relay cannot read. The log is the table the
- * HTTP kept rooms use (kept-text.ts), under the same limits; a snapshot may
- * be a megabyte, too large for kv, so it has a table of its own.
+ * away. Both are ciphertext the relay cannot read. A snapshot may be a
+ * megabyte, too large for kv, so it has a table of its own.
  */
+
+/** The most a kept log holds: bytes, and entries. */
+export const KEPT_LOG_BYTES = 4 * MAX_FRAME_BYTES
+export const KEPT_LOG_ENTRIES = 10000
+/** The log table, created when a room first needs it. */
+export function ensureKeptLog(storage: DurableObjectStorage): void {
+  storage.sql.exec(
+    'CREATE TABLE IF NOT EXISTS kept_text_log (id INTEGER PRIMARY KEY, body BLOB NOT NULL, sender TEXT NOT NULL)',
+  )
+}
 
 // kv: set once the room holds a snapshot or a log, so a room that never did has nothing to clear.
 const DATA_KEY = 'awayData'
