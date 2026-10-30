@@ -48,6 +48,13 @@ it('keeps editor admission distinct from reader admission and truncates only an 
   })
   expect(initialized.status).toBe(200)
   expect((await initialized.json<{ keepSeconds: number }>()).keepSeconds).toBe(604800)
+  expect((await send('/away', { method: 'POST', headers: auth })).status).toBe(200)
+  const away = await send('', { headers: auth })
+  expect((await away.json<{ hostAway: boolean }>()).hostAway).toBe(true)
+  expect((await send('/connect', { method: 'POST', headers: auth })).status).toBe(200)
+  const connected = await send('', { headers: { 'X-Pedit-Admission': reader } })
+  expect((await connected.json<{ hostAway: boolean }>()).hostAway).toBe(false)
+  expect((await send('/checkpoint', { headers: auth })).status).toBe(403)
   expect(
     (
       await send('/append', {

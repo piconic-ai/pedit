@@ -77,143 +77,197 @@ export async function keptText(
 ): Promise<Response> {
   const action = new URL(request.url).pathname.split('/').at(-1)
   if (await expireKeptText(storage)) return new Response(null, { status: 410 })
-  let stored = false
   let state = storage.kv.get<KeptText>('keptText')
   const token = request.headers.get('X-Pedit-Admission')
-  const reply = (value: unknown, status = 200) =>
-    Response.json(value, { status, headers: { 'Cache-Control': 'no-store' } })
   try {
     if (action === 'init' && host && request.method === 'POST') {
       if (state || storage.kv.get('openedAt') !== undefined)
         return new Response(null, { status: 409 })
-      const requested = Number(request.headers.get('X-Pedit-Keep-Seconds'))
-      const cap = maxKeep === undefined ? requested : Number(maxKeep)
-      const seconds = Math.min(requested, cap)
-      const editor = request.headers.get('X-Pedit-Editor') ?? '',
-        reader = request.headers.get('X-Pedit-Reader') ?? ''
-      if (
-        !Number.isSafeInteger(seconds) ||
-        seconds < 1 ||
-        !Number.isSafeInteger(Date.now() + seconds * 1000) ||
-        !/^[A-Za-z0-9_-]{43}$/.test(editor) ||
-        !/^[A-Za-z0-9_-]{43}$/.test(reader)
-      )
-        throw new Error('invalid keep initialization')
-      const snapshot = encode(await body(request)),
-        now = Date.now()
-      const limit = Number(maxRoom) || 0
-      state = {
-        snapshot,
-        editor,
-        reader,
-        seconds,
-        until: now + seconds * 1000,
-        total: limit > 0 ? now + Math.max(limit, seconds) * 1000 : null,
-        hostSeen: now,
-        away: false,
-        tail: 0,
-        cutoff: 0,
-      }
-      storage.transactionSync(() => {
-        if (
-          storage.kv.get('keptText') ||
-          storage.kv.get('keptTextClosed') ||
-          storage.kv.get('openedAt') !== undefined
-        )
-          throw new Error('room already initialized')
-        storage.sql.exec(
-          'CREATE TABLE IF NOT EXISTS kept_text_log (id INTEGER PRIMARY KEY, body BLOB NOT NULL, sender TEXT NOT NULL)',
-        )
-        storage.kv.put('keptText', state)
-      })
-      stored = true
+      state = await initialize(request, storage, maxKeep, maxRoom)
     } else {
       if (!state) return new Response(null, { status: 404 })
       if (!host && token !== state.editor && token !== state.reader)
         return new Response(null, { status: 403 })
-      if (action === 'append' && request.method === 'POST' && token === state.editor) {
-        const sender = request.headers.get('X-Pedit-Sender') ?? ''
-        if (!/^[A-Za-z0-9_-]{1,36}$/.test(sender)) throw new Error('invalid sender')
-        const data = await body(request)
-        storage.transactionSync(() => {
-          const current = storage.kv.get<KeptText>('keptText')
-          if (!current || Date.now() >= Math.min(current.until, current.total ?? Infinity))
-            throw new Error('room closed')
-          const usage = storage.sql
-            .exec<{ bytes: number; count: number }>(
-              'SELECT coalesce(sum(length(body)), 0) AS bytes, count(*) AS count FROM kept_text_log',
-            )
-            .one()
-          if (usage.bytes + data.length > 4 * MAX_FRAME_BYTES || usage.count >= 1000)
-            throw new Error('room log full')
-          state = { ...current, tail: current.tail + 1 }
-          storage.sql.exec(
-            'INSERT INTO kept_text_log (id, body, sender) VALUES (?, ?, ?)',
-            state.tail,
-            data,
-            sender,
-          )
-          storage.kv.put('keptText', state)
-        })
-        stored = true
-      } else if (host && action === 'checkpoint' && request.method === 'POST') {
-        const snapshot = encode(await body(request)),
-          cutoff = Number(request.headers.get('X-Pedit-Cutoff'))
-        storage.transactionSync(() => {
-          const current = storage.kv.get<KeptText>('keptText')
-          if (
-            !current ||
-            Date.now() >= Math.min(current.until, current.total ?? Infinity) ||
-            !Number.isSafeInteger(cutoff) ||
-            cutoff < current.cutoff ||
-            cutoff > current.tail
-          )
-            throw new Error('invalid cutoff')
-          state = { ...current, snapshot, cutoff }
-          storage.sql.exec('DELETE FROM kept_text_log WHERE id <= ?', cutoff)
-          storage.kv.put('keptText', state)
-        })
-        stored = true
-      } else if (host && action === 'away' && request.method === 'POST')
-        state = { ...state, away: true, until: Date.now() + state.seconds * 1000 }
-      else if (host && action === 'connect' && request.method === 'POST')
-        state = {
-          ...state,
-          away: false,
-          hostSeen: Date.now(),
-          until: Date.now() + state.seconds * 1000,
-        }
-      else if (action === 'keep' && request.method === 'GET') {
-        if (host && !state.away)
-          state = { ...state, hostSeen: Date.now(), until: Date.now() + state.seconds * 1000 }
-      } else return new Response(null, { status: 403 })
+      const result = await changeState(
+        request,
+        storage,
+        action,
+        host,
+        token === state.editor,
+        state,
+      )
+      if (result instanceof Response) return result
+      state = result
     }
+    state = storage.kv.get<KeptText>('keptText')
     if (!state) throw new Error('room unavailable')
-    if (!stored) storage.kv.put('keptText', state)
-    const response =
-      request.method !== 'GET'
-        ? reply({
-            keepSeconds: state.seconds,
-            keepUntil: Math.min(state.until, state.total ?? Infinity),
-          })
-        : reply({
-            snapshot: state.snapshot,
-            entries: storage.sql
-              .exec<{ id: number; body: ArrayBuffer }>(
-                'SELECT id, body FROM kept_text_log ORDER BY id',
-              )
-              .toArray()
-              .map((row) => ({ id: row.id, body: encode(new Uint8Array(row.body)) })),
-            tail: state.tail,
-            hostAway: state.away || Date.now() - state.hostSeen > 15000,
-            keepUntil: Math.min(state.until, state.total ?? Infinity),
-          })
+    const response = stateResponse(request, storage, state)
     await armKeptText(storage)
     await storage.sync()
     return response
   } catch {
     return new Response(null, { status: 400 })
   }
+}
+
+async function changeState(
+  request: Request,
+  storage: DurableObjectStorage,
+  action: string | undefined,
+  host: boolean,
+  editor: boolean,
+  state: KeptText,
+): Promise<KeptText | Response> {
+  switch (action) {
+    case 'append':
+      if (request.method !== 'POST' || !editor) return new Response(null, { status: 403 })
+      return appendUpdate(request, storage)
+    case 'checkpoint':
+      if (!host || request.method !== 'POST') return new Response(null, { status: 403 })
+      return checkpointUpdate(request, storage)
+    default: {
+      const changed = lifecycle(request, action, host, state)
+      if (!changed) return new Response(null, { status: 403 })
+      storage.kv.put('keptText', changed)
+      return changed
+    }
+  }
+}
+
+function lifecycle(
+  request: Request,
+  action: string | undefined,
+  host: boolean,
+  state: KeptText,
+): KeptText | undefined {
+  const now = Date.now()
+  if (host && request.method === 'POST') {
+    if (action === 'away') return { ...state, away: true, until: now + state.seconds * 1000 }
+    if (action === 'connect')
+      return { ...state, away: false, hostSeen: now, until: now + state.seconds * 1000 }
+  }
+  if (action !== 'keep' || request.method !== 'GET') return undefined
+  return host && !state.away
+    ? { ...state, hostSeen: now, until: now + state.seconds * 1000 }
+    : state
+}
+function stateResponse(request: Request, storage: DurableObjectStorage, state: KeptText): Response {
+  const reply = (value: unknown) =>
+    Response.json(value, { headers: { 'Cache-Control': 'no-store' } })
+  return request.method !== 'GET'
+    ? reply({
+        keepSeconds: state.seconds,
+        keepUntil: Math.min(state.until, state.total ?? Infinity),
+      })
+    : reply({
+        snapshot: state.snapshot,
+        entries: storage.sql
+          .exec<{ id: number; body: ArrayBuffer }>('SELECT id, body FROM kept_text_log ORDER BY id')
+          .toArray()
+          .map((row) => ({ id: row.id, body: encode(new Uint8Array(row.body)) })),
+        tail: state.tail,
+        hostAway: state.away || Date.now() - state.hostSeen > 15000,
+        keepUntil: Math.min(state.until, state.total ?? Infinity),
+      })
+}
+
+async function initialize(
+  request: Request,
+  storage: DurableObjectStorage,
+  maxKeep: string | undefined,
+  maxRoom: string | undefined,
+): Promise<KeptText> {
+  const requested = Number(request.headers.get('X-Pedit-Keep-Seconds'))
+  const cap = maxKeep === undefined ? requested : Number(maxKeep)
+  const seconds = Math.min(requested, cap)
+  const editor = request.headers.get('X-Pedit-Editor') ?? '',
+    reader = request.headers.get('X-Pedit-Reader') ?? ''
+  if (
+    !Number.isSafeInteger(seconds) ||
+    seconds < 1 ||
+    !Number.isSafeInteger(Date.now() + seconds * 1000) ||
+    !/^[A-Za-z0-9_-]{43}$/.test(editor) ||
+    !/^[A-Za-z0-9_-]{43}$/.test(reader)
+  )
+    throw new Error('invalid keep initialization')
+  const snapshot = encode(await body(request)),
+    now = Date.now()
+  const limit = Number(maxRoom) || 0
+  const state: KeptText = {
+    snapshot,
+    editor,
+    reader,
+    seconds,
+    until: now + seconds * 1000,
+    total: limit > 0 ? now + Math.max(limit, seconds) * 1000 : null,
+    hostSeen: now,
+    away: false,
+    tail: 0,
+    cutoff: 0,
+  }
+  storage.transactionSync(() => {
+    if (
+      storage.kv.get('keptText') ||
+      storage.kv.get('keptTextClosed') ||
+      storage.kv.get('openedAt') !== undefined
+    )
+      throw new Error('room already initialized')
+    storage.sql.exec(
+      'CREATE TABLE IF NOT EXISTS kept_text_log (id INTEGER PRIMARY KEY, body BLOB NOT NULL, sender TEXT NOT NULL)',
+    )
+    storage.kv.put('keptText', state)
+  })
+  return state
+}
+
+async function appendUpdate(request: Request, storage: DurableObjectStorage): Promise<KeptText> {
+  const sender = request.headers.get('X-Pedit-Sender') ?? ''
+  if (!/^[A-Za-z0-9_-]{1,36}$/.test(sender)) throw new Error('invalid sender')
+  const data = await body(request)
+  return storage.transactionSync(() => {
+    const current = storage.kv.get<KeptText>('keptText')
+    if (!current || Date.now() >= Math.min(current.until, current.total ?? Infinity))
+      throw new Error('room closed')
+    const usage = storage.sql
+      .exec<{ bytes: number; count: number }>(
+        'SELECT coalesce(sum(length(body)), 0) AS bytes, count(*) AS count FROM kept_text_log',
+      )
+      .one()
+    if (usage.bytes + data.length > 4 * MAX_FRAME_BYTES || usage.count >= 1000)
+      throw new Error('room log full')
+    const state = { ...current, tail: current.tail + 1 }
+    storage.sql.exec(
+      'INSERT INTO kept_text_log (id, body, sender) VALUES (?, ?, ?)',
+      state.tail,
+      data,
+      sender,
+    )
+    storage.kv.put('keptText', state)
+    return state
+  })
+}
+
+async function checkpointUpdate(
+  request: Request,
+  storage: DurableObjectStorage,
+): Promise<KeptText> {
+  const snapshot = encode(await body(request)),
+    cutoff = Number(request.headers.get('X-Pedit-Cutoff'))
+  return storage.transactionSync(() => {
+    const current = storage.kv.get<KeptText>('keptText')
+    if (
+      !current ||
+      Date.now() >= Math.min(current.until, current.total ?? Infinity) ||
+      !Number.isSafeInteger(cutoff) ||
+      cutoff < current.cutoff ||
+      cutoff > current.tail
+    )
+      throw new Error('invalid cutoff')
+    const state = { ...current, snapshot, cutoff }
+    storage.sql.exec('DELETE FROM kept_text_log WHERE id <= ?', cutoff)
+    storage.kv.put('keptText', state)
+    return state
+  })
 }
 
 async function armKeptText(storage: DurableObjectStorage): Promise<void> {
