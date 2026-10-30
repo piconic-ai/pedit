@@ -87,7 +87,8 @@ away. In the same project, run `pedit --resume <link>` to merge their edits
 back into the file. Resume information stays in a private 0600 file under
 `.pedit/`. Keep that file until the review ends. This mode shares one text
 file, without comments or attachments. Changes made directly to the local
-file while away are preserved and stop automatic recovery.
+file while away are preserved and stop automatic recovery. These two host
+commands currently require Unix file permissions and are unavailable on Windows.
 
 Collaborators who would rather stay in their own editor join from the command
 line instead. Given the link, `pedit` mirrors the shared file to a temporary

@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -64,6 +65,9 @@ type keptTextHost struct {
 // RunKeptText keeps the relay open when the host leaves. Source changes made
 // outside this session are refused rather than overwritten.
 func RunKeptText(ctx context.Context, opts KeptTextOptions, ready func(string, int64, int64), leave func(int64)) (runErr error) {
+	if runtime.GOOS == "windows" {
+		return errors.New("--keep and --resume require Unix file permissions; Windows is not supported")
+	}
 	h := keptTextHost{client: &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 	if e := h.prepare(ctx, opts); e != nil {
 		return e
