@@ -24,6 +24,7 @@ import {
 } from '@pedit/protocol/close'
 import { MAX_FRAME_BYTES } from '@pedit/protocol/frame'
 import { RELAY_BYTE_RATE, RELAY_MESSAGE_RATE } from '@pedit/protocol/pace'
+import { keptText, keptTextAlarm } from './kept-text.ts'
 
 // Shared browser code brings DOM's SubtleCrypto into this program. Augment it
 // with the documented Workers extension also present in our generated types.
@@ -225,6 +226,17 @@ export class Room extends DurableObject<Env> {
 
   override async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname
+    if (/\/keep(?:\/|$)/.test(path))
+      return keptText(
+        request,
+        this.ctx.storage,
+        request.headers.get(HOST_HEADER) === '1',
+        'KEEP_MAX_SECONDS' in this.env && typeof this.env.KEEP_MAX_SECONDS === 'string'
+          ? this.env.KEEP_MAX_SECONDS
+          : undefined,
+        this.env.ROOM_MAX_SECONDS,
+      )
+    if (this.kept()) return new Response('kept rooms use text synchronization', { status: 409 })
     const blob = BLOB_PATH.exec(path)?.[1]
     if (blob) return this.blob(request, blob)
     // Only a connection goes on: a blob path the pattern missed is not one.
@@ -264,6 +276,7 @@ export class Room extends DurableObject<Env> {
   private async admit(token: string, isHost: boolean, read: string | null): Promise<Response> {
     const digest = await sha256(token)
     const readDigest = read === null ? null : await sha256(read)
+    if (this.kept()) return new Response('kept rooms use text synchronization', { status: 409 })
     // Deploys can drop every socket without a close callback. Only a guest
     // with this session's editor admission may start its missing host grace
     // period: the reader token goes to anyone a link was passed on to.
@@ -298,6 +311,13 @@ export class Room extends DurableObject<Env> {
     if (!role) return new Response('invalid room admission', { status: 403 })
     if (this.full(isHost, role)) return refuse(ROOM_FULL, 'room is full')
     return this.accept(isHost, role)
+  }
+
+  private kept(): boolean {
+    return (
+      this.ctx.storage.kv.get('keptText') !== undefined ||
+      this.ctx.storage.kv.get('keptTextClosed') === true
+    )
   }
 
   // Takes a peer admitted to a place. Nothing awaits before the accept.
@@ -412,6 +432,8 @@ export class Room extends DurableObject<Env> {
    * still needed and can run twice.
    */
   override async alarm(): Promise<void> {
+    if (await keptTextAlarm(this.ctx.storage)) return
+
     if (this.expired()) {
       await this.expire()
       return

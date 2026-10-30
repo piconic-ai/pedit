@@ -164,6 +164,31 @@ func (f *BoundFile) Close() error { return f.root.Close() }
 // It stays open until Close.
 func (f *BoundFile) Dir() *os.Root { return f.root }
 
+// Sync flushes the file and directory through their anchored handles, even
+// when the directory was renamed. A replaced file leaves the result uncertain.
+func (f *BoundFile) Sync() error {
+	entry, file, err := f.look(f.name)
+	if err != nil {
+		return err
+	}
+	if file == nil {
+		return f.errNotRegular()
+	}
+	defer file.Close()
+	directory, err := f.root.Open(".")
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	if err := errors.Join(file.Sync(), directory.Sync()); err != nil {
+		return err
+	}
+	if current, err := f.root.Lstat(f.name); err != nil || !os.SameFile(entry.info, current) {
+		return ErrExternalChange
+	}
+	return nil
+}
+
 // CreateOnly makes Write refuse any file at the name, with ErrExternalChange,
 // until Write has created the file itself.
 func (f *BoundFile) CreateOnly() { f.createOnly.Store(true) }

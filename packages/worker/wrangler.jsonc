@@ -52,6 +52,7 @@
     "ROOM_GUESTS": "4",
     "BLOB_MAX_BYTES": "5242880",
     "BLOB_QUOTA_BYTES": "52428800",
+    "KEEP_MAX_SECONDS": "604800",
     "ROOM_MAX_SECONDS": "86400"
   },
   // Per client IP (an IPv6 /64) and Cloudflare location; see docs/self-hosting.md.
@@ -61,7 +62,12 @@
       "namespace_id": "1001",
       "simple": { "limit": 20, "period": 60 }
     },
-    { "name": "CONNECTION_LIMIT", "namespace_id": "1002", "simple": { "limit": 60, "period": 60 } }
+    { "name": "CONNECTION_LIMIT", "namespace_id": "1002", "simple": { "limit": 60, "period": 60 } },
+    {
+      "name": "KEEP_REQUEST_LIMIT",
+      "namespace_id": "1005",
+      "simple": { "limit": 1200, "period": 60 }
+    }
   ],
   // Worker Previews: every push to a branch other than `release` makes (or
   // updates) that branch's Preview via Cloudflare Workers Builds, whose
@@ -80,6 +86,7 @@
       "ROOM_GUESTS": "4",
       "BLOB_MAX_BYTES": "5242880",
       "BLOB_QUOTA_BYTES": "52428800",
+      "KEEP_MAX_SECONDS": "604800",
       "ROOM_MAX_SECONDS": "86400"
     },
     "ratelimits": [
@@ -92,6 +99,11 @@
         "name": "CONNECTION_LIMIT",
         "namespace_id": "1012",
         "simple": { "limit": 60, "period": 60 }
+      },
+      {
+        "name": "KEEP_REQUEST_LIMIT",
+        "namespace_id": "1015",
+        "simple": { "limit": 1200, "period": 60 }
       }
     ],
     // Per-Preview logs and traces: Cloudflare dashboard → `edit` Worker →
@@ -129,6 +141,11 @@
           "name": "CONNECTION_LIMIT",
           "namespace_id": "1022",
           "simple": { "limit": 60, "period": 60 }
+        },
+        {
+          "name": "KEEP_REQUEST_LIMIT",
+          "namespace_id": "1025",
+          "simple": { "limit": 1200, "period": 60 }
         }
       ]
     }

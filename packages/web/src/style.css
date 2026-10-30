@@ -8,6 +8,7 @@
   --muted: light-dark(#656d76, #8b949e);
   --line: light-dark(#d0d7de, #30363d);
   --accent: light-dark(#0969da, #58a6ff);
+  --pedit-green: #00b769;
   --code-bg: light-dark(#afb8c133, #6e768166);
   --warn-bg: light-dark(#f9ecdf, #2c221a);
   --warn-ink: light-dark(#8a4308, #f5c08a);
@@ -152,8 +153,98 @@ header {
   border-radius: 50%;
   background: var(--muted);
 }
-.status[data-status="connected"] .dot {
-  background: var(--accent);
+.room-status {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+.room-status .status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: help;
+}
+.room-status .status:hover,
+.room-status .status:focus-visible {
+  border-color: var(--line);
+  color: var(--ink);
+}
+.room-status .dot {
+  width: 18px;
+  height: 18px;
+  background: none;
+}
+.room-status .host-dot {
+  fill: var(--muted);
+  stroke: var(--panel);
+  stroke-width: 2px;
+}
+.room-status [data-host="online"] .host-dot {
+  fill: var(--pedit-green);
+}
+.room-status [data-icon="spinner"] svg {
+  animation: room-status-spin 1s linear infinite;
+}
+.status-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.status-tooltip {
+  position: fixed;
+  z-index: 100;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 16px));
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 4px 16px #0002;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  white-space: normal;
+  visibility: hidden;
+}
+/* Keep the hover path continuous across the gap below the status button. */
+.status-tooltip::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -8px;
+  height: 8px;
+}
+.room-status[data-open="true"] .status-tooltip {
+  visibility: visible;
+}
+@keyframes room-status-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .room-status [data-icon="spinner"] svg {
+    animation: none;
+  }
+}
+@media (pointer: coarse) {
+  .room-status .status {
+    width: 44px;
+    height: 44px;
+  }
 }
 .people {
   display: flex;
@@ -1408,7 +1499,7 @@ main.editor .cm-vim-panel {
  * top, one in piconic green and one in a peer orange (room.ts). It takes no width, so the text does not shift around it or after it fades.
  */
 .landing h1 {
-  --c: #00b769; /* piconic green */
+  --c: var(--pedit-green);
 }
 .landing p {
   --c: light-dark(#b85a0e, #e08a3e);

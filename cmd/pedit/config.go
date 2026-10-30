@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -326,7 +327,9 @@ func templateName(name string) string {
 }
 
 type commandArgs struct {
-	File string
+	Keep   time.Duration
+	Resume string
+	File   string
 	// More are further files to share in the same room.
 	More []string
 	// Room is a share link to join instead of a file to share.
@@ -348,6 +351,12 @@ func parseArgs(args []string) (commandArgs, error) {
 		option, value, hasValue := strings.Cut(arg, "=")
 		var err error
 		switch option {
+		case "--keep", "--resume":
+			if !hasValue {
+				i++
+				value = optionValue(args, i)
+			}
+			err = opts.setKeptOption(option, value)
 		case "-t", "--template", "-d", "--directory":
 			if !hasValue {
 				i++
@@ -370,6 +379,25 @@ func parseArgs(args []string) (commandArgs, error) {
 		return commandArgs{}, err
 	}
 	return opts, nil
+}
+
+func (o *commandArgs) setKeptOption(option, value string) error {
+	if value == "" {
+		return errors.New(option + " requires a value")
+	}
+	if option == "--keep" {
+		if o.Keep != 0 {
+			return errors.New("specify keep once")
+		}
+		keep, err := parseKeepDuration(value)
+		o.Keep = keep
+		return err
+	}
+	if o.Resume != "" {
+		return errors.New("specify resume once")
+	}
+	o.Resume = value
+	return nil
 }
 
 // optionValue is the argument at i given as an option's value, or "" when
@@ -444,6 +472,13 @@ func (o *commandArgs) addArg(arg string, hasValue bool) error {
 
 // check rejects combinations that are each fine alone.
 func (o *commandArgs) check() error {
+	if o.Keep > 0 && (o.File == "" || o.Room != "" || o.Template != "" || o.Directory != "" || o.Resume != "") {
+		return errors.New("--keep shares existing text files")
+	}
+	if o.Resume != "" && (!isShareLink(o.Resume) || o.File != "" || o.Room != "" || o.Template != "" || o.Directory != "") {
+		return errors.New("--resume requires only a share link")
+	}
+
 	if o.File != "" && o.Directory != "" {
 		return errors.New("use either a file path or -d, not both")
 	}

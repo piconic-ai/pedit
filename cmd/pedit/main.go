@@ -82,6 +82,8 @@ Options:
   -t, --template <name>  Use a template filename or type (csv, canvas, md)
   --<name>              Template shorthand (for example, --canvas)
   -d, --directory <dir>  Save a new file here (overrides config output)
+  --keep <duration>     Keep text files open after leaving (for example 7d)
+  --resume <link>       Resume a kept room hosted from this project
   -h, --help             Show this help
   -v, --version          Show the version
 
@@ -97,19 +99,25 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 1 && (args[0] == "-h" || args[0] == "--help") {
-		fmt.Fprintln(stdout, usage)
-		return 0
+	if len(args) == 1 {
+		switch args[0] {
+		case "-h", "--help":
+			fmt.Fprintln(stdout, usage)
+			return 0
+		case "-v", "--version":
+			fmt.Fprintln(stdout, getVersion())
+			return 0
+		}
 	}
-	if len(args) == 1 && (args[0] == "-v" || args[0] == "--version") {
-		fmt.Fprintln(stdout, getVersion())
-		return 0
-	}
+
 	opts, err := parseArgs(args)
 	if err != nil {
 		fmt.Fprintln(stderr, "pedit:", err)
 		fmt.Fprintln(stderr, usage)
 		return 2
+	}
+	if opts.Keep > 0 || opts.Resume != "" {
+		return runKeep(opts, stdout, stderr)
 	}
 	out := newUI(stdout, isTerminal(stdout), os.Getenv("NO_COLOR") != "")
 	latest := startUpdateCheck(getVersion(), out.tty)
