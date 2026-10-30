@@ -32,6 +32,16 @@ describe('thirdPartyLicenses', () => {
     expect(text).not.toContain('@barefootjs/client@')
   })
 
+  it('lists what was copied into the source, with the text it came under', () => {
+    const text: string = thirdPartyLicenses([], 'Intro.', [
+      { header: 'Octicons mark-github (MIT), in src/info.ts', file: 'primer-octicons.txt' },
+    ])
+    expect(text).toMatch(
+      /^Intro\.\n\nOcticons mark-github \(MIT\), in src\/info\.ts\n-+\n\nMIT License/,
+    )
+    expect(text).toContain('Copyright (c) 2026 GitHub Inc.')
+  })
+
   it('refuses packages with no license text at all', () => {
     const dir = join(mkdtempSync(join(tmpdir(), 'pedit-licenses-')), 'node_modules', 'nolicense')
     mkdirSync(dir, { recursive: true })

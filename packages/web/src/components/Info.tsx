@@ -6,7 +6,7 @@ import { panelBox } from '../settings.ts'
 
 /**
  * The info button and the panel of links it opens: the public relay's terms
- * and privacy policy, and the source. Like the settings, the panel is a
+ * and privacy policy, and the source on GitHub. Like the settings, the panel is a
  * popover, so the browser closes it on Escape or an outside click. The links
  * open in a new tab, so following one does not leave the room.
  */
@@ -75,8 +75,8 @@ export function Info(props: { links: readonly InfoLink[] }) {
                   viewBox="0 0 24 24"
                   width="16"
                   height="16"
-                  fill="none"
-                  stroke="currentColor"
+                  fill={link.filled ? 'currentColor' : 'none'}
+                  stroke={link.filled ? 'none' : 'currentColor'}
                   stroke-width="2"
                   stroke-linecap="round"
                   stroke-linejoin="round"

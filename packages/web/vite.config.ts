@@ -16,6 +16,7 @@ function licenses(): Plugin {
         source: thirdPartyLicenses(
           [...this.getModuleIds()],
           'The pedit web editor bundles the following third-party packages.',
+          [{ header: 'Octicons mark-github (MIT), in src/info.ts', file: 'primer-octicons.txt' }],
         ),
       })
     },

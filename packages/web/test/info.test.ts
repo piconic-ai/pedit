@@ -65,6 +65,11 @@ describe('Info', () => {
       ['Privacy Policy', '/privacy'],
       ['GitHub', SOURCE_URL],
     ])
+    expect(links.map((a) => a.querySelector('svg')?.getAttribute('fill'))).toEqual([
+      'none',
+      'none',
+      'currentColor',
+    ])
     for (const a of links) {
       expect(a.querySelector('svg[aria-hidden="true"] path')?.getAttribute('d')).toBeTruthy()
       expect(a.target).toBe('_blank')

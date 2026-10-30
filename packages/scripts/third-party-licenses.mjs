@@ -45,9 +45,11 @@ function licenseText(dir, pkg) {
 
 /**
  * Builds a THIRD_PARTY_LICENSES text for the npm packages whose files were
- * bundled. `files` are module paths as reported by the bundler.
+ * bundled. `files` are module paths as reported by the bundler. `copied` lists
+ * what was copied into the source instead, such as an icon's path, each with
+ * a `header` and the `file` in licenses/ that holds the text it came under.
  */
-export function thirdPartyLicenses(files, intro) {
+export function thirdPartyLicenses(files, intro, copied = []) {
   const packages = new Map()
   const add = (dir, external = []) => {
     if (packages.has(dir)) return
@@ -69,6 +71,12 @@ export function thirdPartyLicenses(files, intro) {
   for (const file of files) {
     const match = /^(.*node_modules\/(?:@[^/]+\/)?[^/]+)\//.exec(file.replace(/\\/g, '/'))
     if (match) add(resolve(match[1]))
+  }
+  for (const { header, file } of copied) {
+    packages.set(`copied:${file}`, {
+      header,
+      text: readFileSync(join(here, 'licenses', file), 'utf8').trim(),
+    })
   }
   const sections = [...packages.values()]
     .sort((a, b) => a.header.localeCompare(b.header))
