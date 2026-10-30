@@ -83,7 +83,13 @@ working when its room ends, within 24 hours
 ([room admission](contributing/room-admission.md)). The Worker-side entry of
 the host's request has not been looked at.
 <!-- TODO(operator): confirm in the dashboard that webSocketMessage events of the Room Durable Object appear as invocation logs, and whether they name the room. If per-frame logs are not wanted, set observability.logs.invocation_logs to false or lower head_sampling_rate, and update the comment in wrangler.jsonc. -->
-The room ID is in the path; the key never reaches the relay. The Worker's own
+The room ID is in the path; the key never reaches the relay. In the entries
+looked at, the room ID and the blob ID in the path showed as `REDACTED`.
+Nobody redacted them by hand: workerd replaces ID-like parts of a URL in logs
+(`redactUrl` in `src/workerd/api/util.c++`: 32 or more hex digits, or 21 or
+more characters with at least two digits, two upper case and two lower case
+letters). A room ID with fewer than two digits does not match, so some room
+IDs, about one in eight by that rule, are kept as they are. The Worker's own
 log lines are `rate limited <route>`, without the address,
 `failed to delete blobs` with the error, and one JSON line per event that
 ends a session or turns someone away, so a room that closed unexpectedly can

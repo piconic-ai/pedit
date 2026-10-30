@@ -51,7 +51,8 @@
     <h2>Logs</h2>
     <p>
       The service logs requests with Cloudflare Workers Logs, kept for 7 days. A log entry has the time
-      and path of a request (the path contains the room ID) and its status. Looking at an entry, it
+      and path of a request and its status. The path contains the room ID; in the entries we looked at,
+      Cloudflare had replaced it with <code>REDACTED</code>, but its rule for that does not catch every room ID. Looking at an entry, it
       also keeps your IP address, your browser&rsquo;s user agent, the country, city, postal code, coordinates
       and time zone Cloudflare derives from the IP address, the network (ASN and organization), and
       details of the TLS connection such as its version, cipher and client fingerprints. Events in a
