@@ -228,15 +228,17 @@ func TestRoutesAttachmentsAndCanvasMessagesByFile(t *testing.T) {
 func TestResyncsFilesAfterAReconnect(t *testing.T) {
 	relay := prototest.NewRelay(false)
 	key := protocol.GenerateKey()
-	host := join(t, relay, key, joinOpts{})
-	guest := join(t, relay, key, joinOpts{})
+	host := join(t, relay, key, joinOpts{busyBackoff: 20 * time.Millisecond})
+	guest := join(t, relay, key, joinOpts{busyBackoff: 20 * time.Millisecond})
 	notes, gNotes := newFileText("n"), newFileText("")
 	addFile(t, host, 1, notes)
 	addFile(t, guest, 1, gNotes)
 	prototest.WaitFor(t, wait, func() bool { return gNotes.String() == "n" }, "notes")
 	relay.SetRefuse(protocol.RelayBusy)
 	relay.DropAll()
-	prototest.WaitFor(t, wait, func() bool { return host.Status() != protocol.StatusConnected }, "dropped")
+	prototest.WaitFor(t, wait, func() bool {
+		return host.Status() == protocol.StatusBusy && guest.Status() == protocol.StatusBusy
+	}, "both peers refused while offline")
 	notes.insert(1, " offline") // dropped while disconnected
 	relay.SetRefuse(0)
 	prototest.WaitFor(t, wait, func() bool { return gNotes.String() == "n offline" }, "the offline edit, after reconnecting")
