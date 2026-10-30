@@ -334,19 +334,13 @@ header {
   position: fixed;
   inset: auto;
   margin: 0;
-  padding: 12px;
+  padding: 6px;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--panel);
   color: var(--ink);
   font-family: var(--sans);
   box-shadow: 0 8px 24px rgb(0 0 0 / 0.15);
-}
-.info h2 {
-  margin: 0 0 8px;
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--muted);
 }
 .info-links {
   display: grid;
@@ -356,8 +350,10 @@ header {
   list-style: none;
 }
 .info-links a {
-  display: block;
-  padding: 6px 4px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
   border-radius: 6px;
   color: var(--ink);
   font-size: 0.9rem;
@@ -366,6 +362,10 @@ header {
 .info-links a:hover,
 .info-links a:focus-visible {
   background: var(--code-bg);
+}
+.info-links svg {
+  flex: none;
+  color: var(--muted);
 }
 .settings-list {
   display: grid;

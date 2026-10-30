@@ -299,7 +299,9 @@ describe('Header', () => {
 
   it('puts the info button after the settings, when it has links', () => {
     const { q } = mount({
-      info: [{ label: 'GitHub', href: 'https://github.com/piconic-ai/pedit' }],
+      info: [
+        { label: 'GitHub', href: 'https://github.com/piconic-ai/pedit', icon: 'M8 7l-5 5 5 5' },
+      ],
     })
     const header = q('header') as HTMLElement
     expect(header.lastElementChild?.className).toBe('info-slot')

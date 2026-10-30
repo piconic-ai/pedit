@@ -28,8 +28,9 @@ function mount(links: readonly InfoLink[]) {
 }
 
 describe('infoLinks', () => {
-  it('links the public relay’s terms, privacy policy and source', () => {
-    expect(infoLinks(PUBLIC_RELAY_HOST)).toEqual([
+  it('links the public relay’s terms, privacy policy and source, each with its own icon', () => {
+    expect(new Set(infoLinks(PUBLIC_RELAY_HOST).map((l) => l.icon)).size).toBe(3)
+    expect(infoLinks(PUBLIC_RELAY_HOST).map(({ label, href }) => ({ label, href }))).toEqual([
       { label: 'Terms of Use', href: '/terms' },
       { label: 'Privacy Policy', href: '/privacy' },
       { label: 'GitHub', href: SOURCE_URL },
@@ -38,7 +39,7 @@ describe('infoLinks', () => {
 
   it('links only the source on a relay someone else runs, whose operator the pages do not name', () => {
     for (const host of ['relay.example.com', 'add-terms-edit.kfly8.workers.dev', 'localhost']) {
-      expect(infoLinks(host)).toEqual([{ label: 'GitHub', href: SOURCE_URL }])
+      expect(infoLinks(host).map((l) => l.href)).toEqual([SOURCE_URL])
     }
   })
 })
@@ -55,15 +56,17 @@ describe('Info', () => {
     expect(panel.getAttribute('role')).toBe('dialog')
   })
 
-  it('shows each link, opening in a new tab so the room stays open', () => {
+  it('shows each link with its icon and no heading, opening in a new tab so the room stays open', () => {
     const { container } = mount(infoLinks(PUBLIC_RELAY_HOST))
     const links = [...container.querySelectorAll<HTMLAnchorElement>('.info-links a')]
+    expect(container.querySelector('.info h2')).toBeNull()
     expect(links.map((a) => [a.textContent, a.getAttribute('href')])).toEqual([
       ['Terms of Use', '/terms'],
       ['Privacy Policy', '/privacy'],
       ['GitHub', SOURCE_URL],
     ])
     for (const a of links) {
+      expect(a.querySelector('svg[aria-hidden="true"] path')?.getAttribute('d')).toBeTruthy()
       expect(a.target).toBe('_blank')
       expect(a.rel.split(' ').sort()).toEqual(['noopener', 'noreferrer'])
     }

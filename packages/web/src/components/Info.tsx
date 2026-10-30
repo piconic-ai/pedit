@@ -67,11 +67,23 @@ export function Info(props: { links: readonly InfoLink[] }) {
           panel = el
         }}
       >
-        <h2>pedit</h2>
         <ul className="info-links">
           {props.links.map((link) => (
             <li key={link.href}>
               <a href={link.href} target="_blank" rel="noopener noreferrer">
+                <svg
+                  viewBox="0 0 24 24"
+                  width="16"
+                  height="16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d={link.icon} />
+                </svg>
                 {link.label}
               </a>
             </li>
