@@ -18,7 +18,7 @@
   </head>
   <body>
     <h1>Privacy Policy</h1>
-    <p>Last updated: 2026-10-30</p>
+    <p>Last updated: 2026-10-31</p>
     <p>
       This policy describes what the public relay and browser editor at <code>edit.piconic.ai</code>
       (&ldquo;the service&rdquo;) keeps about you. It is run by kobaken, an individual
@@ -33,29 +33,31 @@
     <p>
       Document updates, comments and pasted images are encrypted on your device before they are sent.
       The key is in the part of the link after <code>#</code>, which your browser never sends to the
-      service. The service relays encrypted data and cannot read it. In a live room it stores none of
-      your text. In a kept room, one the host opened with <code>pedit --keep</code> so that others can
-      keep editing while the host is away, it stores encrypted text, comments and images until the
-      room&rsquo;s deadline, at most 7 days after the host leaves. Your files stay on the host&rsquo;s
+      service. The service relays encrypted data and cannot read it. While the host is connected it stores none
+      of your text. When the host leaves, the room stays open so that others can keep editing,
+      for a day by default (the host can choose up to 7 days with <code>pedit --keep</code>, or none
+      with <code>pedit --keep 0</code>), and the service stores encrypted text, comments and images
+      until the room&rsquo;s deadline, at most 7 days after the host leaves. Your files stay on the host&rsquo;s
       computer.
     </p>
 
     <h2>What the service keeps</h2>
     <ul>
-      <li><strong>Encrypted images</strong>. In a live room they are kept while the room&rsquo;s host is
-        connected, and the room deletes them when the host leaves. In a kept room they are kept until the
-        room&rsquo;s deadline, whether or not the host is connected. If a deletion fails, a storage rule
-        expires them after upload (one day for a live room, eight days for a kept room), and Cloudflare
+      <li><strong>Encrypted images</strong>. In a kept room (the default) they are kept until the
+        room&rsquo;s deadline, whether or not the host is connected. In a room that is not kept
+        (<code>pedit --keep 0</code>) they are kept while the host is connected, and the room deletes
+        them when the host leaves. If a deletion fails, a storage rule
+        expires them after upload (eight days for a kept room, one day for one that is not), and Cloudflare
         removes them typically within a further day.</li>
       <li><strong>Kept rooms</strong>: an encrypted snapshot of the text and comments, and a log of the
         encrypted, signed edits and comments made while the host is away. The host&rsquo;s
-        <code>pedit --resume</code> takes them in and the service then deletes the log; what is left is
-        deleted at the room&rsquo;s deadline, at most 7 days after the host leaves. The service sees the
-        size and time of each edit and an opaque identifier of who sent it, never its content. It also
-        keeps the room&rsquo;s editor and reader admission tokens as they are, to admit people while the
-        host is away; a token cannot decrypt anything.</li>
-      <li><strong>Per room</strong>: a hash of the room&rsquo;s admission token (live rooms), and the number and
-        total size of the stored images, deleted when the room ends; and the time the host first
+        <code>pedit</code>, run on the file again, takes them in and the service then deletes the log;
+        what is left is deleted at the room&rsquo;s deadline, at most 7 days after the host leaves. The
+        service sees the size and time of each edit and an opaque identifier of who sent it, never its
+        content.</li>
+      <li><strong>Per room</strong>: hashes of the room&rsquo;s admission tokens, which admit people while the
+        host is away and cannot decrypt anything, and the number and total size of the stored images,
+        deleted when the room ends; and the time the host first
         connected, kept after the room ends so that the room ID cannot be used again. The room&rsquo;s
         storage keeps 30 days of history for point-in-time recovery, which includes a kept room&rsquo;s
         encrypted data after it was deleted.</li>
@@ -76,13 +78,12 @@
       Request headers are kept too. This includes the tokens your browser or the <code>pedit</code> command
       line tool sends to be admitted to a room (in the <code>Sec-WebSocket-Protocol</code> header of the
       connection, and the <code>X-Pedit-Read-Admission</code> and <code>X-Pedit-Admission</code> headers,
-      which a kept room&rsquo;s requests under <code>/api/rooms/&lt;id&gt;/keep/</code> and image requests
-      carry too), and headers such as <code>Origin</code> and the browser&rsquo;s language and client hints.
+      which image requests carry too), and headers such as <code>Origin</code> and the browser&rsquo;s language and client hints.
       Those tokens cannot decrypt anything, but they let their holder open a connection to that room while
-      the room exists: a live room lasts at most 24 hours, and a kept room until its deadline, at most 7
-      days after the host leaves, during which the token admits its holder without the host. The host
-      token, which the command line tool sends in the <code>Authorization</code> header when it opens a room
-      or a kept room, is masked in the log entries we looked at. This page will be updated if the logging
+      the room exists: at most 24 hours while the host is connected and, once the host has left a kept
+      room, until its deadline, at most 7 days later, during which the token admits its holder without
+      the host. The host token, which the command line tool sends in the <code>Authorization</code>
+      header when it opens or closes a room, is masked in the log entries we looked at. This page will be updated if the logging
       is changed.
     </p>
 
