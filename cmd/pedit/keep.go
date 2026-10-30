@@ -50,7 +50,10 @@ func runKeep(opts commandArgs, stdout, stderr io.Writer) int {
 		File: opts.File, More: opts.More, Project: cfg.root, Server: server, Resume: opts.Resume, Keep: opts.Keep,
 		OnSkipped: func(count int) { fmt.Fprintf(stdout, "Skipped %d invalid updates.\n", count) },
 		OnPruned:  func(n int) { fmt.Fprintf(stdout, "Removed %d resume record(s) of finished rooms.\n", n) },
-		OnEnded:   func() { fmt.Fprintln(stdout, "The room is over; removed its resume record.") },
+		OnImageError: func(path string, err error) {
+			fmt.Fprintf(stdout, "Could not save an image of %s: %v\n", path, err)
+		},
+		OnEnded: func() { fmt.Fprintln(stdout, "The room is over; removed its resume record.") },
 	}, func(link string, seconds, until int64) {
 		fmt.Fprintln(stdout, link)
 		if opts.Keep > time.Duration(seconds)*time.Second {

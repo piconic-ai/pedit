@@ -35,6 +35,9 @@ type KeptTextOptions struct {
 	OnSkipped                     func(int)
 	OnPruned                      func(int) // records of finished rooms removed at start
 	OnEnded                       func()    // this room's record removed because the room is over
+	// OnImageError reports an image a kept text refers to that could not be
+	// saved beside its file (once per image and file).
+	OnImageError func(path string, err error)
 }
 type keptTextState struct {
 	Project, Origin, Fragment, HostToken string
@@ -105,6 +108,11 @@ type keptTextHost struct {
 	// resume reach the relay even when no guest edit is waiting in the log.
 	republish bool
 	onSkipped func(int)
+	// Images pasted while the host was away are saved before each write.
+	blobKeys     *protocol.BlobKeys
+	imageClient  *http.Client // nil for the default
+	onImageError func(path string, err error)
+	imageErrors  map[string]bool
 }
 
 // RunKeptText keeps the relay open when the host leaves. Source changes made
@@ -113,7 +121,7 @@ func RunKeptText(ctx context.Context, opts KeptTextOptions, ready func(string, i
 	if runtime.GOOS == "windows" {
 		return errors.New("--keep and --resume require Unix file permissions; Windows is not supported")
 	}
-	h := keptTextHost{client: &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, onSkipped: opts.OnSkipped}
+	h := keptTextHost{client: &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, onSkipped: opts.OnSkipped, onImageError: opts.OnImageError}
 	if e := h.prepare(ctx, opts); e != nil {
 		return e
 	}
@@ -375,6 +383,9 @@ func (h *keptTextHost) sync(ctx context.Context) error {
 		}
 	}
 	if e := saveKeptState(h.path, h.state); e != nil {
+		return e
+	}
+	if e := h.saveImages(ctx); e != nil {
 		return e
 	}
 	if e := h.finishWrites(); e != nil {
