@@ -24,6 +24,7 @@ import {
 } from '@pedit/protocol/close'
 import { MAX_FRAME_BYTES } from '@pedit/protocol/frame'
 import { RELAY_BYTE_RATE, RELAY_MESSAGE_RATE } from '@pedit/protocol/pace'
+import { keptText, keptTextAlarm } from './kept-text.ts'
 
 // Shared browser code brings DOM's SubtleCrypto into this program. Augment it
 // with the documented Workers extension also present in our generated types.
@@ -225,6 +226,16 @@ export class Room extends DurableObject<Env> {
 
   override async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname
+    if (/\/keep(?:\/|$)/.test(path))
+      return keptText(
+        request,
+        this.ctx.storage,
+        request.headers.get(HOST_HEADER) === '1',
+        'KEEP_MAX_SECONDS' in this.env && typeof this.env.KEEP_MAX_SECONDS === 'string'
+          ? this.env.KEEP_MAX_SECONDS
+          : undefined,
+        this.env.ROOM_MAX_SECONDS,
+      )
     const blob = BLOB_PATH.exec(path)?.[1]
     if (blob) return this.blob(request, blob)
     // Only a connection goes on: a blob path the pattern missed is not one.
@@ -412,6 +423,8 @@ export class Room extends DurableObject<Env> {
    * still needed and can run twice.
    */
   override async alarm(): Promise<void> {
+    if (await keptTextAlarm(this.ctx.storage)) return
+
     if (this.expired()) {
       await this.expire()
       return

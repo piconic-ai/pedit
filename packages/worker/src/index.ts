@@ -83,9 +83,10 @@ export async function overLimit(
  * maintenance level, set in the dashboard when the relay has to stop: no new
  * rooms, or closed altogether.
  */
-type Bindings = Omit<Env, 'ROOM_CREATION_LIMIT' | 'CONNECTION_LIMIT'> & {
+type Bindings = Omit<Env, 'ROOM_CREATION_LIMIT' | 'CONNECTION_LIMIT' | 'KEEP_REQUEST_LIMIT'> & {
   ROOM_CREATION_LIMIT?: RateLimit
   CONNECTION_LIMIT?: RateLimit
+  KEEP_REQUEST_LIMIT?: RateLimit
   MAINTENANCE?: string
   // Where the Markdown preview may load images and videos from (docs/self-hosting.md).
   MEDIA_SOURCES?: string
@@ -138,6 +139,30 @@ app.post('/api/rooms', async (c) => {
   }
   const hostToken = base64url(crypto.getRandomValues(new Uint8Array(32)))
   return c.json({ id: await roomIdFor(hostToken), hostToken }, 201)
+})
+
+app.all('/api/rooms/:id/keep/:action?', async (c) => {
+  const id = c.req.param('id')
+  if (!id || !ROOM_ID.test(id) || !allowedOrigin(c.req.raw))
+    return c.text('invalid room request', 400)
+  if (maintenance(c.env) === 'closed') return c.text(CLOSED_FOR_MAINTENANCE, 503)
+  if (await overLimit(c.env.KEEP_REQUEST_LIMIT, c.req.raw, 'kept text'))
+    return c.text('Too many kept room requests', 429, { 'Retry-After': '60' })
+  if (
+    c.req.param('action') === 'init' &&
+    (await overLimit(c.env.ROOM_CREATION_LIMIT, c.req.raw, 'kept room creation'))
+  )
+    return c.text('Too many rooms', 429, { 'Retry-After': '60' })
+
+  const headers = new Headers(c.req.raw.headers)
+  headers.delete(HOST_HEADER)
+  const auth = c.req.header('Authorization')
+  if (auth) {
+    const token = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(auth)?.[1]
+    if (!token || (await roomIdFor(token)) !== id) return c.text('invalid host token', 403)
+    headers.set(HOST_HEADER, '1')
+  }
+  return c.env.ROOM.get(c.env.ROOM.idFromName(id)).fetch(new Request(c.req.raw, { headers }))
 })
 
 app.get('/api/rooms/:id/ws', async (c) => {
