@@ -35,13 +35,22 @@ func TestKindHelpersMirrorTheTypeScriptOnes(t *testing.T) {
 	if tail, ok := protocol.DecodeLogEnd(protocol.EncodeLogEnd(5)[1:]); !ok || tail != 5 {
 		t.Fatal("DecodeLogEnd")
 	}
-	if n, ok := protocol.ParseNumbers("keep", "keep 60 1700000000000", 2); !ok || n[0] != 60 || n[1] != 1700000000000 {
-		t.Fatal("ParseNumbers")
+	if seconds, until, ok := protocol.ParseKeep("keep 60 1700000000000"); !ok || seconds != 60 || until != 1700000000000 {
+		t.Fatal("ParseKeep")
 	}
-	for _, text := range []string{"keep 60", "keep 60 x", "keep -1 2", "keepsake 1 2", "keep 1 2 3"} {
-		if _, ok := protocol.ParseNumbers("keep", text, 2); ok {
-			t.Errorf("ParseNumbers accepted %q", text)
+	for _, text := range []string{"keep 60", "keep 60 x", "keep -1 2", "keepsake 1 2", "keep 1 2 3", "keep 99999999999999999999 1"} {
+		if _, _, ok := protocol.ParseKeep(text); ok {
+			t.Errorf("ParseKeep accepted %q", text)
 		}
+	}
+	if until, ok := protocol.ParseKept("kept 1700000000000"); !ok || until != 1700000000000 {
+		t.Fatal("ParseKept")
+	}
+	if cutoff, tail, ok := protocol.ParseCheckpoint("checkpoint 3 5"); !ok || cutoff != 3 || tail != 5 {
+		t.Fatal("ParseCheckpoint")
+	}
+	if _, _, ok := protocol.ParseCheckpoint(protocol.CheckpointRefused); ok {
+		t.Fatal("ParseCheckpoint took a refusal")
 	}
 }
 

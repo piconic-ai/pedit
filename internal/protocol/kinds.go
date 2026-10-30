@@ -97,25 +97,44 @@ func DecodeLogEnd(payload []byte) (tail uint64, ok bool) {
 // EncodeLogEnd is a kind 6 message, as the relay sends it.
 func EncodeLogEnd(tail uint64) []byte { return WithKind(KindLogEnd, encodeUint64(tail)) }
 
-// ParseNumbers reads the numbers after word in a relay text such as
-// "keep 86400 0", or reports false if the text is not word followed by
-// exactly count numbers.
-func ParseNumbers(word, text string, count int) ([]uint64, bool) {
+// words are the count words after word in a relay text such as "keep 86400 0",
+// or nil if the text is not word followed by exactly count of them.
+func words(word, text string, count int) []string {
 	rest, ok := strings.CutPrefix(text, word+" ")
-	if !ok {
-		return nil, false
+	if parts := strings.Split(rest, " "); ok && len(parts) == count {
+		return parts
 	}
-	parts := strings.Split(rest, " ")
-	if len(parts) != count {
-		return nil, false
+	return nil
+}
+
+// ParseKept reads "kept <until-ms>".
+func ParseKept(text string) (until int64, ok bool) {
+	w := words(Kept, text, 1)
+	if w == nil {
+		return 0, false
 	}
-	numbers := make([]uint64, count)
-	for i, p := range parts {
-		n, err := strconv.ParseUint(p, 10, 64)
-		if err != nil || len(p) > 16 {
-			return nil, false
-		}
-		numbers[i] = n
+	until, err := strconv.ParseInt(w[0], 10, 64)
+	return until, err == nil && until >= 0
+}
+
+// ParseKeep reads "keep <seconds> <until-ms>".
+func ParseKeep(text string) (seconds, until int64, ok bool) {
+	w := words(Keep, text, 2)
+	if w == nil {
+		return 0, 0, false
 	}
-	return numbers, true
+	seconds, err1 := strconv.ParseInt(w[0], 10, 64)
+	until, err2 := strconv.ParseInt(w[1], 10, 64)
+	return seconds, until, err1 == nil && err2 == nil && seconds >= 0 && until >= 0
+}
+
+// ParseCheckpoint reads "checkpoint <cutoff> <tail>".
+func ParseCheckpoint(text string) (cutoff, tail uint64, ok bool) {
+	w := words(Checkpoint, text, 2)
+	if w == nil {
+		return 0, 0, false
+	}
+	cutoff, err1 := strconv.ParseUint(w[0], 10, 64)
+	tail, err2 := strconv.ParseUint(w[1], 10, 64)
+	return cutoff, tail, err1 == nil && err2 == nil
 }

@@ -183,7 +183,7 @@ func TestGoHostKeepsAWebSocketRoomWhileAway(t *testing.T) {
 			kept = string(payload)
 		}
 	}
-	if until, ok := protocol.ParseNumbers("kept", kept, 1); !ok || int64(until[0]) <= time.Now().UnixMilli() {
+	if until, ok := protocol.ParseKept(kept); !ok || until <= time.Now().UnixMilli() {
 		t.Fatalf("relay said %q", kept)
 	}
 

@@ -243,15 +243,15 @@ func (a *keepAway) saveRecord(leaving bool) error {
 
 // onText takes the relay's word on the keep.
 func (a *keepAway) onText(text string) {
-	if n, ok := protocol.ParseNumbers(protocol.Keep, text, 2); ok {
+	if seconds, _, ok := protocol.ParseKeep(text); ok {
 		a.mu.Lock()
 		first := a.granted == 0
-		a.granted = int64(n[0])
+		a.granted = seconds
 		a.mu.Unlock()
-		if first && n[0] > 0 {
+		if first && seconds > 0 {
 			a.report(a.saveRecord(false))
 		}
-		a.tell(int64(n[0]))
+		a.tell(seconds)
 	} else if text == protocol.CheckpointRefused || text == protocol.LogFull {
 		a.report(errors.New("the relay said: " + text))
 	}

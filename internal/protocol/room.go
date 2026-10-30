@@ -572,7 +572,7 @@ func (c *Client) relaySignal(sig Signal) {
 	status := c.status
 	c.mu.Unlock()
 	text := string(sig)
-	switch _, kept := ParseNumbers(Kept, text, 1); {
+	switch _, kept := ParseKept(text); {
 	case sig == HostAway && status == StatusConnected:
 		c.setStatus(StatusWaiting)
 	case sig == HostBack && status.HostAway():

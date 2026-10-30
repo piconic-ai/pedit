@@ -305,9 +305,9 @@ func (r *resumed) awaitCheckpoint(ctx context.Context, h *keptTextHost) error {
 			return err
 		}
 		if kind == textKind {
-			if n, ok := protocol.ParseNumbers(protocol.Checkpoint, string(payload), 2); ok {
-				h.checkpointed(n[0])
-				h.state.After = n[0]
+			if cutoff, _, ok := protocol.ParseCheckpoint(string(payload)); ok {
+				h.checkpointed(cutoff)
+				h.state.After = cutoff
 				return saveKeptState(h.path, h.state)
 			} else if string(payload) == protocol.CheckpointRefused {
 				return errors.New("the relay refused the checkpoint")
@@ -329,8 +329,8 @@ func (r *resumed) next(ctx context.Context) (byte, []byte, error) {
 		cancel()
 		var sig protocol.Signal
 		if errors.As(err, &sig) {
-			if n, ok := protocol.ParseNumbers(protocol.Keep, string(sig), 2); ok {
-				r.keep = int64(n[0])
+			if seconds, _, ok := protocol.ParseKeep(string(sig)); ok {
+				r.keep = seconds
 			}
 			return textKind, []byte(sig), nil
 		}
