@@ -448,8 +448,9 @@ export class RoomClient {
     const socket = this.socket
     this.sendChain = this.sendChain
       .then(async () => {
-        const body = await this.kept.entry(id, update)
-        if (socket && socket.readyState === OPEN) await this.putEntry(socket, body)
+        const open = () => socket !== null && socket.readyState === OPEN
+        const body = await this.kept.entry(id, update, open)
+        if (body && socket) await this.putEntry(socket, body)
       })
       .catch((error) => this.opts.onError?.(error))
   }

@@ -85,9 +85,14 @@ export class KeptAway {
     this.hooks = hooks
   }
 
-  /** Seals an update of a doc as an entry, held until the relay logs it. */
-  async entry(id: number, update: Uint8Array): Promise<Uint8Array> {
+  /**
+   * Seals an update of a doc as an entry, held until the relay logs it. It is
+   * held only if `sendable` still says it can go out when it is sealed: what
+   * is not sent is found missing after the next replay.
+   */
+  async entry(id: number, update: Uint8Array, sendable: () => boolean): Promise<Uint8Array | null> {
     const body = await sealKeptUpdate(this.keys, id, update)
+    if (!sendable()) return null
     this.pending.push({ body, id, update })
     this.hooks.sync('pending')
     return body

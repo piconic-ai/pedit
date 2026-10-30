@@ -222,6 +222,8 @@ describe('a room kept while its host is away', () => {
     m.socket().close(1006)
     m.doc.getText('content').insert(0, 'Y')
     await new Promise((r) => setTimeout(r, 30))
+    // An edit that could not go out is not pending: the replay finds it missing.
+    expect(m.syncs).toEqual([])
     await replay()
     // Nothing was sent before the replay: the relay's copy comes first.
     expect(m.doc.getText('content').toString()).toContain('abc')
