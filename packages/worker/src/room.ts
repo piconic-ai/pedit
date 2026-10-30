@@ -24,7 +24,7 @@ import {
 } from '@pedit/protocol/close'
 import { MAX_FRAME_BYTES } from '@pedit/protocol/frame'
 import { RELAY_BYTE_RATE, RELAY_MESSAGE_RATE } from '@pedit/protocol/pace'
-import { keptText, keptTextAlarm } from './kept-text.ts'
+import { expireKeptText, keptText, keptTextAlarm } from './kept-text.ts'
 
 // Shared browser code brings DOM's SubtleCrypto into this program. Augment it
 // with the documented Workers extension also present in our generated types.
@@ -216,6 +216,8 @@ export class Room extends DurableObject<Env> {
   private generation = 0
   // Host connections between the start of fetch and the accept or refusal.
   private hostHandshakes = 0
+  // Deletes a kept room's images when it expires.
+  private readonly removeKeptBlobs = () => this.deleteBlobs(this.blobPrefix(true))
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
@@ -235,9 +237,14 @@ export class Room extends DurableObject<Env> {
           ? this.env.KEEP_MAX_SECONDS
           : undefined,
         this.env.ROOM_MAX_SECONDS,
+        this.removeKeptBlobs,
       )
-    if (this.kept()) return new Response('kept rooms use text synchronization', { status: 409 })
     const blob = BLOB_PATH.exec(path)?.[1]
+    if (this.kept()) {
+      return blob
+        ? this.blob(request, blob)
+        : new Response('kept rooms use text synchronization', { status: 409 })
+    }
     if (blob) return this.blob(request, blob)
     // Only a connection goes on: a blob path the pattern missed is not one.
     if (path.includes('/blobs/')) return new Response('invalid blob id', { status: 400 })
@@ -432,7 +439,7 @@ export class Room extends DurableObject<Env> {
    * still needed and can run twice.
    */
   override async alarm(): Promise<void> {
-    if (await keptTextAlarm(this.ctx.storage)) return
+    if (await keptTextAlarm(this.ctx.storage, this.removeKeptBlobs)) return
 
     if (this.expired()) {
       await this.expire()
@@ -654,21 +661,32 @@ export class Room extends DurableObject<Env> {
       cleaning = this.cleaning
       await cleaning
     } while (cleaning !== this.cleaning)
-    if (this.expired()) return new Response('room has expired', { status: 410 })
-    if (this.hosts().length === 0) {
-      if (!this.hostAway()) return new Response('room is closed', { status: 410 })
-      // What was attached can still be seen; nothing new goes in.
-      if (request.method !== 'GET') return new Response('the host is away', { status: 503 })
+    const kept = this.kept()
+    let role: Role | null | undefined
+    if (kept) {
+      // A kept room serves its blobs whether or not its host is here; the
+      // admission tokens are the ones it keeps for its text (kept-text.ts).
+      if (await expireKeptText(this.ctx.storage, this.removeKeptBlobs))
+        return new Response('room has expired', { status: 410 })
+      const state = this.ctx.storage.kv.get<{ editor: string; reader: string }>('keptText')
+      role = token === state?.editor ? 'editor' : token === state?.reader ? 'reader' : undefined
+    } else {
+      if (this.expired()) return new Response('room has expired', { status: 410 })
+      if (this.hosts().length === 0) {
+        if (!this.hostAway()) return new Response('room is closed', { status: 410 })
+        // What was attached can still be seen; nothing new goes in.
+        if (request.method !== 'GET') return new Response('the host is away', { status: 503 })
+      }
+      // Hashed first, so the verifier is read after any await.
+      role = this.role(await sha256(token))
     }
-    // Hashed first, so the verifier is read after any await.
-    const role = this.role(await sha256(token))
     if (!role) return new Response('invalid room admission', { status: 403 })
     // Readers see the images; only editors add them, so nobody else can
     // take an image's place or the room's quota.
     if (request.method === 'PUT' && role !== 'editor') {
       return new Response('adding images needs an edit link', { status: 403 })
     }
-    const key = this.blobPrefix() + id
+    const key = this.blobPrefix(kept) + id
     if (request.method === 'GET') {
       const object = await this.env.BLOBS.get(key)
       if (!object) return new Response('no such blob', { status: 404 })
@@ -712,7 +730,9 @@ export class Room extends DurableObject<Env> {
 
   private async upload(request: Request, key: string, length: number): Promise<Response> {
     const generation = this.generation
-    const ended = () => this.generation !== generation
+    const kept = key.startsWith('kept/')
+    const ended = () =>
+      this.generation !== generation || (kept && this.ctx.storage.kv.get('keptText') === undefined)
     const closed = () => new Response('room is closed', { status: 410 })
 
     // The first upload under an id wins; receivers check the content anyway.
@@ -749,8 +769,7 @@ export class Room extends DurableObject<Env> {
   }
 
   // Deletion failures are left to the bucket's lifecycle rule.
-  private async deleteBlobs(): Promise<void> {
-    const prefix = this.blobPrefix()
+  private async deleteBlobs(prefix = this.blobPrefix()): Promise<void> {
     try {
       let cursor: string | undefined
       do {
@@ -764,8 +783,10 @@ export class Room extends DurableObject<Env> {
   }
 
   // The Durable Object id is derived from the room id, and only this room knows it.
-  private blobPrefix(): string {
-    return `rooms/${this.ctx.id.toString()}/`
+  // A kept room's blobs live under their own prefix, which the bucket's
+  // one-day lifecycle rule for `rooms/` leaves alone (docs/public-relay.md).
+  private blobPrefix(kept = false): string {
+    return `${kept ? 'kept' : 'rooms'}/${this.ctx.id.toString()}/`
   }
 
   private usage(): Usage {

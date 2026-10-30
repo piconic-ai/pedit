@@ -1,4 +1,4 @@
-import { createExecutionContext, runInDurableObject } from 'cloudflare:test'
+import { createExecutionContext, runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test'
 import { env } from 'cloudflare:workers'
 import { admissionProtocols } from '@pedit/protocol/admission'
 import { expect, it } from 'vitest'
@@ -134,11 +134,15 @@ it('rolls back initial ciphertext when its cleanup alarm cannot be scheduled', a
         },
         body: Uint8Array.of(1, 2, 3),
       })
-    expect((await keptText(request(), storage, true, undefined, undefined)).status).toBe(400)
+    expect(
+      (await keptText(request(), storage, true, undefined, undefined, async () => {})).status,
+    ).toBe(400)
     await state.storage.sync()
     expect(state.storage.kv.get('keptText')).toBeUndefined()
     expect(await state.storage.getAlarm()).toBeNull()
-    expect((await keptText(request(), state.storage, true, undefined, undefined)).status).toBe(200)
+    expect(
+      (await keptText(request(), state.storage, true, undefined, undefined, async () => {})).status,
+    ).toBe(200)
     expect(await state.storage.getAlarm()).not.toBeNull()
   })
 })
@@ -208,5 +212,80 @@ it('never mixes kept and legacy socket or blob lifecycles, including a closed ke
   const blob = new Request(`${base}/blobs/${'a'.repeat(22)}`, {
     headers: { Authorization: `Bearer ${host}` },
   })
-  expect((await app.fetch(blob, env, createExecutionContext())).status).toBe(409)
+  expect((await app.fetch(blob, env, createExecutionContext())).status).toBe(403)
+})
+
+// A kept room keeps its images beside its text: they are served while the host
+// is away, only to the room's own admissions, and go when the room expires.
+async function keptRoom() {
+  const host = token(),
+    id = await roomIdFor(host),
+    editor = token(),
+    reader = token()
+  const init = new Request(`https://room/api/rooms/${id}/keep/init`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${host}`,
+      'X-Pedit-Editor': editor,
+      'X-Pedit-Reader': reader,
+      'X-Pedit-Keep-Seconds': '60',
+    },
+    body: Uint8Array.of(1),
+  })
+  expect((await app.fetch(init, env, createExecutionContext())).status).toBe(200)
+  const away = new Request(`https://room/api/rooms/${id}/keep/away`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${host}` },
+  })
+  expect((await app.fetch(away, env, createExecutionContext())).status).toBe(200)
+  const blob = (n: number, method: string, admission: string, body?: Uint8Array<ArrayBuffer>) =>
+    app.fetch(
+      new Request(`https://room/api/rooms/${id}/blobs/${'b'.repeat(21)}${n}`, {
+        method,
+        body,
+        headers: { 'X-Pedit-Admission': admission },
+      }),
+      env,
+      createExecutionContext(),
+    )
+  const keys = async (prefix: string) =>
+    (await env.BLOBS.list({ prefix: `${prefix}/${env.ROOM.idFromName(id).toString()}/` })).objects
+  return { id, editor, reader, blob, keys }
+}
+it('stores and serves images of a kept room while its host is away', async () => {
+  const { editor, reader, blob, keys } = await keptRoom()
+  const body = new Uint8Array(40)
+  expect((await blob(1, 'PUT', editor, body)).status).toBe(201)
+  expect((await blob(1, 'GET', reader)).status).toBe(200)
+  expect(new Uint8Array(await (await blob(1, 'GET', editor)).arrayBuffer())).toEqual(body)
+  expect((await blob(2, 'GET', editor)).status).toBe(404)
+  // Under a prefix of their own, which the one-day rule for `rooms/` leaves alone.
+  expect(await keys('rooms')).toHaveLength(0)
+  expect(await keys('kept')).toHaveLength(1)
+})
+it('refuses kept room images to readers and strangers', async () => {
+  const { reader, blob } = await keptRoom()
+  expect((await blob(1, 'PUT', reader, new Uint8Array(4))).status).toBe(403)
+  expect((await blob(1, 'GET', token())).status).toBe(403)
+  expect((await blob(1, 'PUT', token(), new Uint8Array(4))).status).toBe(403)
+})
+it('counts the images of a kept room against the quota', async () => {
+  const { editor, blob } = await keptRoom()
+  // The tests run with a quota of 100 bytes and 5 blobs (vitest.config.ts).
+  expect((await blob(1, 'PUT', editor, new Uint8Array(60))).status).toBe(201)
+  expect((await blob(2, 'PUT', editor, new Uint8Array(60))).status).toBe(429)
+})
+it('keeps the images of a kept room across a host that leaves and returns, and deletes them on expiry', async () => {
+  const { id, editor, blob, keys } = await keptRoom()
+  expect((await blob(1, 'PUT', editor, new Uint8Array(8))).status).toBe(201)
+  const room = env.ROOM.get(env.ROOM.idFromName(id))
+  // The hourly check of live rooms must leave them alone.
+  await runDurableObjectAlarm(room)
+  expect(await keys('kept')).toHaveLength(1)
+  await runInDurableObject(room, (_, state) => {
+    const kept = state.storage.kv.get<{ until: number }>('keptText')
+    state.storage.kv.put('keptText', { ...kept, until: Date.now() - 1 })
+  })
+  expect((await blob(1, 'GET', editor)).status).toBe(410)
+  expect(await keys('kept')).toHaveLength(0)
 })

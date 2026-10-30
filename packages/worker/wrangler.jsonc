@@ -36,6 +36,8 @@
   // Encrypted attachments, kept only while a room's host is connected. Each
   // bucket needs a lifecycle rule expiring `rooms/` after a day, as a backstop
   // for deletion (see docs/contributing/deployment.md and docs/self-hosting.md).
+  // A kept room's images live under `kept/` until the room expires: the public
+  // bucket also needs a rule expiring `kept/` after 8 days, added by hand.
   "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "edit-blobs" }],
   // The public relay is a demo: the host and 4 guests per room, images up to
   // 5 MiB each and 50 MiB per session, and rooms that end 24 hours after their
