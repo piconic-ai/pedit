@@ -14,7 +14,7 @@ import {
   SENDER_BYTES,
   SETTLE_AFTER_MS,
 } from '../src/index.ts'
-import { answer, editKeys, lowerKeys, Relay, sealFrame } from '../src/testing.ts'
+import { answer, editKeys, lowerKeys, Relay, wireFrame } from '../src/testing.ts'
 
 const clients: RoomClient[] = []
 afterEach(async () => {
@@ -111,7 +111,7 @@ describe('fresh messages', () => {
       answer(me),
       edit('after the answer'),
     ].entries()) {
-      peer.send(await sealFrame(keys, sender, counter + 1, message))
+      peer.send(await wireFrame(keys, sender, counter + 1, message))
     }
     await vi.waitFor(() => expect(edits.length).toBeGreaterThan(0))
     expect(edits).toEqual(['after the answer'])
@@ -156,7 +156,7 @@ describe('a reconnection', () => {
       const peer = relay.create('ws://test')
       await vi.waitFor(() => expect(peer.readyState).toBe(1))
       for (const [counter, message] of frames) {
-        peer.send(await sealFrame(keys, sender, counter, message))
+        peer.send(await wireFrame(keys, sender, counter, message))
       }
     }
     await write([1, answer(me)], [2, edit('before')])

@@ -68,6 +68,10 @@ the Worker adds `X-Pedit-Closed: host` when the host closed the room, so a guest
 next refresh shows "Closed by host" instead of the expiry text. Unsent guest edits
 are lost, as on expiry.
 
+Rooms that stay open over the WebSocket while their host is away
+([rooms-away.md](rooms-away.md)) replace this polling mode once the clients
+ship.
+
 ## Work still to design
 
 The following proposals concern broader asynchronous rooms and are not part

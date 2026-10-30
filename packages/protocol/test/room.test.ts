@@ -25,7 +25,8 @@ import {
   SENDER_BYTES,
   SERVER_OUTDATED,
 } from '../src/index.ts'
-import { answer, editKeys, Relay, sealFrame } from '../src/testing.ts'
+import { Kind, withKind } from '../src/kinds.ts'
+import { answer, editKeys, Relay, wireFrame } from '../src/testing.ts'
 
 const clients: RoomClient[] = []
 afterEach(async () => {
@@ -217,11 +218,11 @@ describe('RoomClient', () => {
     await vi.waitFor(() => expect(newer.readyState).toBe(1))
     // A message type, then an attachment and a canvas kind, that b does not know.
     const sender = new Uint8Array(SENDER_BYTES).fill(1)
-    newer.send(await sealFrame(key, sender, 1, new Uint8Array([9, 1, 2, 3])))
+    newer.send(await wireFrame(key, sender, 1, new Uint8Array([9, 1, 2, 3])))
     newer.send(
-      await sealFrame(key, sender, 2, new Uint8Array([MessageType.Attachment, 9, 1, 2, 3])),
+      await wireFrame(key, sender, 2, new Uint8Array([MessageType.Attachment, 9, 1, 2, 3])),
     )
-    newer.send(await sealFrame(key, sender, 3, new Uint8Array([MessageType.Canvas, 9, 1, 2, 3])))
+    newer.send(await wireFrame(key, sender, 3, new Uint8Array([MessageType.Canvas, 9, 1, 2, 3])))
     await join(relay, key, 'after')
     await vi.waitFor(() => expect(text(b)).toBe('after'))
     expect(errors).toEqual([])
@@ -250,7 +251,7 @@ describe('RoomClient', () => {
     const peer = relay.create('ws://test')
     await vi.waitFor(() => expect(peer.readyState).toBe(1))
     const frame = (sender: number, counter: number, id: string) =>
-      sealFrame(
+      wireFrame(
         key,
         new Uint8Array(SENDER_BYTES).fill(sender),
         counter,
@@ -259,7 +260,7 @@ describe('RoomClient', () => {
           encodeCanvas({ kind: 'edit', id, base: '{}', next: '{}' }),
         ),
       )
-    const vouch = (n: number) => sealFrame(key, new Uint8Array(SENDER_BYTES).fill(n), 1, answer(b))
+    const vouch = (n: number) => wireFrame(key, new Uint8Array(SENDER_BYTES).fill(n), 1, answer(b))
     const first = await frame(1, 2, 'first')
     for (const data of [
       await vouch(1),
@@ -292,8 +293,26 @@ describe('RoomClient', () => {
     const relay = new Relay()
     await join(relay, await editKeys(), '', undefined, { Authorization: 'Bearer t' })
     expect(relay.headers).toEqual([{ Authorization: 'Bearer t' }])
-    expect(relay.protocols).toEqual([['pedit-v5', `pedit-admission.${'A'.repeat(43)}`]])
+    expect(relay.protocols).toEqual([['pedit-v6', `pedit-admission.${'A'.repeat(43)}`]])
     expect(relay.urls).toEqual(['ws://test'])
+  })
+
+  it('starts every frame with kind 0 and ignores the kinds of a kept room', async () => {
+    const relay = new Relay()
+    const key = await editKeys()
+    const host = await join(relay, key, 'x')
+    await vi.waitFor(() => expect(host.status).toBe('connected'))
+    await vi.waitFor(() => expect(relay.frames.length).toBeGreaterThan(0))
+    expect(relay.frames.every((f) => f[0] === Kind.Live)).toBe(true)
+    const peer = relay.create('ws://test')
+    await vi.waitFor(() => expect(peer.readyState).toBe(1))
+    for (const kind of [Kind.Entry, Kind.Logged, Kind.Replay, Kind.LogEnd, 9])
+      peer.send(withKind(kind, new Uint8Array(40)))
+    peer.send(new Uint8Array())
+    const guest = await join(relay, key)
+    await vi.waitFor(() => expect(text(guest)).toBe('x'))
+    expect(host.status).toBe('connected')
+    expect(text(host)).toBe('x')
   })
 
   it('stops for good when the host leaves', async () => {

@@ -20,6 +20,7 @@
     "./csp": "./src/csp.ts",
     "./embeds/define": "./src/embeds/define.ts",
     "./frame": "./src/frame.ts",
+    "./kinds": "./src/kinds.ts",
     "./pace": "./src/pace.ts",
     "./testing": "./src/testing.ts"
   }

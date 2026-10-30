@@ -147,6 +147,7 @@ Cloudflare dashboard → your Worker → Settings → Variables and Secrets):
 | `BLOB_QUOTA_BYTES` | All images of a session, in bytes | `104857600` |
 | `BLOB_QUOTA_COUNT` | All images of a session, in number | `500` |
 | `ROOM_MAX_SECONDS` | How long a room lasts, in seconds from its host's first connection | *(unset: no limit)* |
+| `KEEP_MAX_SECONDS` | The longest a host may ask to have a room kept after it leaves (`pedit --keep`); a longer request is cut to it. A room asked to be kept lasts at least that long, from its host's first connection, even past `ROOM_MAX_SECONDS` | `604800` (seven days) |
 | `HOST_GRACE_SECONDS` | How long a room waits for a host whose connection dropped before it closes; meanwhile guests stay and can read but not edit | `120` |
 | `MEDIA_SOURCES` | Where the Markdown preview may load images and videos from: space-separated Content-Security-Policy sources, such as `https:` for any HTTPS site or `https://images.example.com`. An invalid list is ignored. | *(unset: none; only images pasted in the session)* |
 

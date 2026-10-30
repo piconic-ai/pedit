@@ -22,7 +22,8 @@ import {
   type RoomKeys,
   SENDER_BYTES,
 } from '../src/index.ts'
-import { answer, editKeys, lowerKeys, Relay, sealFrame } from '../src/testing.ts'
+import { Kind, withKind } from '../src/kinds.ts'
+import { answer, editKeys, lowerKeys, Relay, sealFrame, wireFrame } from '../src/testing.ts'
 
 const clients: RoomClient[] = []
 afterEach(async () => {
@@ -148,7 +149,7 @@ describe('room links below edit', () => {
     for (const access of ['comment', 'read'] as Access[]) {
       const lower = await lowerKeys(keys, access)
       for (const m of [answer(host), ...forbidden, want]) {
-        peer.send(await sealFrame(lower, sender(access === 'comment' ? 1 : 2), ++counter, m))
+        peer.send(await wireFrame(lower, sender(access === 'comment' ? 1 : 2), ++counter, m))
       }
     }
     // A commenter's signature that claims to be an editor's.
@@ -156,7 +157,7 @@ describe('room links below edit', () => {
     const frame = await sealFrame(comment, sender(5), 1, forbidden[2] as Uint8Array)
     const plain = await decrypt(keys.frameKey, frame)
     plain[SENDER_BYTES + 8 + 1] = 0
-    peer.send(await encrypt(keys.frameKey, plain))
+    peer.send(withKind(Kind.Live, await encrypt(keys.frameKey, plain)))
 
     await vi.waitFor(() => {
       expect(errors.filter((e) => e instanceof NotAllowedError)).toHaveLength(2 * forbidden.length)
@@ -180,11 +181,11 @@ describe('room links below edit', () => {
       encodeMessage(MessageType.Canvas, encodeCanvas({ kind: 'edit', id, base: '{}', next: '{}' }))
     const far = 2 ** 52
     const comment = await lowerKeys(keys, 'comment')
-    peer.send(await sealFrame(comment, sender(7), 1, answer(host)))
-    peer.send(await sealFrame(comment, sender(7), far, edit('commenter')))
-    peer.send(await sealFrame(await lowerKeys(keys, 'read'), sender(7), far, edit('reader')))
-    peer.send(await sealFrame(keys, sender(7), 1, answer(host)))
-    peer.send(await sealFrame(keys, sender(7), 2, edit('editor')))
+    peer.send(await wireFrame(comment, sender(7), 1, answer(host)))
+    peer.send(await wireFrame(comment, sender(7), far, edit('commenter')))
+    peer.send(await wireFrame(await lowerKeys(keys, 'read'), sender(7), far, edit('reader')))
+    peer.send(await wireFrame(keys, sender(7), 1, answer(host)))
+    peer.send(await wireFrame(keys, sender(7), 2, edit('editor')))
     await vi.waitFor(() => expect(heard).toEqual(['editor']))
     peer.close()
   })
@@ -229,10 +230,10 @@ describe('room links below edit', () => {
           encodeSync((e) => syncProtocol.writeUpdate(e, insertUpdate('FORGED'))),
         ),
       )
-    peer.send(await sealFrame(await lowerKeys(keys, 'read'), sender(1), 1, update(2)))
+    peer.send(await wireFrame(await lowerKeys(keys, 'read'), sender(1), 1, update(2)))
     const comment = await lowerKeys(keys, 'comment')
-    peer.send(await sealFrame(comment, sender(2), 1, answer(host)))
-    peer.send(await sealFrame(comment, sender(2), 2, update(1)))
+    peer.send(await wireFrame(comment, sender(2), 1, answer(host)))
+    peer.send(await wireFrame(comment, sender(2), 2, update(1)))
     await vi.waitFor(() =>
       expect(errors.filter((e) => e instanceof NotAllowedError)).toHaveLength(2),
     )

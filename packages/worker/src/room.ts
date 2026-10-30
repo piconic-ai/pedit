@@ -6,13 +6,19 @@ import {
   READ_ADMISSION_HEADER,
   readAdmissionProtocol,
   SOCKET_PROTOCOL,
+  socketProtocol,
 } from '@pedit/protocol/admission'
 import {
+  CHECKPOINT,
+  CHECKPOINT_REFUSED,
   CLIENT_OUTDATED,
   expiredReason,
   HOST_AWAY,
   HOST_BACK,
   HOST_LEFT,
+  KEEP,
+  KEPT,
+  LOG_FULL,
   MESSAGE_TOO_BIG,
   RELAY_MAINTENANCE,
   RELAY_PING,
@@ -23,7 +29,17 @@ import {
   SERVER_OUTDATED,
 } from '@pedit/protocol/close'
 import { MAX_FRAME_BYTES } from '@pedit/protocol/frame'
+import { decodeCheckpoint, encodeLogged, Kind, splitKind, withKind } from '@pedit/protocol/kinds'
 import { RELAY_BYTE_RATE, RELAY_MESSAGE_RATE } from '@pedit/protocol/pace'
+import {
+  appendEntry,
+  awayLog,
+  checkpoint,
+  clearAway,
+  hasSnapshot,
+  replay,
+  storeSnapshot,
+} from './kept-away.ts'
 import { expireKeptText, keptText, keptTextAlarm } from './kept-text.ts'
 
 // Shared browser code brings DOM's SubtleCrypto into this program. Augment it
@@ -41,6 +57,13 @@ declare global {
 export const MAX_PEERS = 32
 /** Set by the Worker (never by clients) on the host's upgrade request. */
 export const HOST_HEADER = 'X-Pedit-Host'
+/**
+ * How long the host asks the relay to keep the room after it leaves, in
+ * seconds. The Worker passes it on only with a host token that checked out.
+ */
+export const KEEP_HEADER = 'X-Pedit-Keep'
+/** The last log entry a peer already holds, when it joins a room whose host is away. */
+export const AFTER_HEADER = 'X-Pedit-After'
 
 /** AES-GCM's IV and tag around an encrypted attachment. */
 export const BLOB_OVERHEAD = 28
@@ -169,6 +192,30 @@ const READ_ADMISSION_KEY = 'readAdmissionHash'
 const OPENED_KEY = 'openedAt'
 // Until when, in ms since the epoch, the room waits for a host that dropped.
 const AWAY_KEY = 'hostAwayUntil'
+// How long the host asked to have the room kept, clamped (0: not kept).
+const KEEP_KEY = 'keepSeconds'
+// Until when, in ms since the epoch, the room is kept without its host.
+// Distinct from AWAY_KEY, the grace period: the room may be in either.
+const KEPT_AWAY_KEY = 'keptAwayUntil'
+// Set when the room ended at the end of its keep, or the host closed it:
+// the ID is not opened again.
+const EXPIRED_KEY = 'expired'
+const CLOSED_KEY = 'closedByHost'
+// The tag of a socket that speaks protocol version 6 (a kind byte before each
+// message); one without it speaks version 5. Tagged `v5` or `v6` at accept.
+const V6_TAG = 'v6'
+const KEEP_DEFAULT_MAX_SECONDS = 7 * 24 * 60 * 60
+
+/** What a connection says about itself when it joins. */
+interface Join {
+  version: number
+  /** The subprotocol to answer in. */
+  protocol: string
+  /** The host's declared keep, clamped; undefined if it declared none. */
+  keep?: number
+  /** The last log entry the peer holds. */
+  after?: number
+}
 
 type Role = 'editor' | 'reader'
 
@@ -217,7 +264,7 @@ export class Room extends DurableObject<Env> {
   // Host connections between the start of fetch and the accept or refusal.
   private hostHandshakes = 0
   // Deletes a kept room's images when it expires.
-  private readonly removeKeptBlobs = () => this.deleteBlobs(this.blobPrefix(true))
+  private readonly removeKeptBlobs = () => this.deleteBlobs([this.blobPrefix(true)])
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
@@ -228,17 +275,7 @@ export class Room extends DurableObject<Env> {
 
   override async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname
-    if (/\/keep(?:\/|$)/.test(path))
-      return keptText(
-        request,
-        this.ctx.storage,
-        request.headers.get(HOST_HEADER) === '1',
-        'KEEP_MAX_SECONDS' in this.env && typeof this.env.KEEP_MAX_SECONDS === 'string'
-          ? this.env.KEEP_MAX_SECONDS
-          : undefined,
-        this.env.ROOM_MAX_SECONDS,
-        this.removeKeptBlobs,
-      )
+    if (/\/keep(?:\/|$)/.test(path)) return this.keepRequest(request, path)
     const blob = BLOB_PATH.exec(path)?.[1]
     if (this.kept()) {
       return blob
@@ -263,8 +300,10 @@ export class Room extends DurableObject<Env> {
       return refuse(SERVER_OUTDATED, 'the server is older than this pedit', version.offered)
     }
     const token = readAdmissionProtocol(protocols)
-    if (!token) return new Response('room admission required; update your client', { status: 403 })
+    if (!token || version.result !== 'current')
+      return new Response('room admission required; update your client', { status: 403 })
     const isHost = request.headers.get(HOST_HEADER) === '1'
+    const join = this.joinFrom(request, version.version, isHost)
     const read = (isHost && request.headers.get(READ_ADMISSION_HEADER)) || null
     if (read !== null && !ADMISSION_PATTERN.test(read)) {
       return new Response('invalid reader admission', { status: 403 })
@@ -274,16 +313,53 @@ export class Room extends DurableObject<Env> {
     // whose host is just reconnecting.
     if (isHost) this.hostHandshakes++
     try {
-      return await this.admit(token, isHost, read)
+      return await this.admit(token, isHost, read, join)
     } finally {
       if (isHost) this.hostHandshakes--
     }
   }
 
-  private async admit(token: string, isHost: boolean, read: string | null): Promise<Response> {
+  // A request under /keep: the host closes a room kept without it, or the HTTP kept room.
+  private keepRequest(request: Request, path: string): Promise<Response> | Response {
+    if (path.endsWith('/keep/close') && request.method === 'POST' && this.awayRoom())
+      return this.closeAway(request)
+    const max = 'KEEP_MAX_SECONDS' in this.env ? this.env.KEEP_MAX_SECONDS : undefined
+    return keptText(
+      request,
+      this.ctx.storage,
+      request.headers.get(HOST_HEADER) === '1',
+      typeof max === 'string' ? max : undefined,
+      this.env.ROOM_MAX_SECONDS,
+      this.removeKeptBlobs,
+    )
+  }
+
+  private joinFrom(request: Request, version: number, isHost: boolean): Join {
+    // Keeping a room needs the kind bytes of version 6.
+    const keeps = isHost && version === 6
+    return {
+      version,
+      protocol: socketProtocol(version),
+      keep: keeps ? this.keepFrom(request.headers.get(KEEP_HEADER)) : undefined,
+      after: afterFrom(request.headers.get(AFTER_HEADER)),
+    }
+  }
+
+  private async admit(
+    token: string,
+    isHost: boolean,
+    read: string | null,
+    join: Join,
+  ): Promise<Response> {
     const digest = await sha256(token)
     const readDigest = read === null ? null : await sha256(read)
     if (this.kept()) return new Response('kept rooms use text synchronization', { status: 409 })
+    if (this.ctx.storage.kv.get(CLOSED_KEY) === true)
+      return refuse(ROOM_CLOSED, 'room is closed', join.protocol)
+    // A version 5 host cannot take in the entries kept for it, and returning
+    // would discard them: it is told to update, and the room stays kept.
+    if (isHost && join.version === 5 && this.keptAway())
+      return refuse(CLIENT_OUTDATED, 'pedit is outdated; update it', join.protocol)
     // Deploys can drop every socket without a close callback. Only a guest
     // with this session's editor admission may start its missing host grace
     // period: the reader token goes to anyone a link was passed on to.
@@ -292,6 +368,7 @@ export class Room extends DurableObject<Env> {
       !this.expired() &&
       this.hosts().length === 0 &&
       this.awayUntil() === undefined &&
+      !this.keptAway() &&
       this.role(digest) === 'editor'
     ) {
       await this.waitForHost()
@@ -304,20 +381,22 @@ export class Room extends DurableObject<Env> {
     // since the time limit is final for every current client.
     if (this.expired()) {
       if (this.sessionOpen()) await this.expire()
-      return refuse(ROOM_EXPIRED, expiredReason(limits(this.env).roomSeconds))
+      return refuse(ROOM_EXPIRED, expiredReason(this.lifeSeconds()), join.protocol)
     }
-    if (!isHost && this.hosts().length === 0 && !this.hostAway()) {
+    if (!isHost && this.hosts().length === 0 && !this.hostAway() && !this.keptAway()) {
       // A grace period that ran out with its alarm late.
       if (this.awayUntil() !== undefined) await this.closeAfterGrace()
-      this.log('turned a guest away', { code: ROOM_CLOSED })
-      return refuse(ROOM_CLOSED, 'room is closed')
+      if (!this.keptAway()) {
+        this.log('turned a guest away', { code: ROOM_CLOSED })
+        return refuse(ROOM_CLOSED, 'room is closed', join.protocol)
+      }
     }
     // Authenticate before taking a peer slot. Only the authenticated host may
     // register the verifiers; a guest cannot claim an unopened room's tokens.
     const role = isHost ? this.registerHost(digest, readDigest) : this.role(digest)
     if (!role) return new Response('invalid room admission', { status: 403 })
-    if (this.full(isHost, role)) return refuse(ROOM_FULL, 'room is full')
-    return this.accept(isHost, role)
+    if (this.full(isHost, role)) return refuse(ROOM_FULL, 'room is full', join.protocol)
+    return this.accept(isHost, role, join)
   }
 
   private kept(): boolean {
@@ -328,23 +407,99 @@ export class Room extends DurableObject<Env> {
   }
 
   // Takes a peer admitted to a place. Nothing awaits before the accept.
-  private async accept(isHost: boolean, role: Role): Promise<Response> {
+  private async accept(isHost: boolean, role: Role, join: Join): Promise<Response> {
+    const kv = this.ctx.storage.kv
     // The clock starts at the host's first connection and never again.
-    if (isHost && this.openedAt() === undefined) this.ctx.storage.kv.put(OPENED_KEY, Date.now())
+    const first = isHost && this.openedAt() === undefined
+    if (first) kv.put(OPENED_KEY, Date.now())
     const { 0: client, 1: server } = new WebSocketPair()
-    this.ctx.acceptWebSocket(server, isHost ? [HOST_TAG] : role === 'reader' ? [READER_TAG] : [])
+    const tags = [`v${join.version}`]
+    if (isHost) tags.push(HOST_TAG)
+    else if (role === 'reader') tags.push(READER_TAG)
+    this.ctx.acceptWebSocket(server, tags)
+    const v6 = join.version === 6
     if (isHost) {
       this.log('host connected')
-      if (this.awayUntil() !== undefined) this.hostReturned()
+      // Fixed at the first connection, before any image is stored under the
+      // prefix it picks: a later connect is answered with the stored keep.
+      if (first) kv.put(KEEP_KEY, join.keep ?? 0)
+      if (join.keep !== undefined) safeSend(server, `${KEEP} ${this.keepSeconds()} 0`)
+      // The host returns to a room kept without it: it is sent what was
+      // written, and the room is its own again.
+      const kept = this.keptAway()
+      if (kept) this.sendReplay(server, join.after, true)
+      if (this.awayUntil() !== undefined || kept) this.hostReturned()
       await this.ctx.storage.setAlarm(this.nextAlarm())
+    } else if (this.keptAway()) {
+      if (v6) {
+        safeSend(server, `${KEPT} ${kv.get<number>(KEPT_AWAY_KEY)}`)
+        this.sendReplay(server, join.after, false)
+      } else {
+        safeSend(server, HOST_AWAY)
+      }
     } else if (this.hostAway()) {
       safeSend(server, HOST_AWAY)
     }
     return new Response(null, {
       status: 101,
       webSocket: client,
-      headers: { 'Sec-WebSocket-Protocol': SOCKET_PROTOCOL },
+      headers: { 'Sec-WebSocket-Protocol': join.protocol },
     })
+  }
+
+  // The snapshot, the entries and the tail of a room kept without its host.
+  private sendReplay(ws: WebSocket, after: number | undefined, host: boolean): void {
+    for (const message of replay(this.ctx.storage, after, host)) {
+      try {
+        ws.send(message)
+      } catch {
+        // Going away; its close handler cleans up.
+      }
+    }
+  }
+
+  // The keep a host asks for: whole seconds, no more than the relay allows.
+  private keepFrom(header: string | null): number | undefined {
+    if (header === null) return undefined
+    const max = Number(
+      'KEEP_MAX_SECONDS' in this.env && typeof this.env.KEEP_MAX_SECONDS === 'string'
+        ? this.env.KEEP_MAX_SECONDS
+        : KEEP_DEFAULT_MAX_SECONDS,
+    )
+    const asked = /^\d{1,10}$/.test(header) ? Number(header) : 0
+    return Math.min(asked, Number.isSafeInteger(max) && max > 0 ? max : 0)
+  }
+
+  private keepSeconds(): number {
+    return this.ctx.storage.kv.get<number>(KEEP_KEY) ?? 0
+  }
+
+  // Whether the room is kept without its host.
+  private keptAway(): boolean {
+    return this.ctx.storage.kv.get<number>(KEPT_AWAY_KEY) !== undefined
+  }
+
+  // Whether the host's leaving can keep the room: it asked, and left a snapshot.
+  private canKeep(): boolean {
+    return this.keepSeconds() > 0 && !this.expired() && hasSnapshot(this.ctx.storage)
+  }
+
+  // Whether the room is, or was, one the host has left: for POST /keep/close.
+  private awayRoom(): boolean {
+    return this.keptAway() || this.ctx.storage.kv.get(CLOSED_KEY) === true
+  }
+
+  // The host ends a room kept without it. Like the HTTP kept room's close, it
+  // names the last entry it took in, and an edit that came later keeps the room open.
+  private async closeAway(request: Request): Promise<Response> {
+    if (request.headers.get(HOST_HEADER) !== '1') return new Response(null, { status: 403 })
+    if (this.keptAway()) {
+      if (request.headers.get('X-Pedit-Tail') !== String(awayLog(this.ctx.storage).tail))
+        return new Response(null, { status: 409 })
+      this.ctx.storage.kv.put(CLOSED_KEY, true)
+      await this.endSession(ROOM_CLOSED, 'the host closed the room')
+    }
+    return Response.json({})
   }
 
   /**
@@ -399,17 +554,31 @@ export class Room extends DurableObject<Env> {
   private deadline(): number {
     const opened = this.openedAt()
     if (opened === undefined) return Number.POSITIVE_INFINITY
-    return opened + limits(this.env).roomSeconds * 1000
+    return opened + Math.max(limits(this.env).roomSeconds, this.keepSeconds()) * 1000
+  }
+
+  // What the close reason says the room lasts: a room kept for longer than
+  // the relay's limit lasts as long as the keep, and one without a limit ends
+  // with its keep.
+  private lifeSeconds(): number {
+    const room = limits(this.env).roomSeconds
+    return Number.isFinite(room) ? Math.max(room, this.keepSeconds()) : this.keepSeconds()
   }
 
   // Date.now() rather than the `now` seam: the tests stop that one at 0.
   private expired(): boolean {
-    return Date.now() >= this.deadline()
+    const keptUntil = this.ctx.storage.kv.get<number>(KEPT_AWAY_KEY) ?? Number.POSITIVE_INFINITY
+    return (
+      Date.now() >= Math.min(this.deadline(), keptUntil) ||
+      this.ctx.storage.kv.get(EXPIRED_KEY) === true
+    )
   }
 
   // The hourly check, or the deadline or the end of a grace period if one
-  // comes sooner.
+  // comes sooner. A room kept without its host is checked at its deadline only.
   private nextAlarm(): number {
+    const keptUntil = this.ctx.storage.kv.get<number>(KEPT_AWAY_KEY)
+    if (keptUntil !== undefined) return Math.min(this.deadline(), keptUntil)
     return Math.min(
       this.deadline(),
       this.awayUntil() ?? Number.POSITIVE_INFINITY,
@@ -452,7 +621,7 @@ export class Room extends DurableObject<Env> {
         await this.ctx.storage.setAlarm(this.nextAlarm())
         return
       }
-      if (this.hostAway()) {
+      if (this.hostAway() || this.keptAway()) {
         await this.ctx.storage.setAlarm(this.nextAlarm())
         return
       }
@@ -464,7 +633,10 @@ export class Room extends DurableObject<Env> {
       // there is nothing left to do. Not armed again until a host connects.
       if (this.sessionOpen()) {
         this.log('alarm found no host')
-        await this.endSession(ROOM_CLOSED, 'the host left')
+        // A host that asked to keep the room gets its grace period, then the
+        // kept state, as if its close had been seen.
+        if (this.canKeep()) await this.waitForHost()
+        else await this.endSession(ROOM_CLOSED, 'the host left')
       }
       return
     }
@@ -476,7 +648,9 @@ export class Room extends DurableObject<Env> {
       this.closePeer(ws, 1003, 'binary frames only')
       return
     }
-    if (message.byteLength > MAX_FRAME_BYTES) {
+    // A version 6 message has the kind byte, and a checkpoint a cutoff, besides.
+    const v6 = this.ctx.getTags(ws).includes(V6_TAG)
+    if (message.byteLength > MAX_FRAME_BYTES + (v6 ? 9 : 0)) {
       this.closePeer(ws, MESSAGE_TOO_BIG, 'message too big')
       return
     }
@@ -501,10 +675,90 @@ export class Room extends DurableObject<Env> {
       this.closePeer(ws, RATE_LIMITED, 'rate limited')
       return
     }
+    const bytes = new Uint8Array(message)
+    // A version 5 peer has no kind byte: all it sends is live.
+    if (!v6) {
+      this.fan(ws, withKind(Kind.Live, bytes), bytes)
+      return
+    }
+    const split = splitKind(bytes)
+    if (!split) {
+      this.closePeer(ws, 1003, 'empty message')
+      return
+    }
+    this.byKind(ws, bytes, split.kind, split.payload)
+  }
+
+  // What the relay does with a message of a kind (docs/design/rooms-away.md).
+  private byKind(ws: WebSocket, wire: Uint8Array, kind: number, payload: Uint8Array): void {
+    if (payload.length > MAX_FRAME_BYTES + (kind === Kind.Checkpoint ? 8 : 0)) {
+      this.closePeer(ws, MESSAGE_TOO_BIG, 'message too big')
+      return
+    }
+    const host = this.isHost(ws)
+    switch (kind) {
+      case Kind.Live:
+        this.fan(ws, wire, payload)
+        return
+      case Kind.Entry:
+        // Entries are an editor's: a reader's link cannot write.
+        if (this.ctx.getTags(ws).includes(READER_TAG) || payload.length === 0) {
+          this.closePeer(ws, RATE_LIMITED, 'readers write no entries')
+        } else if (!this.keptAway()) {
+          // The host is here, and takes the entry in like a live update.
+          this.fan(ws, wire)
+        } else {
+          const id = appendEntry(this.ctx.storage, payload)
+          if (id === undefined) safeSend(ws, LOG_FULL)
+          // To the writer too: the entry coming back with its id is its acknowledgement.
+          else this.fan(null, encodeLogged(id, payload))
+        }
+        return
+      case Kind.Snapshot:
+      case Kind.Checkpoint:
+        this.fromHost(ws, host, kind, payload)
+        return
+      case Kind.Logged:
+      case Kind.Replay:
+      case Kind.LogEnd:
+        // Only the relay sends these.
+        this.closePeer(ws, 1003, 'not for the relay')
+        return
+      default:
+      // A kind of a later version: ignored, as a peer ignores it.
+    }
+  }
+
+  // Kinds 2 and 3, which only the host may send, and only a room it asked to keep stores.
+  private fromHost(ws: WebSocket, host: boolean, kind: number, payload: Uint8Array): void {
+    if (!host) {
+      this.closePeer(ws, RATE_LIMITED, 'only the host keeps a snapshot')
+      return
+    }
+    if (this.keepSeconds() === 0) return
+    if (kind === Kind.Snapshot) {
+      if (payload.length > 0) storeSnapshot(this.ctx.storage, payload)
+      return
+    }
+    const cp = decodeCheckpoint(payload)
+    if (!cp || cp.bundle.length === 0) {
+      this.closePeer(ws, 1003, 'invalid checkpoint')
+      return
+    }
+    const done = checkpoint(this.ctx.storage, cp.cutoff, cp.bundle)
+    safeSend(ws, done ? `${CHECKPOINT} ${done.cutoff} ${done.tail}` : CHECKPOINT_REFUSED)
+  }
+
+  // Sends a message to every peer but `from`: a version 6 peer gets `wire`, a
+  // version 5 peer `plain`, or nothing if there is none (it knows no such kind).
+  private fan(from: WebSocket | null, wire: Uint8Array, plain?: Uint8Array): void {
+    const v6 = new Set(this.ctx.getWebSockets(V6_TAG))
     for (const peer of this.ctx.getWebSockets()) {
-      if (peer === ws) continue
+      if (peer === from) continue
+      const data = v6.has(peer) ? wire : plain
+      if (!data) continue
       try {
-        peer.send(message)
+        peer.send(data)
       } catch {
         // The peer is going away; its close handler cleans up.
       }
@@ -589,19 +843,51 @@ export class Room extends DurableObject<Env> {
     // Leaving on purpose ends the session, even while the relay still counts
     // older connections of the host it has not seen close yet.
     // Under maintenance no host can come back.
-    if (code === HOST_LEFT || maintenance(this.env as { MAINTENANCE?: string }) === 'closed') {
+    const closed = maintenance(this.env as { MAINTENANCE?: string }) === 'closed'
+    if (code === HOST_LEFT || closed) {
+      // A host that asked for it leaves the room kept, if it left a snapshot.
+      if (code === HOST_LEFT && !closed && this.canKeep()) {
+        await this.enterKeptAway(ws)
+        return
+      }
       await this.endSession(ROOM_CLOSED, 'the host left', ws)
       return
     }
-    if (this.hosts(ws).length > 0 || this.awayUntil() !== undefined) return
+    if (this.hosts(ws).length > 0 || this.awayUntil() !== undefined || this.keptAway()) return
     await this.waitForHost()
+  }
+
+  /**
+   * The host is away and the room stays: until the keep runs out, peers
+   * write entries to a log that the host takes in when it comes back. Nobody
+   * is closed, but for the host's own other connections. A room kept without
+   * a snapshot cannot be: it ends as one that was not asked to be kept.
+   */
+  private async enterKeptAway(except?: WebSocket): Promise<void> {
+    const kv = this.ctx.storage.kv
+    const until = Math.min(Date.now() + this.keepSeconds() * 1000, this.deadline())
+    if (until <= Date.now()) {
+      await this.expire()
+      return
+    }
+    kv.put(KEPT_AWAY_KEY, until)
+    kv.delete(AWAY_KEY)
+    this.log('kept away', { untilSeconds: Math.round((until - Date.now()) / 1000) })
+    const v6 = new Set(this.ctx.getWebSockets(V6_TAG))
+    for (const peer of this.ctx.getWebSockets()) {
+      if (peer === except) continue
+      if (this.isHost(peer)) safeClose(peer, ROOM_CLOSED, 'the host left')
+      // A version 5 peer reads the host away and waits for it, as for a grace period.
+      else safeSend(peer, v6.has(peer) ? `${KEPT} ${until}` : HOST_AWAY)
+    }
+    await this.ctx.storage.setAlarm(this.nextAlarm())
   }
 
   // The last host dropped: wait for it to come back, without editing.
   private async waitForHost(): Promise<void> {
     // The session ended already (it expired, or the host left on purpose):
     // this is its last host closing.
-    if (this.ctx.storage.kv.get(ADMISSION_KEY) === undefined) return
+    if (this.ctx.storage.kv.get(ADMISSION_KEY) === undefined || this.keptAway()) return
     const seconds = limits(this.env).hostGraceSeconds
     this.ctx.storage.kv.put(AWAY_KEY, Date.now() + seconds * 1000)
     this.log('host away', { graceSeconds: seconds })
@@ -613,6 +899,8 @@ export class Room extends DurableObject<Env> {
 
   private hostReturned(): void {
     this.ctx.storage.kv.delete(AWAY_KEY)
+    // The log stays until the host checkpoints what it took in.
+    this.ctx.storage.kv.delete(KEPT_AWAY_KEY)
     this.log('host returned')
     for (const peer of this.ctx.getWebSockets()) {
       if (!this.isHost(peer)) safeSend(peer, HOST_BACK)
@@ -621,13 +909,20 @@ export class Room extends DurableObject<Env> {
 
   private async closeAfterGrace(): Promise<void> {
     this.log('host did not come back')
+    if (this.canKeep()) {
+      await this.enterKeptAway()
+      return
+    }
     await this.endSession(ROOM_CLOSED, 'the host left')
   }
 
   // The room reached its time limit: everyone goes, with the session's data.
   // Its `openedAt` stays, so the room ID is never opened again.
   private async expire(): Promise<void> {
-    await this.endSession(ROOM_EXPIRED, expiredReason(limits(this.env).roomSeconds))
+    // A room kept for less than the deadline ends before it: remembered, so
+    // the ID is not opened again.
+    this.ctx.storage.kv.put(EXPIRED_KEY, true)
+    await this.endSession(ROOM_EXPIRED, expiredReason(this.lifeSeconds()))
   }
 
   // Everything before the first await runs synchronously, which the
@@ -647,6 +942,8 @@ export class Room extends DurableObject<Env> {
     this.ctx.storage.kv.delete(ADMISSION_KEY)
     this.ctx.storage.kv.delete(READ_ADMISSION_KEY)
     this.ctx.storage.kv.delete(AWAY_KEY)
+    this.ctx.storage.kv.delete(KEPT_AWAY_KEY)
+    clearAway(this.ctx.storage)
     this.cleaning = this.cleaning.then(() => this.deleteBlobs())
     await this.cleaning
   }
@@ -669,7 +966,7 @@ export class Room extends DurableObject<Env> {
     if (request.method === 'PUT' && role !== 'editor') {
       return new Response('adding images needs an edit link', { status: 403 })
     }
-    const key = this.blobPrefix(kept) + id
+    const key = this.blobPrefix() + id
     if (request.method === 'GET') {
       const object = await this.env.BLOBS.get(key)
       if (!object) return new Response('no such blob', { status: 404 })
@@ -697,7 +994,8 @@ export class Room extends DurableObject<Env> {
       return token === state?.editor ? 'editor' : token === state?.reader ? 'reader' : refused()
     }
     if (this.expired()) return new Response('room has expired', { status: 410 })
-    if (this.hosts().length === 0) {
+    // A room kept without its host keeps serving its images and takes new ones.
+    if (this.hosts().length === 0 && !this.keptAway()) {
       if (!this.hostAway()) return new Response('room is closed', { status: 410 })
       // What was attached can still be seen; nothing new goes in.
       if (method !== 'GET') return new Response('the host is away', { status: 503 })
@@ -736,7 +1034,8 @@ export class Room extends DurableObject<Env> {
     const generation = this.generation
     const kept = key.startsWith('kept/')
     const ended = () =>
-      this.generation !== generation || (kept && this.ctx.storage.kv.get('keptText') === undefined)
+      this.generation !== generation ||
+      (kept && this.ctx.storage.kv.get('keptText') === undefined && this.keepSeconds() === 0)
     const closed = () => new Response('room is closed', { status: 410 })
 
     // The first upload under an id wins; receivers check the content anyway.
@@ -773,24 +1072,31 @@ export class Room extends DurableObject<Env> {
   }
 
   // Deletion failures are left to the bucket's lifecycle rule.
-  private async deleteBlobs(prefix = this.blobPrefix()): Promise<void> {
+  private async deleteBlobs(prefixes = [this.blobPrefix()]): Promise<void> {
     try {
-      let cursor: string | undefined
-      do {
-        const page = await this.env.BLOBS.list({ prefix, cursor })
-        if (page.objects.length > 0) await this.env.BLOBS.delete(page.objects.map((o) => o.key))
-        cursor = page.truncated ? page.cursor : undefined
-      } while (cursor)
+      for (const prefix of prefixes) {
+        let cursor: string | undefined
+        do {
+          const page = await this.env.BLOBS.list({ prefix, cursor })
+          if (page.objects.length > 0) await this.env.BLOBS.delete(page.objects.map((o) => o.key))
+          cursor = page.truncated ? page.cursor : undefined
+        } while (cursor)
+      }
     } catch (error) {
       console.error('failed to delete blobs', error)
     }
   }
 
   // The Durable Object id is derived from the room id, and only this room knows it.
-  // A kept room's blobs live under their own prefix, which the bucket's
-  // one-day lifecycle rule for `rooms/` leaves alone (docs/public-relay.md).
-  private blobPrefix(kept = false): string {
+  // A kept room's blobs, and those of a room its host asked to keep, live under
+  // their own prefix, which the bucket's one-day lifecycle rule for `rooms/`
+  // leaves alone (docs/public-relay.md).
+  private blobPrefix(kept = this.keepsBlobs()): string {
     return `${kept ? 'kept' : 'rooms'}/${this.ctx.id.toString()}/`
+  }
+
+  private keepsBlobs(): boolean {
+    return this.kept() || this.keepSeconds() > 0
   }
 
   private usage(): Usage {
@@ -800,6 +1106,11 @@ export class Room extends DurableObject<Env> {
   private setUsage(usage: Usage): void {
     this.ctx.storage.kv.put(USAGE_KEY, usage)
   }
+}
+
+// The entry a peer last held, from its X-Pedit-After header: whole, or none.
+function afterFrom(header: string | null): number | undefined {
+  return header !== null && /^\d{1,15}$/.test(header) ? Number(header) : undefined
 }
 
 function sha256(token: string): Promise<ArrayBuffer> {

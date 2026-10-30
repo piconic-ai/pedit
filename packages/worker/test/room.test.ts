@@ -47,6 +47,10 @@ interface Room {
   read: string
 }
 
+// These tests speak protocol version 5, which has no kind byte: the relay
+// still serves it. kept-away.test.ts speaks version 6.
+const legacyProtocols = (token: string) => admissionProtocols(token, 5)
+
 const admissions = new Map<string, string>()
 
 // Each request comes from an address of its own unless a test says otherwise,
@@ -85,7 +89,7 @@ function upgrade(id: string, headers: Record<string, string> = {}): Promise<Resp
   return exports.default.fetch(`https://pedit.test/api/rooms/${id}/ws`, {
     headers: {
       Upgrade: 'websocket',
-      'Sec-WebSocket-Protocol': admissionProtocols(admissions.get(id)!).join(', '),
+      'Sec-WebSocket-Protocol': legacyProtocols(admissions.get(id)!).join(', '),
       'CF-Connecting-IP': nextAddress(),
       ...headers,
     },
@@ -118,7 +122,7 @@ const host = (room: Room, headers: Record<string, string> = {}) =>
 
 /** The upgrade headers of a guest with a comment-only or read-only link. */
 const asReader = (room: Room) => ({
-  'Sec-WebSocket-Protocol': admissionProtocols(room.read).join(', '),
+  'Sec-WebSocket-Protocol': legacyProtocols(room.read).join(', '),
 })
 
 /**
@@ -148,7 +152,7 @@ describe('rooms', () => {
     for (let i = 0; i < MAX_PEERS + 1; i++) {
       expect((await upgrade(room.id, { 'Sec-WebSocket-Protocol': '' })).status).toBe(403)
     }
-    const wrong = admissionProtocols('B'.repeat(43)).join(', ')
+    const wrong = legacyProtocols('B'.repeat(43)).join(', ')
     expect((await upgrade(room.id, { 'Sec-WebSocket-Protocol': wrong })).status).toBe(403)
     expect(
       (await upgrade(room.id, { 'Sec-WebSocket-Protocol': wrong, 'X-Pedit-Host': '1' })).status,
@@ -175,14 +179,14 @@ describe('rooms', () => {
   it('tells clients of another protocol version to update, before admission', async () => {
     const room = await createRoom()
     await host(room)
-    const admission = admissionProtocols(admissions.get(room.id)!)[1]
+    const admission = legacyProtocols(admissions.get(room.id)!)[1]
     // pedit-v4 is a pedit from before peers signed their frames.
     const old = await upgrade(room.id, { 'Sec-WebSocket-Protocol': `pedit-v4, ${admission}` })
     expect(old.status).toBe(101)
     expect(old.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v4')
     // A wrong admission makes no difference: the version is checked first.
     const newer = await connect(room.id, {
-      'Sec-WebSocket-Protocol': `pedit-v6, pedit-admission.${'B'.repeat(43)}`,
+      'Sec-WebSocket-Protocol': `pedit-v7, pedit-admission.${'B'.repeat(43)}`,
     })
     expect((await newer.closed).code).toBe(SERVER_OUTDATED)
     const ws = old.webSocket!
@@ -197,7 +201,7 @@ describe('rooms', () => {
   it('only lets the host register admission and preserves it across hibernation', async () => {
     const room = await createRoom()
     const attacker = await connect(room.id, {
-      'Sec-WebSocket-Protocol': admissionProtocols('B'.repeat(43)).join(', '),
+      'Sec-WebSocket-Protocol': legacyProtocols('B'.repeat(43)).join(', '),
     })
     expect((await attacker.closed).code).toBe(ROOM_CLOSED)
     await host(room)
@@ -207,7 +211,7 @@ describe('rooms', () => {
     expect(
       (
         await upgrade(room.id, {
-          'Sec-WebSocket-Protocol': admissionProtocols('B'.repeat(43)).join(', '),
+          'Sec-WebSocket-Protocol': legacyProtocols('B'.repeat(43)).join(', '),
         })
       ).status,
     ).toBe(403)
@@ -216,7 +220,7 @@ describe('rooms', () => {
       (
         await upgrade(room.id, {
           Authorization: `Bearer ${room.hostToken}`,
-          'Sec-WebSocket-Protocol': admissionProtocols('B'.repeat(43)).join(', '),
+          'Sec-WebSocket-Protocol': legacyProtocols('B'.repeat(43)).join(', '),
         })
       ).status,
     ).toBe(403)
@@ -440,7 +444,7 @@ describe('rooms', () => {
     const other = await createRoom()
     await host(other)
     const spoof = await upgrade(other.id, {
-      'Sec-WebSocket-Protocol': admissionProtocols('B'.repeat(43)).join(', '),
+      'Sec-WebSocket-Protocol': legacyProtocols('B'.repeat(43)).join(', '),
       [READ_ADMISSION_HEADER]: 'B'.repeat(43),
     })
     expect(spoof.status).toBe(403)
@@ -596,7 +600,7 @@ describe('blobs', () => {
     const res = await exports.default.fetch(blobUrl(room, id), {
       headers: {
         Upgrade: 'websocket',
-        'Sec-WebSocket-Protocol': admissionProtocols('B'.repeat(43)).join(', '),
+        'Sec-WebSocket-Protocol': legacyProtocols('B'.repeat(43)).join(', '),
         'X-Pedit-Host': '1',
       },
     })
@@ -904,7 +908,7 @@ describe('maintenance', () => {
       new Request(`https://pedit.test/api/rooms/${room.id}/ws`, {
         headers: {
           Upgrade: 'websocket',
-          'Sec-WebSocket-Protocol': admissionProtocols(room.admission).join(', '),
+          'Sec-WebSocket-Protocol': legacyProtocols(room.admission).join(', '),
         },
       }),
     )
@@ -946,7 +950,7 @@ describe('maintenance', () => {
       new Request(`https://pedit.test/api/rooms/${room.id}/ws`, {
         headers: {
           Upgrade: 'websocket',
-          'Sec-WebSocket-Protocol': admissionProtocols(room.admission).join(', '),
+          'Sec-WebSocket-Protocol': legacyProtocols(room.admission).join(', '),
           Authorization: `Bearer ${room.hostToken}`,
         },
       }),
@@ -1111,7 +1115,7 @@ describe('room lifetime', () => {
         new Request(`https://pedit.test/api/rooms/${room.id}/ws`, {
           headers: {
             Upgrade: 'websocket',
-            'Sec-WebSocket-Protocol': admissionProtocols(admissions.get(room.id)!).join(', '),
+            'Sec-WebSocket-Protocol': legacyProtocols(admissions.get(room.id)!).join(', '),
             'X-Pedit-Host': '1',
           },
         }),
@@ -1208,7 +1212,7 @@ describe('room lifetime', () => {
       new Request(`https://pedit.test/api/rooms/${other.id}/ws`, {
         headers: {
           Upgrade: 'websocket',
-          'Sec-WebSocket-Protocol': admissionProtocols(other.admission).join(', '),
+          'Sec-WebSocket-Protocol': legacyProtocols(other.admission).join(', '),
         },
       }),
       { ...env, MAINTENANCE: 'closed' },
@@ -1317,7 +1321,7 @@ describe('a host that drops', () => {
     const room = await createRoom()
     await host(room)
     await evictDurableObject(stubOf(room), { webSockets: 'close' })
-    const wrong = { 'Sec-WebSocket-Protocol': admissionProtocols('B'.repeat(43)).join(', ') }
+    const wrong = { 'Sec-WebSocket-Protocol': legacyProtocols('B'.repeat(43)).join(', ') }
     const refused = await connect(room.id, wrong)
     expect((await refused.closed).code).toBe(ROOM_CLOSED)
     expect(await awayUntil(room)).toBeUndefined()

@@ -3,6 +3,7 @@ import {
   admissionProtocols,
   checkProtocolVersion,
   deriveAdmissionToken,
+  MIN_PROTOCOL_VERSION,
   PROTOCOL_VERSION,
   readAdmissionProtocol,
   SOCKET_PROTOCOL,
@@ -33,6 +34,9 @@ describe('room admission', () => {
       expect(readAdmissionProtocol(value)).toBeNull()
     }
     expect(() => admissionProtocols('bad')).toThrow()
+    expect(admissionProtocols(token, 5)[0]).toBe('pedit-v5')
+    expect(readAdmissionProtocol(admissionProtocols(token, 5).join(', '))).toBe(token)
+    expect(readAdmissionProtocol(`pedit-v7, pedit-admission.${token}`)).toBeNull()
   })
 
   it('compares the offered protocol versions with its own', () => {
@@ -43,18 +47,24 @@ describe('room admission', () => {
     // for a closed room. Version 5: editors sign their frames, and peers
     // apply only what the signer's link allows (#122); older peers would
     // apply anyone's.
-    expect(PROTOCOL_VERSION).toBe(5)
-    expect(SOCKET_PROTOCOL).toBe('pedit-v5')
+    // Version 6: every binary message starts with a kind byte (kinds.ts), so
+    // a room can keep a text while its host is away. The relay still serves
+    // version 5, which has none.
+    expect(PROTOCOL_VERSION).toBe(6)
+    expect(SOCKET_PROTOCOL).toBe('pedit-v6')
+    expect(MIN_PROTOCOL_VERSION).toBe(5)
     const token = `pedit-admission.${'A'.repeat(43)}`
-    expect(checkProtocolVersion(`pedit-v5, ${token}`)).toEqual({ result: 'current' })
-    expect(checkProtocolVersion('pedit-v6, pedit-v5')).toEqual({ result: 'current' })
-    expect(checkProtocolVersion(`pedit-v6, ${token}`)).toEqual({
-      result: 'server-outdated',
-      offered: 'pedit-v6',
-    })
-    expect(checkProtocolVersion('pedit-v7, pedit-v6')).toEqual({
+    expect(checkProtocolVersion(`pedit-v5, ${token}`)).toEqual({ result: 'current', version: 5 })
+    expect(checkProtocolVersion(`pedit-v6, ${token}`)).toEqual({ result: 'current', version: 6 })
+    expect(checkProtocolVersion('pedit-v5, pedit-v6')).toEqual({ result: 'current', version: 6 })
+    expect(checkProtocolVersion('pedit-v7, pedit-v5')).toEqual({ result: 'current', version: 5 })
+    expect(checkProtocolVersion(`pedit-v7, ${token}`)).toEqual({
       result: 'server-outdated',
       offered: 'pedit-v7',
+    })
+    expect(checkProtocolVersion('pedit-v8, pedit-v7')).toEqual({
+      result: 'server-outdated',
+      offered: 'pedit-v8',
     })
     expect(checkProtocolVersion(`pedit-v4, ${token}`)).toEqual({
       result: 'client-outdated',
