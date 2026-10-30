@@ -6,10 +6,10 @@ the relay can see, read [security design](security-design.md) first.
 
 ## Who runs it
 
-The maintainers of [piconic-ai/pedit](https://github.com/piconic-ai/pedit)
-run it on Cloudflare Workers, Durable Objects and R2.
-<!-- TODO(operator): confirm operator name -->
-It runs the latest release, deployed from this repository
+kobaken (an individual, [kobaken.co](https://kobaken.co); contact
+[kobaken@piconic.ai](mailto:kobaken@piconic.ai)) runs it for
+[piconic-ai/pedit](https://github.com/piconic-ai/pedit) on Cloudflare Workers,
+Durable Objects and R2. It runs the latest release, deployed from this repository
 ([deployment](contributing/deployment.md)).
 
 ## What it keeps
@@ -152,20 +152,25 @@ and everything the relay sees. The Worker's code uses the address only to
 count rate limits; Workers Logs may still record it with the request (see
 [logs](#logs)).
 
-## Terms
+## Terms and privacy policy
+
+The terms of use and the privacy policy are served by the relay itself, at
+[`/terms`](https://edit.piconic.ai/terms) and
+[`/privacy`](https://edit.piconic.ai/privacy)
+(sources: `packages/web/public/terms.html` and `privacy.html`). In short:
 
 - Free, with no SLA. It may be limited or stopped at any time. For
   maintenance it can turn away new rooms, or close all rooms, open ones
   included.
-- The relay keeps no document text, and deletes encrypted images when the
-  host leaves; [what it keeps](#what-it-keeps) says what can be left behind,
-  and [logs](#logs) what is logged. Everyone you give the link gets the
-  content, and a CLI guest saves a copy.
 - Use it to edit files with people you invite. Do not use it for content that
   is illegal or harms others, malware, harassment or spam, or to move data
   unrelated to editing. Do not try to get around its limits, enter rooms you
   were not invited to, or load test it ([testing guidelines](../SECURITY.md#testing-guidelines)).
 - Rooms or networks that break these rules may be blocked.
+
+Keep the pages and this document in step: when what the relay keeps or logs
+changes, change `privacy.html` and its "Last updated" date in the same pull
+request.
 
 ## Reporting abuse
 

@@ -268,7 +268,9 @@ Homebrew, `go install` or a release archive you verify, not from `install.sh`,
 which the relay serves. Or [self-host](#self-host) the relay and editor. See
 [security design](docs/security-design.md) for the encryption and what it does
 not protect against, and [the public relay](docs/public-relay.md) for what
-`edit.piconic.ai` logs and keeps.
+`edit.piconic.ai` logs and keeps. The public relay's
+[terms of use](https://edit.piconic.ai/terms) and
+[privacy policy](https://edit.piconic.ai/privacy) are on the relay itself.
 
 ![The browser encrypts Text. Cloudflare relays Encrypted Text to pedit CLI, which decrypts it and saves Text to local notes.md. The URL path identifies the room; its fragment contains the shared key, which is never sent to the server.](docs/assets/encryption-sequence.svg)
 

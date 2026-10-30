@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Privacy Policy - pedit</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { font: 16px/1.7 system-ui, sans-serif; max-width: 42rem; margin: 0 auto; padding: 2rem 1rem 4rem; }
+      h1 { font-size: 1.6rem; }
+      h2 { font-size: 1.2rem; margin-top: 2rem; }
+      a { color: #00875a; }
+      @media (prefers-color-scheme: dark) { a { color: #00b769; } }
+      footer { margin-top: 3rem; font-size: 0.9rem; }
+    </style>
+  </head>
+  <body>
+    <h1>Privacy Policy</h1>
+    <p>Last updated: 2026-10-30</p>
+    <p>
+      This policy describes what the public relay and browser editor at <code>edit.piconic.ai</code>
+      (&ldquo;the service&rdquo;) keeps about you. It is run by kobaken, an individual
+      (<a href="https://kobaken.co">kobaken.co</a>); contact
+      <a href="mailto:kobaken@piconic.ai">kobaken@piconic.ai</a>. The details, kept up to date with the code,
+      are in the
+      <a href="https://github.com/piconic-ai/pedit/blob/main/docs/public-relay.md">public relay notes</a> and the
+      <a href="https://github.com/piconic-ai/pedit/blob/main/docs/security-design.md">security design</a>.
+    </p>
+
+    <h2>Your documents</h2>
+    <p>
+      Document updates, comments and pasted images are encrypted on your device before they are sent.
+      The key is in the part of the link after <code>#</code>, which your browser never sends to the
+      service. The service relays encrypted data and cannot read it. It does not store document text.
+      Your files stay on the host&rsquo;s computer.
+    </p>
+
+    <h2>What the service keeps</h2>
+    <ul>
+      <li><strong>Encrypted images</strong> are kept while the room&rsquo;s host is connected. The room deletes
+        them when the host leaves. If a deletion fails, a storage rule expires them one day after
+        upload, and Cloudflare removes them typically within a further day.</li>
+      <li><strong>Per room</strong>: a hash of the room&rsquo;s admission token, and the number and total size of
+        the stored images, deleted when the host leaves; and the time the host first connected, kept
+        after the room ends so that the room ID cannot be used again. The room&rsquo;s storage keeps 30 days of
+        history for point-in-time recovery.</li>
+    </ul>
+
+    <h2>Logs</h2>
+    <p>
+      The service logs requests with Cloudflare Workers Logs, kept for 7 days. A log entry has the time
+      and path of a request (the path contains the room ID), its status, and the details Cloudflare
+      adds, which include country, city, postal code, coordinates and network of the request.
+      Events in a room, including each relayed message, are logged with their time. The content of the
+      messages is encrypted and is not logged.
+    </p>
+    <p>
+      Not yet confirmed: whether these logs also keep the client&rsquo;s IP address, and which request
+      headers they keep, in particular two tokens that cannot decrypt anything. This page will be
+      updated when it is confirmed.
+    </p>
+
+    <h2>Cloudflare</h2>
+    <p>
+      The service runs on Cloudflare, which handles every request and sees your IP address and
+      everything the service sees. See
+      <a href="https://www.cloudflare.com/privacypolicy/">Cloudflare&rsquo;s privacy policy</a>.
+    </p>
+
+    <h2>In your browser</h2>
+    <p>
+      The editor&rsquo;s own code sets no cookies and loads no analytics or tracking scripts. Not yet
+      confirmed: whether Cloudflare features on the <code>piconic.ai</code> zone add a cookie or script of
+      their own. The editor keeps in your browser&rsquo;s local storage only the name you typed and display
+      preferences, never a room ID, key or document content. Your browser history keeps the full link,
+      key included.
+    </p>
+
+    <h2>Third parties</h2>
+    <p>
+      The Markdown preview does not load images or videos from other sites. A link to a video player or
+      to a public file on GitHub loads only after you click it (or choose &ldquo;Always load&rdquo; for that
+      provider), and then the provider sees your IP address. The service sees nothing of it. The
+      <code>pedit</code> command line tool itself contacts <code>api.github.com</code> once a day to check for a
+      newer release, with no file name, room or key.
+    </p>
+
+    <h2>Your requests</h2>
+    <p>
+      The service cannot read your documents, so it cannot show or delete them. To ask what is held
+      about a room, or to ask for a room to be blocked or its data removed, write to
+      <a href="mailto:kobaken@piconic.ai">kobaken@piconic.ai</a> with the room ID (the 22 characters after
+      <code>/r/</code>, without the <code>#</code> and what follows).
+    </p>
+
+    <h2>Changes</h2>
+    <p>
+      This policy may change. The current version is always at this address, with the date above, and
+      the history is in the
+      <a href="https://github.com/piconic-ai/pedit/commits/main/packages/web/public/privacy.html">repository</a>.
+    </p>
+
+    <footer>
+      <a href="/">pedit</a> &middot; <a href="/terms">Terms of Use</a> &middot;
+      <a href="https://github.com/piconic-ai/pedit">GitHub</a>
+    </footer>
+  </body>
+</html>
