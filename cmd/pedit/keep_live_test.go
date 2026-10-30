@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +39,8 @@ func TestUIKeepNotesAndTheKeptStatus(t *testing.T) {
 	u.keeping(0, time.Hour)
 	u.setStatus(protocol.StatusConnected)
 	u.sharing([]string{"notes.md"}, "https://x.test/r/AAAA#key", false, false)
+	u.setKeptUntil(time.UnixMilli(1700000000000).UTC())
+	u.setStatus(protocol.StatusKept)
 	u.setStatus(protocol.StatusKept)
 	u.setStatus(protocol.StatusConnected)
 	u.stopLive()
@@ -48,7 +51,7 @@ func TestUIKeepNotesAndTheKeptStatus(t *testing.T) {
 		"Relay capped keep time to 1m.",
 		"Room keep time: 1d.",
 		"This relay cannot keep a room. It ends when you leave.",
-		"○ The host is away. The room is kept for them; your copy is read-only until they are back.",
+		"○ The host is away. The room is kept until 2023-11-14T22:13:20Z; your copy is read-only until they are back.",
 		"✓ Back online. Changes sync again.",
 		"✓ Saved notes.md.\n",
 		"Room stays open until 2023-11-14T22:13:20Z.",
@@ -57,6 +60,9 @@ func TestUIKeepNotesAndTheKeptStatus(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output lacks %q:\n%s", want, out.String())
 		}
+	}
+	if n := strings.Count(out.String(), "The host is away"); n != 1 {
+		t.Errorf("the host-away line appeared %d times:\n%s", n, out.String())
 	}
 	if strings.Contains(out.String(), "The link no longer works") {
 		t.Fatal("said the link stops working for a kept room")
@@ -68,5 +74,23 @@ func TestFinishOfAKeptRoom(t *testing.T) {
 	code := finish(newUI(&stdout, false, false), &stderr, "notes.md", false, func() error { return nil }, func() bool { return true })
 	if code != 0 || strings.Contains(stdout.String(), "no longer works") || !strings.Contains(stdout.String(), "Saved notes.md.") {
 		t.Fatalf("code %d, output %q", code, stdout.String())
+	}
+}
+
+func TestResumeShowsRecordedPathsLikeTheFirstRun(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	got := displayPaths([]string{filepath.Join(dir, "docs", "notes.md"), "/elsewhere/b.md"})
+	if want := filepath.Join("docs", "notes.md"); got[0] != want || got[1] != "/elsewhere/b.md" {
+		t.Fatalf("paths = %v", got)
+	}
+	var out strings.Builder
+	u := newUI(&out, false, false)
+	u.sharing(got[:1], "https://x.test/r/AAAA#key", false, false)
+	if !strings.Contains(out.String(), "docs/notes.md is ready") || strings.Contains(out.String(), dir) {
+		t.Fatalf("output shows the absolute path:\n%s", out.String())
 	}
 }

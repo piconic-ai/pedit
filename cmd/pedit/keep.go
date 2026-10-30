@@ -135,11 +135,22 @@ func chooseResume(opts *commandArgs, stdout, stderr io.Writer) (live bool, code 
 	}
 	for _, r := range records {
 		if r.Live && (r.Room == opts.Resume || strings.Contains(opts.Resume, "/r/"+r.Room)) {
-			opts.Resume, opts.File, opts.More = r.Room, r.Files[0], r.Files[1:]
+			shown := displayPaths(r.Files)
+			opts.Resume, opts.File, opts.More = r.Room, shown[0], shown[1:]
 			return true, 0
 		}
 	}
 	return false, 0
+}
+
+// displayPaths shows a record's paths as displayPath does, so --resume names
+// the files as the first run did.
+func displayPaths(paths []string) []string {
+	shown := make([]string, len(paths))
+	for i, p := range paths {
+		shown[i] = displayPath(p)
+	}
+	return shown
 }
 
 func runKeep(opts commandArgs, stdout, stderr io.Writer) int {
