@@ -85,6 +85,26 @@ async function endKeptText(
   // lifecycle rule for `kept/`.
   await removeBlobs()
 }
+// Answers a request for a room that is gone, or one that the host closes now.
+async function closedOrClosing(
+  request: Request,
+  action: string | undefined,
+  storage: DurableObjectStorage,
+  host: boolean,
+  removeBlobs: () => Promise<void>,
+): Promise<Response | undefined> {
+  const closing = action === 'close' && request.method === 'POST'
+  if (closing && !host) return new Response(null, { status: 403 })
+  if (await expireKeptText(storage, removeBlobs)) {
+    if (closing) return Response.json({})
+    const byHost = storage.kv.get('keptTextClosedByHost')
+    return new Response(null, { status: 410, headers: byHost ? { 'X-Pedit-Closed': 'host' } : {} })
+  }
+  if (!closing) return undefined
+  if (!storage.kv.get('keptText')) return new Response(null, { status: 404 })
+  await endKeptText(storage, removeBlobs, true)
+  return Response.json({})
+}
 export async function keptText(
   request: Request,
   storage: DurableObjectStorage,
@@ -94,20 +114,8 @@ export async function keptText(
   removeBlobs: () => Promise<void>,
 ): Promise<Response> {
   const action = new URL(request.url).pathname.split('/').at(-1)
-  const closing = action === 'close' && request.method === 'POST'
-  if (closing && !host) return new Response(null, { status: 403 })
-  if (await expireKeptText(storage, removeBlobs))
-    return closing
-      ? Response.json({})
-      : new Response(null, {
-          status: 410,
-          headers: storage.kv.get('keptTextClosedByHost') ? { 'X-Pedit-Closed': 'host' } : {},
-        })
-  if (closing) {
-    if (!storage.kv.get('keptText')) return new Response(null, { status: 404 })
-    await endKeptText(storage, removeBlobs, true)
-    return Response.json({})
-  }
+  const early = await closedOrClosing(request, action, storage, host, removeBlobs)
+  if (early) return early
   let state = storage.kv.get<KeptText>('keptText')
   const token = request.headers.get('X-Pedit-Admission')
   try {

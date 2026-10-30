@@ -333,7 +333,9 @@ it('does not say the host closed a room that expired', async () => {
   })
   const get = () =>
     app.fetch(
-      new Request(`https://room/api/rooms/${id}/keep`, { headers: { 'X-Pedit-Admission': reader } }),
+      new Request(`https://room/api/rooms/${id}/keep`, {
+        headers: { 'X-Pedit-Admission': reader },
+      }),
       env,
       createExecutionContext(),
     )

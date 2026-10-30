@@ -377,7 +377,8 @@ export class KeptTextClient {
     )
     if (!response.ok && !(method === 'GET' && response.status === 304)) {
       void response.body?.cancel().catch(() => {})
-      if (response.status === 410) throw new KeptTextClosedError(response.headers.get('X-Pedit-Closed') === 'host')
+      if (response.status === 410)
+        throw new KeptTextClosedError(response.headers.get('X-Pedit-Closed') === 'host')
       throw new Error('kept request refused')
     }
     return response

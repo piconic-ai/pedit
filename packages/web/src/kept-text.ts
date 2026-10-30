@@ -45,6 +45,10 @@ import { ContextMenu } from './menu.ts'
 import { NoticeBoard } from './notice.ts'
 import { Store } from './store.ts'
 
+// A refused request for a room the host closed, or one that expired.
+const closedStatus = (error: KeptTextClosedError): KeptSyncStatus =>
+  error.byHost ? 'host-closed' : 'expired'
+
 export async function joinKeptText(
   container: HTMLElement,
   id: string,
@@ -355,7 +359,7 @@ export async function joinKeptText(
             EditorView.editable.of(false),
           ]),
         })
-        status.set(error.byHost ? 'host-closed' : 'expired')
+        status.set(closedStatus(error))
         return
       }
       status.set('retrying')
