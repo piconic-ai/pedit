@@ -32,10 +32,13 @@ describe('terms and privacy pages', () => {
     expect(parse(privacy).querySelector('a[href="/terms"]')).not.toBeNull()
   })
 
-  it.each(Object.entries(pages))('%s says what a kept room stores and for how long', (_name, html) => {
-    expect(html).toContain('pedit --keep')
-    expect(html).toMatch(/at most 7 days after the host leaves|up to 7 days/)
-  })
+  it.each(Object.entries(pages))(
+    '%s says what a kept room stores and for how long',
+    (_name, html) => {
+      expect(html).toContain('pedit --keep')
+      expect(html).toMatch(/at most 7 days after the host leaves|up to 7 days/)
+    },
+  )
 
   it('privacy says that a kept room keeps its admission tokens unhashed', () => {
     expect(privacy).toContain('admission tokens as they are')
