@@ -102,26 +102,37 @@ func TestNewcomersDropFramesKeptFromBefore(t *testing.T) {
 	}
 }
 
-// canvasID opens a frame of the room of key and gives the ID of the canvas
-// message an editor signed in it, or "" for any other frame.
-func canvasID(t *testing.T, key string) func(frame []byte) string {
+// signedMessage opens a frame of the room of key and gives the message an
+// editor signed in it, its type and payload, or false for any other frame.
+func signedMessage(t *testing.T, key string) func(frame []byte) (protocol.MessageType, []byte, bool) {
 	t.Helper()
 	c, err := protocol.NewCipher(editKeys(t, key).FrameKey)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return func(frame []byte) string {
+	return func(frame []byte) (protocol.MessageType, []byte, bool) {
 		plain, err := c.Decrypt(frame)
 		if err != nil {
-			return ""
+			return 0, nil, false
 		}
 		_, _, signed, err := protocol.DecodeFrame(plain)
 		// MessageSigned, the tier, the signature, then the message (signed.go).
 		if err != nil || len(signed) < 2+ed25519.SignatureSize || protocol.MessageType(signed[0]) != protocol.MessageSigned {
-			return ""
+			return 0, nil, false
 		}
 		typ, payload, err := protocol.DecodeMessage(signed[2+ed25519.SignatureSize:])
-		if err != nil || typ != protocol.MessageCanvas {
+		return typ, payload, err == nil
+	}
+}
+
+// canvasID opens a frame of the room of key and gives the ID of the canvas
+// message an editor signed in it, or "" for any other frame.
+func canvasID(t *testing.T, key string) func(frame []byte) string {
+	t.Helper()
+	open := signedMessage(t, key)
+	return func(frame []byte) string {
+		typ, payload, ok := open(frame)
+		if !ok || typ != protocol.MessageCanvas {
 			return ""
 		}
 		m, err := protocol.DecodeCanvas(payload)
