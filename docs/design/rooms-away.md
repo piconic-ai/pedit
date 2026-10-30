@@ -2,9 +2,9 @@
 
 A live room normally ends when its host leaves. A host that asks for it keeps
 the room open instead: guests stay connected, edit, and the host takes their
-edits in when it comes back. This replaces the polling mode of
-[async.md](async.md) once the clients ship; until then both exist. The relay
-stays an opaque ciphertext relay: it learns sizes, times and counts, never
+edits in when it comes back. This is the only kept room: the earlier polling
+mode (HTTP endpoints and the `?keep=1` page, [async.md](async.md)) was removed.
+The relay stays an opaque ciphertext relay: it learns sizes, times and counts, never
 text or keys, and the host's local files remain the source of truth.
 
 ## Why the relay needs help
@@ -75,8 +75,7 @@ Yjs sync when the host returns. A version 5 host cannot keep a room.
   period, and the room has a keep and a snapshot. The relay stores
   `keptAwayUntil = now + keep` (at most the room's deadline), tells every peer
   `kept <until>`, and arms its alarm for that time. Nobody is closed.
-- **While kept.** Kind 1 entries are appended (4 MiB and 10,000 entries at most,
-  as in kept text) and sent as kind 4. Kind 0 frames are relayed as always, for
+- **While kept.** Kind 1 entries are appended (4 MiB and 10,000 entries at most) and sent as kind 4. Kind 0 frames are relayed as always, for
   awareness and for read-only peers' requests. A reader that sends a kind 1 is
   closed. Images can be added by editors and fetched by anyone with a link,
   under `kept/`.
@@ -112,8 +111,7 @@ The browser (`RoomClient` in `packages/protocol`, `packages/web`) speaks version
   read-only again, as no further edit would be kept.
 - **Edits.** While the room is kept, an edit of a text file or its comments is
   not a live update but a kind 1 entry: one document per entry, named by its
-  file ID, signed and encrypted as in kept text mode (`sealKeptUpdate`, shared
-  with `KeptTextClient`). It is pending, and the header says `sending`, until
+  file ID, signed and encrypted in the kept text format (`sealKeptUpdate`). It is pending, and the header says `sending`, until
   the same entry comes back as kind 4 with an ID, which acknowledges it. A
   connection that drops keeps what it wrote: after the next kind 6 the client
   compares each document with its copy of what the relay holds, and sends what
@@ -133,7 +131,7 @@ The browser (`RoomClient` in `packages/protocol`, `packages/web`) speaks version
   sends the cursor as the query parameter `after=<id>` on the `/ws` URL, which
   the relay reads when the header is absent.
 - **Images.** The page uploads to the blob routes with the room's admission
-  token, as in kept text mode, and links the image under `assets/`; the host
+  token and links the image under `assets/`; the host
   saves it on its return.
 - **Closed by the host.** `ROOM_CLOSED` with the reason `the host closed the room` (`pedit --close`) shows as "Closed by host", not as a room whose host left.
 - **Host back.** The client drops what it holds, shows `connected`, and greets
@@ -145,10 +143,9 @@ The browser (`RoomClient` in `packages/protocol`, `packages/web`) speaks version
 `pedit --keep 7d file.md` (or `keep:` in `.pedit/config.yaml`) runs the live
 session with `X-Pedit-Keep: <seconds>` and `X-Pedit-After: <last entry taken
 in>` on the host's upgrade. Once the relay answers `keep <seconds> <until>` the
-host writes the resume record, the record of the polling mode with `Socket` set
-and `After` added: room, origin, key, host token, keep, the files with their
-stable ids, and the comments doc paired with each. It sends a snapshot (kind 2,
-the same bundle as in the polling mode) right after connecting, after 200
+host writes the resume record, a mode-0600 record outside the project, with
+`After` (the last entry taken in) among its fields: room, origin, key, host token, keep, the files with their
+stable ids, and the comments doc paired with each. It sends a snapshot (kind 2) right after connecting, after 200
 changes taken in or 5 minutes with changes, and just before leaving. On Ctrl+C
 it saves the files, sends the last snapshot, leaves with `HOST_LEFT`, writes the
 record once more, with the files as saved, and prints the deadline and
@@ -156,8 +153,7 @@ record once more, with the files as saved, and prints the deadline and
 says so, and the room ends when it leaves.
 
 While the host is here, a kind 1 entry (from a guest that has not heard
-`host back` yet) is taken in like a live update, after the checks of the polling
-mode: the update must belong to a root of its doc, leave nothing waiting on
+`host back` yet) is taken in like a live update, after the checks of the intake below: the update must belong to a root of its doc, leave nothing waiting on
 missing items, and come with a valid signature; an entry that fails is counted
 and skipped. A host that dropped for so long that the room went into the kept
 state is sent the log on reconnecting: it takes the entries in like entries of
@@ -166,8 +162,7 @@ kind 1 and checkpoints at the tail.
 `pedit --resume [room]` reads the record. It first merges the edits made to the
 files while it was away into the record's documents, as a live room merges a
 save from another editor. It then connects as the host with `X-Pedit-After`,
-takes the replay (kind 5 if sent, kind 4, kind 6) in with the intake of the
-polling mode (invalid entries skipped and counted, images under `assets/`,
+takes the replay (kind 5 if sent, kind 4, kind 6) in with the intake below (invalid entries skipped and counted, images under `assets/`,
 comments to `.pedit/meta/`), saves the files, and sends a checkpoint at the last
 id it took in with a fresh bundle. On `checkpoint <cutoff> <tail>` it records
 `After`. It then goes on with the same connection as a live host, from the
@@ -177,8 +172,85 @@ checkpoint are taken in once it is live. `pedit --close` takes the same steps,
 leaves, and asks `POST /keep/close` (the relay ends only a room whose host is
 away); it then connects once more, and a room that was ended turns it away.
 
-The polling mode is still there as `--keep-polling`, and its records resume as
-before.
+`--keep-polling` still exists in the CLI but talks to endpoints the relay no
+longer has; a later change removes it.
+
+### Merging, the record and the journal
+
+`pedit --keep 7d notes.md todo.md` publishes a fixed set of encrypted Yjs text
+documents, one per file. A signed encrypted bundle carries their stable IDs,
+relative display paths and states; signed entries name their target file. The
+record keeps the original Yjs identifiers, so entries made against the old
+documents merge. All source writes and the recovery journal are durable before
+the shared log cutoff advances, and a restart finishes any partly completed
+journal writes. Repeated Yjs text updates are idempotent, and the entries never
+carry canvas operations.
+
+Local edits made while away are diffed against the text the host last wrote
+(the journal's expected text) and applied to the restored document as host
+edits, using the live room's external-edit merge, before the relay log is
+applied. The journal is rewritten with the merged state and the on-disk text as
+the file's last written text, so the later write and log truncation follow the
+usual order. A file that cannot be read, is not UTF-8 or exceeds the frame
+limit is not merged and is refused as an external change, preserving it.
+
+### Comments
+
+Each text file inside the project also gets a paired comments doc (root map
+`comments`), with its own stable file ID (1024 plus the file's ID, kept in the
+record) and the path `.pedit/meta/<path>.json` as its pairing name in the
+bundle, as in a live room's manifest (`metaPath`). Entries target it by that ID
+like a text file's; a root other than `comments`, an update that fails the live
+room's comment checks (`meta.CheckUpdate`, `checkMetaUpdate`), and unknown IDs
+are skipped and counted. A file outside the project, or whose pairing path
+cannot be listed, has no comments doc.
+
+On `--keep`, an existing `.pedit/meta/<path>.json` is loaded into the doc,
+anchors re-found by their saved text; a file pedit cannot read is left alone
+and offers no comments. On `--resume`, after the text writes of the same file,
+the doc is rendered with the live room's code (`meta.Read`, `meta.Render`) and
+written through the same journal as the text: the file is created only once
+there is a thread, never removed, and never written over a file changed outside
+pedit. Comments never go into the shared file. Browsers show the live room's
+comment panel; a thread or reply made while the host is away is an entry like
+an edit, and a read link only reads. Older browsers list the paired doc as an
+extra, empty text tab.
+
+### Images
+
+A browser with an edit link prepares a pasted image as in a live room (strips
+metadata, shrinks to the limit), encrypts it with the blob keys, uploads it with
+`PUT /api/rooms/:id/blobs/:blobId` and inserts `![](assets/<hash>.<ext>)` into
+the text, so the reference travels in the signed entry. The relay accepts the
+blob while the host is away, for the editor token (readers may only `GET`),
+under the room's quota. Blobs live under `kept/<room>/`, apart from live rooms'
+`rooms/`, and are deleted when the room expires or is closed, never when the
+host leaves.
+
+The host finds the references in the merged text and, for each image not yet
+beside the file, fetches the blob, checks it against its hash and saves it
+under `assets/` with the live room's writer, after the journal records the new
+text and before the file is written and the log truncated. A missing image or
+one that does not match its hash is reported and does not block the text; the
+blob stays on the relay until the deadline, so a later sync can fetch it.
+
+### Closing and limits
+
+`pedit --close [room|link]` runs one resume (fetch, merge, durable writes of
+every file, comment and image, checkpoint), then asks `POST /keep/close` with
+the host token and the last entry it took in (`X-Pedit-Tail`; on 409 a guest
+appended since, and the host reads again and retries), then removes the record.
+If any save fails the host neither closes nor removes the record. A close of a
+closed or expired room succeeds. Unsent guest edits are lost, as on expiry.
+A relay that still holds a room kept over HTTP from before the removal tears it
+down and answers as for a room that ended.
+
+The 1 MiB encrypted bundle includes the comments docs; the 64-file cap counts
+text files only (the bundle holds at most 128 entries). Signatures authenticate
+editor access, not freshness: a relay can withhold unseen entries or serve an
+older snapshot to a new guest. Expiry deletes the room's ciphertext. The
+interop tests exercise publication, departure, new guests, replay, resumed
+intake, truncation and close against a local relay.
 
 ### The command line guest
 
@@ -189,11 +261,28 @@ away is not supported yet.
 
 ## What the relay learns
 
-The same as kept text mode: sizes, times, the count of entries. The log stores
+Sizes, times and the count of entries. The log stores
 no sender; the entry carries its own, signed and encrypted.
 
 ## Not in this design
 
-Canvas while the host is away (it needs replay counters the host persists),
-removing the HTTP kept endpoints and the `?keep=1` page, and changing the
-default keep.
+Canvas while the host is away (it needs replay counters the host persists), and
+changing the default keep.
+
+## Open questions
+
+- The canvas JSON pane sends edits to the host for validation and waits for its
+  answer. Moving that algorithm to each browser is not enough: reordering
+  deletes and reinserts a Y.Map, so concurrent moves can duplicate IDs or
+  strand edits. A shared Go and browser model needs a stable record per node
+  and edge with a separate order key and deletion marker, public-ID collisions
+  and edges to deleted nodes handled explicitly, and a new protocol version.
+- An acknowledged append whose response was lost must be distinguishable from a
+  new operation on retry. A durable per-sender sequence separate from the live
+  frame counter is one candidate; it needs a proof for concurrent tabs, sender
+  impersonation and checkpoint replacement.
+- Signing keys are shared within an access tier, so one participant can
+  impersonate another. Define per-sender authentication or state the boundary.
+- A host-signed checkpoint with an epoch and counter floors would let a
+  returning host reject a rolled-back snapshot; today a relay can serve an older
+  valid snapshot to a first-time guest and the UI must not promise otherwise.

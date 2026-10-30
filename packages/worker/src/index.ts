@@ -142,21 +142,15 @@ app.post('/api/rooms', async (c) => {
   return c.json({ id: await roomIdFor(hostToken), hostToken }, 201)
 })
 
-app.all('/api/rooms/:id/keep/:action?', async (c) => {
+// Only the host's close survives of the old HTTP kept rooms.
+app.post('/api/rooms/:id/keep/close', async (c) => {
   const id = c.req.param('id')
   if (!id || !ROOM_ID.test(id) || !allowedOrigin(c.req.raw))
     return c.text('invalid room request', 400)
   const level = maintenance(c.env)
   if (level === 'closed') return c.text(CLOSED_FOR_MAINTENANCE, 503)
-  if (level === 'no-new-rooms' && c.req.param('action') === 'init')
-    return c.text(UNDER_MAINTENANCE, 503)
-  if (await overLimit(c.env.KEEP_REQUEST_LIMIT, c.req.raw, 'kept text'))
+  if (await overLimit(c.env.KEEP_REQUEST_LIMIT, c.req.raw, 'keep close'))
     return c.text('Too many kept room requests', 429, { 'Retry-After': '60' })
-  if (
-    c.req.param('action') === 'init' &&
-    (await overLimit(c.env.ROOM_CREATION_LIMIT, c.req.raw, 'kept room creation'))
-  )
-    return c.text('Too many rooms', 429, { 'Retry-After': '60' })
 
   const headers = new Headers(c.req.raw.headers)
   headers.delete(HOST_HEADER)

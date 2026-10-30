@@ -47,7 +47,6 @@ import {
   replay,
   storeSnapshot,
 } from './kept-away.ts'
-import { expireKeptText, keptText, keptTextAlarm } from './kept-text.ts'
 
 // Shared browser code brings DOM's SubtleCrypto into this program. Augment it
 // with the documented Workers extension also present in our generated types.
@@ -282,13 +281,9 @@ export class Room extends DurableObject<Env> {
 
   override async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname
+    if (await this.dropLegacyKept()) return new Response('room has ended', { status: 410 })
     if (/\/keep(?:\/|$)/.test(path)) return this.keepRequest(request, path)
     const blob = BLOB_PATH.exec(path)?.[1]
-    if (this.kept()) {
-      return blob
-        ? this.blob(request, blob)
-        : new Response('kept rooms use text synchronization', { status: 409 })
-    }
     if (blob) return this.blob(request, blob)
     // Only a connection goes on: a blob path the pattern missed is not one.
     if (path.includes('/blobs/')) return new Response('invalid blob id', { status: 400 })
@@ -326,19 +321,11 @@ export class Room extends DurableObject<Env> {
     }
   }
 
-  // A request under /keep: the host closes a room kept without it, or the HTTP kept room.
+  // A request under /keep: only the host's close of a room kept without it.
   private keepRequest(request: Request, path: string): Promise<Response> | Response {
     if (path.endsWith('/keep/close') && request.method === 'POST' && this.awayRoom())
       return this.closeAway(request)
-    const max = 'KEEP_MAX_SECONDS' in this.env ? this.env.KEEP_MAX_SECONDS : undefined
-    return keptText(
-      request,
-      this.ctx.storage,
-      request.headers.get(HOST_HEADER) === '1',
-      typeof max === 'string' ? max : undefined,
-      this.env.ROOM_MAX_SECONDS,
-      this.removeKeptBlobs,
-    )
+    return new Response(null, { status: 404 })
   }
 
   private joinFrom(request: Request, version: number, isHost: boolean): Join {
@@ -363,7 +350,6 @@ export class Room extends DurableObject<Env> {
   ): Promise<Response> {
     const digest = await sha256(token)
     const readDigest = read === null ? null : await sha256(read)
-    if (this.kept()) return new Response('kept rooms use text synchronization', { status: 409 })
     if (this.ctx.storage.kv.get(CLOSED_KEY) === true)
       return refuse(ROOM_CLOSED, 'room is closed', join.protocol)
     // A version 5 host cannot take in the entries kept for it, and returning
@@ -409,11 +395,22 @@ export class Room extends DurableObject<Env> {
     return this.accept(isHost, role, join)
   }
 
-  private kept(): boolean {
-    return (
-      this.ctx.storage.kv.get('keptText') !== undefined ||
-      this.ctx.storage.kv.get('keptTextClosed') === true
-    )
+  // A room kept over HTTP before that mode was removed (kv `keptText`) is torn
+  // down: its snapshot, log and images go, and it answers as a room that ended
+  // (`keptTextClosed` stays). Returns whether the room is one.
+  private async dropLegacyKept(): Promise<boolean> {
+    const storage = this.ctx.storage
+    if (storage.kv.get('keptText') !== undefined) {
+      storage.transactionSync(() => {
+        storage.kv.delete('keptText')
+        storage.kv.put('keptTextClosed', true)
+        storage.sql.exec('DROP TABLE IF EXISTS kept_text_log')
+      })
+      await storage.deleteAlarm()
+      await storage.sync()
+      await this.removeKeptBlobs()
+    }
+    return storage.kv.get('keptTextClosed') === true
   }
 
   // Takes a peer admitted to a place. Nothing awaits before the accept.
@@ -618,7 +615,7 @@ export class Room extends DurableObject<Env> {
    * still needed and can run twice.
    */
   override async alarm(): Promise<void> {
-    if (await keptTextAlarm(this.ctx.storage, this.removeKeptBlobs)) return
+    if (await this.dropLegacyKept()) return
 
     if (this.expired()) {
       await this.expire()
@@ -968,8 +965,7 @@ export class Room extends DurableObject<Env> {
       cleaning = this.cleaning
       await cleaning
     } while (cleaning !== this.cleaning)
-    const kept = this.kept()
-    const role = await this.blobRole(request.method, token, kept)
+    const role = await this.blobRole(request.method, token)
     if (role instanceof Response) return role
     // Readers see the images; only editors add them, so nobody else can
     // take an image's place or the room's quota.
@@ -993,16 +989,8 @@ export class Room extends DurableObject<Env> {
   }
 
   // What the token may do with the room's blobs, or the refusal.
-  private async blobRole(method: string, token: string, kept: boolean): Promise<Role | Response> {
+  private async blobRole(method: string, token: string): Promise<Role | Response> {
     const refused = () => new Response('invalid room admission', { status: 403 })
-    if (kept) {
-      // A kept room serves its blobs whether or not its host is here; the
-      // admission tokens are the ones it keeps for its text (kept-text.ts).
-      if (await expireKeptText(this.ctx.storage, this.removeKeptBlobs))
-        return new Response('room has expired', { status: 410 })
-      const state = this.ctx.storage.kv.get<{ editor: string; reader: string }>('keptText')
-      return token === state?.editor ? 'editor' : token === state?.reader ? 'reader' : refused()
-    }
     if (this.expired()) return new Response('room has expired', { status: 410 })
     // A room kept without its host keeps serving its images and takes new ones.
     if (this.hosts().length === 0 && !this.keptAway()) {
@@ -1043,9 +1031,7 @@ export class Room extends DurableObject<Env> {
   private async upload(request: Request, key: string, length: number): Promise<Response> {
     const generation = this.generation
     const kept = key.startsWith('kept/')
-    const ended = () =>
-      this.generation !== generation ||
-      (kept && this.ctx.storage.kv.get('keptText') === undefined && this.keepSeconds() === 0)
+    const ended = () => this.generation !== generation || (kept && this.keepSeconds() === 0)
     const closed = () => new Response('room is closed', { status: 410 })
 
     // The first upload under an id wins; receivers check the content anyway.
@@ -1106,7 +1092,7 @@ export class Room extends DurableObject<Env> {
   }
 
   private keepsBlobs(): boolean {
-    return this.kept() || this.keepSeconds() > 0
+    return this.keepSeconds() > 0
   }
 
   private usage(): Usage {

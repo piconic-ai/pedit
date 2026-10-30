@@ -119,7 +119,7 @@ export interface AttachmentsOptions {
   /** How many bytes of images to keep in memory. */
   cacheBytes?: number
   /**
-   * A kept room (kept-text.ts) has no host to answer: an upload is done once
+   * A kept room has no host to answer: an upload is done once
    * the relay holds it, the link is the one the host writes on resume, and an
    * image the relay lacks is missing, not asked for. A function says it
    * for a room that is kept only while its host is away.

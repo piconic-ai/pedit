@@ -932,11 +932,6 @@ async function start(): Promise<void> {
   // If the theme could not load, the page matches the default theme the editor falls back to.
   applyPalette(pageColors(appearance, loaded.id))
   keepDroppedFiles()
-  if (new URLSearchParams(location.search).get('keep') === '1') {
-    const { joinKeptText } = await import('./kept-text.ts')
-    await joinKeptText(app, room.id, room.key, loaded.extension, appearance, loaded.id, me.name)
-    return
-  }
   await joinRoom(room.id, room.key, me, appearance, loaded)
 }
 
