@@ -254,9 +254,14 @@ func TestKeptTextVerticalSlice(t *testing.T) {
 	if got := command(newcomer, `{"append":" newcomer"}`); got.Text != final {
 		t.Fatal("new guest edit")
 	}
+	// The host also edits the file in their own editor while away.
+	if err := os.WriteFile(file, []byte("local\nnotes online"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	hostFinal := "local\n" + final
 	resumed := keptCommand(t, project, binary, "--resume", link)
 	resumed.link(t)
-	prototest.WaitFor(t, 5*time.Second, func() bool { b, _ := os.ReadFile(file); return string(b) == final }, "all edits merged after host restart")
+	prototest.WaitFor(t, 5*time.Second, func() bool { b, _ := os.ReadFile(file); return string(b) == hostFinal }, "local and guest edits merged after host restart")
 	if state := command(newcomer, `{"replay":true}`); state.Text != final {
 		t.Fatal("replayed frame changed document")
 	}
@@ -271,7 +276,7 @@ func TestKeptTextVerticalSlice(t *testing.T) {
 		return json.NewDecoder(response.Body).Decode(&state) == nil && state.Entries == 0
 	}, "relay log truncated after host save")
 	checkpointGuest := keptCommand(t, project, "node", script, dir, link)
-	if got := read(checkpointGuest); got.Text != final || got.Filename != filepath.Base(file) || got.Skipped != 0 {
+	if got := read(checkpointGuest); got.Text != hostFinal || got.Filename != filepath.Base(file) || got.Skipped != 0 {
 		t.Fatal("brand-new browser cannot load host checkpoint after rejecting invalid roots")
 	}
 	if !strings.Contains(strings.Join(resumed.seen, "\n"), "Skipped 2 invalid updates.") {

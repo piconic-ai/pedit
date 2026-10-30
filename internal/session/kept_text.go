@@ -21,6 +21,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/piconic-ai/pedit/internal/filewriter"
+	"github.com/piconic-ai/pedit/internal/merge"
 	"github.com/piconic-ai/pedit/internal/protocol"
 	"github.com/reearth/ygo/crdt"
 )
@@ -79,7 +80,10 @@ type keptTextHost struct {
 	after         uint64
 	etag          string
 	skipped       int
-	onSkipped     func(int)
+	// republish forces the next sync to checkpoint, so local edits merged on
+	// resume reach the relay even when no guest edit is waiting in the log.
+	republish bool
+	onSkipped func(int)
 }
 
 // RunKeptText keeps the relay open when the host leaves. Source changes made
@@ -243,10 +247,44 @@ func (h *keptTextHost) restore() error {
 			return errors.New("invalid saved kept document")
 		}
 	}
+	h.republish = true
+	if e := h.mergeLocalEdits(); e != nil {
+		return e
+	}
 	if _, e := h.snapshot(); e != nil {
 		return e
 	}
 	return h.finishWrites()
+}
+
+// mergeLocalEdits folds edits made to a source file while the host was away
+// into its checkpoint document, as host edits, the way a live room merges a
+// save from another editor. The relay log is applied later by sync, so both
+// sides merge before the file is written and the log is cut. A file that
+// cannot be read, is not valid UTF-8 or is too large is left alone, and
+// finishWrites then refuses it as it always did.
+func (h *keptTextHost) mergeLocalEdits() error {
+	changed := false
+	for i := range h.state.Files {
+		file := &h.state.Files[i]
+		// With a write pending, an edit may have been made before or after it
+		// landed: the base is ambiguous, so finishWrites refuses the file.
+		if file.Pending != nil {
+			continue
+		}
+		onDisk, ok := h.files[file.ID].bound.Read()
+		if !ok || onDisk == file.Text || !utf8.ValidString(onDisk) || len(onDisk) > protocol.MaxFrameBytes {
+			continue
+		}
+		doc := h.files[file.ID].doc
+		merge.ExternalEdit(doc, doc.GetText("content"), file.Text, onDisk, nil)
+		file.State, file.Text, file.Pending = crdt.EncodeStateAsUpdateV1(doc, nil), onDisk, nil
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return saveKeptState(h.path, h.state)
 }
 
 func (h *keptTextHost) connect(ctx context.Context) error {
@@ -285,7 +323,7 @@ func (h *keptTextHost) sync(ctx context.Context) error {
 	if h.skipped != before && h.onSkipped != nil {
 		h.onSkipped(h.skipped)
 	}
-	if (read.Unchanged || len(read.Entries) == 0) && h.unchanged() {
+	if (read.Unchanged || len(read.Entries) == 0) && h.unchanged() && !h.republish {
 		h.after = read.Tail
 		return nil
 	}
@@ -310,7 +348,7 @@ func (h *keptTextHost) sync(ctx context.Context) error {
 	}
 	_, e = keptTextRequest(ctx, h.client, &h.state, h.room, "POST", "/checkpoint", frame, http.Header{"X-Pedit-Cutoff": {strconv.FormatUint(read.Tail, 10)}}, &h.meta)
 	if e == nil {
-		h.after = read.Tail
+		h.after, h.republish = read.Tail, false
 		h.snapshotNames = map[uint32]string{}
 		for _, file := range h.state.Files {
 			h.snapshotNames[file.ID] = file.Path

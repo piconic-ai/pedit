@@ -12,6 +12,14 @@ Yjs identifiers from a mode-0600 record outside the project, merges signed updat
 files and recovery state, then checkpoints and truncates the observed log prefix.
 All source writes and the recovery journal are durable before the shared log
 cutoff advances. Restart finishes any partially completed journal writes.
+
+Local edits made while away are diffed against the text the host last wrote
+(the journal's expected text) and applied to the restored checkpoint document
+as host edits, using the live room's external-edit merge, before the relay log
+is applied. The journal is rewritten with the merged state and the on-disk text
+as the file's last written text, so the later write and log truncation follow
+the usual order. A file that cannot be read, is not UTF-8 or exceeds the frame
+limit is not merged and is refused as an external change, preserving it.
 Repeated Yjs text updates are idempotent. This path is separate from the live
 nonce handshake and never accepts canvas, comment or attachment operations.
 Signatures authenticate editor access, not freshness. A relay can withhold
