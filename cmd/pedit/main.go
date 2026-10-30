@@ -467,6 +467,7 @@ func runJoin(opts commandArgs, out *ui, stderr io.Writer) int {
 				cancel()
 			}
 		},
+		OnKept:   out.setKeptUntil,
 		OnPeople: out.setPeople,
 		OnNotice: func(n session.Notice) {
 			debug(n.Err)

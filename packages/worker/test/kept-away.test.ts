@@ -713,7 +713,8 @@ describe('the end of a kept room', () => {
     expect((await close(room, 1, 'y'.repeat(43))).status).toBe(403)
     expect(await closedWithin(guest)).toBeUndefined()
     expect((await close(room, 1)).status).toBe(200)
-    expect((await guest.closed).code).toBe(ROOM_CLOSED)
+    const ended = await guest.closed
+    expect([ended.code, ended.reason]).toEqual([ROOM_CLOSED, 'the host closed the room'])
     expect((await reader.closed).code).toBe(ROOM_CLOSED)
     const s = await state(room)
     expect([s.until, s.snapshot, s.rows]).toEqual([undefined, false, 0])

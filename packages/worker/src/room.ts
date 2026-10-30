@@ -29,7 +29,14 @@ import {
   SERVER_OUTDATED,
 } from '@pedit/protocol/close'
 import { MAX_FRAME_BYTES } from '@pedit/protocol/frame'
-import { decodeCheckpoint, encodeLogged, Kind, splitKind, withKind } from '@pedit/protocol/kinds'
+import {
+  decodeCheckpoint,
+  encodeLogged,
+  HOST_CLOSED_REASON,
+  Kind,
+  splitKind,
+  withKind,
+} from '@pedit/protocol/kinds'
 import { RELAY_BYTE_RATE, RELAY_MESSAGE_RATE } from '@pedit/protocol/pace'
 import {
   appendEntry,
@@ -500,7 +507,7 @@ export class Room extends DurableObject<Env> {
       if (request.headers.get('X-Pedit-Tail') !== String(awayLog(this.ctx.storage).tail))
         return new Response(null, { status: 409 })
       this.ctx.storage.kv.put(CLOSED_KEY, true)
-      await this.endSession(ROOM_CLOSED, 'the host closed the room')
+      await this.endSession(ROOM_CLOSED, HOST_CLOSED_REASON)
     }
     return Response.json({})
   }

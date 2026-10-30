@@ -182,13 +182,20 @@ func TestKeptStatusAndRelayTexts(t *testing.T) {
 	s := &prototest.Scripted{}
 	var mu sync.Mutex
 	var texts []string
+	var until time.Time
 	client, _ := scriptedPeer(t, s, protocol.GenerateKey(), protocol.ClientOptions{
+		OnKept: func(at time.Time) { mu.Lock(); until = at; mu.Unlock() },
 		OnText: func(text string) { mu.Lock(); texts = append(texts, text); mu.Unlock() },
 	})
 	conn := waitConn(t, s)
 	prototest.WaitFor(t, wait, func() bool { return client.Status() == protocol.StatusConnected }, "connected")
 	conn.Say("kept 1700000000000")
 	prototest.WaitFor(t, wait, func() bool { return client.Status() == protocol.StatusKept }, "kept")
+	mu.Lock()
+	if until.UnixMilli() != 1700000000000 {
+		t.Errorf("OnKept got %v", until)
+	}
+	mu.Unlock()
 	if !client.Status().HostAway() || protocol.StatusKept.Final() {
 		t.Fatal("kept must be a host-away state that does not end the client")
 	}

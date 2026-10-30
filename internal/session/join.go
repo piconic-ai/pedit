@@ -36,6 +36,9 @@ type JoinOptions struct {
 	Header   http.Header
 	Dial     protocol.Dialer
 	OnStatus func(protocol.Status)
+	// OnKept is called with the time a kept room stays open until, before
+	// OnStatus reports it kept.
+	OnKept   func(time.Time)
 	OnPeople func([]string)
 	// OnNotice and OnError are as in Options.
 	OnNotice func(Notice)
@@ -180,6 +183,7 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 				opts.OnStatus(st)
 			}
 		},
+		OnKept:     opts.OnKept,
 		OnSynced:   func() { close(room.synced) },
 		OnError:    onError,
 		OnManifest: s.takeManifest,

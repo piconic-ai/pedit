@@ -135,6 +135,7 @@ The browser (`RoomClient` in `packages/protocol`, `packages/web`) speaks version
 - **Images.** The page uploads to the blob routes with the room's admission
   token, as in kept text mode, and links the image under `assets/`; the host
   saves it on its return.
+- **Closed by the host.** `ROOM_CLOSED` with the reason `the host closed the room` (`pedit --close`) shows as "Closed by host", not as a room whose host left.
 - **Host back.** The client drops what it holds, shows `connected`, and greets
   the room as on connecting: a fresh handshake, and a sync step 1 and its state
   for every document, so the host reconciles what it missed. The page asks
@@ -182,7 +183,7 @@ before.
 ### The command line guest
 
 A guest speaks version 6 and handles a kept room as a host that dropped: `kept
-<until>` is shown as the host being away, the copy stays read-only, and on
+<until>` is shown once as the host being away and the room being kept until then, the copy stays read-only, and on
 `host back` the guest continues. Editing from the command line while the host is
 away is not supported yet.
 

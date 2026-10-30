@@ -19,6 +19,8 @@ export interface EndedBannerProps {
   keptUntil?: Readable<string | null>
   /** How many kept edits did not hold, and were left out. */
   skipped?: Readable<number>
+  /** Whether the host closed the room on purpose (`pedit --close`). */
+  hostClosed?: Readable<boolean>
   clipboard?: Pick<Clipboard, 'writeText'>
   resetMs?: number
 }
@@ -66,6 +68,8 @@ export function EndedBanner(props: EndedBannerProps) {
     }
     if (status() === 'log-full')
       return 'The host is away and the relay cannot keep more edits. Copy the text to save what you wrote since.'
+    if (status() === 'closed' && props.hostClosed?.get())
+      return 'The host closed the room. Editing has ended. You can still copy the text.'
     return message(status(), props.timeLimit?.get())
   }
   const [copy, setCopy] = createSignal<keyof typeof LABELS>('idle')

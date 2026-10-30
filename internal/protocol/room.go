@@ -107,7 +107,10 @@ type ClientOptions struct {
 	OnKind func(kind byte, payload []byte)
 	// OnText is called with the relay's texts the Client does not act on
 	// itself, such as "keep 3600 0", on the connection's read loop.
-	OnText     func(text string)
+	OnText func(text string)
+	// OnKept is called with the time the relay keeps the room until, just
+	// before the status becomes StatusKept.
+	OnKept     func(until time.Time)
 	Dial       Dialer
 	MinBackoff time.Duration
 	MaxBackoff time.Duration
@@ -572,12 +575,16 @@ func (c *Client) relaySignal(sig Signal) {
 	status := c.status
 	c.mu.Unlock()
 	text := string(sig)
-	switch _, kept := ParseKept(text); {
+	until, kept := ParseKept(text)
+	switch {
 	case sig == HostAway && status == StatusConnected:
 		c.setStatus(StatusWaiting)
 	case sig == HostBack && status.HostAway():
 		c.setStatus(StatusConnected)
 	case kept && (status == StatusConnected || status.HostAway()):
+		if c.opts.OnKept != nil {
+			c.opts.OnKept(time.UnixMilli(until))
+		}
 		c.setStatus(StatusKept)
 	case c.opts.OnText != nil:
 		c.opts.OnText(text)

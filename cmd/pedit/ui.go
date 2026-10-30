@@ -34,6 +34,8 @@ type ui struct {
 	signingIn bool
 	// resumable is set when Enter picks a session up again after maintenance.
 	resumable bool
+	// keptUntil is when the relay stops keeping the room, once it said so.
+	keptUntil time.Time
 	// typing is set while the host types on a line of its own below the live
 	// line, in a raw terminal; typed is that line so far.
 	typing bool
@@ -269,6 +271,12 @@ func (u *ui) left(file string) {
 // leftTemporary confirms nothing is left behind after leaving a room.
 func (u *ui) leftTemporary() {
 	u.print("", u.green("✓")+" Left the room. The temporary copies were removed.", "")
+}
+
+func (u *ui) setKeptUntil(until time.Time) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.keptUntil = until
 }
 
 func (u *ui) setStatus(s protocol.Status) {
@@ -522,7 +530,11 @@ func (u *ui) liveLine() string {
 	case protocol.StatusWaiting:
 		return u.yellow("○") + " The host's connection dropped. Waiting for them to come back…"
 	case protocol.StatusKept:
-		return u.yellow("○") + " The host is away. The room is kept for them; your copy is read-only until they are back."
+		until := "for them"
+		if !u.keptUntil.IsZero() {
+			until = "until " + u.keptUntil.Format(time.RFC3339)
+		}
+		return u.yellow("○") + " The host is away. The room is kept " + until + "; your copy is read-only until they are back."
 	case protocol.StatusDisconnected:
 		return u.yellow("○") + " Offline. Reconnecting…"
 	case protocol.StatusBusy:

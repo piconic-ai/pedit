@@ -13,12 +13,14 @@ import {
   generateKey,
   HOST_AWAY,
   HOST_BACK,
+  HOST_CLOSED_REASON,
   importKey,
   isFinalStatus,
   MAX_FRAME_BYTES,
   MessageType,
   RELAY_MAINTENANCE,
   ReplayedFrameError,
+  ROOM_CLOSED,
   ROOM_EXPIRED,
   RoomClient,
   type RoomKeys,
@@ -414,6 +416,16 @@ describe('RoomClient', () => {
     const client = await join(relay, await editKeys())
     await vi.waitFor(() => expect(client.status).toBe('expired'))
     expect(client.timeLimitSeconds).toBe(86400)
+  })
+
+  it('tells a room the host closed from one that ended with its host', async () => {
+    const relay = new Relay({ refuse: ROOM_CLOSED, refuseReason: HOST_CLOSED_REASON })
+    const closed = await join(relay, await editKeys())
+    await vi.waitFor(() => expect(closed.status).toBe('closed'))
+    expect(closed.closedByHost).toBe(true)
+    const left = await join(new Relay({ refuse: ROOM_CLOSED }), await editKeys())
+    await vi.waitFor(() => expect(left.status).toBe('closed'))
+    expect(left.closedByHost).toBe(false)
   })
 
   it('does not know the time limit when the relay names none', async () => {
