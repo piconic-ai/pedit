@@ -4,6 +4,7 @@ import type { Readable } from '../store.ts'
 
 export function KeptTextHeader(props: {
   status: Readable<string>
+  skipped: Readable<number>
   deadline: Readable<string | null>
   readOnly: boolean
 }) {
@@ -16,6 +17,9 @@ export function KeptTextHeader(props: {
         <span className="file">Shared text</span>
         <span hidden={!props.readOnly}>Read only</span>
         <span role="status">{props.status.get()}</span>
+        <span role="status" hidden={props.skipped.get() === 0}>
+          Skipped invalid updates: {props.skipped.get()}
+        </span>
       </header>
       <p className="banner" role="status" hidden={props.deadline.get() === null}>
         The host is away. This room stays open until {props.deadline.get() ?? ''}.

@@ -76,28 +76,38 @@ async function sign(keys: RoomKeys, doc: Y.Doc): Promise<string> {
   plain.set(signature, message.length)
   return btoa(String.fromCharCode(...(await encrypt(keys.frameKey, plain))))
 }
-async function setup(access: 'edit' | 'read' | 'comment' = 'edit') {
+async function setup(access: 'edit' | 'read' | 'comment' = 'edit', initial = 'host') {
   const link = parseFragment(fragment)
   if (!link) throw new Error('fixture link')
   const keys = await deriveRoomKeys(link, room),
     host = new Y.Doc()
   documents.push(host)
-  host.getText('content').insert(0, 'host')
+  host.getText('content').insert(0, initial)
   let snapshot = await sign(keys, host),
     closed = false,
     appends = 0
+  const entries: { id: number; body: string }[] = []
+  const reads: { after: number; bytes: number; snapshot: boolean }[] = []
   vi.stubGlobal(
     'fetch',
-    vi.fn<typeof fetch>(async (_, init) => {
+    vi.fn<typeof fetch>(async (input, init) => {
       if (closed) return new Response(null, { status: 410 })
-      if (init?.method === 'POST') return Response.json({ id: ++appends })
-      return Response.json({
-        snapshot,
-        entries: [],
-        tail: 0,
+      if (init?.method === 'POST') {
+        const bytes = new Uint8Array(await new Response(init.body).arrayBuffer())
+        entries.push({ id: ++appends, body: btoa(String.fromCharCode(...bytes)) })
+        return Response.json({ id: appends })
+      }
+      const after = Number(new URL(String(input)).searchParams.get('after') ?? '0')
+      const value = {
+        ...(after === 0 ? { snapshot } : {}),
+        cutoff: 0,
+        tail: appends,
+        entries: entries.filter((entry) => entry.id > after),
         hostAway: true,
         keepUntil: Date.now() + 60000,
-      })
+      }
+      reads.push({ after, bytes: JSON.stringify(value).length, snapshot: 'snapshot' in value })
+      return Response.json(value)
     }),
   )
   const container = document.createElement('div')
@@ -118,6 +128,7 @@ async function setup(access: 'edit' | 'read' | 'comment' = 'edit') {
       closed = true
     },
     appends: () => appends,
+    reads,
     peer: async () => {
       host.getText('content').insert(host.getText('content').length, ' peer')
       snapshot = await sign(keys, host)
@@ -213,4 +224,26 @@ it('consumes an empty Yjs undo command even if it returns false instead of falli
   expect(x.doc.getText('content').toString()).toBe('host')
   expect(x.view.state.doc.toString()).toBe('host')
   expect(x.appends()).toBe(0)
+})
+
+it('batches 2000 character updates into one append at the next one-second flush', async () => {
+  const x = await setup()
+  for (let i = 0; i < 2000; i++)
+    x.view.dispatch({ changes: { from: x.view.state.doc.length, insert: 'x' } })
+  await new Promise((resolve) => setTimeout(resolve, 25))
+  expect(x.appends()).toBe(0)
+  await vi.advanceTimersByTimeAsync(1000)
+  await vi.waitFor(() => expect(x.appends()).toBe(1))
+  expect(x.doc.getText('content').length).toBe(2004)
+})
+it('transfers only small status bodies on unchanged browser polls after loading a large document', async () => {
+  const x = await setup('edit', 'x'.repeat(100000))
+  x.view.dispatch({ changes: { from: 100000, insert: ' local' } })
+  await vi.advanceTimersByTimeAsync(1000)
+  await vi.waitFor(() => expect(x.appends()).toBe(1))
+  x.reads.length = 0
+  await vi.advanceTimersByTimeAsync(1000)
+  await vi.advanceTimersByTimeAsync(1000)
+  expect(x.reads).toHaveLength(2)
+  expect(x.reads.every((read) => read.after === 1 && !read.snapshot && read.bytes < 300)).toBe(true)
 })

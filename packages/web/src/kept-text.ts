@@ -22,7 +22,8 @@ export async function joinKeptText(
   const keys = await deriveRoomKeys(link, id),
     doc = new Y.Doc()
   const status = new Store('Connecting…'),
-    deadline = new Store<string | null>(null)
+    deadline = new Store<string | null>(null),
+    skipped = new Store(0)
   let parts: LayoutParts | undefined
   render(container, 'Layout', {
     onReady: (value: LayoutParts) => {
@@ -30,7 +31,12 @@ export async function joinKeptText(
     },
   })
   if (!parts) throw new Error('room layout unavailable')
-  render(parts.header, 'KeptTextHeader', { status, deadline, readOnly: keys.access !== 'edit' })
+  render(parts.header, 'KeptTextHeader', {
+    status,
+    deadline,
+    skipped,
+    readOnly: keys.access !== 'edit',
+  })
   parts.main.dataset.view = 'editor'
   parts.comments.hidden = true
   let pending = false
@@ -91,34 +97,25 @@ export async function joinKeptText(
   })
   let stopped = false,
     loaded = false,
-    again = false,
     running = false
   const refresh = async () => {
-    if (stopped) return
-    if (running) {
-      again = true
-      return
-    }
+    if (stopped || running) return
     running = true
     try {
-      do {
-        again = false
-        if (loaded && keys.access === 'edit') await client.flush()
-        await client.refresh()
-        deadline.set(
-          client.state.hostAway ? new Date(client.state.keepUntil).toLocaleString() : null,
-        )
-        if (!loaded) {
-          loaded = true
-          editor.dispatch({
-            effects: editable.reconfigure([
-              EditorState.readOnly.of(keys.access !== 'edit'),
-              EditorView.editable.of(keys.access === 'edit'),
-            ]),
-          })
-          status.set('Connected')
-        } else if (keys.access !== 'edit') status.set('Connected')
-      } while (again && !stopped)
+      if (loaded && keys.access === 'edit') await client.flush()
+      await client.refresh()
+      skipped.set(client.state.skipped)
+      deadline.set(client.state.hostAway ? new Date(client.state.keepUntil).toLocaleString() : null)
+      if (!loaded) {
+        loaded = true
+        editor.dispatch({
+          effects: editable.reconfigure([
+            EditorState.readOnly.of(keys.access !== 'edit'),
+            EditorView.editable.of(keys.access === 'edit'),
+          ]),
+        })
+        status.set('Connected')
+      } else if (keys.access !== 'edit') status.set('Connected')
     } catch (error) {
       if (stopped) return
       if (error instanceof KeptTextClosedError) {
@@ -142,10 +139,6 @@ export async function joinKeptText(
   const timer = setInterval(() => {
     void refresh()
   }, 1000)
-  const update = () => {
-    void refresh()
-  }
-  doc.on('update', update)
   const warnPending = (event: BeforeUnloadEvent) => {
     if (pending) {
       event.preventDefault()

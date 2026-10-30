@@ -207,8 +207,14 @@ To report a vulnerability instead, see [SECURITY.md](../SECURITY.md).
 | Session length | 24 hours from the host's first connection |
 | Kept room after departure | Up to 7 days; the CLI reports any clamp |
 | Kept room total life | At least the effective keep duration; measured from publication |
-| Kept text log | 4 MiB ciphertext and 1,000 updates before the host checkpoints |
+| Kept text log | 4 MiB of encrypted editing history before the host checkpoints; a 10,000-entry abuse guard also applies |
 | Kept room requests | 1,200 a minute from one network |
+
+Kept guests batch pending edits once per second. The 4 MiB budget measures
+encrypted update history, including signatures and encryption overhead, rather
+than keystrokes or final document size. Repeated replacements and deletions
+also use this budget; after it fills, the host must resume and checkpoint
+before more edits can be retained. Each encrypted entry is at most 1 MiB.
 
 The values are `vars` and `ratelimits` in `packages/worker/wrangler.jsonc` and
 the constants in `packages/worker/src/room.ts` and `kept-text.ts`. A network is one IP address,

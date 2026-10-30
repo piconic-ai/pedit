@@ -38,6 +38,17 @@ for await (const line of createInterface({ input: process.stdin })) {
     doc.getText('content').insert(doc.getText('content').length, command.append)
     await client.flush()
   }
+  if (command.garbage) {
+    const response = await fetch(
+      `${url.origin}/api/rooms/${url.pathname.split('/')[2]}/keep/append`,
+      {
+        method: 'POST',
+        headers: { 'X-Pedit-Admission': keys.editAdmission, 'X-Pedit-Sender': crypto.randomUUID() },
+        body: Uint8Array.of(1),
+      },
+    )
+    if (!response.ok) throw new Error('could not insert invalid log entry')
+  }
   if (command.replay && previous) await fetch(previous.input, previous.init)
   await client.refresh()
   send()

@@ -70,6 +70,7 @@ func TestKeptTextPendingWriteRecoveryAndExternalChange(t *testing.T) {
 }
 
 func TestKeptTextResumesAfterCommittedCheckpointResponseIsLost(t *testing.T) {
+	isolateKeptUserConfig(t)
 	dir := t.TempDir()
 	file := filepath.Join(dir, "notes.md")
 	if err := os.WriteFile(file, []byte("base"), 0600); err != nil {
@@ -95,7 +96,7 @@ func TestKeptTextResumesAfterCommittedCheckpointResponseIsLost(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "/init"):
 			initCalls++
 			var state keptTextState
-			if err := readKeptState(filepath.Join(dir, ".pedit", room+".keep.json"), &state); err != nil {
+			if err := readKeptState(keptTestStatePath(t, dir, room), &state); err != nil {
 				t.Error("network initialization preceded private durable state")
 			}
 			link, err := protocol.ParseFragment(state.Fragment)
@@ -140,7 +141,7 @@ func TestKeptTextResumesAfterCommittedCheckpointResponseIsLost(t *testing.T) {
 		t.Fatal("did not persist before checkpoint request")
 	}
 	var state keptTextState
-	if err := readKeptState(filepath.Join(dir, ".pedit", room+".keep.json"), &state); err != nil {
+	if err := readKeptState(keptTestStatePath(t, dir, room), &state); err != nil {
 		t.Fatal(err)
 	}
 	fullLink = server.URL + "/r/" + room + "?keep=1#" + state.Fragment

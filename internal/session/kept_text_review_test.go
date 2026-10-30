@@ -12,20 +12,22 @@ import (
 )
 
 func TestReviewResumeRejectsInvalidPendingStateBeforeWritingSource(t *testing.T) {
+	isolateKeptUserConfig(t)
 	dir := t.TempDir()
 	file := filepath.Join(dir, "notes.md")
 	if err := os.WriteFile(file, []byte("original"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(filepath.Join(dir, ".pedit"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	token := base64.RawURLEncoding.EncodeToString(make([]byte, 32))
 	hash := sha256.Sum256([]byte(token))
 	room := base64.RawURLEncoding.EncodeToString(hash[:])[:22]
 	pending := "corrupted pending text"
-	state := keptTextState{File: file, Origin: "https://example.test", Fragment: protocol.GenerateEditSecret(), HostToken: token, Keep: 60, State: []byte{1, 2, 3}, Text: "original", Pending: &pending, Initialized: true}
-	if err := saveKeptState(filepath.Join(dir, ".pedit", room+".keep.json"), state); err != nil {
+	state := keptTextState{File: file, Project: dir, Origin: "https://example.test", Fragment: protocol.GenerateEditSecret(), HostToken: token, Keep: 60, State: []byte{1, 2, 3}, Text: "original", Pending: &pending, Initialized: true}
+	path := keptTestStatePath(t, dir, room)
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveKeptState(path, state); err != nil {
 		t.Fatal(err)
 	}
 	link := state.Origin + "/r/" + room + "?keep=1#" + state.Fragment

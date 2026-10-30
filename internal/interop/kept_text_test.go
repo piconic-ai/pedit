@@ -3,6 +3,8 @@ package interop
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +28,7 @@ type keptProcess struct {
 	done  chan error
 	input io.WriteCloser
 	log   string
+	seen  []string
 }
 
 func keptCommand(t *testing.T, directory string, args ...string) *keptProcess {
@@ -68,6 +72,7 @@ func (p *keptProcess) line(t *testing.T) string {
 			data, _ := os.ReadFile(p.log)
 			t.Fatalf("process ended before expected output: %s", data)
 		}
+		p.seen = append(p.seen, line)
 		return line
 	case <-time.After(15 * time.Second):
 		t.Fatal("timed out waiting for process output")
@@ -141,6 +146,21 @@ func keptRelay(t *testing.T) string {
 	return origin
 }
 func TestKeptTextVerticalSlice(t *testing.T) {
+	// Preserve the toolchain caches before isolating the user configuration home.
+	for _, key := range []string{"GOMODCACHE", "GOCACHE"} {
+		if os.Getenv(key) == "" {
+			raw, e := exec.Command("go", "env", key).Output()
+			if e != nil {
+				t.Fatal(e)
+			}
+			t.Setenv(key, strings.TrimSpace(string(raw)))
+		}
+	}
+	userConfig := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", userConfig)
+	if runtime.GOOS == "darwin" {
+		t.Setenv("HOME", userConfig)
+	}
 	dir := protocolDir(t)
 	relay := keptRelay(t)
 	root, err := filepath.Abs("../..")
@@ -164,6 +184,18 @@ func TestKeptTextVerticalSlice(t *testing.T) {
 	if err := os.WriteFile(file, []byte("notes"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	git := func(args ...string) string {
+		command := exec.Command("git", args...)
+		command.Dir = project
+		raw, e := command.CombinedOutput()
+		if e != nil {
+			t.Fatalf("git %v: %s", args, raw)
+		}
+		return string(raw)
+	}
+	git("init", "-q")
+	git("add", "-f", ".pedit/config.yaml", "notes.md")
+	beforeProjectState := git("status", "--porcelain", "--", ".pedit")
 	host := keptCommand(t, project, binary, "--keep", "7d", "notes.md")
 	link := host.link(t)
 	if !strings.Contains(host.line(t), "60s") {
@@ -176,6 +208,7 @@ func TestKeptTextVerticalSlice(t *testing.T) {
 		HostAway   bool
 		KeepUntil  int64
 		LogEntries int
+		Skipped    int
 	}
 	read := func(p *keptProcess) guestState {
 		t.Helper()
@@ -206,8 +239,11 @@ func TestKeptTextVerticalSlice(t *testing.T) {
 	if away.Text != "notes online away" || !away.HostAway || away.KeepUntil <= time.Now().UnixMilli() {
 		t.Fatal("existing guest cannot edit while host is away")
 	}
+	if got := command(old, `{"garbage":true}`); got.Text != away.Text || got.Skipped != 1 {
+		t.Fatal("invalid entry poisoned existing guest or skipped count missing")
+	}
 	newcomer := keptCommand(t, project, "node", script, dir, link)
-	if got := read(newcomer); got.Text != away.Text || !got.HostAway {
+	if got := read(newcomer); got.Text != away.Text || !got.HostAway || got.Skipped != 1 {
 		t.Fatal("new guest cannot open current text while host away")
 	}
 	final := "notes online away newcomer"
@@ -216,28 +252,47 @@ func TestKeptTextVerticalSlice(t *testing.T) {
 	}
 	resumed := keptCommand(t, project, binary, "--resume", link)
 	resumed.link(t)
+	if !strings.Contains(strings.Join(resumed.seen, "\n"), "Skipped 1 invalid updates.") {
+		t.Fatal("CLI did not report skipped entry")
+	}
 	prototest.WaitFor(t, 5*time.Second, func() bool { b, _ := os.ReadFile(file); return string(b) == final }, "all edits merged after host restart")
 	if state := command(newcomer, `{"replay":true}`); state.Text != final {
 		t.Fatal("replayed frame changed document")
 	}
-	prototest.WaitFor(t, 5*time.Second, func() bool { return command(newcomer, `{}`).LogEntries == 0 }, "relay log truncated after host save")
+	roomURL, _ := url.Parse(link)
+	prototest.WaitFor(t, 5*time.Second, func() bool {
+		response, err := http.Get(relay + "/__test/kept/" + strings.TrimPrefix(roomURL.Path, "/r/"))
+		if err != nil {
+			return false
+		}
+		defer response.Body.Close()
+		var state struct{ Entries int }
+		return json.NewDecoder(response.Body).Decode(&state) == nil && state.Entries == 0
+	}, "relay log truncated after host save")
 	resumed.stop(t)
-	entries, err := os.ReadDir(filepath.Join(project, ".pedit"))
+	if after := git("status", "--porcelain", "--", ".pedit"); after != beforeProjectState {
+		t.Fatalf("kept credentials changed project git status: %q -> %q", beforeProjectState, after)
+	}
+	configRoot, err := os.UserConfigDir()
 	if err != nil {
 		t.Fatal(err)
 	}
-	credentials := 0
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".keep.json") {
-			credentials++
-			info, err := entry.Info()
-			if err != nil || info.Mode().Perm() != 0600 {
-				t.Fatal("host resume state must be mode0600")
-			}
-		}
+	projectAbs, err := filepath.Abs(project)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if credentials != 1 {
-		t.Fatal("host resume state was not retained")
+	projectDigest := sha256.Sum256([]byte(filepath.Clean(projectAbs)))
+	stateDirectory := filepath.Join(configRoot, "pedit", "keep", hex.EncodeToString(projectDigest[:])[:16])
+	entries, err := os.ReadDir(stateDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatal("host resume state was not retained outside project")
+	}
+	info, err := entries[0].Info()
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Fatal("host resume state must be mode0600")
 	}
 	if err := os.WriteFile(filepath.Join(project, "expire.md"), []byte("expires"), 0600); err != nil {
 		t.Fatal(err)

@@ -84,8 +84,9 @@ For asynchronous text review, run `pedit --keep 7d notes.md`. The relay caps
 this duration and pedit reports the effective value. Ctrl+C leaves the room
 open and prints its deadline. Browser guests can keep editing while you are
 away. In the same project, run `pedit --resume <link>` to merge their edits
-back into the file. Resume information stays in a private 0600 file under
-`.pedit/`. Keep that file until the review ends. This mode shares one text
+back into the file. Resume information stays in a private 0600 record under
+`pedit/keep/` in your user configuration directory, outside the project. Keep
+that record until the review ends. This mode shares one text
 file, without comments or attachments. Changes made directly to the local
 file while away are preserved and stop automatic recovery. These two host
 commands currently require Unix file permissions and are unavailable on Windows.

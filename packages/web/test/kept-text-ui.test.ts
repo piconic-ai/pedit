@@ -12,6 +12,7 @@ type Captured = {
   client?: KeptTextClient
   doc?: Y.Doc
   status?: Readable<string>
+  skipped?: Readable<number>
   editor?: { state: EditorState; destroyed: boolean }
 }
 const captured = vi.hoisted(() => {
@@ -35,7 +36,11 @@ vi.mock('@barefootjs/client/runtime', () => ({
   render: (
     _container: HTMLElement,
     component: string,
-    props: { onReady?: (parts: unknown) => void; status?: Readable<string> },
+    props: {
+      onReady?: (parts: unknown) => void
+      status?: Readable<string>
+      skipped?: Readable<number>
+    },
   ) => {
     if (component === 'Layout')
       props.onReady?.({
@@ -44,7 +49,10 @@ vi.mock('@barefootjs/client/runtime', () => ({
         source: document.createElement('div'),
         comments: document.createElement('div'),
       })
-    if (component === 'KeptTextHeader') captured.status = props.status
+    if (component === 'KeptTextHeader') {
+      captured.status = props.status
+      captured.skipped = props.skipped
+    }
   },
 }))
 vi.mock('@codemirror/view', async (load) => {
@@ -130,6 +138,7 @@ const response = (encrypted: string) =>
     snapshot: encrypted,
     entries: [],
     tail: 0,
+    cutoff: 0,
     hostAway: true,
     keepUntil: Date.now() + 60000,
   })
@@ -159,11 +168,16 @@ it('keeps an edit pending during a read until its append is acknowledged', async
   )
   const joined = joinKeptText(document.createElement('div'), room, fragment, [])
   try {
+    await joined
+    const poll = vi.advanceTimersByTimeAsync(1000)
     await readStarted.wait
     if (!captured.doc || !captured.status) throw new Error('room was not mounted')
     captured.doc.getText('content').insert(5, ' unsent')
     expect(captured.status.get()).toBe('Saving your edits…')
     read.release()
+    await poll
+    await captured.client?.refresh()
+    const sending = vi.advanceTimersByTimeAsync(1000)
     await appendStarted.wait
     expect(posts).toBe(1)
     expect(captured.status.get()).not.toBe('Edits kept')
@@ -171,8 +185,8 @@ it('keeps an edit pending during a read until its append is acknowledged', async
     window.dispatchEvent(warn)
     expect(warn.defaultPrevented).toBe(true)
     append.release()
-    await joined
-    expect(captured.status.get()).toBe('Edits kept')
+    await sending
+    await vi.waitFor(() => expect(captured.status?.get()).toBe('Edits kept'))
     const clean = new Event('beforeunload', { cancelable: true })
     window.dispatchEvent(clean)
     expect(clean.defaultPrevented).toBe(false)
@@ -204,4 +218,25 @@ it('retries an initial read failure and only enables editing after loading the r
   await vi.advanceTimersByTimeAsync(5000)
   expect(calls).toBe(count)
   expect(captured.editor?.destroyed).toBe(true)
+})
+
+it('publishes skipped invalid-entry count in the browser header while loading valid text', async () => {
+  const encrypted = await snapshot()
+  vi.stubGlobal(
+    'fetch',
+    vi.fn<typeof fetch>(async () =>
+      Response.json({
+        snapshot: encrypted,
+        cutoff: 0,
+        tail: 1,
+        entries: [{ id: 1, body: '!' }],
+        hostAway: true,
+        keepUntil: Date.now() + 60000,
+      }),
+    ),
+  )
+  await joinKeptText(document.createElement('div'), room, fragment, [])
+  expect(captured.doc?.getText('content').toString()).toBe('hello')
+  expect(captured.editor?.state.readOnly).toBe(false)
+  expect(captured.skipped?.get()).toBe(1)
 })

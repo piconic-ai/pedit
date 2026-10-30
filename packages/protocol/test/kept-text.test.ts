@@ -56,9 +56,11 @@ async function setup() {
       }
       return Response.json({ id: entries.length })
     }
+    const after = Number(new URL(url).searchParams.get('after') ?? 0)
     return Response.json({
-      snapshot,
-      entries,
+      snapshot: after === 0 ? snapshot : undefined,
+      entries: entries.filter((entry) => entry.id > after),
+      cutoff: 0,
       tail: entries.length,
       hostAway: true,
       keepUntil: 1234567890,
@@ -99,13 +101,19 @@ it('loads signed text without enqueueing, preserves exact ciphertext after a los
     await x.client.refresh()
     await x.client.refresh()
     expect(x.doc.getText('content').toString()).toBe('hello guest')
-    expect(x.client.state).toEqual({ hostAway: true, keepUntil: 1234567890, logEntries: 1 })
+    expect(x.client.state).toEqual({
+      hostAway: true,
+      keepUntil: 1234567890,
+      logEntries: 1,
+      skipped: 0,
+      after: 1,
+    })
   } finally {
     x.source.destroy()
   }
 })
 
-it('rejects commenter signatures and malformed later entries before applying any remote state', async () => {
+it('skips commenter signatures but rejects malformed read metadata before importing state', async () => {
   const x = await setup()
   try {
     const fragment = x.keys.fragments.comment
@@ -128,14 +136,21 @@ it('rejects commenter signatures and malformed later entries before applying any
           Response.json({
             snapshot: x.snapshot,
             entries: [entry],
+            cutoff: 0,
             tail: 1,
             hostAway: true,
             keepUntil: 1,
           }),
       })
       opened.push({ client, doc })
-      await expect(client.refresh()).rejects.toThrow()
-      expect(doc.getText('content').toString()).toBe('')
+      if (entry.id === 1) {
+        await client.refresh()
+        expect(doc.getText('content').toString()).toBe('hello')
+        expect(client.state.skipped).toBe(1)
+      } else {
+        await expect(client.refresh()).rejects.toThrow()
+        expect(doc.getText('content').toString()).toBe('')
+      }
     }
   } finally {
     x.source.destroy()
@@ -157,7 +172,14 @@ it('read and comment links never append text and use only their reader admission
     const fetcher = vi.fn<typeof fetch>(async (_, init) => {
       expect(init?.method).toBe('GET')
       expect(new Headers(init?.headers).get('X-Pedit-Admission')).toBe(keys.readAdmission)
-      return Response.json({ snapshot, entries: [], tail: 0, hostAway: true, keepUntil: 1 })
+      return Response.json({
+        snapshot,
+        entries: [],
+        cutoff: 0,
+        tail: 0,
+        hostAway: true,
+        keepUntil: 1,
+      })
     })
     const client = new KeptTextClient({ origin, roomId: room, keys, doc, fetch: fetcher })
     opened.push({ client, doc })
@@ -177,12 +199,20 @@ it('rejects oversized streams, oversized frames, redirects and invalid metadata'
       Response.json({
         snapshot: 'A'.repeat(Math.ceil((MAX_FRAME_BYTES + 1) / 3) * 4),
         entries: [],
+        cutoff: 0,
         tail: 0,
         hostAway: true,
         keepUntil: 1,
       }),
       new Response(null, { status: 302, headers: { Location: 'https://attacker.test' } }),
-      Response.json({ snapshot: x.snapshot, entries: [], tail: -1, hostAway: true, keepUntil: 1 }),
+      Response.json({
+        snapshot: x.snapshot,
+        entries: [],
+        cutoff: 0,
+        tail: -1,
+        hostAway: true,
+        keepUntil: 1,
+      }),
     ]
     for (const response of invalid) {
       const doc = new Y.Doc(),

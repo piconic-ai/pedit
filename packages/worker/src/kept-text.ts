@@ -2,6 +2,7 @@ import { MAX_FRAME_BYTES } from '@pedit/protocol/frame'
 
 type KeptText = {
   snapshot: string
+  snapshotTag: string
   editor: string
   reader: string
   seconds: number
@@ -152,23 +153,41 @@ function lifecycle(
     : state
 }
 function stateResponse(request: Request, storage: DurableObjectStorage, state: KeptText): Response {
-  const reply = (value: unknown) =>
-    Response.json(value, { headers: { 'Cache-Control': 'no-store' } })
-  return request.method !== 'GET'
-    ? reply({
-        keepSeconds: state.seconds,
-        keepUntil: Math.min(state.until, state.total ?? Infinity),
-      })
-    : reply({
-        snapshot: state.snapshot,
-        entries: storage.sql
-          .exec<{ id: number; body: ArrayBuffer }>('SELECT id, body FROM kept_text_log ORDER BY id')
-          .toArray()
-          .map((row) => ({ id: row.id, body: encode(new Uint8Array(row.body)) })),
-        tail: state.tail,
-        hostAway: state.away || Date.now() - state.hostSeen > 15000,
-        keepUntil: Math.min(state.until, state.total ?? Infinity),
-      })
+  const keepUntil = Math.min(state.until, state.total ?? Infinity)
+  const headers = new Headers({ 'Cache-Control': 'no-store' })
+  if (request.method !== 'GET')
+    return Response.json({ keepSeconds: state.seconds, keepUntil }, { headers })
+  const after = Number(new URL(request.url).searchParams.get('after') ?? '0')
+  if (!Number.isSafeInteger(after) || after < 0 || after > state.tail)
+    throw new Error('invalid kept cursor')
+  const full = after === 0 || after < state.cutoff
+  const hostAway = state.away || Date.now() - state.hostSeen > 15000
+  const etag = `"${state.snapshotTag}-${state.tail}"`
+  headers.set('ETag', etag)
+  if (full && request.headers.get('If-None-Match') === etag) {
+    headers.set('X-Pedit-Cutoff', String(state.cutoff))
+    headers.set('X-Pedit-Tail', String(state.tail))
+    headers.set('X-Pedit-Host-Away', String(hostAway))
+    headers.set('X-Pedit-Keep-Until', String(keepUntil))
+    return new Response(null, { status: 304, headers })
+  }
+  return Response.json(
+    {
+      ...(full ? { snapshot: state.snapshot } : {}),
+      entries: storage.sql
+        .exec<{ id: number; body: ArrayBuffer }>(
+          'SELECT id, body FROM kept_text_log WHERE id > ? ORDER BY id',
+          after,
+        )
+        .toArray()
+        .map((row) => ({ id: row.id, body: encode(new Uint8Array(row.body)) })),
+      cutoff: state.cutoff,
+      tail: state.tail,
+      hostAway,
+      keepUntil,
+    },
+    { headers },
+  )
 }
 
 async function initialize(
@@ -195,6 +214,7 @@ async function initialize(
   const limit = Number(maxRoom) || 0
   const state: KeptText = {
     snapshot,
+    snapshotTag: crypto.randomUUID(),
     editor,
     reader,
     seconds,
@@ -236,7 +256,7 @@ async function appendUpdate(request: Request, storage: DurableObjectStorage): Pr
         'SELECT coalesce(sum(length(body)), 0) AS bytes, count(*) AS count FROM kept_text_log',
       )
       .one()
-    if (usage.bytes + data.length > 4 * MAX_FRAME_BYTES || usage.count >= 1000)
+    if (usage.bytes + data.length > 4 * MAX_FRAME_BYTES || usage.count >= 10000)
       throw new Error('room log full')
     const state = { ...current, tail: current.tail + 1 }
     storage.sql.exec(
@@ -266,7 +286,7 @@ async function checkpointUpdate(
       cutoff > current.tail
     )
       throw new Error('invalid cutoff')
-    const state = { ...current, snapshot, cutoff }
+    const state = { ...current, snapshot, snapshotTag: crypto.randomUUID(), cutoff }
     storage.sql.exec('DELETE FROM kept_text_log WHERE id <= ?', cutoff)
     storage.kv.put('keptText', state)
     return state

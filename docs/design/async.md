@@ -5,7 +5,7 @@
 `pedit --keep 7d notes.md` publishes one encrypted Yjs text document. The relay
 caps retention, keeps an encrypted snapshot and update log, and serves browser
 guests after the host leaves. `pedit --resume <link>` restores the original
-Yjs identifiers from a mode-0600 local record, merges signed updates, saves the
+Yjs identifiers from a mode-0600 record outside the project, merges signed updates, saves the
 file and recovery state, then checkpoints and truncates the observed log prefix.
 Repeated Yjs text updates are idempotent. This path is separate from the live
 nonce handshake and never accepts canvas, comment or attachment operations.

@@ -14,7 +14,12 @@ export class Room extends ProductionRoom {
             )
             .one().bytes
         : 0
-      return Response.json({ bytes: bytes + (snapshot?.snapshot.length ?? 0) })
+      const entries = exists
+        ? this.ctx.storage.sql
+            .exec<{ count: number }>('SELECT count(*) AS count FROM kept_text_log')
+            .one().count
+        : 0
+      return Response.json({ bytes: bytes + (snapshot?.snapshot.length ?? 0), entries })
     }
     return super.fetch(request)
   }
