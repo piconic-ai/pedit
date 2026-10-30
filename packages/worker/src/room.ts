@@ -281,7 +281,12 @@ export class Room extends DurableObject<Env> {
 
   override async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname
-    if (await this.dropLegacyKept()) return new Response('room has ended', { status: 410 })
+    // A connection is refused with a close code below, which the page shows.
+    if (
+      (await this.dropLegacyKept()) &&
+      request.headers.get('Upgrade')?.toLowerCase() !== 'websocket'
+    )
+      return new Response('room has ended', { status: 410 })
     if (/\/keep(?:\/|$)/.test(path)) return this.keepRequest(request, path)
     const blob = BLOB_PATH.exec(path)?.[1]
     if (blob) return this.blob(request, blob)
@@ -352,6 +357,8 @@ export class Room extends DurableObject<Env> {
     const readDigest = read === null ? null : await sha256(read)
     if (this.ctx.storage.kv.get(CLOSED_KEY) === true)
       return refuse(ROOM_CLOSED, 'room is closed', join.protocol)
+    if (this.ctx.storage.kv.get('keptTextClosed') === true)
+      return refuse(ROOM_EXPIRED, 'room has expired', join.protocol)
     // A version 5 host cannot take in the entries kept for it, and returning
     // would discard them: it is told to update, and the room stays kept.
     if (isHost && join.version === 5 && this.keptAway())
