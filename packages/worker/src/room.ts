@@ -275,19 +275,7 @@ export class Room extends DurableObject<Env> {
 
   override async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname
-    if (/\/keep\/close$/.test(path) && request.method === 'POST' && this.awayRoom())
-      return this.closeAway(request)
-    if (/\/keep(?:\/|$)/.test(path))
-      return keptText(
-        request,
-        this.ctx.storage,
-        request.headers.get(HOST_HEADER) === '1',
-        'KEEP_MAX_SECONDS' in this.env && typeof this.env.KEEP_MAX_SECONDS === 'string'
-          ? this.env.KEEP_MAX_SECONDS
-          : undefined,
-        this.env.ROOM_MAX_SECONDS,
-        this.removeKeptBlobs,
-      )
+    if (/\/keep(?:\/|$)/.test(path)) return this.keepRequest(request, path)
     const blob = BLOB_PATH.exec(path)?.[1]
     if (this.kept()) {
       return blob
@@ -315,16 +303,7 @@ export class Room extends DurableObject<Env> {
     if (!token || version.result !== 'current')
       return new Response('room admission required; update your client', { status: 403 })
     const isHost = request.headers.get(HOST_HEADER) === '1'
-    const join: Join = {
-      version: version.version,
-      protocol: socketProtocol(version.version),
-      // Keeping a room needs the kind bytes of version 6.
-      keep:
-        isHost && version.version === 6
-          ? this.keepFrom(request.headers.get(KEEP_HEADER))
-          : undefined,
-      after: afterFrom(request.headers.get(AFTER_HEADER)),
-    }
+    const join = this.joinFrom(request, version.version, isHost)
     const read = (isHost && request.headers.get(READ_ADMISSION_HEADER)) || null
     if (read !== null && !ADMISSION_PATTERN.test(read)) {
       return new Response('invalid reader admission', { status: 403 })
@@ -337,6 +316,32 @@ export class Room extends DurableObject<Env> {
       return await this.admit(token, isHost, read, join)
     } finally {
       if (isHost) this.hostHandshakes--
+    }
+  }
+
+  // A request under /keep: the host closes a room kept without it, or the HTTP kept room.
+  private keepRequest(request: Request, path: string): Promise<Response> | Response {
+    if (path.endsWith('/keep/close') && request.method === 'POST' && this.awayRoom())
+      return this.closeAway(request)
+    const max = 'KEEP_MAX_SECONDS' in this.env ? this.env.KEEP_MAX_SECONDS : undefined
+    return keptText(
+      request,
+      this.ctx.storage,
+      request.headers.get(HOST_HEADER) === '1',
+      typeof max === 'string' ? max : undefined,
+      this.env.ROOM_MAX_SECONDS,
+      this.removeKeptBlobs,
+    )
+  }
+
+  private joinFrom(request: Request, version: number, isHost: boolean): Join {
+    // Keeping a room needs the kind bytes of version 6.
+    const keeps = isHost && version === 6
+    return {
+      version,
+      protocol: socketProtocol(version),
+      keep: keeps ? this.keepFrom(request.headers.get(KEEP_HEADER)) : undefined,
+      after: afterFrom(request.headers.get(AFTER_HEADER)),
     }
   }
 

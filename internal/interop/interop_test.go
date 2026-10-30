@@ -36,7 +36,9 @@ const roomID = "AAAAAAAAAAAAAAAAAAAAAA"
 // sockets and keeps blobs.
 func newServer(t *testing.T) *httptest.Server {
 	var mu sync.Mutex
-	conns := map[*websocket.Conn]bool{}
+	// Each socket with the protocol version it speaks: the Go host speaks 5,
+	// which has no kind byte, and the JavaScript client 6, which has.
+	conns := map[*websocket.Conn]int{}
 	blobs := map[string][]byte{}
 	// The editor and reader admission tokens, as the relay registers them
 	// from the host's handshake.
@@ -102,13 +104,17 @@ func newServer(t *testing.T) *httptest.Server {
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
-		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{protocol.SocketProtocol}})
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{"pedit-v6", protocol.SocketProtocol}})
 		if err != nil {
 			return
 		}
 		c.SetReadLimit(-1)
 		mu.Lock()
-		conns[c] = true
+		version := 5
+		if c.Subprotocol() == "pedit-v6" {
+			version = 6
+		}
+		conns[c] = version
 		mu.Unlock()
 		defer func() {
 			mu.Lock()
@@ -120,11 +126,24 @@ func newServer(t *testing.T) *httptest.Server {
 			if err != nil {
 				return
 			}
-			mu.Lock()
-			for peer := range conns {
-				if peer != c {
-					_ = peer.Write(context.Background(), typ, data)
+			// As the Worker does: a version 6 message has a kind byte, and only
+			// live frames (kind 0) are relayed, to a version 5 peer without it.
+			if version == 6 {
+				if len(data) == 0 || data[0] != 0 {
+					continue
 				}
+				data = data[1:]
+			}
+			mu.Lock()
+			for peer, peerVersion := range conns {
+				if peer == c {
+					continue
+				}
+				out := data
+				if peerVersion == 6 {
+					out = append([]byte{0}, data...)
+				}
+				_ = peer.Write(context.Background(), typ, out)
 			}
 			mu.Unlock()
 		}
