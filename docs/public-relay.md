@@ -20,8 +20,9 @@ the relay's copies can be deleted without losing them. Live rooms relay frames
 without storing them. Kept rooms store ciphertext as described below.
 
 - **Plaintext document text: none.** Live-room frames are relayed and never stored.
-- **Encrypted images**, in R2. They can be uploaded only while the room's host
-  is connected, and the room deletes them when the host leaves. A deletion
+- **Encrypted images**, in R2. In a live room they can be uploaded only while
+  the room's host is connected, and the room deletes them when the host leaves
+  (kept rooms differ, below). A deletion
   that fails is logged and not tried again; a bucket rule expires leftovers
   one day after upload, and R2 removes them typically within a further day
   ([R2](https://developers.cloudflare.com/r2/buckets/object-lifecycles/)).
