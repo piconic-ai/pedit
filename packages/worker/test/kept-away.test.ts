@@ -60,6 +60,8 @@ interface Options {
   version?: 5 | 6
   keep?: string
   after?: number
+  /** Send the cursor as `?after=` on the URL, as a browser must. */
+  query?: boolean
 }
 
 async function join(room: Room, o: Options = {}): Promise<Peer> {
@@ -76,8 +78,11 @@ async function join(room: Room, o: Options = {}): Promise<Peer> {
     headers[READ_ADMISSION_HEADER] = room.read
   }
   if (o.keep !== undefined) headers['X-Pedit-Keep'] = o.keep
-  if (o.after !== undefined) headers['X-Pedit-After'] = String(o.after)
-  const res = await exports.default.fetch(`https://pedit.test/api/rooms/${room.id}/ws`, { headers })
+  if (o.after !== undefined && !o.query) headers['X-Pedit-After'] = String(o.after)
+  const query = o.query && o.after !== undefined ? `?after=${o.after}` : ''
+  const res = await exports.default.fetch(`https://pedit.test/api/rooms/${room.id}/ws${query}`, {
+    headers,
+  })
   expect(res.status).toBe(101)
   expect(res.headers.get('Sec-WebSocket-Protocol')).toBe(`pedit-v${o.version ?? 6}`)
   const ws = res.webSocket as WebSocket
@@ -412,6 +417,16 @@ describe('a room kept while its host is away', () => {
     const lost = await join(room, { after: 99 })
     await until(() => lost.binary.length === 5)
     expect(kinds(lost)).toEqual([Kind.Replay, 4, 4, 4, Kind.LogEnd])
+  })
+
+  it('reads the cursor from ?after= too, which a browser can send', async () => {
+    const { room, writer } = await away()
+    for (const n of [10, 11, 12]) writer.ws.send(withKind(Kind.Entry, bytes(n)))
+    await until(() => writer.binary.length === 3)
+    const partial = await join(room, { after: 2, query: true })
+    await until(() => partial.binary.length === 2)
+    expect(kinds(partial)).toEqual([Kind.Logged, Kind.LogEnd])
+    expect(decodeLogged(partial.binary[0]!.subarray(1))?.id).toBe(3)
   })
 
   it('tells a version 5 peer that the host is away, as for a host that dropped', async () => {

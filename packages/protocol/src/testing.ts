@@ -218,3 +218,31 @@ export class FakeSocket implements SocketLike {
     queueMicrotask(() => this.onclose?.({ code, reason }))
   }
 }
+
+/** A file of a kept bundle: its id, its path, and the Yjs update that holds its content. */
+export interface BundleFile {
+  id: number
+  path: string
+  update: Uint8Array
+}
+
+/** A kept bundle as the host seals it for the relay's snapshot (kind 2 and 5): signed, encrypted. */
+export async function sealBundle(keys: RoomKeys, files: BundleFile[]): Promise<Uint8Array> {
+  const parts = files.map((file) => {
+    const path = new TextEncoder().encode(file.path)
+    const head = new Uint8Array(10 + path.length)
+    const view = new DataView(head.buffer)
+    view.setUint32(0, file.id)
+    view.setUint16(4, path.length)
+    head.set(path, 6)
+    view.setUint32(6 + path.length, file.update.length)
+    return [head, file.update]
+  })
+  const count = new Uint8Array(2)
+  new DataView(count.buffer).setUint16(0, files.length)
+  const domain = new TextEncoder().encode('pedit kept files snapshot v1\0')
+  const message = new Uint8Array([...domain, ...count, ...parts.flat().flatMap((p) => [...p])])
+  if (!keys.signer) throw new Error('no signer')
+  const signature = new Uint8Array(await crypto.subtle.sign('Ed25519', keys.signer.key, message))
+  return encrypt(keys.frameKey, new Uint8Array([...message, ...signature]))
+}
