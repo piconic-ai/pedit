@@ -61,7 +61,17 @@ func keptCommand(t *testing.T, directory string, args ...string) *keptProcess {
 		close(p.lines)
 	}()
 	go func() { p.done <- cmd.Wait() }()
-	t.Cleanup(func() { cancel(); cmd.Process.Kill(); input.Close(); log.Close() })
+	t.Cleanup(func() {
+		cancel()
+		cmd.Process.Kill()
+		input.Close()
+		// A process still writing into a temporary directory fails its removal.
+		select {
+		case <-p.done:
+		case <-time.After(5 * time.Second):
+		}
+		log.Close()
+	})
 	return p
 }
 func (p *keptProcess) line(t *testing.T) string {
