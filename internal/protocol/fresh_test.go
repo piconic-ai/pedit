@@ -1,6 +1,7 @@
 package protocol_test
 
 import (
+	"crypto/ed25519"
 	"slices"
 	"sync"
 	"testing"
@@ -40,8 +41,20 @@ func TestNewcomersDropFramesKeptFromBefore(t *testing.T) {
 	if err := host.SendCanvas(protocol.CanvasMessage{Kind: protocol.CanvasEdit, ID: "old", Base: "{}", Next: "{}"}); err != nil {
 		t.Fatal(err)
 	}
-	prototest.WaitFor(t, wait, func() bool { return len(relay.Frames()) == before+1 }, "the old edit sent")
-	kept := relay.Frames()[before]
+	// The host sends its connecting frames after its status changes, and
+	// holds the edit until it settles, so the next frame may be another one:
+	// keep the edit itself, found by what it carries.
+	id := canvasID(t, key)
+	var kept []byte
+	prototest.WaitFor(t, wait, func() bool {
+		for _, frame := range relay.Frames()[before:] {
+			if id(frame) == "old" {
+				kept = frame
+				return true
+			}
+		}
+		return false
+	}, "the old edit sent")
 
 	conn, err := relay.Dial(t.Context(), "ws://test", nil)
 	if err != nil {
@@ -73,7 +86,9 @@ func TestNewcomersDropFramesKeptFromBefore(t *testing.T) {
 		}
 	}()
 	prototest.WaitFor(t, wait, func() bool { return newcomer.Status() == protocol.StatusConnected }, "newcomer connected")
-	prototest.WaitFor(t, wait, func() bool { return newcomer.String() == host.String() && len(relay.Frames()) > before+20 }, "replays during the handshake")
+	// The newcomer takes the host's awareness only once the host answered its
+	// nonce, so seeing it means the newcomer heard from the host.
+	prototest.WaitFor(t, wait, func() bool { return len(newcomer.aw.GetStates()) == 2 && len(relay.Frames()) > before+20 }, "replays during the handshake")
 	if err := host.SendCanvas(protocol.CanvasMessage{Kind: protocol.CanvasEdit, ID: "new", Base: "{}", Next: "{}"}); err != nil {
 		t.Fatal(err)
 	}
@@ -84,6 +99,36 @@ func TestNewcomersDropFramesKeptFromBefore(t *testing.T) {
 	defer mu.Unlock()
 	if !slices.Equal(edits, []string{"new"}) {
 		t.Fatalf("edits = %v", edits)
+	}
+}
+
+// canvasID opens a frame of the room of key and gives the ID of the canvas
+// message an editor signed in it, or "" for any other frame.
+func canvasID(t *testing.T, key string) func(frame []byte) string {
+	t.Helper()
+	c, err := protocol.NewCipher(editKeys(t, key).FrameKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return func(frame []byte) string {
+		plain, err := c.Decrypt(frame)
+		if err != nil {
+			return ""
+		}
+		_, _, signed, err := protocol.DecodeFrame(plain)
+		// MessageSigned, the tier, the signature, then the message (signed.go).
+		if err != nil || len(signed) < 2+ed25519.SignatureSize || protocol.MessageType(signed[0]) != protocol.MessageSigned {
+			return ""
+		}
+		typ, payload, err := protocol.DecodeMessage(signed[2+ed25519.SignatureSize:])
+		if err != nil || typ != protocol.MessageCanvas {
+			return ""
+		}
+		m, err := protocol.DecodeCanvas(payload)
+		if err != nil {
+			return ""
+		}
+		return m.ID
 	}
 }
 
