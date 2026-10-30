@@ -77,11 +77,11 @@ host's `GET /api/rooms/:id/ws` entry (checked on the Room Durable Object side)
 keeps `sec-websocket-protocol` (the editor token) and `x-pedit-read-admission`
 (the reader token) in plain text and the `user-agent` (`Go-http-client/1.1`),
 but shows `authorization` (the host token) as `********`, so Cloudflare masks
-it. The tokens cannot decrypt anything, and a room ends within 24 hours, but
-[room admission](contributing/room-admission.md) says the admission tokens
-must never appear in an application log and that custom infrastructure must
-redact them, so this is a gap to close. The Worker-side entry of the host's
-request has not been looked at.
+it. The relay keeps these logs to see which routes fail, and accepts that
+they hold the admission tokens: a token cannot decrypt anything, and stops
+working when its room ends, within 24 hours
+([room admission](contributing/room-admission.md)). The Worker-side entry of
+the host's request has not been looked at.
 <!-- TODO(operator): confirm in the dashboard that webSocketMessage events of the Room Durable Object appear as invocation logs, and whether they name the room. If per-frame logs are not wanted, set observability.logs.invocation_logs to false or lower head_sampling_rate, and update the comment in wrangler.jsonc. -->
 The room ID is in the path; the key never reaches the relay. The Worker's own
 log lines are `rate limited <route>`, without the address,
@@ -100,7 +100,7 @@ connected and how long ago the host first came.
 This relay runs on Workers Paid, where Workers Logs keeps logs for 7 days
 ([pricing](https://developers.cloudflare.com/workers/observability/logs/workers-logs/#pricing),
 [Cloudflare Observability pricing](https://developers.cloudflare.com/observability/pricing/)).
-<!-- TODO(operator): decide how to stop the admission tokens being logged: the Workers Logs invocation logs keep request headers whole except those Cloudflare masks (Authorization), so turn off observability.logs.invocation_logs (production and previews) or find a way to redact Sec-WebSocket-Protocol, X-Pedit-Admission and X-Pedit-Read-Admission. Look at the Worker-side (stateless) entry of a host's GET /api/rooms/:id/ws to see whether Authorization is masked there too. Then update this section and web/public/privacy.html. -->
+<!-- TODO(operator): look at the Worker-side (stateless) entry of a host's GET /api/rooms/:id/ws to see whether Authorization is masked there too, and update this section and web/public/privacy.html if it is not. -->
 
 ## In your browser
 

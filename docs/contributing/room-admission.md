@@ -36,8 +36,15 @@ missing, malformed, or multiple admission tokens. Browsers use the standard
 WebSocket protocols argument; the Go client uses its handshake options.
 Blob GET and PUT requests send `X-Pedit-Admission: <token>`. A blob PUT
 needs the editor token; a GET takes either. The capability
-never appears in a path, query string, response body, or application log.
-Custom infrastructure must redact these request headers.
+never appears in a path, query string or response body, and the relay's own
+code never logs it. Request logs are another matter: the host also sends the
+reader token in `X-Pedit-Read-Admission`, and logs that keep request headers
+keep these three headers. The public relay's Workers Logs do, in plain text,
+for the 7 days the logs are kept ([public relay](../public-relay.md#logs)).
+The public relay accepts this: a token cannot decrypt anything, admits only
+to its room, and stops working when the room ends, within 24 hours, since the
+room's verifiers go with it and its ID cannot be used again. A relay that
+should not keep them turns off its request logs or redacts these headers.
 
 ## Registration and lifetime
 
