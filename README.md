@@ -86,8 +86,10 @@ this duration and pedit reports the effective value. Ctrl+C leaves the room
 open and prints its deadline. Browser guests can keep editing while you are
 away. In the same project, run `pedit --resume <link>` to merge their edits
 back into the original files. Resume information stays in a private 0600 record under
-`pedit/keep/` in your user configuration directory, outside the project. Keep
-that record until the review ends. This mode shares a fixed set of text files, without comments or attachments.
+`pedit/keep/` in your user configuration directory, outside the project. pedit
+removes that record once the room is over (when `--resume` finds the relay room expired, and at the next
+`--keep` or `--resume` in the same project for rooms past their deadline), never while a write is pending or the relay may still hold
+entries. This mode shares a fixed set of text files, without comments or attachments.
 The browser uses the same file tabs as a live room. The encrypted snapshot for
 all files together must fit within 1 MiB; log updates have a separate byte budget. Changes made directly to a local
 file while away are merged with the guests' edits on resume, the way a live room
