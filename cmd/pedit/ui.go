@@ -476,11 +476,11 @@ func (u *ui) keeping(seconds int64, asked time.Duration) {
 }
 
 // keptHint says until when the kept room stays and how to take it up again.
-func (u *ui) keptHint(until time.Time, room string, others bool) {
+func (u *ui) keptHint(until time.Time, room string, others bool, file string) {
 	u.print(fmt.Sprintf("Room stays open until %s.", until.Format(time.RFC3339)))
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	printKeepHint(u.out, room, others)
+	printKeepHint(u.out, room, others, file)
 }
 
 // updateAvailable points to a newer release and how to upgrade to it.

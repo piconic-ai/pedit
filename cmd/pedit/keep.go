@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -32,10 +34,14 @@ func parseKeepDuration(value string) (time.Duration, error) {
 	return duration, nil
 }
 
-// applyConfigKeep makes `pedit <file>` keep its room when .pedit/config.yaml
-// sets keep: and the command line does not say otherwise.
+// defaultKeep is how long a room is kept when nothing says otherwise.
+const defaultKeep = 24 * time.Hour
+
+// applyConfigKeep makes `pedit <file>` keep its room: for the time keep: in
+// .pedit/config.yaml gives, or for a day, unless the command line says
+// otherwise. A config of keep: 0 turns it off, like --keep 0.
 func applyConfigKeep(opts *commandArgs) error {
-	if opts.File == "" || opts.Keep > 0 || opts.KeepOff || opts.Room != "" || opts.Template != "" || opts.Directory != "" {
+	if opts.File == "" || opts.Keep > 0 || opts.KeepOff || opts.Room != "" || opts.Resume != "" || opts.Template != "" || opts.Directory != "" {
 		return nil
 	}
 	cwd, err := os.Getwd()
@@ -43,11 +49,70 @@ func applyConfigKeep(opts *commandArgs) error {
 		return err
 	}
 	cfg, err := loadConfig(cwd)
-	if err != nil || cfg.Keep == "" {
+	if err != nil {
 		return err
 	}
-	opts.Keep, err = parseKeepDuration(cfg.Keep)
+	switch cfg.Keep {
+	case "0":
+		opts.KeepOff = true
+	case "":
+		// A canvas cannot be kept, and a file that does not exist yet is
+		// created from a template, not shared as it is.
+		for _, file := range append([]string{opts.File}, opts.More...) {
+			if _, err := os.Stat(file); err != nil || strings.EqualFold(filepath.Ext(file), ".canvas") {
+				return nil
+			}
+		}
+		opts.Keep = defaultKeep
+	default:
+		opts.Keep, err = parseKeepDuration(cfg.Keep)
+	}
 	return err
+}
+
+// resumeHeld makes `pedit <file>` resume the live kept room of this project
+// that holds the file, as --resume does. The room's set of files is fixed, so
+// a file it does not hold is an error. --keep 0 asks for a separate room.
+func resumeHeld(opts *commandArgs, stdout, stderr io.Writer) (code int) {
+	if opts.File == "" || opts.KeepOff || opts.Room != "" || opts.Resume != "" || opts.ResumeAny || opts.Template != "" || opts.Directory != "" {
+		return 0
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return 0
+	}
+	cfg, err := loadConfig(cwd)
+	if err != nil {
+		return 0
+	}
+	records, err := session.ListKeptText(cfg.root)
+	if err != nil {
+		return 0
+	}
+	names := append([]string{opts.File}, opts.More...)
+	files := make([]string, len(names))
+	for i, name := range names {
+		if files[i], err = filepath.Abs(name); err != nil {
+			return 0
+		}
+	}
+	now := time.Now().UnixMilli()
+	for _, r := range records {
+		if !r.Live || r.Until > 0 && r.Until <= now || !slices.Contains(r.Files, files[0]) {
+			continue
+		}
+		for i, file := range files {
+			if !slices.Contains(r.Files, file) {
+				fmt.Fprintf(stderr, "pedit: %s is not in the kept room %s, which holds %s.\nRun pedit --close %s first, or pedit --keep 0 for a separate room.\n",
+					names[i], r.Room, strings.Join(displayPaths(r.Files), ", "), r.Room)
+				return 1
+			}
+		}
+		fmt.Fprintf(stdout, "Resuming the kept room %s.\n", r.Room)
+		opts.Resume = r.Room
+		return 0
+	}
+	return 0
 }
 
 // formatKeep prints a keep time in its largest whole unit: 7d, 12h, 90m, 45s.
@@ -64,11 +129,18 @@ func formatKeep(seconds int64) string {
 }
 
 // printKeepHint tells how to come back; others is whether this project has
-// another kept room, which makes a bare --resume ambiguous.
-func printKeepHint(w io.Writer, room string, others bool) {
+// another kept room. A live room is taken up again with pedit <file>; the
+// polling one, which has no file here, with pedit --resume.
+func printKeepHint(w io.Writer, room string, others bool, file string) {
 	resume := "pedit --resume"
 	if others {
 		resume += " " + room
+	}
+	if file != "" {
+		resume = "pedit " + file
+		if others {
+			resume += "  (or: pedit --resume " + room + ")"
+		}
 	}
 	fmt.Fprintf(w, "Leave with Ctrl+C. To take in the edits later, run in this directory:\n  %s\n", resume)
 }
@@ -186,7 +258,7 @@ func runKeep(opts commandArgs, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "Room keep time: %s.", formatKeep(seconds))
 		}
 		fmt.Fprintf(stdout, " Room stays open until %s.\n", time.UnixMilli(until).Format(time.RFC3339))
-		printKeepHint(stdout, keptRoomOf(link), otherKeptRooms(cfg.root, keptRoomOf(link)))
+		printKeepHint(stdout, keptRoomOf(link), otherKeptRooms(cfg.root, keptRoomOf(link)), "")
 	}, func(until int64) {
 		fmt.Fprintf(stdout, "Room stays open until %s.\n", time.UnixMilli(until).Format(time.RFC3339))
 	})

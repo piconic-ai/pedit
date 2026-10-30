@@ -46,7 +46,7 @@ func TestUIKeepNotesAndTheKeptStatus(t *testing.T) {
 	u.stopLive()
 	u.saving("notes.md")
 	u.savedKept("notes.md")
-	u.keptHint(time.UnixMilli(1700000000000).UTC(), testRoom, false)
+	u.keptHint(time.UnixMilli(1700000000000).UTC(), testRoom, false, "notes.md")
 	for _, want := range []string{
 		"Relay capped keep time to 1m.",
 		"Room keep time: 1d.",
@@ -55,7 +55,7 @@ func TestUIKeepNotesAndTheKeptStatus(t *testing.T) {
 		"✓ Back online. Changes sync again.",
 		"✓ Saved notes.md.\n",
 		"Room stays open until 2023-11-14T22:13:20Z.",
-		"pedit --resume\n",
+		"  pedit notes.md\n",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output lacks %q:\n%s", want, out.String())
