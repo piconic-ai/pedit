@@ -58,6 +58,32 @@ func TestKeptTextResumeRemovesRecordWhenRoomIsOver(t *testing.T) {
 	}
 }
 
+func TestKeptTextPruneKeepsJournalSavedDuringRelayCheck(t *testing.T) {
+	isolateKeptUserConfig(t)
+	project := t.TempDir()
+	var path string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if path == "" || !strings.Contains(r.URL.Path, strings.TrimSuffix(filepath.Base(path), ".json")) {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		var s keptTextState
+		if readKeptState(path, &s) == nil {
+			pending := "unfinished"
+			s.Files[0].Pending = &pending
+			_ = saveKeptState(path, s)
+		}
+		w.WriteHeader(http.StatusGone)
+	}))
+	defer server.Close()
+	_, _, link := pruneRecord(t, project, server.URL, 1, int64(1)<<60, nil)
+	_, path, _ = pruneRecord(t, project, server.URL, 2, 1, nil)
+	_ = RunKeptText(context.Background(), KeptTextOptions{Project: project, Resume: link}, nil, nil)
+	if !exists(path) {
+		t.Fatal("pruned a record whose journal was saved during the relay check")
+	}
+}
+
 func TestKeptTextStartPrunesOnlyConfirmedExpiredRecordsOfThisProject(t *testing.T) {
 	isolateKeptUserConfig(t)
 	live := int64(1) << 60

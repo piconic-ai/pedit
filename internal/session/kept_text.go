@@ -700,14 +700,16 @@ func syncKeptDirectory(path string) error {
 	return dir.Sync()
 }
 
-func (h *keptTextHost) nothingPending() bool {
-	for _, file := range h.state.Files {
+func (s keptTextState) hasPending() bool {
+	for _, file := range s.Files {
 		if file.Pending != nil {
-			return false
+			return true
 		}
 	}
-	return true
+	return false
 }
+
+func (h *keptTextHost) nothingPending() bool { return !h.state.hasPending() }
 
 // pruneExpired removes records of other rooms in this project whose deadline is
 // past, the host has nothing left to write, and the relay confirms the room is
@@ -722,13 +724,15 @@ func (h *keptTextHost) pruneExpired(ctx context.Context, notify func(int)) {
 			!s.Initialized || s.Until <= 0 || s.Until >= time.Now().UnixMilli() {
 			continue
 		}
-		pending := false
-		for _, file := range s.Files {
-			pending = pending || file.Pending != nil
-		}
+		pending := s.hasPending()
 		var read keptTextRead
 		_, e := keptTextRequest(ctx, h.client, &s, room, "GET", "?after=0", nil, nil, &read)
-		if !pending && errors.Is(e, errKeptGone) && os.Remove(path) == nil {
+		// Re-read: another run may have journaled a write while the request was in flight.
+		var latest keptTextState
+		if pending || !errors.Is(e, errKeptGone) || readKeptState(path, &latest) != nil || latest.hasPending() {
+			continue
+		}
+		if os.Remove(path) == nil {
 			removed++
 		}
 	}
