@@ -34,10 +34,14 @@ const send = () =>
       text: doc.getText('content').toString(),
       ...client.state,
       documents: Object.fromEntries(
-        client.state.files.map((file) => [
-          file.id,
-          client.getDoc(file.id).getText('content').toString(),
-        ]),
+        client.state.files
+          .filter((file) => file.format === 'text')
+          .map((file) => [file.id, client.getDoc(file.id).getText('content').toString()]),
+      ),
+      threads: Object.fromEntries(
+        client.state.files
+          .filter((file) => file.format === 'meta')
+          .map((file) => [file.id, [...client.getDoc(file.id).getMap('comments').keys()]]),
       ),
     }) + '\n',
   )
@@ -49,6 +53,35 @@ for await (const line of createInterface({ input: process.stdin })) {
       command.file === undefined || command.file === 0 ? doc : client.getDoc(command.file)
     if (!target) throw new Error('unknown fixture file')
     target.getText('content').insert(target.getText('content').length, command.append)
+    await client.flush()
+  }
+  if (command.thread) {
+    // A comment on [from, to) of a file, as the web editor makes one.
+    const { file = 0, from, to, quote, body } = command.thread
+    const pairs = client.state.files
+    const entry = pairs.find(
+      (f) =>
+        f.format === 'meta' &&
+        f.path === `.pedit/meta/${pairs.find((p) => p.id === file).path}.json`,
+    )
+    const text = (file === 0 ? doc : client.getDoc(file)).getText('content')
+    const position = (index, assoc) =>
+      btoa(
+        String.fromCharCode(
+          ...Y.encodeRelativePosition(Y.createRelativePositionFromTypeIndex(text, index, assoc)),
+        ),
+      )
+    const meta = client.getDoc(entry.id)
+    meta.transact(() => {
+      const thread = new Y.Map()
+      meta.getMap('comments').set('thread1', thread)
+      thread.set('anchor', { type: 'text', start: position(from, 0), end: position(to, -1) })
+      thread.set('quote', quote)
+      thread.set('resolved', false)
+      const messages = new Y.Map()
+      thread.set('messages', messages)
+      messages.set('m1', { author: 'Ada', time: '2026-10-21T00:00:00.000Z', body })
+    })
     await client.flush()
   }
   if (command.garbage) {

@@ -240,6 +240,14 @@ Tests: `packages/web/test/comments.test.ts` and
   whose format it does not know (#113), so an older browser or CLI never
   sees the comments' file.
 
+## Kept rooms
+
+A kept room (`--keep`, #234) carries comments the same way: each text file in
+the project has a `meta` doc paired by `metaPath`, inside the encrypted snapshot
+and addressed by its own file ID in signed log entries. The host loads
+`.pedit/meta/<path>.json` on `--keep` and writes it on `--resume`, with the same
+rules as above. See `docs/design/async.md`.
+
 ## Not yet
 
 - Following a renamed file (a `pedit doctor` could list and repair).

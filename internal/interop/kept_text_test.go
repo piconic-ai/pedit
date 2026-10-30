@@ -407,7 +407,7 @@ func TestKeptMultipleFilesRoundTrip(t *testing.T) {
 		return read(p)
 	}
 	initial := read(guest)
-	if initial.HostAway || len(initial.Files) != 2 || initial.Files[0].Path != "notes.md" || initial.Files[1].Path != "todo.md" || initial.Documents["0"] != "notes" || initial.Documents["1"] != "todo" {
+	if initial.HostAway || len(initial.Files) != 4 || initial.Files[0].Path != "notes.md" || initial.Files[1].Path != "todo.md" || initial.Documents["0"] != "notes" || initial.Documents["1"] != "todo" {
 		t.Fatalf("host online: %+v", initial)
 	}
 	send(guest, `{"file":0,"append":" online"}`)
@@ -440,7 +440,7 @@ func TestKeptMultipleFilesRoundTrip(t *testing.T) {
 	prototest.WaitFor(t, 5*time.Second, func() bool { return send(newcomer, `{}`).LogEntries == 0 }, "bundle log truncated after all file saves")
 	fresh := keptCommand(t, project, "node", script, dir, link)
 	final := read(fresh)
-	if final.Documents["0"] != "notes online away newcomer" || final.Documents["1"] != "todo online away newcomer" || len(final.Files) != 2 {
+	if final.Documents["0"] != "notes online away newcomer" || final.Documents["1"] != "todo online away newcomer" || len(final.Files) != 4 {
 		t.Fatalf("new guest checkpoint: %+v", final)
 	}
 	send(newcomer, `{"replay":true}`)

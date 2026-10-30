@@ -40,8 +40,10 @@ import {
   loadCommentsOpen,
   OpenCounts,
   type ShownThread,
+  sameTarget,
   saveCommentsOpen,
   type ThreadList,
+  textTarget,
 } from './comments.ts'
 import { copyText } from './copy.ts'
 import { delimiterFor } from './csv.ts'
@@ -813,11 +815,6 @@ function nodeTarget(selected: readonly string[]): CommentTarget | null {
   return selected.length === 1 ? { kind: 'node', id: selected[0]! } : null
 }
 
-/** The editor's selection as a comment's target: text, if any is selected. */
-function textTarget(s: { from: number; to: number }): CommentTarget | null {
-  return s.to > s.from ? { kind: 'text', from: s.from, to: s.to } : null
-}
-
 /**
  * The table's selection as a comment's target: the cell, or the corners of
  * its row or column. None while editing a cell, or where there is no cell.
@@ -874,17 +871,6 @@ function sameColors(a: ReadonlyMap<string, string>, b: ReadonlyMap<string, strin
   return true
 }
 
-/** Whether two comment targets are the same. */
-function sameTarget(a: CommentTarget | null, b: CommentTarget | null): boolean {
-  if (a === null || b === null || a.kind !== b.kind) return a === b
-  if (a.kind === 'text' && b.kind === 'text') return a.from === b.from && a.to === b.to
-  if (a.kind === 'node' && b.kind === 'node') return a.id === b.id
-  if (a.kind !== 'cells' || b.kind !== 'cells') return false
-  const same = (x: { row: number; col: number }, y: { row: number; col: number }) =>
-    x.row === y.row && x.col === y.col
-  return same(a.from, b.from) && same(a.to, b.to)
-}
-
 // A file dropped outside the editor would open in place of the page, and
 // the room's key in the URL would go with it.
 function keepDroppedFiles(): void {
@@ -927,7 +913,7 @@ async function start(): Promise<void> {
   keepDroppedFiles()
   if (new URLSearchParams(location.search).get('keep') === '1') {
     const { joinKeptText } = await import('./kept-text.ts')
-    await joinKeptText(app, room.id, room.key, loaded.extension, appearance, loaded.id)
+    await joinKeptText(app, room.id, room.key, loaded.extension, appearance, loaded.id, me.name)
     return
   }
   await joinRoom(room.id, room.key, me, appearance, loaded)

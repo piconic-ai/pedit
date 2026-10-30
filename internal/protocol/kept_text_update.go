@@ -6,10 +6,19 @@ import (
 	"github.com/reearth/ygo/encoding"
 )
 
+// KeptCommentsRoot is the one root of a kept file's paired metadata doc.
+const KeptCommentsRoot = "comments"
+
 // ValidateKeptTextUpdate checks V1 root metadata before ygo can create named types.
 // Parent IDs and inferred parents are safe: their defining item must name a root.
 func ValidateKeptTextUpdate(update []byte) error {
-	r := keptUpdateReader{Decoder: encoding.NewDecoder(update)}
+	return ValidateKeptDocUpdate(update, "content")
+}
+
+// ValidateKeptDocUpdate is ValidateKeptTextUpdate for a doc whose only root is root:
+// "content" for a text file, KeptCommentsRoot for its paired metadata doc.
+func ValidateKeptDocUpdate(update []byte, root string) error {
+	r := keptUpdateReader{Decoder: encoding.NewDecoder(update), root: root}
 	clients := r.count()
 	for range clients {
 		structs := r.count()
@@ -36,7 +45,8 @@ func ValidateKeptTextUpdate(update []byte) error {
 
 type keptUpdateReader struct {
 	*encoding.Decoder
-	err error
+	root string
+	err  error
 }
 
 func (r *keptUpdateReader) uint() uint64 {
@@ -99,7 +109,7 @@ func (r *keptUpdateReader) item() {
 	if info&192 == 0 {
 		switch r.byte() {
 		case 1:
-			if r.string() != "content" {
+			if r.string() != r.root {
 				r.err = errors.New("unexpected kept document root")
 			}
 		case 0:

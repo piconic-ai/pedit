@@ -2,8 +2,9 @@ import * as decoding from 'lib0/decoding'
 import * as Y from 'yjs'
 import type { RoomKeys } from './access.ts'
 import { decrypt, encrypt } from './cipher.ts'
-import type { FileEntry } from './files.ts'
+import { type FileEntry, metaTarget } from './files.ts'
 import { MAX_FRAME_BYTES } from './frame.ts'
+import { checkMetaUpdate } from './meta.ts'
 import { checkPath, MAX_PATH_BYTES } from './path.ts'
 
 const DOMAIN = new TextEncoder().encode('pedit kept text v1\0')
@@ -11,6 +12,8 @@ const SNAPSHOT_DOMAIN = new TextEncoder().encode('pedit kept snapshot v1\0')
 const BUNDLE_DOMAIN = new TextEncoder().encode('pedit kept files snapshot v1\0')
 const FILE_DOMAIN = new TextEncoder().encode('pedit kept file update v1\0')
 const LIMIT = 8 * 1024 * 1024
+/** Text files in a kept room; the comments docs paired with them do not count. */
+const MAX_KEPT_FILES = 64
 export class KeptTextClosedError extends Error {
   constructor() {
     super('kept room expired')
@@ -144,14 +147,24 @@ export class KeptTextClient {
       opened.kind === 'bundle'
         ? opened.files
         : [{ id: 0, path: opened.filename, update: opened.update }]
+    // A file whose path is the metadata path of another is that file's comments.
+    const paths = new Set(snapshots.map((file) => file.path))
+    const isMeta = (path: string | null) => {
+      const target = path === null ? undefined : metaTarget(path)
+      return target !== undefined && paths.has(target)
+    }
     const listed = snapshots.flatMap((file) =>
-      file.path === null ? [] : [{ id: file.id, path: file.path, format: 'text' }],
+      file.path === null
+        ? []
+        : [{ id: file.id, path: file.path, format: isMeta(file.path) ? 'meta' : 'text' }],
     )
     for (const file of snapshots) {
       let base = bases.get(file.id)
+      const comments = isMeta(file.path)
+      if (base && kindOf(base) !== (comments ? 'comments' : 'content'))
+        throw new Error('changed kept manifest')
       if (!base) {
-        base = new Y.Doc()
-        base.getText('content')
+        base = declare(new Y.Doc(), comments)
         bases.set(file.id, base)
       }
       mergeSnapshot(base, file.update)
@@ -192,8 +205,7 @@ export class KeptTextClient {
     for (const [id, result] of results) {
       let doc = this.docs.get(id)
       if (!doc) {
-        doc = new Y.Doc()
-        doc.getText('content')
+        doc = declare(new Y.Doc(), kindOf(result) === 'comments')
         this.docs.set(id, doc)
         this.listen(id, doc)
       }
@@ -432,7 +444,7 @@ function decodeSnapshot(message: Uint8Array): OpenedSnapshot {
   return { kind: 'legacy', filename: null, update: legacy }
 }
 function mergeSnapshot(base: Y.Doc, update: Uint8Array): void {
-  const empty = new Y.Doc()
+  const empty = declare(new Y.Doc(), kindOf(base) === 'comments')
   let snapshot: Y.Doc | undefined
   try {
     snapshot = trial(empty, update)
@@ -457,7 +469,7 @@ function decodeBundle(payload: Uint8Array): BundleFile[] {
     files: BundleFile[] = [],
     ids = new Set<number>(),
     paths = new Set<string>()
-  if (count < 1 || count > 64) throw new Error('invalid kept file count')
+  if (count < 1 || count > 2 * MAX_KEPT_FILES) throw new Error('invalid kept file count')
   let at = 2
   for (let i = 0; i < count; i++) {
     const id = view.getUint32(at)
@@ -486,6 +498,9 @@ function decodeBundle(payload: Uint8Array): BundleFile[] {
     files.push({ id, path, update: payload.slice(at, at + length) })
     at += length
   }
+  // The cap counts text files; their paired metadata docs come on top.
+  if (files.filter((file) => metaTarget(file.path) === undefined).length > MAX_KEPT_FILES)
+    throw new Error('invalid kept file count')
   if (at !== payload.length) throw new Error('invalid kept bundle trailing bytes')
   return files
 }
@@ -534,13 +549,24 @@ function isSnapshot(value: unknown): value is Snapshot {
 function incomplete(doc: Y.Doc): boolean {
   return doc.store.pendingStructs !== null || doc.store.pendingDs !== null
 }
+/** A kept file's doc has one root: its text, or the comments paired with it. */
+function kindOf(doc: Y.Doc): 'content' | 'comments' {
+  return doc.share.has('comments') ? 'comments' : 'content'
+}
+function declare(doc: Y.Doc, comments: boolean): Y.Doc {
+  if (comments) doc.getMap('comments')
+  else doc.getText('content')
+  return doc
+}
 function copyDoc(doc: Y.Doc): Y.Doc {
-  const copy = new Y.Doc()
-  copy.getText('content')
+  const copy = declare(new Y.Doc(), kindOf(doc) === 'comments')
   Y.applyUpdate(copy, Y.encodeStateAsUpdate(doc))
   return copy
 }
 function trial(base: Y.Doc, update: Uint8Array): Y.Doc {
+  // Anyone with the edit key may log an update: comments are checked as in a live room.
+  const refusal = kindOf(base) === 'comments' ? checkMetaUpdate(base, update) : null
+  if (refusal) throw new Error('invalid kept comments')
   const copy = copyDoc(base)
   try {
     const decoder = decoding.createDecoder(update)

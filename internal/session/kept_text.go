@@ -2,6 +2,7 @@ package session
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/piconic-ai/pedit/internal/filewriter"
 	"github.com/piconic-ai/pedit/internal/merge"
+	"github.com/piconic-ai/pedit/internal/meta"
 	"github.com/piconic-ai/pedit/internal/protocol"
 	"github.com/reearth/ygo/crdt"
 )
@@ -46,10 +48,22 @@ type keptTextFileState struct {
 	State      []byte
 	Text       string
 	Pending    *string `json:",omitempty"`
+	// Meta is the comments doc paired with the file, if its comments can be kept.
+	Meta *keptMetaState `json:",omitempty"`
 }
 type keptTextDocument struct {
 	doc   *crdt.Doc
 	bound *filewriter.BoundFile
+	// root is the doc's one root type: "content" (or unset) for a text file,
+	// protocol.KeptCommentsRoot for the comments doc paired with one.
+	root string
+	// tracker follows the anchors of the comments paired with a text file
+	// through every change to its text, so a position whose character a guest
+	// deletes is still placed; paired is the comments doc's text file.
+	tracker *meta.Tracker
+	paired  *keptTextDocument
+	// comments is the text file's comments doc.
+	comments *keptTextDocument
 }
 type keptTextMeta struct {
 	Seconds int64 `json:"keepSeconds"`
@@ -82,6 +96,7 @@ type keptTextHost struct {
 	client        *http.Client
 	keys          *protocol.RoomKeys
 	files         map[uint32]*keptTextDocument
+	project       *os.Root // set while a file has comments
 	meta          keptTextMeta
 	after         uint64
 	etag          string
@@ -255,7 +270,14 @@ func (h *keptTextHost) restore() error {
 		if e := applyKeptText(doc, file.State); e != nil || !completeKeptText(doc) || doc.GetText("content").ToString() != expected {
 			return errors.New("invalid saved kept document")
 		}
+		if m := file.Meta; m != nil {
+			doc := h.files[m.ID]
+			if e := doc.apply(doc.doc, m.State); e != nil || !completeKeptText(doc.doc) {
+				return errors.New("invalid saved kept comments")
+			}
+		}
 	}
+	h.followComments()
 	h.republish = true
 	if e := h.mergeLocalEdits(); e != nil {
 		return e
@@ -348,6 +370,9 @@ func (h *keptTextHost) sync(ctx context.Context) error {
 			return errors.New("invalid kept UTF-8 text")
 		}
 		file.State, file.Pending = crdt.EncodeStateAsUpdateV1(doc, nil), &next
+		if e := h.syncMeta(file); e != nil {
+			return e
+		}
 	}
 	if e := saveKeptState(h.path, h.state); e != nil {
 		return e
@@ -359,8 +384,8 @@ func (h *keptTextHost) sync(ctx context.Context) error {
 	if e == nil {
 		h.after, h.republish = read.Tail, false
 		h.snapshotNames = map[uint32]string{}
-		for _, file := range h.state.Files {
-			h.snapshotNames[file.ID] = file.Path
+		for _, entry := range h.entries() {
+			h.snapshotNames[entry.ID] = entry.Path
 		}
 	}
 	return e
@@ -427,12 +452,13 @@ func (h *keptTextHost) applySnapshot(frame []byte) error {
 	if e != nil {
 		return e
 	}
-	if len(files) != len(h.state.Files) {
+	expected := h.entries()
+	if len(files) != len(expected) {
 		return errors.New("kept snapshot file inventory differs")
 	}
 	names := map[uint32]string{}
 	for i, file := range files {
-		local := h.state.Files[i]
+		local := expected[i]
 		if file.ID != local.ID || (len(files) > 1 && file.Path != local.Path) {
 			return errors.New("kept snapshot file inventory differs")
 		}
@@ -451,16 +477,32 @@ func (h *keptTextHost) applySnapshot(frame []byte) error {
 
 func (h *keptTextDocument) applyUpdate(update []byte) error {
 	candidate := crdt.New(crdt.WithGC(false))
-	e := crdt.ApplyUpdateV1(candidate, crdt.EncodeStateAsUpdateV1(h.doc, nil), nil)
+	var e error
+	if h.root == protocol.KeptCommentsRoot {
+		// Anyone with the edit key may log an update: every peer checks the
+		// comments by the same rules.
+		e = meta.CheckUpdate(h.doc, update)
+	}
 	if e == nil {
-		e = applyKeptText(candidate, update)
+		e = crdt.ApplyUpdateV1(candidate, crdt.EncodeStateAsUpdateV1(h.doc, nil), nil)
+	}
+	if e == nil {
+		e = h.apply(candidate, update)
 	}
 	if e != nil {
 		candidate.Destroy()
 		return e
 	}
+	if h.tracker != nil {
+		// The doc stays, so its tracker sees the change.
+		candidate.Destroy()
+		return crdt.ApplyUpdateV1(h.doc, update, nil)
+	}
 	h.doc.Destroy()
 	h.doc = candidate
+	if h.paired != nil && h.paired.tracker != nil {
+		h.paired.tracker.Learn(h.doc)
+	}
 	return nil
 }
 
@@ -482,34 +524,63 @@ func (h *keptTextDocument) pruneIncomplete(base []byte, accepted [][]byte) (int,
 		}
 		skipped += len(accepted) - len(complete)
 		accepted = complete
-		h.doc.Destroy()
-		h.doc = crdt.New(crdt.WithGC(false))
-		if e := applyKeptText(h.doc, base); e != nil {
+		if e := h.rebuild(base, accepted); e != nil {
 			return skipped, e
-		}
-		for _, frame := range accepted {
-			if e := h.applyUpdate(frame); e != nil {
-				return skipped, e
-			}
 		}
 	}
 	return skipped, nil
+}
+
+// rebuild makes the doc again from base and the accepted updates. A doc whose
+// anchors are followed gets a tracker of its own, from the base on.
+func (h *keptTextDocument) rebuild(base []byte, accepted [][]byte) error {
+	h.doc.Destroy()
+	h.doc = crdt.New(crdt.WithGC(false))
+	followed := h.tracker != nil
+	if followed {
+		h.tracker.Close()
+		h.tracker = nil
+	}
+	if e := h.apply(h.doc, base); e != nil {
+		return e
+	}
+	if followed {
+		h.tracker = meta.NewTracker(h.doc)
+		h.tracker.Learn(h.comments.doc)
+	}
+	for _, frame := range accepted {
+		if e := h.applyUpdate(frame); e != nil {
+			return e
+		}
+		if followed {
+			h.tracker.Learn(h.comments.doc)
+		}
+	}
+	return nil
 }
 func (h *keptTextDocument) frameIntegrated(projection, frame []byte) bool {
 	candidate := crdt.New()
 	defer candidate.Destroy()
 	return crdt.ApplyUpdateV1(candidate, projection, nil) == nil &&
-		applyKeptText(candidate, frame) == nil && completeKeptText(candidate)
+		h.apply(candidate, frame) == nil && completeKeptText(candidate)
 }
 
-func applyKeptText(doc *crdt.Doc, update []byte) (err error) {
+func applyKeptText(doc *crdt.Doc, update []byte) error {
+	return applyKeptDoc(doc, update, "content")
+}
+
+func (h *keptTextDocument) apply(doc *crdt.Doc, update []byte) error {
+	return applyKeptDoc(doc, update, cmp.Or(h.root, "content"))
+}
+
+func applyKeptDoc(doc *crdt.Doc, update []byte, root string) (err error) {
 	defer func() {
 		if recover() != nil {
 			err = errors.New("invalid kept document update")
 		}
 	}()
 	if len(update) == 0 || len(update) > protocol.MaxFrameBytes ||
-		protocol.ValidateKeptTextUpdate(update) != nil || crdt.ApplyUpdateV1(doc, update, nil) != nil {
+		protocol.ValidateKeptDocUpdate(update, root) != nil || crdt.ApplyUpdateV1(doc, update, nil) != nil {
 		return errors.New("invalid kept document update")
 	}
 
@@ -696,7 +767,7 @@ func syncKeptDirectory(path string) error {
 
 func (s keptTextState) hasPending() bool {
 	for _, file := range s.Files {
-		if file.Pending != nil {
+		if file.Pending != nil || (file.Meta != nil && file.Meta.Pending != nil) {
 			return true
 		}
 	}

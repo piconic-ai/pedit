@@ -89,9 +89,11 @@ back into the original files. Resume information stays in a private 0600 record 
 `pedit/keep/` in your user configuration directory, outside the project. pedit
 removes that record once the room is over (when `--resume` finds the relay room expired, and at the next
 `--keep` or `--resume` in the same project for rooms past their deadline), never while a write is pending or the relay may still hold
-entries. This mode shares a fixed set of text files, without comments or attachments.
+entries. This mode shares a fixed set of text files (up to 64), with their comments but without attachments:
+guests can comment while you are away, and `--resume` writes the threads to
+`.pedit/meta/<path>.json` as a live room does, never into the shared file.
 The browser uses the same file tabs as a live room. The encrypted snapshot for
-all files together must fit within 1 MiB; log updates have a separate byte budget. Changes made directly to a local
+all files together, comments included, must fit within 1 MiB; log updates have a separate byte budget. Changes made directly to a local
 file while away are merged with the guests' edits on resume, the way a live room
 merges a save from another editor. A file that cannot be read or is not valid
 UTF-8 is preserved and stops automatic recovery. These two host

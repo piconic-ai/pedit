@@ -4,7 +4,47 @@ import (
 	"bytes"
 	"strconv"
 	"testing"
+
+	"github.com/reearth/ygo/crdt"
 )
+
+func TestKeptBundlePairsMetaDocsAndCapsTextFilesOnly(t *testing.T) {
+	link, _ := ParseFragment(GenerateEditSecret())
+	keys, _ := DeriveRoomKeys(link, "abcdefghijklmnopqrstuv")
+	files := make([]KeptFileSnapshot, 0, 128)
+	for i := range 64 {
+		files = append(files, KeptFileSnapshot{ID: uint32(i), Path: strconv.Itoa(i) + ".md", Update: []byte{0, 0}})
+	}
+	for i := range 64 {
+		files = append(files, KeptFileSnapshot{ID: uint32(1024 + i), Path: MetaPath(strconv.Itoa(i) + ".md"), Update: []byte{0, 0}})
+	}
+	frame, err := SealKeptBundle(keys, files)
+	if err != nil {
+		t.Fatal("64 text files with 64 meta docs rejected:", err)
+	}
+	got, err := OpenKeptBundle(keys, frame)
+	if err != nil || len(got) != 128 || got[127].Path != MetaPath("63.md") {
+		t.Fatalf("bundle with meta docs: %d %v", len(got), err)
+	}
+	files = append(files[:64:64], KeptFileSnapshot{ID: 64, Path: "extra.md", Update: []byte{0, 0}})
+	files = append(files, KeptFileSnapshot{ID: 2000, Path: MetaPath("0.md"), Update: []byte{0, 0}})
+	if _, err := SealKeptBundle(keys, files); err == nil {
+		t.Fatal("65 text files accepted")
+	}
+}
+
+func TestValidateKeptDocUpdateNamesTheRoot(t *testing.T) {
+	doc := crdt.New()
+	comments := doc.GetMap("comments")
+	doc.Transact(func(tx *crdt.Transaction) { comments.Set(tx, "t1", "x") })
+	update := crdt.EncodeStateAsUpdateV1(doc, nil)
+	if err := ValidateKeptDocUpdate(update, KeptCommentsRoot); err != nil {
+		t.Fatal("comments root refused:", err)
+	}
+	if err := ValidateKeptTextUpdate(update); err == nil {
+		t.Fatal("comments root accepted as a text file")
+	}
+}
 
 func TestKeptFilesCodec(t *testing.T) {
 	link, _ := ParseFragment(GenerateEditSecret())

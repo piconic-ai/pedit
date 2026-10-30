@@ -2,13 +2,23 @@ import { render } from '@barefootjs/client/runtime'
 import { markdown } from '@codemirror/lang-markdown'
 import { Compartment, EditorState, type Extension, Prec } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
-import { deriveRoomKeys, type FileEntry, parseFragment } from '@pedit/protocol'
+import { deriveRoomKeys, type FileEntry, metaFiles, parseFragment } from '@pedit/protocol'
 import { KeptTextClient, KeptTextClosedError } from '@pedit/protocol/kept-text'
 import { basicSetup } from 'codemirror'
 import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next'
 import * as Y from 'yjs'
 import { AlwaysLoad } from './alwaysload.ts'
 import { type Appearance, applyText, loadAppearance, resolveTheme } from './appearance.ts'
+import { commentMarks } from './commentmarks.ts'
+import {
+  CommentsView,
+  type CommentTarget,
+  followFocus,
+  type ShownThread,
+  sameTarget,
+  type ThreadList,
+  textTarget,
+} from './comments.ts'
 import type { LayoutParts } from './components/Layout.tsx'
 import type { KeptSyncStatus } from './components/RoomStatusIndicator.tsx'
 import { PreviewPane } from './pane.ts'
@@ -20,7 +30,9 @@ import { loadVimMode, VimToggle, vimExtension } from './vim.ts'
 import './components/Header.tsx'
 import './components/FileTabs.tsx'
 import './components/KeptTextNotice.tsx'
+import './components/CommentsPanel.tsx'
 import { lockedUndo } from './lockedundo.ts'
+import { ContextMenu } from './menu.ts'
 import { Store } from './store.ts'
 
 export async function joinKeptText(
@@ -33,6 +45,7 @@ export async function joinKeptText(
     matchMedia('(prefers-color-scheme: dark)').matches,
   ),
   themeId = resolveTheme(appearance, matchMedia('(prefers-color-scheme: dark)').matches),
+  authorName = 'Guest',
 ): Promise<void> {
   const link = parseFragment(key)
   if (!link) throw new Error('invalid room link')
@@ -52,7 +65,19 @@ export async function joinKeptText(
     },
   })
   if (!parts) throw new Error('room layout unavailable')
+  // Comments (#121) are the paired meta docs of the kept files; the panel
+  // shows once the file on screen has one. A read link cannot sign, so it
+  // only reads them.
   parts.comments.hidden = true
+  const comments = new Store<CommentsView | null>(null),
+    threadsShown = new Store<readonly ShownThread[]>([]),
+    commentFocus = new Store<string | null>(null),
+    commentList = new Store<ThreadList>('open'),
+    commentTarget = new Store<CommentTarget | null>(null),
+    selection = new Store({ from: 0, to: 0 }),
+    locked = new Store(keys.access !== 'edit'),
+    panelOpen = new Store(true)
+  followFocus(threadsShown, commentFocus, commentList)
   let pending = false
   const client = new KeptTextClient({
     origin: location.origin,
@@ -116,6 +141,12 @@ export async function joinKeptText(
       wrapMode.of(held(wrapMode, lineWrapping(appearance.wrap))),
       editable.of(held(editable, [EditorState.readOnly.of(true), EditorView.editable.of(false)])),
       yCollab(text, null, { undoManager: undo }),
+      commentMarks(threadsShown, commentFocus),
+      EditorView.updateListener.of((update) => {
+        const s = update.state.selection.main,
+          was = selection.get()
+        if (s.from !== was.from || s.to !== was.to) selection.set({ from: s.from, to: s.to })
+      }),
     ]
   }
   const editor: EditorView = new EditorView({
@@ -166,6 +197,34 @@ export async function joinKeptText(
     settings,
     access: keys.access === 'edit' ? 'edit' : 'read',
   })
+  selection.subscribe((s) => {
+    const next = textTarget(s)
+    if (!sameTarget(next, commentTarget.get())) commentTarget.set(next)
+  })
+  const views = new Map<number, CommentsView>()
+  let stopThreads = () => {}
+  // Shows the comments of the file on screen, once its doc has arrived.
+  const showComments = () => {
+    const id = current.get()
+    const metaId = metaFiles([...client.state.files]).get(id)
+    const metaDoc = metaId === undefined ? undefined : client.getDoc(metaId)
+    const content = client.getDoc(id)
+    let view = views.get(id) ?? null
+    if (!view && metaDoc && content) {
+      view = new CommentsView(metaDoc, content, {
+        name: () => authorName,
+        locked: () => locked.get(),
+      })
+      views.set(id, view)
+    }
+    if (view === comments.get()) return
+    stopThreads()
+    comments.set(view)
+    commentFocus.set(null)
+    if (parts) parts.comments.hidden = view === null
+    threadsShown.set(view?.threads.get() ?? [])
+    stopThreads = view ? view.threads.subscribe((t) => threadsShown.set(t)) : () => {}
+  }
   const openFile = (id: number) => {
     const entry = files.get().find((file) => file.id === id)
     const next = client.getDoc(id)
@@ -186,10 +245,28 @@ export async function joinKeptText(
     preview.setText(text)
     current.set(id)
     file.set(entry.path)
+    selection.set({ from: 0, to: 0 })
+    showComments()
     follow()
   }
   render(parts.files, 'FileTabs', { files, current, onOpen: openFile })
   render(parts.banner, 'KeptTextNotice', { deadline, skipped })
+  render(parts.comments, 'CommentsPanel', {
+    comments,
+    target: commentTarget,
+    locked,
+    focus: commentFocus,
+    list: commentList,
+    colors: new Store<ReadonlyMap<string, string>>(new Map()),
+    menu: new ContextMenu(),
+    open: panelOpen,
+    onToggle: () => {},
+    onShow: (t: ShownThread) => {
+      if (t.from < 0 || t.to > editor.state.doc.length) return
+      editor.dispatch({ selection: { anchor: t.from, head: t.to }, scrollIntoView: true })
+      editor.focus()
+    },
+  })
   let stopped = false,
     loaded = false,
     running = false
@@ -200,7 +277,9 @@ export async function joinKeptText(
       if (loaded && keys.access === 'edit') await client.flush()
       await client.refresh()
       hostAway.set(client.state.hostAway)
-      files.set(client.state.files)
+      // Comments docs are listed beside their files but are not files to open.
+      files.set(client.state.files.filter((entry) => entry.format === 'text'))
+      showComments()
       file.set(
         files.get().find((entry) => entry.id === current.get())?.path || client.state.filename,
       )
@@ -223,6 +302,7 @@ export async function joinKeptText(
         stopped = true
         clearInterval(timer)
         deadline.set(null)
+        locked.set(true)
         editor.dispatch({
           effects: editable.reconfigure([
             EditorState.readOnly.of(true),
@@ -256,6 +336,8 @@ export async function joinKeptText(
       narrow.removeEventListener('change', resize)
       settings.destroy()
       preview.active = false
+      stopThreads()
+      for (const view of views.values()) view.destroy()
       editor.destroy()
       for (const undo of undos.values()) undo.destroy()
       client.close()

@@ -16,7 +16,7 @@ import (
 
 func prepareKeptFiles(opts KeptTextOptions) ([]keptTextFileState, error) {
 	paths := append([]string{opts.File}, opts.More...)
-	if len(paths) > 64 {
+	if len(paths) > protocol.MaxKeptFiles {
 		return nil, errors.New("kept rooms support at most 64 text files")
 	}
 	project, e := filepath.Abs(opts.Project)
@@ -51,11 +51,7 @@ func prepareKeptFiles(opts KeptTextOptions) ([]keptTextFileState, error) {
 		infos = append(infos, info)
 		files = append(files, file)
 	}
-	snapshots := make([]protocol.KeptFileSnapshot, 0, len(files))
-	for _, file := range files {
-		snapshots = append(snapshots, protocol.KeptFileSnapshot{ID: file.ID, Path: file.Path, Update: file.State})
-	}
-	if e := protocol.CheckKeptBundle(snapshots); e != nil {
+	if e := attachKeptMetas(opts.Project, files); e != nil {
 		return nil, e
 	}
 	return files, nil
@@ -142,24 +138,78 @@ func (h *keptTextHost) openFiles() error {
 		paths[protocol.PathKey(file.Path)] = true
 		infos = append(infos, info)
 	}
+	return h.openMetas()
+}
+
+// openMetas makes the comments docs paired with the files, and opens the
+// project their metadata files are written in.
+func (h *keptTextHost) openMetas() error {
+	for _, file := range h.state.Files {
+		m := file.Meta
+		if m == nil {
+			continue
+		}
+		if h.files[m.ID] != nil || checkKeptMeta(file, h.state.Project) != nil || protocol.CheckPath(protocol.MetaPath(file.Path)) != nil {
+			h.closeFiles()
+			return errors.New("invalid saved kept comments")
+		}
+		if h.project == nil {
+			project, e := os.OpenRoot(h.state.Project)
+			if e != nil {
+				h.closeFiles()
+				return errors.New("cannot open the kept project")
+			}
+			h.project = project
+		}
+		h.files[m.ID] = &keptTextDocument{doc: crdt.New(crdt.WithGC(false)), root: protocol.KeptCommentsRoot}
+	}
 	return nil
+}
+
+// keptEntry is a doc of the room as the snapshot lists it.
+type keptEntry struct {
+	ID    uint32
+	Path  string
+	State []byte
+}
+
+// entries lists the room's docs in snapshot order, as last saved: the text
+// files, then the comments docs paired with them.
+func (h *keptTextHost) entries() []keptEntry {
+	list := make([]keptEntry, 0, 2*len(h.state.Files))
+	for _, file := range h.state.Files {
+		list = append(list, keptEntry{file.ID, file.Path, file.State})
+	}
+	for _, file := range h.state.Files {
+		if m := file.Meta; m != nil {
+			list = append(list, keptEntry{m.ID, protocol.MetaPath(file.Path), m.State})
+		}
+	}
+	return list
 }
 func (h *keptTextHost) closeFiles() {
 	for _, file := range h.files {
+		if file.tracker != nil {
+			file.tracker.Close()
+		}
 		file.doc.Destroy()
 		if file.bound != nil {
 			file.bound.Close()
 		}
 	}
+	if h.project != nil {
+		h.project.Close()
+		h.project = nil
+	}
 }
 func (h *keptTextHost) snapshot() ([]byte, error) {
-	files := make([]protocol.KeptFileSnapshot, 0, len(h.state.Files))
-	for _, file := range h.state.Files {
-		update := file.State
-		if live := h.files[file.ID]; live != nil {
+	files := make([]protocol.KeptFileSnapshot, 0, 2*len(h.state.Files))
+	for _, entry := range h.entries() {
+		update := entry.State
+		if live := h.files[entry.ID]; live != nil {
 			update = crdt.EncodeStateAsUpdateV1(live.doc, nil)
 		}
-		files = append(files, protocol.KeptFileSnapshot{ID: file.ID, Path: file.Path, Update: update})
+		files = append(files, protocol.KeptFileSnapshot{ID: entry.ID, Path: entry.Path, Update: update})
 	}
 	if len(files) == 1 {
 		return protocol.SealKeptTextSnapshot(h.keys, files[0].Path, files[0].Update)
@@ -167,8 +217,8 @@ func (h *keptTextHost) snapshot() ([]byte, error) {
 	return protocol.SealKeptBundle(h.keys, files)
 }
 func (h *keptTextHost) unchanged() bool {
-	for _, file := range h.state.Files {
-		if h.snapshotNames[file.ID] != file.Path || !bytes.Equal(crdt.EncodeStateAsUpdateV1(h.files[file.ID].doc, nil), file.State) {
+	for _, entry := range h.entries() {
+		if h.snapshotNames[entry.ID] != entry.Path || !bytes.Equal(crdt.EncodeStateAsUpdateV1(h.files[entry.ID].doc, nil), entry.State) {
 			return false
 		}
 	}
@@ -181,6 +231,9 @@ func (h *keptTextHost) finishWrites() error {
 		if e := checkKeptSource(file, h.files[file.ID].bound); e != nil {
 			return e
 		}
+		if e := h.checkKeptMetaSource(file.Meta); e != nil {
+			return e
+		}
 	}
 	for i := range h.state.Files {
 		file := &h.state.Files[i]
@@ -188,6 +241,9 @@ func (h *keptTextHost) finishWrites() error {
 			return e
 		}
 		if e := saveKeptState(h.path, h.state); e != nil {
+			return e
+		}
+		if e := h.finishKeptMeta(file.Meta); e != nil {
 			return e
 		}
 	}
