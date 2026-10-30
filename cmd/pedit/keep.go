@@ -109,6 +109,39 @@ func pickKept(records []session.KeptTextRecord, in io.Reader, interactive bool, 
 	return records[n-1].Room, 0
 }
 
+// chooseResume settles which room --resume or --close is about, asking when
+// the project has several, and tells whether it is a live one, which the
+// relay keeps. For a live room it sets the files from its record.
+func chooseResume(opts *commandArgs, stdout, stderr io.Writer) (live bool, code int) {
+	cwd, err := os.Getwd()
+	var cfg config
+	if err == nil {
+		cfg, err = loadConfig(cwd)
+	}
+	var records []session.KeptTextRecord
+	if err == nil {
+		records, err = session.ListKeptText(cfg.root)
+	}
+	if err != nil {
+		fmt.Fprintln(stderr, "pedit:", err)
+		return false, 1
+	}
+	if opts.ResumeAny {
+		room, code := pickKept(records, os.Stdin, isTerminal(os.Stdin), stdout, stderr)
+		if code != 0 {
+			return false, code
+		}
+		opts.Resume, opts.ResumeAny = room, false
+	}
+	for _, r := range records {
+		if r.Live && (r.Room == opts.Resume || strings.Contains(opts.Resume, "/r/"+r.Room)) {
+			opts.Resume, opts.File, opts.More = r.Room, r.Files[0], r.Files[1:]
+			return true, 0
+		}
+	}
+	return false, 0
+}
+
 func runKeep(opts commandArgs, stdout, stderr io.Writer) int {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -119,18 +152,6 @@ func runKeep(opts commandArgs, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintln(stderr, "pedit:", err)
 		return 1
-	}
-	if opts.ResumeAny {
-		records, err := session.ListKeptText(cfg.root)
-		if err != nil {
-			fmt.Fprintln(stderr, "pedit:", err)
-			return 1
-		}
-		room, code := pickKept(records, os.Stdin, isTerminal(os.Stdin), stdout, stderr)
-		if code != 0 {
-			return code
-		}
-		opts.Resume = room
 	}
 	server := cfg.Server
 	if opts.Resume != "" {
@@ -169,7 +190,8 @@ func runKeep(opts commandArgs, stdout, stderr io.Writer) int {
 }
 
 func keptRoomOf(link string) string {
-	room, _, _ := strings.Cut(link[strings.Index(link, "/r/")+3:], "?")
+	room, _, _ := strings.Cut(link[strings.Index(link, "/r/")+3:], "#")
+	room, _, _ = strings.Cut(room, "?")
 	return room
 }
 

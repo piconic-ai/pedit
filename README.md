@@ -87,19 +87,25 @@ save; failed or slow disk writes can extend that window. Ctrl+C flushes pending
 changes and closes the room. Running `pedit` again creates a new link.
 
 For asynchronous text review, run `pedit --keep 7d notes.md` or
-`pedit --keep 7d notes.md todo.md` to share several text files in one room. The relay caps
-this duration and pedit reports the effective value. Ctrl+C leaves the room
-open and prints its deadline. Browser guests can keep editing while you are
-away. In the same project, run `pedit --resume` to merge their edits
-back into the original files: with one kept room it resumes that room, with several it lists them
-and asks which (or pass the room ID, `pedit --resume <room>`; the full link still works, quoted in
-zsh because of the `?`). After `--keep` opens the room, pedit prints this command. To keep every room you
+`pedit --keep 7d notes.md todo.md` to share several text files in one room. It is the live room
+described above, with a keep: pedit asks the relay to leave the room open for that long once you
+leave. The relay caps the duration and pedit reports the effective value. While you are here nothing
+else changes; the relay also holds an encrypted snapshot of the files, which pedit refreshes now and
+then and sends once more when you press Ctrl+C. Ctrl+C then saves the files, leaves the room open and
+prints its deadline. Guests stay connected, the link keeps working, and what they write while you are away waits on the relay,
+encrypted, until you are back. In the same project, run `pedit --resume` to take the room up again: pedit connects as the host,
+merges what you changed in your files meanwhile with the guests' edits, saves the files, tells the relay it can drop
+what it held, and carries on as a live room (Ctrl+C keeps it again). With one kept room it resumes that room, with several it lists them
+and asks which (or pass the room ID, `pedit --resume <room>`; the room's link works too). After `--keep` opens the room, pedit prints this command. To keep every room you
 share, set `keep: 7d` in `.pedit/config.yaml` (same syntax as `--keep`; `--keep` on the command line wins and
-`--keep 0` turns it off for one run). Resume information stays in a private 0600 record under
+`--keep 0` turns it off for one run). A relay that cannot keep rooms (a self-hosted one that is not updated)
+ends the room when you leave, as without `--keep`, and pedit says so. Resume information stays in a private 0600 record under
 `pedit/keep/` in your user configuration directory, outside the project. pedit
 removes that record once the room is over (when `--resume` finds the relay room expired, and at the next
 `--keep` or `--resume` in the same project for rooms past their deadline), never while a write is pending or the relay may still hold
-entries. This mode shares a fixed set of text files (up to 64), with their comments and pasted images:
+entries. The older mode, `pedit --keep-polling 7d notes.md`, creates a kept room that pedit takes in by polling the relay over HTTP and
+that guests open with `?keep=1`; it stays until it is removed, and `--resume` and `--close` work on its rooms too.
+A kept room shares the fixed set of text files it started with (up to 64; no file can be added later), with their comments and pasted images:
 guests can paste images (PNG, JPEG, GIF or WebP, within the public relay's image limits) as in a live room, and the relay keeps them,
 encrypted, until the room's deadline. On `--resume` pedit saves each image the merged text refers to under `assets/`
 beside its file, as a live room does, and reports any it cannot find. Guests can comment while you are away, and `--resume` writes the threads to

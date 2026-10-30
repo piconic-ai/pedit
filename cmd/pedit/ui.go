@@ -275,17 +275,17 @@ func (u *ui) setStatus(s protocol.Status) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	previous := u.status
-	if (previous == protocol.StatusDisconnected || previous == protocol.StatusWaiting) &&
+	if (previous == protocol.StatusDisconnected || previous.HostAway()) &&
 		(s == protocol.StatusConnecting || s == protocol.StatusBusy) {
 		return
 	}
 	u.status = s
 	if u.live && s != previous {
-		if s == protocol.StatusConnected && (previous == protocol.StatusDisconnected || previous == protocol.StatusWaiting) {
+		if s == protocol.StatusConnected && (previous == protocol.StatusDisconnected || previous.HostAway()) {
 			u.aboveLocked(u.green("✓") + " Back online. Changes sync again.")
 			return
 		}
-		if u.tty && (s == protocol.StatusDisconnected || s == protocol.StatusWaiting) {
+		if u.tty && (s == protocol.StatusDisconnected || s.HostAway()) {
 			u.aboveLocked(u.liveLine())
 			return
 		}
@@ -450,6 +450,31 @@ func (u *ui) saved(file string) {
 	u.print(u.green("✓")+" Saved "+file+". The link no longer works.", "")
 }
 
+// savedKept is saved for a room the relay keeps for the host's return.
+func (u *ui) savedKept(file string) {
+	u.print(u.green("✓")+" Saved "+file+".", "")
+}
+
+// keeping says how long the relay keeps the room after the host leaves.
+func (u *ui) keeping(seconds int64, asked time.Duration) {
+	switch {
+	case seconds == 0:
+		u.above(u.yellow("This relay cannot keep a room. It ends when you leave."))
+	case asked > time.Duration(seconds)*time.Second:
+		u.above("Relay capped keep time to " + formatKeep(seconds) + ".")
+	default:
+		u.above("Room keep time: " + formatKeep(seconds) + ".")
+	}
+}
+
+// keptHint says until when the kept room stays and how to take it up again.
+func (u *ui) keptHint(until time.Time, room string, others bool) {
+	u.print(fmt.Sprintf("Room stays open until %s.", until.Format(time.RFC3339)))
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	printKeepHint(u.out, room, others)
+}
+
 // updateAvailable points to a newer release and how to upgrade to it.
 func (u *ui) updateAvailable(current string, latest release, command string) {
 	lines := []string{u.yellow("A new release of pedit is available: ") + current + " → " + u.bold(latest.Version)}
@@ -496,6 +521,8 @@ func (u *ui) liveLine() string {
 		return u.green("●") + " " + whoIsHere(u.people)
 	case protocol.StatusWaiting:
 		return u.yellow("○") + " The host's connection dropped. Waiting for them to come back…"
+	case protocol.StatusKept:
+		return u.yellow("○") + " The host is away. The room is kept for them; your copy is read-only until they are back."
 	case protocol.StatusDisconnected:
 		return u.yellow("○") + " Offline. Reconnecting…"
 	case protocol.StatusBusy:

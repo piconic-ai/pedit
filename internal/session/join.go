@@ -168,7 +168,7 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 		Header:    opts.Header,
 		Dial:      opts.Dial,
 		OnStatus: func(st protocol.Status) {
-			if st == protocol.StatusWaiting {
+			if st.HostAway() {
 				waited.Store(true)
 			} else if st == protocol.StatusConnected && waited.Swap(false) {
 				s.resumeFromDisk()

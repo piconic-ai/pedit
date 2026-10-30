@@ -180,9 +180,6 @@ func TestKeptStatusAndRelayTexts(t *testing.T) {
 	prototest.WaitFor(t, wait, func() bool { return client.Status() == protocol.StatusConnected }, "connected")
 	conn.Say("kept 1700000000000")
 	prototest.WaitFor(t, wait, func() bool { return client.Status() == protocol.StatusKept }, "kept")
-	if got := client.KeptUntil(); !got.Equal(time.UnixMilli(1700000000000)) {
-		t.Fatalf("KeptUntil = %v", got)
-	}
 	if !client.Status().HostAway() || protocol.StatusKept.Final() {
 		t.Fatal("kept must be a host-away state that does not end the client")
 	}

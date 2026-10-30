@@ -111,7 +111,7 @@ func TestFinish(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var stdout, stderr strings.Builder
-			code := finish(newUI(&stdout, false, false), &stderr, "notes.md", tt.scratch, func() error { return tt.stopErr })
+			code := finish(newUI(&stdout, false, false), &stderr, "notes.md", tt.scratch, func() error { return tt.stopErr }, nil)
 			if code != tt.code {
 				t.Errorf("code = %d", code)
 			}

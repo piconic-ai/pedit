@@ -195,7 +195,6 @@ type Client struct {
 	destroyed bool
 	synced    bool
 	version   int // of the current connection
-	keptUntil time.Time
 	timeLimit time.Duration
 	unsubs    []func()
 	files     map[uint64]*fileDoc
@@ -567,27 +566,16 @@ func (c *Client) relaySignal(sig Signal) {
 	status := c.status
 	c.mu.Unlock()
 	text := string(sig)
-	switch n, kept := ParseNumbers(Kept, text, 1); {
+	switch _, kept := ParseNumbers(Kept, text, 1); {
 	case sig == HostAway && status == StatusConnected:
 		c.setStatus(StatusWaiting)
 	case sig == HostBack && status.HostAway():
 		c.setStatus(StatusConnected)
 	case kept && (status == StatusConnected || status.HostAway()):
-		c.mu.Lock()
-		c.keptUntil = time.UnixMilli(int64(n[0]))
-		c.mu.Unlock()
 		c.setStatus(StatusKept)
 	case c.opts.OnText != nil:
 		c.opts.OnText(text)
 	}
-}
-
-// KeptUntil is when the room, kept for the host who left, ends; zero unless
-// the relay said so.
-func (c *Client) KeptUntil() time.Time {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.keptUntil
 }
 
 // receive decrypts a frame, checks its signature, takes it once, and

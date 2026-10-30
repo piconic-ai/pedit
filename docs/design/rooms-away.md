@@ -99,6 +99,8 @@ Yjs sync when the host returns. A version 5 host cannot keep a room.
 
 ## Clients
 
+### The browser
+
 The browser (`RoomClient` in `packages/protocol`, `packages/web`) speaks version
 6 and does this:
 
@@ -137,6 +139,51 @@ The browser (`RoomClient` in `packages/protocol`, `packages/web`) speaks version
   the room as on connecting: a fresh handshake, and a sync step 1 and its state
   for every document, so the host reconciles what it missed. The page asks
   before it is closed with entries still pending.
+### The command line host
+
+`pedit --keep 7d file.md` (or `keep:` in `.pedit/config.yaml`) runs the live
+session with `X-Pedit-Keep: <seconds>` and `X-Pedit-After: <last entry taken
+in>` on the host's upgrade. Once the relay answers `keep <seconds> <until>` the
+host writes the resume record, the record of the polling mode with `Socket` set
+and `After` added: room, origin, key, host token, keep, the files with their
+stable ids, and the comments doc paired with each. It sends a snapshot (kind 2,
+the same bundle as in the polling mode) right after connecting, after 200
+changes taken in or 5 minutes with changes, and just before leaving. On Ctrl+C
+it saves the files, sends the last snapshot, leaves with `HOST_LEFT`, writes the
+record once more, with the files as saved, and prints the deadline and
+`pedit --resume`. A relay that speaks version 5 cannot keep the room: the host
+says so, and the room ends when it leaves.
+
+While the host is here, a kind 1 entry (from a guest that has not heard
+`host back` yet) is taken in like a live update, after the checks of the polling
+mode: the update must belong to a root of its doc, leave nothing waiting on
+missing items, and come with a valid signature; an entry that fails is counted
+and skipped. A host that dropped for so long that the room went into the kept
+state is sent the log on reconnecting: it takes the entries in and checkpoints.
+
+`pedit --resume [room]` reads the record. It first merges the edits made to the
+files while it was away into the record's documents, as a live room merges a
+save from another editor. It then connects as the host with `X-Pedit-After`,
+takes the replay (kind 5 if sent, kind 4, kind 6) in with the intake of the
+polling mode (invalid entries skipped and counted, images under `assets/`,
+comments to `.pedit/meta/`), saves the files, and sends a checkpoint at the last
+id it took in with a fresh bundle. On `checkpoint <cutoff> <tail>` it records
+`After`. It then goes on with the same connection as a live host, from the
+documents it has just merged, so that its guests, who hold the same documents,
+do not see the text twice. Entries that arrive between the replay and the
+checkpoint are taken in once it is live. `pedit --close` takes the same steps,
+leaves, and asks `POST /keep/close` (the relay ends only a room whose host is
+away); it then connects once more, and a room that was ended turns it away.
+
+The polling mode is still there as `--keep-polling`, and its records resume as
+before.
+
+### The command line guest
+
+A guest speaks version 6 and handles a kept room as a host that dropped: `kept
+<until>` is shown as the host being away, the copy stays read-only, and on
+`host back` the guest continues. Editing from the command line while the host is
+away is not supported yet.
 
 ## What the relay learns
 

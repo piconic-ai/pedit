@@ -54,7 +54,7 @@ func TestKeptCloseRoundTrip(t *testing.T) {
 	if err := os.WriteFile(notes, []byte("hello"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	host := keptCommand(t, project, binary, "--keep", "7d", "notes.md")
+	host := keptCommand(t, project, binary, "--keep-polling", "7d", "notes.md")
 	link := host.link(t)
 	guest := keptCommand(t, project, "node", filepath.Join(root, "internal/interop/testdata/kept-text.mjs"), dir, link)
 	read := func() map[string]any {

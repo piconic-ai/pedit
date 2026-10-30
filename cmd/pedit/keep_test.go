@@ -35,6 +35,9 @@ func TestKeepWindowsPermissions(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows permission boundary")
 	}
+	if _, err := session.Start(context.Background(), session.Options{File: "notes.md", Keep: time.Hour}); err == nil || !strings.Contains(err.Error(), "Windows is not supported") {
+		t.Fatalf("unsupported live keep: %v", err)
+	}
 	for _, resume := range []string{"", "https://example.test/r/room?keep=1#key"} {
 		project := t.TempDir()
 		err := session.RunKeptText(context.Background(), session.KeptTextOptions{Project: project, Resume: resume}, nil, nil)

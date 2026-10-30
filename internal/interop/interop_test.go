@@ -36,8 +36,8 @@ const roomID = "AAAAAAAAAAAAAAAAAAAAAA"
 // sockets and keeps blobs.
 func newServer(t *testing.T) *httptest.Server {
 	var mu sync.Mutex
-	// Each socket with the protocol version it speaks: the Go host speaks 5,
-	// which has no kind byte, and the JavaScript client 6, which has.
+	// Each socket with the protocol version it speaks: version 5 has
+	// no kind byte, version 6 has (the Go host and the JavaScript client).
 	conns := map[*websocket.Conn]int{}
 	blobs := map[string][]byte{}
 	// The editor and reader admission tokens, as the relay registers them
@@ -104,7 +104,7 @@ func newServer(t *testing.T) *httptest.Server {
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
-		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{"pedit-v6", protocol.SocketProtocol}})
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{"pedit-v6", "pedit-v5"}})
 		if err != nil {
 			return
 		}

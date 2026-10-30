@@ -76,7 +76,8 @@ Clients and the server check that they speak the same protocol version when
 they connect. Patch releases never change it; a minor release may. When it
 changes, a CLI older than the server is told to update pedit, and a CLI newer
 than the server says the server is older. Update the server when your CLIs
-move to a new minor release.
+move to a new minor release. The CLI offers protocol versions 6 and 5, so it still works with a server that
+serves version 5 only; such a server cannot keep a room (`--keep`), and pedit says so.
 
 ## Updating to room admission
 
