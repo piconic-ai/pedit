@@ -967,7 +967,8 @@ export class Room extends DurableObject<Env> {
     if (request.method === 'GET') {
       // An image from before the host changed its keep is under the other prefix.
       const object =
-        (await this.env.BLOBS.get(key)) ?? (await this.env.BLOBS.get(this.blobPrefix(!this.keepsBlobs()) + id))
+        (await this.env.BLOBS.get(key)) ??
+        (await this.env.BLOBS.get(this.blobPrefix(!this.keepsBlobs()) + id))
       if (!object) return new Response('no such blob', { status: 404 })
       return new Response(object.body, {
         headers: {
@@ -1072,7 +1073,9 @@ export class Room extends DurableObject<Env> {
 
   // Deletion failures are left to the bucket's lifecycle rule.
   // Without prefixes, the session's images wherever the host's keep put them.
-  private async deleteBlobs(prefixes = [this.blobPrefix(false), this.blobPrefix(true)]): Promise<void> {
+  private async deleteBlobs(
+    prefixes = [this.blobPrefix(false), this.blobPrefix(true)],
+  ): Promise<void> {
     try {
       for (const prefix of prefixes) {
         let cursor: string | undefined
