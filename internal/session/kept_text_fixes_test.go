@@ -68,7 +68,7 @@ func keptFixFrames(t *testing.T) (*protocol.RoomKeys, []byte, []byte, []byte) {
 	return keys, baseline, first, crdt.EncodeStateAsUpdateV1(doc, vector)
 }
 func TestKeptTextSkipsInvalidEntryAndCheckpointsPastIt(t *testing.T) {
-	for _, kind := range []string{"decrypt", "domain", "signature", "apply"} {
+	for _, kind := range []string{"decrypt", "domain", "signature", "apply", "extra-root"} {
 		t.Run(kind, func(t *testing.T) {
 			keys, baseline, first, last := keptFixFrames(t)
 			seal := func(update []byte) []byte {
@@ -79,6 +79,13 @@ func TestKeptTextSkipsInvalidEntryAndCheckpointsPastIt(t *testing.T) {
 				return frame
 			}
 			bad := []byte{1}
+			if kind == "extra-root" {
+				extra := crdt.New()
+				extraText := extra.GetText("unexpected")
+				extra.Transact(func(tx *crdt.Transaction) { extraText.Insert(tx, 0, "poison", nil) })
+				bad = seal(crdt.EncodeStateAsUpdateV1(extra, nil))
+				extra.Destroy()
+			}
 			if kind == "apply" {
 				bad = seal([]byte{1, 2, 3})
 			}
@@ -451,5 +458,22 @@ func TestKeptTextSkipsUnresolvableEntryAfterResolvingBatchDependencies(t *testin
 	}
 	if h.doc.GetText("content").ToString() != "base first second" || h.skipped != 1 || !completeKeptText(h.doc) {
 		t.Fatal("lost valid out-of-order edits while skipping unresolvable entry")
+	}
+}
+
+func TestKeptTextRejectsExtraRootSnapshot(t *testing.T) {
+	keys, _, _, _ := keptFixFrames(t)
+	doc := crdt.New()
+	defer doc.Destroy()
+	extraMap := doc.GetMap("extra")
+	doc.Transact(func(tx *crdt.Transaction) { extraMap.Set(tx, "x", "poison") })
+	frame, err := protocol.SealKeptText(keys, crdt.EncodeStateAsUpdateV1(doc, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := keptTextHost{keys: keys, doc: crdt.New(crdt.WithGC(false))}
+	defer func() { h.doc.Destroy() }()
+	if err := h.applySnapshot(frame); err == nil {
+		t.Fatal("extra root snapshot accepted")
 	}
 }

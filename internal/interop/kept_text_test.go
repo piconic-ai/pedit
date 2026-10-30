@@ -242,8 +242,11 @@ func TestKeptTextVerticalSlice(t *testing.T) {
 	if got := command(old, `{"garbage":true}`); got.Text != away.Text || got.Skipped != 1 {
 		t.Fatal("invalid entry poisoned existing guest or skipped count missing")
 	}
+	if got := command(old, `{"extraRoot":true}`); got.Text != away.Text || got.Skipped != 2 {
+		t.Fatal("unsupported signed root poisoned existing guest or skipped count missing")
+	}
 	newcomer := keptCommand(t, project, "node", script, dir, link)
-	if got := read(newcomer); got.Text != away.Text || !got.HostAway || got.Skipped != 1 {
+	if got := read(newcomer); got.Text != away.Text || !got.HostAway || got.Skipped != 2 {
 		t.Fatal("new guest cannot open current text while host away")
 	}
 	final := "notes online away newcomer"
@@ -252,9 +255,6 @@ func TestKeptTextVerticalSlice(t *testing.T) {
 	}
 	resumed := keptCommand(t, project, binary, "--resume", link)
 	resumed.link(t)
-	if !strings.Contains(strings.Join(resumed.seen, "\n"), "Skipped 1 invalid updates.") {
-		t.Fatal("CLI did not report skipped entry")
-	}
 	prototest.WaitFor(t, 5*time.Second, func() bool { b, _ := os.ReadFile(file); return string(b) == final }, "all edits merged after host restart")
 	if state := command(newcomer, `{"replay":true}`); state.Text != final {
 		t.Fatal("replayed frame changed document")
@@ -269,6 +269,13 @@ func TestKeptTextVerticalSlice(t *testing.T) {
 		var state struct{ Entries int }
 		return json.NewDecoder(response.Body).Decode(&state) == nil && state.Entries == 0
 	}, "relay log truncated after host save")
+	checkpointGuest := keptCommand(t, project, "node", script, dir, link)
+	if got := read(checkpointGuest); got.Text != final || got.Skipped != 0 {
+		t.Fatal("brand-new browser cannot load host checkpoint after rejecting invalid roots")
+	}
+	if !strings.Contains(strings.Join(resumed.seen, "\n"), "Skipped 2 invalid updates.") {
+		t.Fatal("CLI did not report skipped entry")
+	}
 	resumed.stop(t)
 	if after := git("status", "--porcelain", "--", ".pedit"); after != beforeProjectState {
 		t.Fatalf("kept credentials changed project git status: %q -> %q", beforeProjectState, after)

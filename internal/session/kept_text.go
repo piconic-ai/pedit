@@ -429,7 +429,8 @@ func applyKeptText(doc *crdt.Doc, update []byte) (err error) {
 			err = errors.New("invalid kept document update")
 		}
 	}()
-	if len(update) == 0 || len(update) > protocol.MaxFrameBytes || crdt.ApplyUpdateV1(doc, update, nil) != nil {
+	if len(update) == 0 || len(update) > protocol.MaxFrameBytes ||
+		protocol.ValidateKeptTextUpdate(update) != nil || crdt.ApplyUpdateV1(doc, update, nil) != nil {
 		return errors.New("invalid kept document update")
 	}
 
