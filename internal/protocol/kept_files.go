@@ -10,6 +10,10 @@ import (
 var keptFilesDomain = []byte("pedit kept files snapshot v1\x00")
 var keptFileUpdateDomain = []byte("pedit kept file update v1\x00")
 
+// MaxKeptFiles caps the text files of a kept room. Their paired metadata docs
+// (comments) do not count, but the bundle holds at most twice as many entries.
+const MaxKeptFiles = 64
+
 type KeptFileSnapshot struct {
 	ID     uint32
 	Path   string
@@ -34,14 +38,22 @@ func SealKeptBundle(keys *RoomKeys, files []KeptFileSnapshot) ([]byte, error) {
 
 // CheckKeptBundle also bounds the complete encrypted snapshot before room creation.
 func CheckKeptBundle(files []KeptFileSnapshot) error {
-	if len(files) < 1 || len(files) > 64 || files[0].ID != 0 {
+	if len(files) < 1 || len(files) > 2*MaxKeptFiles || files[0].ID != 0 {
 		return errors.New("invalid kept file inventory")
 	}
 	ids := map[uint32]bool{}
 	paths := map[string]bool{}
 	size := 2 + len(keptFilesDomain) + 64 + 28
+	texts := 0
 	for _, file := range files {
+		// Each text file may have a paired metadata doc; the cap counts text files.
+		if _, paired := metaTarget(file.Path); !paired {
+			texts++
+		}
 		if ids[file.ID] || paths[file.Path] || CheckPath(file.Path) != nil || len(file.Update) == 0 {
+			return errors.New("invalid kept file inventory")
+		}
+		if texts > MaxKeptFiles {
 			return errors.New("invalid kept file inventory")
 		}
 		ids[file.ID], paths[file.Path] = true, true
@@ -64,7 +76,7 @@ func OpenKeptBundle(keys *RoomKeys, frame []byte) ([]KeptFileSnapshot, error) {
 	}
 	r := bytes.NewReader(body)
 	var count uint16
-	if binary.Read(r, binary.BigEndian, &count) != nil || count < 1 || count > 64 {
+	if binary.Read(r, binary.BigEndian, &count) != nil || count < 1 || count > 2*MaxKeptFiles {
 		return nil, errors.New("invalid kept file inventory")
 	}
 	files := make([]KeptFileSnapshot, 0, count)
