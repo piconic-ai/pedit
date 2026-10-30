@@ -16,11 +16,14 @@ Durable Objects and R2. It runs the latest release, deployed from this repositor
 
 The relay is not permanent storage. Its design permits keeping room content
 only as ciphertext while the room is open. Once the host has taken in changes,
-the relay's copies can be deleted without losing them. While the host is
-connected, frames are relayed and never stored. A room is kept for a day after
-the host leaves unless the host chose otherwise (`--keep`, up to the cap below;
-`--keep 0` for a room that ends when the host leaves); while it is kept, the
-relay stores ciphertext as described below.
+the relay's copies can be deleted without losing them. Frames are relayed and
+never stored. A room opened from existing text files has a keep by default (a
+day; `--keep` up to the cap below; `--keep 0` for a room that stores nothing
+and ends when the host leaves; a canvas, a scratch room and a host on Windows
+get no keep): the host uploads an encrypted snapshot while it is connected,
+and after it leaves the room stays open for the keep, never beyond the room's
+total limit (24 hours from the host's first connection, or the keep if that is
+longer). While it is kept, the relay stores ciphertext as described below.
 
 - **Plaintext document text: none.** Frames are relayed and never stored; what
   a kept room stores is encrypted and signed on the editors' devices.

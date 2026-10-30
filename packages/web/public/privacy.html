@@ -33,11 +33,16 @@
     <p>
       Document updates, comments and pasted images are encrypted on your device before they are sent.
       The key is in the part of the link after <code>#</code>, which your browser never sends to the
-      service. The service relays encrypted data and cannot read it. While the host is connected it stores none
-      of your text. When the host leaves, the room stays open so that others can keep editing,
-      for a day by default (the host can choose up to 7 days with <code>pedit --keep</code>, or none
-      with <code>pedit --keep 0</code>), and the service stores encrypted text, comments and images
-      until the room&rsquo;s deadline, at most 7 days after the host leaves. Your files stay on the host&rsquo;s
+      service. The service relays encrypted data and cannot read it. A room that <code>pedit</code> opens from
+      existing text files is kept by default: while the host is connected the service holds the
+      host&rsquo;s latest encrypted snapshot of the files, and when the host leaves the room stays open
+      so that others can keep editing, for a day by default (the host can choose up to 7 days with
+      <code>pedit --keep</code>, or none with <code>pedit --keep 0</code>, a room that stores nothing),
+      and never beyond the room&rsquo;s total limit (24 hours from the host&rsquo;s first connection, or
+      the keep if that is longer). While it is kept, the service stores encrypted text, comments and
+      images until the room&rsquo;s deadline, at most 7 days after the host leaves. A canvas, a file
+      created from a template, a scratch room and a host on Windows get a room that stores none of
+      your text and ends when the host leaves. Your files stay on the host&rsquo;s
       computer.
     </p>
 

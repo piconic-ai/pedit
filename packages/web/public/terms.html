@@ -55,11 +55,15 @@
 
     <h2>Your content and your links</h2>
     <p>
-      You are responsible for what you share. While the host is connected the service stores none of
-      your text. A room stays open for a day after the host leaves unless the host chose otherwise
-      (<code>pedit --keep</code> for up to 7 days, <code>pedit --keep 0</code> for a room that ends when
-      the host leaves); while it is kept, the service stores your text, comments and images encrypted
-      until the room&rsquo;s deadline.
+      You are responsible for what you share. A room that <code>pedit</code> opens from existing text
+      files is kept by default: the service holds an encrypted snapshot of the files from the host
+      while the host is connected, and the room stays open after the host leaves, for a day unless
+      the host chose otherwise (<code>pedit --keep</code> for up to 7 days, <code>pedit --keep 0</code>
+      for a room that stores nothing and ends when the host leaves), and never beyond the room&rsquo;s
+      total limit (24 hours from the host&rsquo;s first connection, or the keep if that is longer).
+      While it is kept, the service stores your text, comments and images encrypted until the
+      room&rsquo;s deadline. A canvas, a file created from a template and a host on Windows get a room
+      that ends when the host leaves.
       <a href="/privacy">What it keeps</a> is described in the privacy policy. Anyone you give a link to
       can read the files, and can edit them if the link allows editing, also while you are away as long
       as the room is kept. A guest who joins from the command line saves a copy on their computer.
