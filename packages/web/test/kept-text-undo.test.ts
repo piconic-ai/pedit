@@ -41,6 +41,7 @@ vi.mock('@barefootjs/client/runtime', async (load) => ({
     container.append(header, main)
     props.onReady?.({
       header,
+      banner: document.createElement('div'),
       main,
       source,
       comments,
@@ -49,7 +50,8 @@ vi.mock('@barefootjs/client/runtime', async (load) => ({
     })
   },
 }))
-vi.mock('../src/components/KeptTextHeader.tsx', () => ({}))
+vi.mock('../src/components/Header.tsx', () => ({}))
+vi.mock('../src/components/KeptTextNotice.tsx', () => ({}))
 const { joinKeptText } = await import('../src/kept-text.ts')
 const room = 'AAECAwQFBgcICQoLDA0ODw',
   fragment = 'A'.repeat(43)

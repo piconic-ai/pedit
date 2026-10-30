@@ -31,8 +31,8 @@ describe('EndedBanner IR', () => {
   })
 })
 
-describe('Header IR', () => {
-  const file = 'Header.tsx'
+describe('Participants IR', () => {
+  const file = 'Participants.tsx'
   const ir = renderToTest(readFileSync(join(dir, file), 'utf8'), file)
 
   it('keeps whether the names are shown as a signal, and the +N count as a memo', () => {

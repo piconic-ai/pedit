@@ -49,16 +49,17 @@ function mount(extra: Record<string, unknown> = {}) {
   render(container, 'Header', {
     file,
     status,
-    people,
-    narrow,
+    participants: { people, narrow },
     view,
     settings,
-    commentCounts,
-    files,
-    current,
-    commentable,
-    commentsOpen,
-    onToggleComments: () => commentsOpen.set(!commentsOpen.get()),
+    comments: {
+      counts: commentCounts,
+      files,
+      current,
+      commentable,
+      open: commentsOpen,
+      onToggle: () => commentsOpen.set(!commentsOpen.get()),
+    },
     ...extra,
   })
   const q = <T extends Element = HTMLElement>(sel: string) => container.querySelector<T>(sel)
@@ -86,6 +87,17 @@ function mount(extra: Record<string, unknown> = {}) {
 }
 
 describe('Header', () => {
+  it('omits unavailable participants and comments without placeholder stores', () => {
+    const { q, file } = mount({ participants: undefined, comments: undefined, access: 'read' })
+    file.set('notes.md')
+    expect(q('.file')?.textContent).toBe('notes.md')
+    expect(q('.people')).toBeNull()
+    expect(q('.comments-button')).toBeNull()
+    expect(q('.comment-count')).toBeNull()
+    expect(q('.access')?.getAttribute('title')).toBe('You can read this file.')
+    expect(q('.status .dot')).not.toBeNull()
+  })
+
   it('reads the stores without subscribing to them, so nothing can leak', () => {
     const m = mount()
     const { file, status, people, narrow, commentCounts, files, current } = m

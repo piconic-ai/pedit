@@ -9,15 +9,16 @@ import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next'
 import * as Y from 'yjs'
 import { AlwaysLoad } from './alwaysload.ts'
 import { type Appearance, applyText, loadAppearance, resolveTheme } from './appearance.ts'
-import type { KeptSyncStatus } from './components/KeptTextHeader.tsx'
 import type { LayoutParts } from './components/Layout.tsx'
+import type { KeptSyncStatus } from './components/RoomStatusIndicator.tsx'
 import { PreviewPane } from './pane.ts'
 import { lineWrapping, settingsModel } from './settings-model.ts'
 import { Splitter } from './splitter.ts'
 import { readerTheme, ThemeSwitcher } from './themes.ts'
 import { NARROW_QUERY, ViewSwitch } from './view.ts'
 import { loadVimMode, VimToggle, vimExtension } from './vim.ts'
-import './components/KeptTextHeader.tsx'
+import './components/Header.tsx'
+import './components/KeptTextNotice.tsx'
 import { lockedUndo } from './lockedundo.ts'
 import { Store } from './store.ts'
 
@@ -148,15 +149,14 @@ export async function joinKeptText(
     fontMode,
   )
   if (loadVimMode()) settings.setVim(true)
-  render(parts.header, 'KeptTextHeader', {
+  render(parts.header, 'Header', {
     status,
     file,
-    deadline,
-    skipped,
     view,
     settings,
-    readOnly: keys.access !== 'edit',
+    access: keys.access === 'edit' ? 'edit' : 'read',
   })
+  render(parts.banner, 'KeptTextNotice', { deadline, skipped })
   let stopped = false,
     loaded = false,
     running = false

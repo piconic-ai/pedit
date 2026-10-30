@@ -152,28 +152,45 @@ header {
   border-radius: 50%;
   background: var(--muted);
 }
-.status[data-status="connected"] .dot {
-  background: var(--accent);
-}
-.kept-status {
+.room-status {
   position: relative;
   display: inline-flex;
-  align-items: center;
   flex: 0 0 auto;
-  color: var(--muted);
 }
-.kept-status[data-phase="synced"] {
+.room-status .status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: help;
+}
+.room-status .status:hover,
+.room-status .status:focus-visible {
+  border-color: var(--line);
+  color: var(--ink);
+}
+.room-status .status[data-tone="ok"] {
   color: var(--accent);
 }
-.kept-status[data-phase="synced"] path {
+.room-status .dot {
+  width: 18px;
+  height: 18px;
+  background: none;
+}
+.room-status [data-icon="dot"] path {
   fill: currentColor;
   stroke: none;
 }
-.kept-status[data-phase="connecting"] svg,
-.kept-status[data-phase="saving"] svg {
-  animation: kept-sync-spin 1s linear infinite;
+.room-status [data-icon="spinner"] svg {
+  animation: room-status-spin 1s linear infinite;
 }
-.kept-status-label {
+.status-label {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -182,14 +199,49 @@ header {
   clip-path: inset(50%);
   white-space: nowrap;
 }
-@keyframes kept-sync-spin {
+.status-tooltip {
+  position: fixed;
+  z-index: 100;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 16px));
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 4px 16px #0002;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  white-space: normal;
+  visibility: hidden;
+}
+/* Keep the hover path continuous across the gap below the status button. */
+.status-tooltip::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -8px;
+  height: 8px;
+}
+.room-status[data-open="true"] .status-tooltip {
+  visibility: visible;
+}
+@keyframes room-status-spin {
   to {
     transform: rotate(360deg);
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .kept-status svg {
+  .room-status [data-icon="spinner"] svg {
     animation: none;
+  }
+}
+@media (pointer: coarse) {
+  .room-status .status {
+    width: 44px;
+    height: 44px;
   }
 }
 .people {

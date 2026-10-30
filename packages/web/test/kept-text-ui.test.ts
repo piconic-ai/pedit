@@ -46,16 +46,15 @@ vi.mock('@barefootjs/client/runtime', async (load) => ({
     if (component === 'Layout')
       props.onReady?.({
         header: document.createElement('header'),
+        banner: document.createElement('div'),
         main: document.createElement('main'),
         source: document.createElement('div'),
         comments: document.createElement('div'),
         preview: document.createElement('article'),
         splitter: document.createElement('div'),
       })
-    if (component === 'KeptTextHeader') {
-      captured.status = props.status
-      captured.skipped = props.skipped
-    }
+    if (component === 'Header') captured.status = props.status
+    if (component === 'KeptTextNotice') captured.skipped = props.skipped
   },
 }))
 vi.mock('@codemirror/view', async (load) => {
@@ -91,7 +90,8 @@ vi.mock('y-codemirror.next', async (load) => ({
   ...(await load<typeof import('y-codemirror.next')>()),
   yCollab: () => [],
 }))
-vi.mock('../src/components/KeptTextHeader.tsx', () => ({}))
+vi.mock('../src/components/Header.tsx', () => ({}))
+vi.mock('../src/components/KeptTextNotice.tsx', () => ({}))
 const { joinKeptText } = await import('../src/kept-text.ts')
 const room = 'AAECAwQFBgcICQoLDA0ODw',
   fragment = 'A'.repeat(43)

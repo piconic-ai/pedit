@@ -483,16 +483,17 @@ async function joinRoom(
   render(header, 'Header', {
     file: fileName,
     status: roomStatus,
-    people,
-    narrow: isNarrow,
+    participants: { people, narrow: isNarrow },
     view,
     settings,
-    commentCounts: openCounts.counts,
-    files,
-    current,
-    commentable,
-    commentsOpen: panel.open,
-    onToggleComments: () => panel.toggle(),
+    comments: {
+      counts: openCounts.counts,
+      files,
+      current,
+      commentable,
+      open: panel.open,
+      onToggle: () => panel.toggle(),
+    },
     access: keys.access,
     onShare: (button: HTMLElement) => {
       const at = button.getBoundingClientRect()

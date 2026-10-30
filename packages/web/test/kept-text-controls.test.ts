@@ -81,14 +81,14 @@ async function mount() {
     if (!result) throw new Error(`missing ${selector}`)
     return result
   }
-  return { container, editor, q }
+  return { container, editor, q, snapshot }
 }
 it('restores ordinary view controls and updates the actual Markdown preview', async () => {
   const x = await mount()
   expect(x.q('[aria-label="Settings"]')).toBeTruthy()
   expect(x.q('.file').textContent).toBe('notes.md')
-  expect(x.q('.kept-status').getAttribute('aria-label')).toContain('waiting for the host')
-  expect(x.q('.kept-status svg')).toBeTruthy()
+  expect(x.q('.status').getAttribute('aria-label')).toContain('waiting for the host')
+  expect(x.q('.status svg')).toBeTruthy()
   expect(x.container.textContent).not.toContain('Shared text')
   x.q('button[data-mode="split"]').click()
   expect(x.q('main').dataset.view).toBe('split')
@@ -137,18 +137,50 @@ it('applies ordinary text, theme and Vim settings to the actual retained editor'
 
 it('updates status icons and accessible explanations as saving and connectivity change', async () => {
   const x = await mount()
-  const status = x.q('.kept-status')
-  expect(status.dataset.phase).toBe('kept')
+  const status = x.q('.status')
+  expect(status.dataset.status).toBe('kept')
   x.editor.dispatch({ changes: { from: x.editor.state.doc.length, insert: '!' } })
-  await vi.waitFor(() => expect(status.dataset.phase).toBe('saving'))
+  await vi.waitFor(() => expect(status.dataset.status).toBe('saving'))
   expect(status.getAttribute('aria-label')).toContain('Sending')
   vi.mocked(fetch).mockRejectedValueOnce(new Error('offline'))
   await vi.advanceTimersByTimeAsync(1000)
-  await vi.waitFor(() => expect(status.dataset.phase).toBe('retrying'))
-  expect(status.getAttribute('title')).toContain('Retrying')
+  await vi.waitFor(() => expect(status.dataset.status).toBe('retrying'))
+  expect(status.getAttribute('aria-label')).toContain('Retrying')
   vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 410 }))
   await vi.advanceTimersByTimeAsync(1000)
-  await vi.waitFor(() => expect(status.dataset.phase).toBe('expired'))
+  await vi.waitFor(() => expect(status.dataset.status).toBe('expired'))
   expect(status.getAttribute('aria-label')).toContain('expired')
   expect(x.editor.state.readOnly).toBe(true)
+})
+
+it('keeps the same header controls and view while the host goes offline and returns', async () => {
+  const x = await mount()
+  const header = x.q('header'),
+    settings = x.q('[aria-label="Settings"]')
+  x.q('button[data-mode="split"]').click()
+  const respond = (hostAway: boolean) =>
+    vi.mocked(fetch).mockImplementation(async () =>
+      Response.json({
+        snapshot: x.snapshot,
+        cutoff: 0,
+        tail: 0,
+        entries: [],
+        hostAway,
+        keepUntil: Date.now() + 60000,
+      }),
+    )
+  respond(false)
+  await vi.advanceTimersByTimeAsync(1000)
+  await vi.waitFor(() => expect(x.q('.status').dataset.status).toBe('synced'))
+  expect(x.q('header')).toBe(header)
+  expect(x.q('[aria-label="Settings"]')).toBe(settings)
+  expect(x.q('main').dataset.view).toBe('split')
+  respond(true)
+  await vi.advanceTimersByTimeAsync(1000)
+  await vi.waitFor(() => expect(x.q('.status').dataset.status).toBe('kept'))
+  expect(x.q('header')).toBe(header)
+  expect(x.q('[aria-label="Settings"]')).toBe(settings)
+  expect(x.q('main').dataset.view).toBe('split')
+  expect(x.container.querySelector('.people')).toBeNull()
+  expect(x.container.querySelector('.comments-button')).toBeNull()
 })
