@@ -31,10 +31,12 @@ type KeptTextOptions struct {
 	More                          []string
 	Keep                          time.Duration
 	OnSkipped                     func(int)
+	OnPruned                      func(int) // records of finished rooms removed at start
+	OnEnded                       func()    // this room's record removed because the room is over
 }
 type keptTextState struct {
 	Project, Origin, Fragment, HostToken string
-	Keep                                 int64
+	Keep, Until                          int64 // Until: relay deadline in Unix ms; 0 if unknown
 	Files                                []keptTextFileState
 	Initialized                          bool
 }
@@ -67,12 +69,16 @@ type keptTextRead struct {
 	Unchanged bool   `json:"-"`
 }
 
+var errKeptGone = errors.New("kept room expired")
+var errKeptMissing = errors.New("kept room no longer exists")
+
 var keptTextRoomID = regexp.MustCompile(`^[A-Za-z0-9_-]{22}$`)
 
 type keptTextHost struct {
 	snapshotNames map[uint32]string
 	state         keptTextState
 	room, path    string
+	dir           string
 	client        *http.Client
 	keys          *protocol.RoomKeys
 	files         map[uint32]*keptTextDocument
@@ -96,6 +102,7 @@ func RunKeptText(ctx context.Context, opts KeptTextOptions, ready func(string, i
 	if e := h.prepare(ctx, opts); e != nil {
 		return e
 	}
+	h.pruneExpired(ctx, opts.OnPruned)
 	if e := h.openFiles(); e != nil {
 		return e
 	}
@@ -103,6 +110,7 @@ func RunKeptText(ctx context.Context, opts KeptTextOptions, ready func(string, i
 	if e := h.restore(); e != nil {
 		return e
 	}
+	defer func() { h.dropEndedRecord(runErr, opts.OnEnded) }()
 	if e := h.connect(ctx); e != nil {
 		return e
 	}
@@ -118,6 +126,7 @@ func RunKeptText(ctx context.Context, opts KeptTextOptions, ready func(string, i
 		}
 	}()
 	h.state.Initialized = true
+	h.state.Until = h.meta.Until
 	if e := saveKeptState(h.path, h.state); e != nil {
 		return e
 	}
@@ -166,7 +175,7 @@ func (h *keptTextHost) prepare(ctx context.Context, opts KeptTextOptions) error 
 	if e != nil {
 		return e
 	}
-	h.path = filepath.Join(directory, h.room+".json")
+	h.dir, h.path = directory, filepath.Join(directory, h.room+".json")
 	digest := sha256.Sum256([]byte(h.state.HostToken))
 	if h.state.Project != project || h.state.Keep <= 0 ||
 		base64.RawURLEncoding.EncodeToString(digest[:])[:22] != h.room {
@@ -312,8 +321,8 @@ func (h *keptTextHost) sync(ctx context.Context) error {
 	if _, e := keptTextRequest(ctx, h.client, &h.state, h.room, "GET", action, nil, headers, &read); e != nil {
 		return e
 	}
-	if read.KeepUntil > 0 {
-		h.meta.Until = read.KeepUntil
+	if e := h.trackDeadline(read.KeepUntil); e != nil {
+		return e
 	}
 	before := h.skipped
 	if e := h.applyRead(read); e != nil {
@@ -534,7 +543,10 @@ func keptTextRequest(ctx context.Context, client *http.Client, s *keptTextState,
 		}
 	}
 	if response.StatusCode == http.StatusGone {
-		return response.StatusCode, errors.New("kept room expired")
+		return response.StatusCode, errKeptGone
+	}
+	if response.StatusCode == http.StatusNotFound {
+		return response.StatusCode, errKeptMissing
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return response.StatusCode, fmt.Errorf("kept request refused (HTTP %d)", response.StatusCode)
@@ -680,4 +692,67 @@ func syncKeptDirectory(path string) error {
 	}
 	defer dir.Close()
 	return dir.Sync()
+}
+
+func (s keptTextState) hasPending() bool {
+	for _, file := range s.Files {
+		if file.Pending != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *keptTextHost) nothingPending() bool { return !h.state.hasPending() }
+
+// pruneExpired removes records of other rooms in this project whose deadline is
+// past, the host has nothing left to write, and the relay confirms the room is
+// gone. Anything unparsable, unconfirmed or uncertain is kept.
+func (h *keptTextHost) pruneExpired(ctx context.Context, notify func(int)) {
+	paths, _ := filepath.Glob(filepath.Join(h.dir, "*.json"))
+	removed := 0
+	for _, path := range paths {
+		room := strings.TrimSuffix(filepath.Base(path), ".json")
+		var s keptTextState
+		if path == h.path || !keptTextRoomID.MatchString(room) || readKeptState(path, &s) != nil ||
+			!s.Initialized || s.Until <= 0 || s.Until >= time.Now().UnixMilli() {
+			continue
+		}
+		pending := s.hasPending()
+		var read keptTextRead
+		_, e := keptTextRequest(ctx, h.client, &s, room, "GET", "?after=0", nil, nil, &read)
+		// Re-read: another run may have journaled a write while the request was in flight.
+		var latest keptTextState
+		if pending || !errors.Is(e, errKeptGone) || readKeptState(path, &latest) != nil || latest.hasPending() {
+			continue
+		}
+		if os.Remove(path) == nil {
+			removed++
+		}
+	}
+	if removed > 0 && notify != nil {
+		notify(removed)
+	}
+}
+
+// dropEndedRecord removes this room's record when the relay says the room is
+// gone, so it holds no entries to take in. A journaled write still pending keeps it.
+func (h *keptTextHost) dropEndedRecord(err error, notify func()) {
+	gone := errors.Is(err, errKeptGone) || (errors.Is(err, errKeptMissing) && h.state.Initialized)
+	if gone && h.nothingPending() && os.Remove(h.path) == nil && notify != nil {
+		notify()
+	}
+}
+
+// trackDeadline keeps the saved record's deadline equal to the relay's.
+func (h *keptTextHost) trackDeadline(until int64) error {
+	if until <= 0 {
+		return nil
+	}
+	h.meta.Until = until
+	if h.state.Until == until || !h.state.Initialized {
+		return nil
+	}
+	h.state.Until = until
+	return saveKeptState(h.path, h.state)
 }
