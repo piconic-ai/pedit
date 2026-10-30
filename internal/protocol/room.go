@@ -33,9 +33,12 @@ type Status string
 var errDestroyed = errors.New("client destroyed")
 
 const (
-	StatusConnecting   Status = "connecting"
-	StatusConnected    Status = "connected"
-	StatusWaiting      Status = "waiting"
+	StatusConnecting Status = "connecting"
+	StatusConnected  Status = "connected"
+	StatusWaiting    Status = "waiting"
+	// StatusKept: the host left on purpose and the room is kept for it. Like
+	// StatusWaiting, the Client does not edit meanwhile.
+	StatusKept         Status = "kept"
 	StatusDisconnected Status = "disconnected"
 	StatusBusy         Status = "busy"
 	StatusClosed       Status = "closed"
@@ -70,6 +73,10 @@ func finalOf(err error) (Status, bool) {
 	return st, ok
 }
 
+// HostAway reports whether the host is not in the room: its connection dropped,
+// or it left and the room is kept.
+func (s Status) HostAway() bool { return s == StatusWaiting || s == StatusKept }
+
 // Final reports whether a Client stays in s for good and no longer reconnects.
 func (s Status) Final() bool {
 	switch s {
@@ -94,7 +101,13 @@ type ClientOptions struct {
 	Header http.Header
 	// Host is set for the room's host, which tells the relay when it leaves
 	// on purpose (HostLeft) rather than dropping.
-	Host       bool
+	Host bool
+	// OnKind is called with each message of the relay of a kind other than
+	// KindLive (version 6 only), on the connection's read loop: return quickly.
+	OnKind func(kind byte, payload []byte)
+	// OnText is called with the relay's texts the Client does not act on
+	// itself, such as "keep 3600 0", on the connection's read loop.
+	OnText     func(text string)
 	Dial       Dialer
 	MinBackoff time.Duration
 	MaxBackoff time.Duration
@@ -181,6 +194,8 @@ type Client struct {
 	started   bool
 	destroyed bool
 	synced    bool
+	version   int // of the current connection
+	keptUntil time.Time
 	timeLimit time.Duration
 	unsubs    []func()
 	files     map[uint64]*fileDoc
@@ -208,21 +223,7 @@ func NewClient(opts ClientOptions) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	opts.Header = opts.Header.Clone()
-	if opts.Header == nil {
-		opts.Header = http.Header{}
-	}
-	// Editors show the relay their own token, which keeps them places of
-	// their own and lets them add images; the host registers the readers'
-	// as well.
-	token := keys.ReadAdmission
-	if keys.Access == AccessEdit {
-		token = keys.EditAdmission
-	}
-	opts.Header.Set("Sec-WebSocket-Protocol", SocketProtocol+", "+AdmissionProtocolPrefix+token)
-	if opts.Host {
-		opts.Header.Set(ReadAdmissionHeader, keys.ReadAdmission)
-	}
+	opts.Header = HandshakeHeader(opts.Header, keys, opts.Host)
 	if opts.Dial == nil {
 		opts.Dial = DialWebSocket
 	}
@@ -254,6 +255,46 @@ func NewClient(opts ClientOptions) (*Client, error) {
 		c.aw.OnChange(c.handleAwarenessChange),
 	}
 	return c, nil
+}
+
+// HandshakeHeader adds to h what the relay admits a peer by: the protocol
+// versions offered and the room capability, and for the host the readers'.
+func HandshakeHeader(h http.Header, keys *RoomKeys, host bool) http.Header {
+	h = h.Clone()
+	if h == nil {
+		h = http.Header{}
+	}
+	// Editors show the relay their own token, which keeps them places of
+	// their own and lets them add images; the host registers the readers'
+	// as well.
+	token := keys.ReadAdmission
+	if keys.Access == AccessEdit {
+		token = keys.EditAdmission
+	}
+	h.Set("Sec-WebSocket-Protocol", SocketProtocols+", "+AdmissionProtocolPrefix+token)
+	if host {
+		h.Set(ReadAdmissionHeader, keys.ReadAdmission)
+	}
+	return h
+}
+
+// ConnVersion is the protocol version a connection negotiated. A connection
+// that does not say speaks version 5, which has no kind byte.
+func ConnVersion(conn Conn) int {
+	if v, ok := conn.(interface{ Subprotocol() string }); ok {
+		if version := socketVersion(v.Subprotocol()); version != 0 {
+			return version
+		}
+	}
+	return 5
+}
+
+// Version is the protocol version of the current connection, or 0 while
+// there is none.
+func (c *Client) Version() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.version
 }
 
 // Keys returns what the Client's link gives in its room.
@@ -428,6 +469,7 @@ func (c *Client) serve(conn Conn) error {
 		return errDestroyed
 	}
 	c.out = out
+	c.version = ConnVersion(conn)
 	c.mu.Unlock()
 	c.greet(out)
 
@@ -442,6 +484,7 @@ func (c *Client) serve(conn Conn) error {
 			c.mu.Lock()
 			if c.out == out {
 				c.out = nil
+				c.version = 0
 			}
 			c.mu.Unlock()
 			out.stop()
@@ -451,10 +494,38 @@ func (c *Client) serve(conn Conn) error {
 			}
 			return err
 		}
+		if c.Version() >= 6 {
+			kind, payload, ok := SplitKind(data)
+			if !ok {
+				continue
+			}
+			if kind != KindLive {
+				// A kind of a later version is ignored.
+				if c.opts.OnKind != nil {
+					c.opts.OnKind(kind, payload)
+				}
+				continue
+			}
+			data = payload
+		}
 		if err := c.receive(data); err != nil {
 			c.onError(err)
 		}
 	}
+}
+
+// SendMessage queues a message of a kind other than KindLive (WithKind) on the
+// current connection. It reports false, sending nothing, while there is none
+// or the relay speaks version 5, which has no kinds.
+func (c *Client) SendMessage(message []byte) bool {
+	c.mu.Lock()
+	out, version := c.out, c.version
+	c.mu.Unlock()
+	if out == nil || version < 6 {
+		return false
+	}
+	out.push(message)
+	return true
 }
 
 // greet sends the room what a Client sends on connecting. The whole state
@@ -495,12 +566,28 @@ func (c *Client) relaySignal(sig Signal) {
 	c.mu.Lock()
 	status := c.status
 	c.mu.Unlock()
-	switch {
+	text := string(sig)
+	switch n, kept := ParseNumbers(Kept, text, 1); {
 	case sig == HostAway && status == StatusConnected:
 		c.setStatus(StatusWaiting)
-	case sig == HostBack && status == StatusWaiting:
+	case sig == HostBack && status.HostAway():
 		c.setStatus(StatusConnected)
+	case kept && (status == StatusConnected || status.HostAway()):
+		c.mu.Lock()
+		c.keptUntil = time.UnixMilli(int64(n[0]))
+		c.mu.Unlock()
+		c.setStatus(StatusKept)
+	case c.opts.OnText != nil:
+		c.opts.OnText(text)
 	}
+}
+
+// KeptUntil is when the room, kept for the host who left, ends; zero unless
+// the relay said so.
+func (c *Client) KeptUntil() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.keptUntil
 }
 
 // receive decrypts a frame, checks its signature, takes it once, and
@@ -830,7 +917,11 @@ func (c *Client) send(t MessageType, payload []byte) {
 		header := EncodeFrame(c.guard.self, c.sent, nil)
 		message = signMessage(c.keys.Signer, c.keys.Access, header, message)
 	}
-	out.push(c.cipher.Encrypt(EncodeFrame(c.guard.self, c.sent, message)))
+	frame := c.cipher.Encrypt(EncodeFrame(c.guard.self, c.sent, message))
+	if c.Version() >= 6 {
+		frame = WithKind(KindLive, frame)
+	}
+	out.push(frame)
 }
 
 func (c *Client) setStatus(s Status) {

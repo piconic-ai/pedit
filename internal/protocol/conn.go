@@ -145,6 +145,9 @@ func (w *wsConn) ping(ctx context.Context) error {
 	}
 }
 
+// Subprotocol is the protocol version the relay chose, such as "pedit-v6".
+func (w *wsConn) Subprotocol() string { return w.c.Subprotocol() }
+
 func (w *wsConn) Read(ctx context.Context) ([]byte, error) {
 	for {
 		typ, data, err := w.c.Read(ctx)
