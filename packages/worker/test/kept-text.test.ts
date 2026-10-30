@@ -1,7 +1,8 @@
-import { createExecutionContext } from 'cloudflare:test'
+import { createExecutionContext, runInDurableObject } from 'cloudflare:test'
 import { env } from 'cloudflare:workers'
 import { expect, it } from 'vitest'
 import app, { roomIdFor } from '../src/index.ts'
+import { keptText } from '../src/kept-text.ts'
 
 const token = () =>
   btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))))
@@ -107,4 +108,36 @@ it('keeps editor admission distinct from reader admission and truncates only an 
       })
     ).status,
   ).toBe(400)
+})
+
+it('rolls back initial ciphertext when its cleanup alarm cannot be scheduled', async () => {
+  const room = env.ROOM.get(env.ROOM.idFromName(crypto.randomUUID()))
+  await runInDurableObject(room, async (_, state) => {
+    const storage = new Proxy(state.storage, {
+      get(target, property) {
+        if (property === 'setAlarm')
+          return async () => {
+            throw new Error('alarm storage unavailable')
+          }
+        const value = Reflect.get(target, property, target)
+        return typeof value === 'function' ? value.bind(target) : value
+      },
+    })
+    const request = () =>
+      new Request('https://room/api/rooms/test/keep/init', {
+        method: 'POST',
+        headers: {
+          'X-Pedit-Editor': token(),
+          'X-Pedit-Reader': token(),
+          'X-Pedit-Keep-Seconds': '60',
+        },
+        body: Uint8Array.of(1, 2, 3),
+      })
+    expect((await keptText(request(), storage, true, undefined, undefined)).status).toBe(400)
+    await state.storage.sync()
+    expect(state.storage.kv.get('keptText')).toBeUndefined()
+    expect(await state.storage.getAlarm()).toBeNull()
+    expect((await keptText(request(), state.storage, true, undefined, undefined)).status).toBe(200)
+    expect(await state.storage.getAlarm()).not.toBeNull()
+  })
 })

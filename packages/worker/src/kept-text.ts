@@ -205,7 +205,7 @@ async function initialize(
     tail: 0,
     cutoff: 0,
   }
-  storage.transactionSync(() => {
+  await storage.transaction(async () => {
     if (
       storage.kv.get('keptText') ||
       storage.kv.get('keptTextClosed') ||
@@ -216,6 +216,9 @@ async function initialize(
       'CREATE TABLE IF NOT EXISTS kept_text_log (id INTEGER PRIMARY KEY, body BLOB NOT NULL, sender TEXT NOT NULL)',
     )
     storage.kv.put('keptText', state)
+    const deadline = Math.min(state.until, state.total ?? Infinity),
+      old = await storage.getAlarm()
+    if (old === null || deadline < old) await storage.setAlarm(deadline)
   })
   return state
 }
