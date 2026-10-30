@@ -1,13 +1,25 @@
 # Asynchronous rooms
 
-Issue #234 lets guests read, edit and comment while the host is away. The
-relay keeps encrypted state until the host has saved it or the room closes. The
-host's files remain the source of truth after the host has saved the changes.
+## Implemented text review
 
-This document is a design in progress. The wire format, limits and recovery
-protocol below need implementation and interoperability tests before release.
+`pedit --keep 7d notes.md` publishes one encrypted Yjs text document. The relay
+caps retention, keeps an encrypted snapshot and update log, and serves browser
+guests after the host leaves. `pedit --resume <link>` restores the original
+Yjs identifiers from a mode-0600 local record, merges signed updates, saves the
+file and recovery state, then checkpoints and truncates the observed log prefix.
+Repeated Yjs text updates are idempotent. This path is separate from the live
+nonce handshake and never accepts canvas, comment or attachment operations.
+Signatures authenticate editor access, not freshness. A relay can withhold
+unseen updates or serve an older snapshot to a new guest. Expiry deletes the
+room's active ciphertext. The interop test exercises publication, departure,
+new guests, replay, resumed intake, truncation and expiry against a local relay.
 
-## Security boundary
+## Work still to design
+
+The following proposals concern broader asynchronous rooms and are not part
+of the text-only implementation above.
+
+### Security boundary
 
 The relay does not receive a document key or plaintext. It sees room IDs,
 admission verifiers, ciphertext sizes, times, and the number of senders. It
@@ -36,7 +48,7 @@ detect the relay presenting an older valid checkpoint and its log. A returning
 host must retain its last accepted generation and reject a rollback. The UI
 must not promise that an unavailable relay has retained an edit.
 
-## Checkpoints and log
+### Checkpoints and log
 
 A checkpoint includes the manifest, complete Yjs state for each content and
 metadata document, canvas and attachment state, and the counter floors that
@@ -64,7 +76,7 @@ atomic in the Durable Object. A reader interrupted by compaction
 restarts from a consistent checkpoint and log. Epoch changes must not discard
 unacknowledged edits; their safe retry protocol remains to be designed.
 
-## Host recovery
+### Host recovery
 
 The host restores the prior Yjs state, validates the checkpoint and log, and
 merges changes made to the local files while it was away. Before writing any
@@ -82,7 +94,7 @@ and the journal are durable. A failed save keeps the log and its attachments.
 The journal makes a multi-file save
 recoverable; it does not make all files visible atomically.
 
-## Lifetime and cleanup
+### Lifetime and cleanup
 
 The host chooses a keep duration when opening a room. The relay clamps it to
 its configured maximum and reports the effective deadline. The proposed public
@@ -98,7 +110,7 @@ rooms; orphan cleanup must not delete their attachments.
 The public relay remains a service without an SLA. Self-hosted limits are
 configurable.
 
-## Verification before release
+### Verification before release
 
 Tests must cover cross-language encoding, signature and access validation,
 old epochs and duplicate frames, and reconnecting guests with no host. They
@@ -109,7 +121,7 @@ expiration, and cleanup. An interoperability test must leave a room open for a
 simulated week, edit and comment while the host is away, then verify that the
 host saves the results and the covered log is removed.
 
-## Work still to design
+### Work still to design
 
 - The canvas JSON pane sends edits to the host for validation and waits for
   its answer. A kept room needs a way to validate and apply those edits while
