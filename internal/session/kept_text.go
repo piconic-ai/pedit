@@ -80,7 +80,10 @@ type keptTextHost struct {
 	after         uint64
 	etag          string
 	skipped       int
-	onSkipped     func(int)
+	// republish forces the next sync to checkpoint, so local edits merged on
+	// resume reach the relay even when no guest edit is waiting in the log.
+	republish bool
+	onSkipped func(int)
 }
 
 // RunKeptText keeps the relay open when the host leaves. Source changes made
@@ -244,6 +247,7 @@ func (h *keptTextHost) restore() error {
 			return errors.New("invalid saved kept document")
 		}
 	}
+	h.republish = true
 	if e := h.mergeLocalEdits(); e != nil {
 		return e
 	}
@@ -263,16 +267,17 @@ func (h *keptTextHost) mergeLocalEdits() error {
 	changed := false
 	for i := range h.state.Files {
 		file := &h.state.Files[i]
-		expected := file.Text
+		// With a write pending, an edit may have been made before or after it
+		// landed: the base is ambiguous, so finishWrites refuses the file.
 		if file.Pending != nil {
-			expected = *file.Pending
+			continue
 		}
 		onDisk, ok := h.files[file.ID].bound.Read()
-		if !ok || onDisk == file.Text || onDisk == expected || !utf8.ValidString(onDisk) || len(onDisk) > protocol.MaxFrameBytes {
+		if !ok || onDisk == file.Text || !utf8.ValidString(onDisk) || len(onDisk) > protocol.MaxFrameBytes {
 			continue
 		}
 		doc := h.files[file.ID].doc
-		merge.ExternalEdit(doc, doc.GetText("content"), expected, onDisk, nil)
+		merge.ExternalEdit(doc, doc.GetText("content"), file.Text, onDisk, nil)
 		file.State, file.Text, file.Pending = crdt.EncodeStateAsUpdateV1(doc, nil), onDisk, nil
 		changed = true
 	}
@@ -318,7 +323,7 @@ func (h *keptTextHost) sync(ctx context.Context) error {
 	if h.skipped != before && h.onSkipped != nil {
 		h.onSkipped(h.skipped)
 	}
-	if (read.Unchanged || len(read.Entries) == 0) && h.unchanged() {
+	if (read.Unchanged || len(read.Entries) == 0) && h.unchanged() && !h.republish {
 		h.after = read.Tail
 		return nil
 	}
@@ -343,7 +348,7 @@ func (h *keptTextHost) sync(ctx context.Context) error {
 	}
 	_, e = keptTextRequest(ctx, h.client, &h.state, h.room, "POST", "/checkpoint", frame, http.Header{"X-Pedit-Cutoff": {strconv.FormatUint(read.Tail, 10)}}, &h.meta)
 	if e == nil {
-		h.after = read.Tail
+		h.after, h.republish = read.Tail, false
 		h.snapshotNames = map[uint32]string{}
 		for _, file := range h.state.Files {
 			h.snapshotNames[file.ID] = file.Path
