@@ -61,7 +61,10 @@ Yjs sync when the host returns. A version 5 host cannot keep a room.
 - **Keep.** The host declares it at connect with the request header
   `X-Pedit-Keep: <seconds>`, which the Worker passes on only with a host token
   that checked out. The room clamps it to `KEEP_MAX_SECONDS`, stores it, and
-  answers `keep`. Zero or none: the room ends when the host leaves, as always.
+  answers `keep`. The keep is fixed at the room's first host connection, since
+  it decides where images go (`kept/` from the first upload, never `rooms/`): a
+  later connect, with another value or none, is answered with the stored keep,
+  and a room first connected without one cannot gain one. Zero or none: the room ends when the host leaves, as always.
   A room with a keep lasts until `openedAt + max(ROOM_MAX_SECONDS, keep)`.
 - **Snapshots.** The host sends a snapshot right after connecting, after every
   200 entries it took in or 5 minutes with changes, and just before leaving.

@@ -410,7 +410,8 @@ export class Room extends DurableObject<Env> {
   private async accept(isHost: boolean, role: Role, join: Join): Promise<Response> {
     const kv = this.ctx.storage.kv
     // The clock starts at the host's first connection and never again.
-    if (isHost && this.openedAt() === undefined) kv.put(OPENED_KEY, Date.now())
+    const first = isHost && this.openedAt() === undefined
+    if (first) kv.put(OPENED_KEY, Date.now())
     const { 0: client, 1: server } = new WebSocketPair()
     const tags = [`v${join.version}`]
     if (isHost) tags.push(HOST_TAG)
@@ -419,8 +420,10 @@ export class Room extends DurableObject<Env> {
     const v6 = join.version === 6
     if (isHost) {
       this.log('host connected')
-      kv.put(KEEP_KEY, join.keep ?? 0)
-      if (join.keep !== undefined) safeSend(server, `${KEEP} ${join.keep} 0`)
+      // Fixed at the first connection, before any image is stored under the
+      // prefix it picks: a later connect is answered with the stored keep.
+      if (first) kv.put(KEEP_KEY, join.keep ?? 0)
+      if (join.keep !== undefined) safeSend(server, `${KEEP} ${this.keepSeconds()} 0`)
       // The host returns to a room kept without it: it is sent what was
       // written, and the room is its own again.
       const kept = this.keptAway()
@@ -965,10 +968,7 @@ export class Room extends DurableObject<Env> {
     }
     const key = this.blobPrefix() + id
     if (request.method === 'GET') {
-      // An image from before the host changed its keep is under the other prefix.
-      const object =
-        (await this.env.BLOBS.get(key)) ??
-        (await this.env.BLOBS.get(this.blobPrefix(!this.keepsBlobs()) + id))
+      const object = await this.env.BLOBS.get(key)
       if (!object) return new Response('no such blob', { status: 404 })
       return new Response(object.body, {
         headers: {
@@ -1072,10 +1072,7 @@ export class Room extends DurableObject<Env> {
   }
 
   // Deletion failures are left to the bucket's lifecycle rule.
-  // Without prefixes, the session's images wherever the host's keep put them.
-  private async deleteBlobs(
-    prefixes = [this.blobPrefix(false), this.blobPrefix(true)],
-  ): Promise<void> {
+  private async deleteBlobs(prefixes = [this.blobPrefix()]): Promise<void> {
     try {
       for (const prefix of prefixes) {
         let cursor: string | undefined

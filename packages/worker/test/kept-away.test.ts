@@ -191,10 +191,11 @@ describe('the host declares a keep', () => {
     const h = await hostOf(room, '3600')
     await until(() => h.signals.length === 1)
     expect(h.signals).toEqual(['keep 3600 0'])
-    const big = await hostOf(room, String(KEEP_MAX * 10))
+    const other = await createRoom()
+    const big = await hostOf(other, String(KEEP_MAX * 10))
     await until(() => big.signals.length === 1)
     expect(big.signals).toEqual([`keep ${KEEP_MAX} 0`])
-    expect((await state(room)).keep).toBe(KEEP_MAX)
+    expect((await state(other)).keep).toBe(KEEP_MAX)
   })
 
   it('takes a header that is not a whole number as no keep', async () => {
@@ -590,34 +591,36 @@ describe('a kept room and the clients and deploys that meet it', () => {
     expect((await state(room)).until).toBeGreaterThan(Date.now())
   })
 
-  it('serves and deletes an image wherever the host`s keep put it', async () => {
+  it('fixes the keep at the first connection, with every image under kept/', async () => {
     const room = await createRoom()
-    const url = (n: string) => `https://pedit.test/api/rooms/${room.id}/blobs/${n.repeat(22)}`
-    const send = (n: string, method: 'PUT' | 'GET') =>
-      exports.default.fetch(url(n), {
-        method,
-        ...(method === 'PUT' ? { body: bytes(1) } : {}),
-        headers: { [ADMISSION_HEADER]: room.admission },
-      })
-    const h = await join(room, { host: true })
-    expect((await send('A', 'PUT')).status).toBe(201)
+    const url = `https://pedit.test/api/rooms/${room.id}/blobs/${'A'.repeat(22)}`
+    const h = await hostOf(room, '3600')
+    const put = await exports.default.fetch(url, {
+      method: 'PUT',
+      body: bytes(1),
+      headers: { [ADMISSION_HEADER]: room.admission },
+    })
+    expect(put.status).toBe(201)
+    const id = env.ROOM.idFromName(room.id).toString()
+    expect((await env.BLOBS.list({ prefix: `kept/${id}/` })).objects).toHaveLength(1)
+    expect((await env.BLOBS.list({ prefix: `rooms/${id}/` })).objects).toHaveLength(0)
     h.ws.close(1001, 'gone')
     await h.closed
-    const kept = await hostOf(room, '3600')
-    expect((await send('B', 'PUT')).status).toBe(201)
-    expect((await send('A', 'GET')).status).toBe(200)
-    kept.ws.close(1001, 'gone')
-    await kept.closed
-    const plain = await join(room, { host: true })
-    expect((await send('B', 'GET')).status).toBe(200)
-    expect((await send('A', 'GET')).status).toBe(200)
-    plain.ws.close(HOST_LEFT, 'bye')
-    await plain.closed
-    const id = env.ROOM.idFromName(room.id).toString()
-    await expect
-      .poll(async () => (await env.BLOBS.list({ prefix: `kept/${id}/` })).objects.length)
-      .toBe(0)
-    expect((await env.BLOBS.list({ prefix: `rooms/${id}/` })).objects).toHaveLength(0)
+    // A later connect cannot change it: it is answered with the stored keep.
+    const again = await hostOf(room, '60')
+    await until(() => again.signals.length === 1)
+    expect(again.signals).toEqual(['keep 3600 0'])
+    expect((await state(room)).keep).toBe(3600)
+    const get = await exports.default.fetch(url, {
+      headers: { [ADMISSION_HEADER]: room.admission },
+    })
+    expect(get.status).toBe(200)
+    // A room first connected without a keep cannot gain one.
+    const plain = await createRoom()
+    await join(plain, { host: true })
+    const late = await hostOf(plain, '3600')
+    await until(() => late.signals.length === 1)
+    expect(late.signals).toEqual(['keep 0 0'])
   })
 })
 

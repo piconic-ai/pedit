@@ -57,7 +57,9 @@ encrypted, editor-signed entries that peers write meanwhile, in the room's SQLit
 storage, under the same limits (4 MiB, 10,000 entries). The peers stay connected
 and the relay tells them the room is kept until a time, at most the relay's
 keep cap after the host left. It deletes the snapshot, the log and the room's
-images, which are stored under `kept/` for such a room, when that time passes or
+images, which are stored under `kept/` for such a room from the first upload
+(the keep is fixed when the host first connects; a later request to change it is
+answered with the stored value), when that time passes or
 when the host closes the room, and the room ID is not opened again. Without a
 snapshot, or without a keep, the room ends when the host leaves, as above.
 The relay learns ciphertext sizes, request times, and opaque sender identifiers
