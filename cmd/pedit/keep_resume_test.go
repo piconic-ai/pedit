@@ -17,6 +17,7 @@ func TestResumeArguments(t *testing.T) {
 		"--resume":                             {ResumeAny: true},
 		"--resume " + testRoom:                 {Resume: testRoom},
 		"--resume=" + testRoom:                 {Resume: testRoom},
+		"--resume -AAAAAAAAAAAAAAAAAAAAA":      {Resume: "-AAAAAAAAAAAAAAAAAAAAA"},
 		"--resume https://x.test/r/a?keep=1#k": {Resume: "https://x.test/r/a?keep=1#k"},
 	} {
 		got, err := parseArgs(strings.Fields(args))

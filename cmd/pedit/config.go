@@ -366,6 +366,10 @@ func parseArgs(args []string) (commandArgs, error) {
 		case "--keep", "--resume":
 			if !hasValue {
 				value = optionValue(args, i+1)
+				// A room ID may begin with "-".
+				if option == "--resume" && i+1 < len(args) && roomIDArg.MatchString(args[i+1]) {
+					value = args[i+1]
+				}
 				if value == "" && option == "--resume" {
 					err = opts.setResumeAny()
 					break
