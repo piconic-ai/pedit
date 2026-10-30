@@ -127,7 +127,9 @@ export function RoomStatusIndicator(props: {
   const away = () =>
     props.hostAway?.get() ?? (props.status.get() === 'waiting' || props.status.get() === 'kept')
   const detail = () =>
-    cloud() ? `The host is ${away() ? 'away' : 'online'}. ${description().detail}` : description().detail
+    cloud()
+      ? `The host is ${away() ? 'away' : 'online'}. ${description().detail}`
+      : description().detail
   const [open, setOpen] = createSignal(false)
   const [hovered, setHovered] = createSignal(false)
   onMount(() => {
