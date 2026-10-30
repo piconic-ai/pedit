@@ -236,6 +236,7 @@ export class Room extends DurableObject<Env> {
           : undefined,
         this.env.ROOM_MAX_SECONDS,
       )
+    if (this.kept()) return new Response('kept rooms use text synchronization', { status: 409 })
     const blob = BLOB_PATH.exec(path)?.[1]
     if (blob) return this.blob(request, blob)
     // Only a connection goes on: a blob path the pattern missed is not one.
@@ -275,6 +276,7 @@ export class Room extends DurableObject<Env> {
   private async admit(token: string, isHost: boolean, read: string | null): Promise<Response> {
     const digest = await sha256(token)
     const readDigest = read === null ? null : await sha256(read)
+    if (this.kept()) return new Response('kept rooms use text synchronization', { status: 409 })
     // Deploys can drop every socket without a close callback. Only a guest
     // with this session's editor admission may start its missing host grace
     // period: the reader token goes to anyone a link was passed on to.
@@ -309,6 +311,13 @@ export class Room extends DurableObject<Env> {
     if (!role) return new Response('invalid room admission', { status: 403 })
     if (this.full(isHost, role)) return refuse(ROOM_FULL, 'room is full')
     return this.accept(isHost, role)
+  }
+
+  private kept(): boolean {
+    return (
+      this.ctx.storage.kv.get('keptText') !== undefined ||
+      this.ctx.storage.kv.get('keptTextClosed') === true
+    )
   }
 
   // Takes a peer admitted to a place. Nothing awaits before the accept.

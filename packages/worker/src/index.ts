@@ -145,7 +145,10 @@ app.all('/api/rooms/:id/keep/:action?', async (c) => {
   const id = c.req.param('id')
   if (!id || !ROOM_ID.test(id) || !allowedOrigin(c.req.raw))
     return c.text('invalid room request', 400)
-  if (maintenance(c.env) === 'closed') return c.text(CLOSED_FOR_MAINTENANCE, 503)
+  const level = maintenance(c.env)
+  if (level === 'closed') return c.text(CLOSED_FOR_MAINTENANCE, 503)
+  if (level === 'no-new-rooms' && c.req.param('action') === 'init')
+    return c.text(UNDER_MAINTENANCE, 503)
   if (await overLimit(c.env.KEEP_REQUEST_LIMIT, c.req.raw, 'kept text'))
     return c.text('Too many kept room requests', 429, { 'Retry-After': '60' })
   if (

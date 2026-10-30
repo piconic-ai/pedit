@@ -1,5 +1,6 @@
 import { createExecutionContext, runInDurableObject } from 'cloudflare:test'
 import { env } from 'cloudflare:workers'
+import { admissionProtocols } from '@pedit/protocol/admission'
 import { expect, it } from 'vitest'
 import app, { roomIdFor } from '../src/index.ts'
 import { keptText } from '../src/kept-text.ts'
@@ -140,4 +141,72 @@ it('rolls back initial ciphertext when its cleanup alarm cannot be scheduled', a
     expect((await keptText(request(), state.storage, true, undefined, undefined)).status).toBe(200)
     expect(await state.storage.getAlarm()).not.toBeNull()
   })
+})
+
+it('rejects new kept rooms during maintenance while allowing existing room reads', async () => {
+  const host = token(),
+    id = await roomIdFor(host),
+    editor = token(),
+    reader = token()
+  const base = `https://room/api/rooms/${id}/keep`
+  const init = () =>
+    new Request(`${base}/init`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${host}`,
+        'X-Pedit-Editor': editor,
+        'X-Pedit-Reader': reader,
+        'X-Pedit-Keep-Seconds': '60',
+      },
+      body: Uint8Array.of(1),
+    })
+  const maintenance = { ...env, MAINTENANCE: 'no-new-rooms' }
+  expect((await app.fetch(init(), maintenance, createExecutionContext())).status).toBe(503)
+  expect((await app.fetch(init(), env, createExecutionContext())).status).toBe(200)
+  const read = new Request(base, { headers: { 'X-Pedit-Admission': reader } })
+  expect((await app.fetch(read, maintenance, createExecutionContext())).status).toBe(200)
+})
+it('never mixes kept and legacy socket or blob lifecycles, including a closed kept room', async () => {
+  const host = token(),
+    id = await roomIdFor(host),
+    editor = token(),
+    reader = token()
+  const base = `https://room/api/rooms/${id}`
+  const init = new Request(`${base}/keep/init`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${host}`,
+      'X-Pedit-Editor': editor,
+      'X-Pedit-Reader': reader,
+      'X-Pedit-Keep-Seconds': '60',
+    },
+    body: Uint8Array.of(1),
+  })
+  expect((await app.fetch(init, env, createExecutionContext())).status).toBe(200)
+  const room = env.ROOM.get(env.ROOM.idFromName(id))
+  const before = await runInDurableObject(room, (_, state) => state.storage.getAlarm())
+  const socket = () =>
+    new Request(`${base}/ws`, {
+      headers: {
+        Authorization: `Bearer ${host}`,
+        Upgrade: 'websocket',
+        'Sec-WebSocket-Protocol': admissionProtocols(editor).join(', '),
+      },
+    })
+  const response = await app.fetch(socket(), env, createExecutionContext())
+  if (response.webSocket) {
+    response.webSocket.accept()
+    response.webSocket.close()
+  }
+  expect(response.status).toBe(409)
+  expect(await runInDurableObject(room, (_, state) => state.storage.getAlarm())).toBe(before)
+  await runInDurableObject(room, (_, state) => {
+    state.storage.kv.delete('keptText')
+    state.storage.kv.put('keptTextClosed', true)
+  })
+  expect((await app.fetch(socket(), env, createExecutionContext())).status).toBe(409)
+  const blob = new Request(`${base}/blobs/${'a'.repeat(22)}`, {
+    headers: { Authorization: `Bearer ${host}` },
+  })
+  expect((await app.fetch(blob, env, createExecutionContext())).status).toBe(409)
 })
