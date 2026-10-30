@@ -115,6 +115,12 @@ export interface AttachmentsOptions {
   wantTimeoutMs?: number
   /** How many bytes of images to keep in memory. */
   cacheBytes?: number
+  /**
+   * A kept room (kept-text.ts) has no host to answer: an upload is done once
+   * the relay holds it, the link is the one the host writes on resume, and an
+   * image the relay lacks is missing, not asked for.
+   */
+  kept?: boolean
 }
 
 /** What the preview shows for an image link (see preview.ts). */
@@ -146,6 +152,13 @@ interface Pending {
 const RETRIES = 5
 const CACHE_BYTES = 64 * 1024 * 1024
 const EXTENSIONS = new Set(['png', 'jpg', 'gif', 'webp'])
+const EXTENSION_OF: Record<ImageType, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+}
+const KEPT_HOST: HostAttachments = { dir: 'assets', maxBytes: MAX_BYTES }
 
 /**
  * Adds images to the room: uploads them encrypted, tells the room, and waits
@@ -286,7 +299,7 @@ export class Attachments implements ImageResolver {
   }
 
   async #upload(file: Blob, to: number | undefined): Promise<string> {
-    const host = this.host
+    const host = this.#opts.kept ? KEPT_HOST : this.host
     if (!host) throw new AttachmentError(MESSAGES.unsupported)
     let image: Awaited<ReturnType<typeof prepareImage>>
     try {
@@ -303,6 +316,10 @@ export class Attachments implements ImageResolver {
     const waiting = this.#pending.get(hash)
     if (waiting) return waiting.promise
     await this.#put(hash, await encryptBlob(this.#opts.keys, image.bytes))
+    if (this.#opts.kept) {
+      this.#remember(hash, image.bytes, image.type)
+      return `${KEPT_HOST.dir}/${hash}.${EXTENSION_OF[image.type]}`
+    }
     // Another upload of the same image may have got here first.
     const announced = this.#pending.get(hash)
     if (announced) return announced.promise
@@ -338,6 +355,7 @@ export class Attachments implements ImageResolver {
       if (res.status === 404 && this.#announcedWhileLoading.has(hash)) {
         res = await this.#fetch(url, init)
       }
+      if (res.status === 404 && this.#opts.kept) throw new Error('blob: 404')
       if (res.status === 404) {
         this.#want(hash)
         return
