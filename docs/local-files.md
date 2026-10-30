@@ -115,6 +115,12 @@ shows only with `PEDIT_DEBUG=1`.
 | Writes | A copy of each text file the room shares, in a new private directory such as `$TMPDIR/pedit-<room>-<random>/` | Named by pedit, as above, never as the room names it, and never in a directory of its own. The directory is `0700` and each copy `0600`, both before your umask; every copy is made through a handle on the directory held since joining, so the directory moved and replaced by a link cannot lead elsewhere. Never over a file that is there. Canvases are not copied. At most 20 files. All are removed when you leave or the host closes the room, with anything else you put in that directory; when the room closes because a file grew too large, they stay, and pedit says where. |
 | Reads | The copies, when you edit them | The same guards as the host's file: never through a symlink, only UTF-8. |
 
+In a kept room (`--keep`), `--resume` also saves, under `assets/` beside each
+file, the images that file's text refers to and that guests pasted while you
+were away, with the same checks and permissions as above (content hash, PNG,
+JPEG, GIF or WebP by their bytes, `0600`). It fetches only images the text
+refers to, and none already there.
+
 A joined session saves no images, keeps no comments and reads no
 configuration. Besides the
 copy, it writes only the update check cache. A save of the copy that fails is

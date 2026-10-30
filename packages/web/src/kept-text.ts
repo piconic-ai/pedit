@@ -2,13 +2,20 @@ import { render } from '@barefootjs/client/runtime'
 import { markdown } from '@codemirror/lang-markdown'
 import { Compartment, EditorState, type Extension, Prec } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
-import { deriveRoomKeys, type FileEntry, metaFiles, parseFragment } from '@pedit/protocol'
+import {
+  deriveBlobKeys,
+  deriveRoomKeys,
+  type FileEntry,
+  metaFiles,
+  parseFragment,
+} from '@pedit/protocol'
 import { KeptTextClient, KeptTextClosedError } from '@pedit/protocol/kept-text'
 import { basicSetup } from 'codemirror'
 import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next'
 import * as Y from 'yjs'
 import { AlwaysLoad } from './alwaysload.ts'
 import { type Appearance, applyText, loadAppearance, resolveTheme } from './appearance.ts'
+import { Attachments } from './attachments.ts'
 import { commentMarks } from './commentmarks.ts'
 import {
   CommentsView,
@@ -22,6 +29,7 @@ import {
 import type { LayoutParts } from './components/Layout.tsx'
 import type { KeptSyncStatus } from './components/RoomStatusIndicator.tsx'
 import { PreviewPane } from './pane.ts'
+import { imagePaste, textAnchor } from './paste.ts'
 import { lineWrapping, settingsModel } from './settings-model.ts'
 import { Splitter } from './splitter.ts'
 import { readerTheme, ThemeSwitcher } from './themes.ts'
@@ -31,8 +39,10 @@ import './components/Header.tsx'
 import './components/FileTabs.tsx'
 import './components/KeptTextNotice.tsx'
 import './components/CommentsPanel.tsx'
+import './components/Notice.tsx'
 import { lockedUndo } from './lockedundo.ts'
 import { ContextMenu } from './menu.ts'
+import { NoticeBoard } from './notice.ts'
 import { Store } from './store.ts'
 
 export async function joinKeptText(
@@ -78,6 +88,21 @@ export async function joinKeptText(
     locked = new Store(keys.access !== 'edit'),
     panelOpen = new Store(true)
   followFocus(threadsShown, commentFocus, commentList)
+  // Images are encrypted blobs in the relay, kept with the room. The host
+  // writes them to assets/ on resume, from the links in the text, so no one
+  // needs to announce them.
+  const attachments = new Attachments({
+    roomId: id,
+    keys: await deriveBlobKeys(keys.frameSecret, keys.editAdmission ?? keys.readAdmission),
+    send: () => {},
+    kept: true,
+  })
+  const notices = new NoticeBoard()
+  render(parts.notice, 'Notice', {
+    message: notices.message,
+    uploading: attachments.uploading,
+    onDismiss: () => notices.dismiss(),
+  })
   let pending = false
   const client = new KeptTextClient({
     origin: location.origin,
@@ -142,6 +167,15 @@ export async function joinKeptText(
       editable.of(held(editable, [EditorState.readOnly.of(true), EditorView.editable.of(false)])),
       yCollab(text, null, { undoManager: undo }),
       commentMarks(threadsShown, commentFocus),
+      imagePaste({
+        blocked: () =>
+          editor.state.readOnly
+            ? 'Images can be added with an edit link, while the room is open.'
+            : null,
+        upload: (file) => attachments.upload(file),
+        anchor: (pos) => textAnchor(text, pos),
+        onError: (message) => notices.show(message),
+      }),
       EditorView.updateListener.of((update) => {
         const s = update.state.selection.main,
           was = selection.get()
@@ -157,7 +191,13 @@ export async function joinKeptText(
     if (parts?.main.dataset.view === 'split') preview.follow(editor)
   }
   const alwaysLoad = new AlwaysLoad()
-  const preview = new PreviewPane(text, { element: parts.preview, alwaysLoad, onRender: follow })
+  const preview = new PreviewPane(text, {
+    element: parts.preview,
+    alwaysLoad,
+    images: attachments,
+    onRender: follow,
+  })
+  attachments.version.subscribe(() => preview.refresh())
   const splitter = new Splitter(parts.main, { onResize: follow })
   parts.splitter.replaceChildren(splitter.element)
   const narrow = matchMedia(NARROW_QUERY)
@@ -267,7 +307,8 @@ export async function joinKeptText(
       editor.focus()
     },
   })
-  let stopped = false,
+  let entries = 0,
+    stopped = false,
     loaded = false,
     running = false
   const refresh = async () => {
@@ -284,6 +325,11 @@ export async function joinKeptText(
         files.get().find((entry) => entry.id === current.get())?.path || client.state.filename,
       )
       skipped.set(client.state.skipped)
+      // An image a guest pasted may have reached the relay since a lookup failed.
+      if (client.state.logEntries !== entries) {
+        entries = client.state.logEntries
+        attachments.reconnected()
+      }
       if (!pending)
         status.set(client.state.hostAway || client.state.logEntries > 0 ? 'kept' : 'synced')
       deadline.set(client.state.hostAway ? new Date(client.state.keepUntil).toLocaleString() : null)

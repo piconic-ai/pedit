@@ -13,6 +13,7 @@ const { deriveRoomKeys, parseFragment } = await import(
 )
 const { encrypt } = await import(pathToFileURL(join(protocolDir, 'src/cipher.ts')).href)
 const { KeptTextClient } = await import(pathToFileURL(join(protocolDir, 'src/kept-text.ts')).href)
+const protocol = await import(pathToFileURL(join(protocolDir, 'src/index.ts')).href)
 const url = new URL(link)
 const keys = await deriveRoomKeys(parseFragment(url.hash.slice(1)), url.pathname.split('/')[2])
 const doc = new Y.Doc()
@@ -28,9 +29,15 @@ const client = new KeptTextClient({
   },
 })
 await client.refresh()
+// What the last image command found: its content hash and whether the relay
+// held it intact.
+let image
+const blobUrl = async (blobKeys, hash) =>
+  `${url.origin}/api/rooms/${url.pathname.split('/')[2]}/blobs/${await protocol.blobIdFor(blobKeys, hash)}`
 const send = () =>
   process.stdout.write(
     JSON.stringify({
+      image,
       text: doc.getText('content').toString(),
       ...client.state,
       documents: Object.fromEntries(
@@ -83,6 +90,42 @@ for await (const line of createInterface({ input: process.stdin })) {
       messages.set('m1', { author: 'Ada', time: '2026-10-21T00:00:00.000Z', body })
     })
     await client.flush()
+  }
+  if (command.image || command.fetchImage) {
+    const blobKeys = await protocol.deriveBlobKeys(
+      keys.frameSecret,
+      keys.editAdmission ?? keys.readAdmission,
+    )
+    const headers = { [protocol.ADMISSION_HEADER]: blobKeys.admission }
+    if (command.image) {
+      // Pasted in the browser: uploaded first, then linked in the text.
+      const bytes = Uint8Array.from(atob(command.image), (c) => c.charCodeAt(0))
+      const hash = await protocol.contentHash(bytes)
+      const response = await fetch(await blobUrl(blobKeys, hash), {
+        method: 'PUT',
+        headers,
+        body: await protocol.encryptBlob(blobKeys, bytes),
+      })
+      if (!response.ok) throw new Error(`could not upload the image: ${response.status}`)
+      const text = doc.getText('content')
+      text.insert(text.length, `\n![](assets/${hash}.png)`)
+      await client.flush()
+      image = { hash, ok: true }
+    } else {
+      const response = await fetch(await blobUrl(blobKeys, command.fetchImage), { headers })
+      let ok = false
+      if (response.ok) {
+        try {
+          await protocol.decryptBlob(
+            blobKeys,
+            new Uint8Array(await response.arrayBuffer()),
+            command.fetchImage,
+          )
+          ok = true
+        } catch {}
+      }
+      image = { hash: command.fetchImage, ok, status: response.status }
+    }
   }
   if (command.garbage) {
     const response = await fetch(

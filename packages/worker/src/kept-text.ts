@@ -56,7 +56,10 @@ async function body(request: Request): Promise<Uint8Array> {
   }
 }
 
-export async function expireKeptText(storage: DurableObjectStorage): Promise<boolean> {
+export async function expireKeptText(
+  storage: DurableObjectStorage,
+  removeBlobs: () => Promise<void>,
+): Promise<boolean> {
   const state = storage.kv.get<KeptText>('keptText')
   if (!state) return storage.kv.get<boolean>('keptTextClosed') === true
   if (Date.now() < Math.min(state.until, state.total ?? Infinity)) return false
@@ -67,6 +70,9 @@ export async function expireKeptText(storage: DurableObjectStorage): Promise<boo
   })
   await storage.deleteAlarm()
   await storage.sync()
+  // The room's images go with its text; a failure is left to the bucket's
+  // lifecycle rule for `kept/`.
+  await removeBlobs()
   return true
 }
 export async function keptText(
@@ -75,9 +81,10 @@ export async function keptText(
   host: boolean,
   maxKeep: string | undefined,
   maxRoom: string | undefined,
+  removeBlobs: () => Promise<void>,
 ): Promise<Response> {
   const action = new URL(request.url).pathname.split('/').at(-1)
-  if (await expireKeptText(storage)) return new Response(null, { status: 410 })
+  if (await expireKeptText(storage, removeBlobs)) return new Response(null, { status: 410 })
   let state = storage.kv.get<KeptText>('keptText')
   const token = request.headers.get('X-Pedit-Admission')
   try {
@@ -302,10 +309,13 @@ async function armKeptText(storage: DurableObjectStorage): Promise<void> {
     if (old === null || deadline < old) await storage.setAlarm(deadline)
   })
 }
-export async function keptTextAlarm(storage: DurableObjectStorage): Promise<boolean> {
+export async function keptTextAlarm(
+  storage: DurableObjectStorage,
+  removeBlobs: () => Promise<void>,
+): Promise<boolean> {
   if (!storage.kv.get('keptText') && !storage.kv.get('keptTextClosed')) return false
   try {
-    if (!(await expireKeptText(storage))) await armKeptText(storage)
+    if (!(await expireKeptText(storage, removeBlobs))) await armKeptText(storage)
   } catch (error) {
     await storage.setAlarm(Date.now() + 60000)
     throw error

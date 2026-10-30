@@ -16,10 +16,12 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -322,6 +324,46 @@ func (a *Attachments) announced(hash, mime string) {
 	a.send(protocol.Attachment{Kind: protocol.AttachmentStored, Hash: hash, Path: path})
 }
 
+// ErrNotInRoom means the room no longer holds an image the document refers to.
+var ErrNotInRoom = errors.New("the room no longer has the image, or it does not match its name")
+
+// Restore saves the images that document refers to and that are not beside the
+// file yet, fetched from the room. It is for a kept room, whose host was away
+// while guests pasted them. It returns how many it wrote and one error for
+// each image it could not save, which the caller reports: a missing image
+// must not stop the text from being written.
+func (a *Attachments) Restore(ctx context.Context, document string) (int, []error) {
+	hashes := slices.Sorted(maps.Keys(documentHashes(document)))
+	var errs []error
+	saved := 0
+	for _, hash := range hashes {
+		if _, _, ok := a.load(hash); ok {
+			continue
+		}
+		content, err := a.fetchWithin(ctx, hash)
+		if errors.Is(err, errInvalid) {
+			err = ErrNotInRoom
+		}
+		ext, ok := extensions[http.DetectContentType(content)]
+		if err == nil && !ok {
+			err = errors.New("not a PNG, JPEG, GIF or WebP image")
+		}
+		if err == nil {
+			var written bool
+			if _, written, err = a.save(hash, ext, content); written {
+				saved++
+				if a.opts.OnSaved != nil {
+					a.opts.OnSaved(Dir + "/" + hash + ext)
+				}
+			}
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("image %s: %w", hash, err))
+		}
+	}
+	return saved, errs
+}
+
 // wanted uploads images from disk that peers could not fetch.
 func (a *Attachments) wanted(hashes []string) {
 	for _, hash := range hashes {
@@ -392,7 +434,11 @@ func (a *Attachments) request(ctx context.Context, method, hash string, body []b
 
 // fetch downloads and decrypts an attachment, checking it against its hash.
 func (a *Attachments) fetch(hash string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(a.ctx, a.timeout)
+	return a.fetchWithin(a.ctx, hash)
+}
+
+func (a *Attachments) fetchWithin(parent context.Context, hash string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(parent, a.timeout)
 	defer cancel()
 	res, err := a.request(ctx, http.MethodGet, hash, nil)
 	if err != nil {

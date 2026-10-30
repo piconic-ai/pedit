@@ -21,7 +21,8 @@ as the file's last written text, so the later write and log truncation follow
 the usual order. A file that cannot be read, is not UTF-8 or exceeds the frame
 limit is not merged and is refused as an external change, preserving it.
 Repeated Yjs text updates are idempotent. This path is separate from the live
-nonce handshake and never accepts canvas or attachment operations.
+nonce handshake and never accepts canvas operations. Images are not operations
+on the room: see "Images in kept rooms".
 
 ### Comments in kept rooms
 
@@ -134,6 +135,27 @@ truncates the covered relay log only after every output, referenced attachment
 and the journal are durable. A failed save keeps the log and its attachments.
 The journal makes a multi-file save
 recoverable; it does not make all files visible atomically.
+
+### Images in kept rooms
+
+A browser with an edit link prepares a pasted image as in a live room (strip
+metadata, shrink to the limit), encrypts it with the blob keys, uploads it with
+`PUT /api/rooms/:id/blobs/:blobId` and then inserts `![](assets/<hash>.<ext>)`
+into the text, so the reference travels in the signed log entry. There is no
+announcement and no host to answer: the relay accepts the blob while the host is
+away, for the editor or reader token of the room (readers may only `GET`), under
+the same per-room quota. The blobs live under `kept/<room>/`, apart from live
+rooms' `rooms/`, and are deleted when the room expires, never when the host
+leaves or by a live room's orphan check.
+
+The host finds the references in the merged text (after the relay log is
+applied and local edits merged) and, for each image not yet beside the file,
+fetches the blob with the editor token, checks it against its hash and saves it
+under `assets/` with the live room's writer. This happens after the journal
+records the new text and before the file is written and the log truncated. An
+image that is missing or does not match its hash is reported and does not block
+the text; the blob stays on the relay until the deadline, so a later sync can
+still fetch it.
 
 ### Lifetime and cleanup
 

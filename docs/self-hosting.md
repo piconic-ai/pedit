@@ -110,6 +110,11 @@ format and compatibility requirements.
 bound as `BLOBS`. They expire encrypted attachments under `rooms/` after one
 day as a backstop if deletion on host disconnect fails.
 
+Images of kept rooms (`--keep`) are stored under `kept/` and are deleted when
+the room expires. They are not covered by that rule, since a kept room can last
+for days; if you want a backstop for a failed deletion, add a rule for `kept/`
+that is longer than `KEEP_MAX_SECONDS` and the room limit.
+
 Use a dedicated bucket: deployment replaces its lifecycle configuration.
 Keep any additional rules in `scripts/r2-lifecycle.json`; dashboard-only
 changes are overwritten on the next deployment.

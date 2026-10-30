@@ -681,3 +681,54 @@ func TestIgnoresOtherKinds(t *testing.T) {
 	h.a.Handle(protocol.Attachment{Kind: protocol.AttachmentRejected, Hash: hash, Reason: "type"})
 	h.nothingSent()
 }
+
+func TestRestoreSavesTheImagesADocumentReferences(t *testing.T) {
+	h := newHarness(t)
+	hash := protocol.ContentHash(png)
+	h.upload(hash, png)
+	document := "see ![](assets/" + hash + ".png)"
+	saved, errs := h.a.Restore(context.Background(), document)
+	if saved != 1 || len(errs) != 0 {
+		t.Fatalf("saved=%d errs=%v", saved, errs)
+	}
+	path := filepath.Join(filepath.Dir(h.file), "assets", hash+".png")
+	got, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(got, png) {
+		t.Fatalf("file = %q, %v", got, err)
+	}
+	if info, _ := os.Stat(path); info.Mode().Perm() != 0o600 {
+		t.Fatalf("mode = %v", info.Mode())
+	}
+	// Already beside the file: not fetched again.
+	h.mu.Lock()
+	gets := h.gets
+	h.mu.Unlock()
+	if saved, errs := h.a.Restore(context.Background(), document); saved != 0 || len(errs) != 0 {
+		t.Fatalf("second run saved=%d errs=%v", saved, errs)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.gets != gets {
+		t.Fatalf("fetched an image it had: %d -> %d", gets, h.gets)
+	}
+}
+
+func TestRestoreReportsWhatIsMissingAndSavesTheRest(t *testing.T) {
+	h := newHarness(t)
+	have, missing, forged := protocol.ContentHash(png), protocol.ContentHash(jpeg), protocol.ContentHash([]byte("\x89PNG\r\n\x1a\n other"))
+	h.upload(have, png)
+	h.upload(forged, png)
+	document := "![](assets/" + missing + ".jpg)\n![](assets/" + forged + ".png)\n![](assets/" + have + ".png)"
+	saved, errs := h.a.Restore(context.Background(), document)
+	if saved != 1 || len(errs) != 2 {
+		t.Fatalf("saved=%d errs=%v", saved, errs)
+	}
+	for _, err := range errs {
+		if !errors.Is(err, ErrNotInRoom) {
+			t.Fatalf("unexpected error %v", err)
+		}
+	}
+	if names := h.assets(); !reflect.DeepEqual(names, []string{have + ".png"}) {
+		t.Fatalf("assets = %v", names)
+	}
+}

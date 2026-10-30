@@ -17,6 +17,8 @@ type Captured = {
   locked?: Readable<boolean>
   panel?: HTMLElement
   editor?: { state: EditorState; destroyed: boolean }
+  paste?: import('../src/paste.ts').ImagePasteOptions
+  images?: import('../src/attachments.ts').ImageResolver
 }
 const captured = vi.hoisted(() => {
   const value: Captured = {}
@@ -31,6 +33,28 @@ vi.mock('@pedit/protocol/kept-text', async (load) => {
         super(options)
         captured.client = this
         captured.doc = options.doc
+      }
+    },
+  }
+})
+vi.mock('../src/paste.ts', async (load) => {
+  const real = await load<typeof import('../src/paste.ts')>()
+  return {
+    ...real,
+    imagePaste: (options: import('../src/paste.ts').ImagePasteOptions) => {
+      captured.paste = options
+      return []
+    },
+  }
+})
+vi.mock('../src/pane.ts', async (load) => {
+  const real = await load<typeof import('../src/pane.ts')>()
+  return {
+    ...real,
+    PreviewPane: class extends real.PreviewPane {
+      constructor(...args: ConstructorParameters<typeof real.PreviewPane>) {
+        super(...args)
+        captured.images = args[1]?.images
       }
     },
   }
@@ -102,6 +126,7 @@ vi.mock('y-codemirror.next', async (load) => ({
   ...(await load<typeof import('y-codemirror.next')>()),
   yCollab: () => [],
 }))
+vi.mock('../src/components/Notice.tsx', () => ({}))
 vi.mock('../src/components/Header.tsx', () => ({}))
 vi.mock('../src/components/KeptTextNotice.tsx', () => ({}))
 vi.mock('../src/components/CommentsPanel.tsx', () => ({}))
@@ -387,4 +412,68 @@ it('keeps comments read-only on a read link', async () => {
   expect(captured.comments?.get()?.start(0, 5, 'No')).toBeNull()
   await vi.advanceTimersByTimeAsync(2000)
   expect(posts).toHaveLength(0)
+})
+
+// A 1x1 PNG, small enough to go up as it is.
+const PNG = Uint8Array.from(
+  atob(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  ),
+  (c) => c.charCodeAt(0),
+)
+it('adds a pasted image to a kept room: uploads it, then links it where it was pasted', async () => {
+  // jsdom's Blob does not take another realm's bytes, and has no object URLs.
+  vi.stubGlobal('Blob', (await import('node:buffer')).Blob)
+  vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: () => 'blob:image' }))
+  const puts: { url: string; admission: string | null }[] = []
+  vi.stubGlobal(
+    'fetch',
+    vi.fn<typeof fetch>(async (input, init) => {
+      if (String(input).includes('/blobs/')) {
+        puts.push({
+          url: String(input),
+          admission: new Headers(init?.headers).get('X-Pedit-Admission'),
+        })
+        return new Response(null, { status: 201 })
+      }
+      return response(await snapshot())
+    }),
+  )
+  await joinKeptText(document.createElement('div'), room, fragment, [])
+  const link = parseFragment(fragment)
+  const keys = link && (await deriveRoomKeys(link, room))
+  expect(captured.paste?.blocked()).toBeNull()
+  const anchor = captured.paste?.anchor?.(5)
+  const path = await captured.paste?.upload(new File([PNG], 'a.png', { type: 'image/png' }))
+  expect(path).toMatch(/^assets\/[0-9a-f]{32}\.png$/)
+  anchor?.insert(`![](${path})`)
+  expect(captured.doc?.getText('content').toString()).toBe(`hello![](${path})`)
+  expect(puts).toHaveLength(1)
+  expect(puts[0]?.url).toMatch(/^\/api\/rooms\/[A-Za-z0-9_-]{22}\/blobs\/[A-Za-z0-9_-]{22}$/)
+  expect(puts[0]?.admission).toBe(keys?.editAdmission)
+  // The same page shows it without asking the relay again.
+  expect(captured.images?.lookup(path ?? '')).toMatchObject({ url: expect.any(String) })
+})
+it('does not let a read link paste images, and shows the ones the room keeps', async () => {
+  const link = parseFragment(fragment)
+  const edit = link ? await deriveRoomKeys(link, room) : undefined
+  const read = edit?.fragments.read
+  if (!read || !edit) throw new Error('fixture read link')
+  const hash = '0'.repeat(32)
+  const requests: (string | null)[] = []
+  vi.stubGlobal(
+    'fetch',
+    vi.fn<typeof fetch>(async (input, init) => {
+      if (String(input).includes('/blobs/')) {
+        requests.push(new Headers(init?.headers).get('X-Pedit-Admission'))
+        return new Response(null, { status: 404 })
+      }
+      return response(await snapshot())
+    }),
+  )
+  await joinKeptText(document.createElement('div'), room, read, [])
+  expect(captured.paste?.blocked()).not.toBeNull()
+  expect(captured.images?.lookup(`assets/${hash}.png`)).toBe('loading')
+  await vi.waitFor(() => expect(requests).toHaveLength(1))
+  expect(requests[0]).toBe(edit.readAdmission)
 })

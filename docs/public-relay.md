@@ -38,6 +38,14 @@ of encrypted, editor-signed Yjs updates in the room's SQLite storage. A host
 truncates the log only after saving the edits locally. Guests can read and
 edit while the host is away. The relay deletes the snapshot and log at the
 keep deadline or total room limit. A marker prevents reuse of the closed room.
+A kept room also keeps the encrypted images guests paste, in R2 under `kept/`
+instead of `rooms/`, whether or not the host is connected: they are not deleted
+when the host leaves, only when the room expires or ends, within the same
+limits as in a live room (below). Only editors can add them; anyone with the
+room's link can fetch them. The bucket needs a second lifecycle rule expiring
+`kept/` after 8 days (the public cap on keeping is seven) as a backstop for a
+deletion that failed; the operator adds it by hand, as the release deploy only
+manages the `rooms/` rule.
 The relay learns ciphertext sizes, request times, and opaque sender identifiers
 and counts. It receives no plaintext or URL-fragment key. A relay can still
 withhold or replay data; a signature does not prove freshness or availability.
@@ -228,7 +236,7 @@ To report a vulnerability instead, see [SECURITY.md](../SECURITY.md).
 | --- | --- |
 | People in a room | The host and 4 guests |
 | One image | 5 MiB before encryption |
-| Images of a session | 50 MiB encrypted, 500 images |
+| Images of a session, or of a kept room | 50 MiB encrypted, 500 images |
 | Image uploads at once, per room | 4 |
 | Room creation requests | 20 a minute from one network |
 | WebSocket connections | 60 a minute from one network |
