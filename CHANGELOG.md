@@ -1,5 +1,26 @@
 # Changelog
 
+## [v0.1.20](https://github.com/piconic-ai/pedit/compare/v0.1.19...v0.1.20) - 2026-10-30
+
+- chore(deps): bump the actions group with 5 updates by @dependabot[bot] in https://github.com/piconic-ai/pedit/pull/277
+- Design encrypted asynchronous rooms and canvas recovery by @kfly8 in https://github.com/piconic-ai/pedit/pull/314
+- Add terms of use and privacy policy pages to the public relay by @kfly8 in https://github.com/piconic-ai/pedit/pull/330
+- Retain signed text updates for host-away review by @kfly8 in https://github.com/piconic-ai/pedit/pull/326
+- Keep text editable while the CLI host is away by @kfly8 in https://github.com/piconic-ai/pedit/pull/327
+- Unify room headers and explain connection and save status by @kfly8 in https://github.com/piconic-ai/pedit/pull/331
+- Keep multiple text files editable while their host is away by @kfly8 in https://github.com/piconic-ai/pedit/pull/332
+- Show host presence with a consistent cloud and brand-green dot by @kfly8 in https://github.com/piconic-ai/pedit/pull/333
+- Land the kept-rooms stack for #234 on main by @kfly8 in https://github.com/piconic-ai/pedit/pull/334
+- chore(deps): bump github.com/reearth/ygo from 1.51.11 to 1.54.0 in the go-minor-and-patch group by @dependabot[bot] in https://github.com/piconic-ai/pedit/pull/275
+- chore(deps): bump the npm-minor-and-patch group in /packages with 9 updates by @dependabot[bot] in https://github.com/piconic-ai/pedit/pull/276
+- Fix a race in TestNewcomersDropFramesKeptFromBefore by @kfly8 in https://github.com/piconic-ai/pedit/pull/335
+- Refuse comment sidecars as kept text sources by @kfly8 in https://github.com/piconic-ai/pedit/pull/336
+- Merge local edits made while away into a resumed kept room by @kfly8 in https://github.com/piconic-ai/pedit/pull/337
+- Add an info button with the terms, privacy policy and source by @kfly8 in https://github.com/piconic-ai/pedit/pull/338
+- Remove resume records once a kept room is over by @kfly8 in https://github.com/piconic-ai/pedit/pull/339
+- Keep comments in kept rooms and write them to .pedit/meta on resume by @kfly8 in https://github.com/piconic-ai/pedit/pull/341
+- Keep pasted images in kept rooms and save them on resume by @kfly8 in https://github.com/piconic-ai/pedit/pull/342
+
 ## [v0.1.19](https://github.com/piconic-ai/pedit/compare/v0.1.18...v0.1.19) - 2026-10-27
 
 - docs(readme): introduce comments and comment-only and read-only links by @kfly8 in https://github.com/piconic-ai/pedit/pull/231
