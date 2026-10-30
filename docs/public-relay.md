@@ -16,56 +16,59 @@ Durable Objects and R2. It runs the latest release, deployed from this repositor
 
 The relay is not permanent storage. Its design permits keeping room content
 only as ciphertext while the room is open. Once the host has taken in changes,
-the relay's copies can be deleted without losing them. Live rooms relay frames
-without storing them. Kept rooms store ciphertext as described below.
+the relay's copies can be deleted without losing them. Frames are relayed and
+never stored. A room opened from existing text files has a keep by default (a
+day; `--keep` up to the cap below; `--keep 0` for a room that stores nothing
+and ends when the host leaves; a canvas, a scratch room and a host on Windows
+get no keep): the host uploads an encrypted snapshot while it is connected,
+and after it leaves the room stays open for the keep, never beyond the room's
+total limit (24 hours from the host's first connection, or the keep if that is
+longer). While it is kept, the relay stores ciphertext as described below.
 
-- **Plaintext document text: none.** Live-room frames are relayed and never stored.
-- **Encrypted images**, in R2. In a live room they can be uploaded only while
-  the room's host is connected, and the room deletes them when the host leaves
-  (kept rooms differ, below). A deletion
+- **Plaintext document text: none.** Frames are relayed and never stored; what
+  a kept room stores is encrypted and signed on the editors' devices.
+- **Encrypted images**, in R2. In a room that is not kept (`--keep 0`) they
+  can be uploaded only while the room's host is connected, and the room deletes
+  them when the host leaves. A deletion
   that fails is logged and not tried again; a bucket rule expires leftovers
   one day after upload, and R2 removes them typically within a further day
   ([R2](https://developers.cloudflare.com/r2/buckets/object-lifecycles/)).
   The release deploy adds the rule to the bucket if it is missing.
-- **Per room**: the SHA-256 of the admission token, and the number and total
-  size of stored images, deleted when the host leaves; and the time the host
+- **Per room**: the SHA-256 of the admission tokens, and the number and total
+  size of stored images, deleted when the room ends; and the time the host
   first connected, kept after the room ends so that its ID cannot be used
   again. The Durable Object's storage keeps 30 days of history for
   point-in-time recovery
   ([Cloudflare](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/#pitr-point-in-time-recovery-api)).
 
-With `--keep`, the relay stores an encrypted text snapshot and a bounded log
-of encrypted, editor-signed Yjs updates in the room's SQLite storage. A host
-truncates the log only after saving the edits locally. Guests can read and
-edit while the host is away. The relay deletes the snapshot and log at the
-keep deadline or total room limit, or at once when the host runs `pedit --close`,
-which also deletes the room's images. The host does that only after saving every
-edit to its files. A marker prevents reuse of the closed room.
-A kept room also keeps the encrypted images guests paste, in R2 under `kept/`
-instead of `rooms/`, whether or not the host is connected: they are not deleted
-when the host leaves, only when the room expires or ends, within the same
-limits as in a live room (below). Only editors can add them; anyone with the
-room's link can fetch them. The bucket needs a second lifecycle rule expiring
-`kept/` after 8 days (the public cap on keeping is seven) as a backstop for a
-deletion that failed; the operator adds it by hand, as the release deploy only
-manages the `rooms/` rule.
-A live room whose host asked to keep it (protocol version 6, `X-Pedit-Keep`)
-stores the same ciphertext when the host leaves on purpose or does not return
-within the grace period: the host's latest encrypted snapshot, and a log of the
-encrypted, editor-signed entries that peers write meanwhile, in the room's SQLite
-storage, under the same limits (4 MiB, 10,000 entries). The peers stay connected
-and the relay tells them the room is kept until a time, at most the relay's
-keep cap after the host left. It deletes the snapshot, the log and the room's
-images, which are stored under `kept/` for such a room from the first upload
-(the keep is fixed when the host first connects; a later request to change it is
-answered with the stored value), when that time passes or
-when the host closes the room, and the room ID is not opened again. Without a
-snapshot, or without a keep, the room ends when the host leaves, as above.
+A room with a keep (protocol version 6, `X-Pedit-Keep`; the keep is fixed when
+the host first connects, and a later request to change it is answered with the
+stored value) stores ciphertext when the host leaves on purpose or does not
+return within the grace period: the host's latest encrypted snapshot, and a log
+of the encrypted, editor-signed entries that peers write meanwhile, in the
+room's SQLite storage (4 MiB, 10,000 entries). The peers stay connected and
+the relay tells them the room is kept until a time, at most the relay's keep
+cap after the host left. Guests can read and edit while the host is away. The
+host truncates the log only after saving the edits locally. The relay deletes
+the snapshot and the log when that time or the total room limit passes, or at
+once when the host runs `pedit --close`, which also deletes the room's images;
+the host does that only after saving every edit to its files. A marker
+prevents reuse of the closed room. Without a snapshot the room ends when the
+host leaves, as a room without a keep does.
+Such a room keeps the encrypted images guests paste in R2 under `kept/`
+instead of `rooms/`, from the first upload, whether or not the host is
+connected: they are not deleted when the host leaves, only when the room
+expires or ends, within the same limits as any room (below). Only editors can
+add them; anyone with the room's link can fetch them. The bucket needs a second
+lifecycle rule expiring `kept/` after 8 days (the public cap on keeping is
+seven) as a backstop for a deletion that failed; the operator adds it by hand,
+as the release deploy only manages the `rooms/` rule.
 The relay learns ciphertext sizes, request times, and opaque sender identifiers
 and counts. It receives no plaintext or URL-fragment key. A relay can still
 withhold or replay data; a signature does not prove freshness or availability.
 
-The following disconnect behavior describes live rooms without `--keep`.
+The following disconnect behavior describes a room while its host is
+connected, and a room without a keep (`--keep 0`) after that.
 
 A host whose connection drops, rather than one ending the session with
 Ctrl+C, gets two minutes to come back: meanwhile the room keeps its guests,
@@ -258,7 +261,7 @@ To report a vulnerability instead, see [SECURITY.md](../SECURITY.md).
 | One message | 1 MiB |
 | Messages from one connection | Bursts of 1,000 messages and 32 MiB, then 200 messages and 1 MiB a second |
 | Session length | 24 hours from the host's first connection |
-| Kept room after departure | Up to 7 days; the CLI reports any clamp |
+| Kept room after departure | One day unless the host chose otherwise; up to 7 days; the CLI reports any clamp |
 | Kept room total life | At least the effective keep duration; measured from publication |
 | Kept text snapshot | 1 MiB of ciphertext for all files together; at most 64 text files, fixed when the room opens |
 | Kept text log | 4 MiB of encrypted editing history before the host checkpoints; a 10,000-entry abuse guard also applies |

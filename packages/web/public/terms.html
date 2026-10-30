@@ -18,7 +18,7 @@
   </head>
   <body>
     <h1>Terms of Use</h1>
-    <p>Last updated: 2026-10-30</p>
+    <p>Last updated: 2026-10-31</p>
     <p>
       These terms apply to the public relay and browser editor at <code>edit.piconic.ai</code>
       (&ldquo;the service&rdquo;), which the <code>pedit</code> command line tool uses by default.
@@ -39,8 +39,8 @@
       limited, changed or stopped at any time. For maintenance it can turn away new rooms or close
       all rooms, open ones included. Rooms have the limits listed in the
       <a href="https://github.com/piconic-ai/pedit/blob/main/docs/public-relay.md#limits">public relay notes</a>,
-      such as a 24-hour session length for a live room and, for a room kept open after its host leaves
-      (<code>pedit --keep</code>), up to 7 days.
+      such as a 24-hour session length while the host is connected and, for a room kept open after its
+      host leaves (for a day by default, longer with <code>pedit --keep</code>), up to 7 days.
     </p>
 
     <h2>Acceptable use</h2>
@@ -55,11 +55,18 @@
 
     <h2>Your content and your links</h2>
     <p>
-      You are responsible for what you share. In a live room the service stores none of your text; in a
-      kept room it stores your text, comments and images encrypted until the room&rsquo;s deadline.
+      You are responsible for what you share. A room that <code>pedit</code> opens from existing text
+      files is kept by default: the service holds an encrypted snapshot of the files from the host
+      while the host is connected, and the room stays open after the host leaves, for a day unless
+      the host chose otherwise (<code>pedit --keep</code> for up to 7 days, <code>pedit --keep 0</code>
+      for a room that stores nothing and ends when the host leaves), and never beyond the room&rsquo;s
+      total limit (24 hours from the host&rsquo;s first connection, or the keep if that is longer).
+      While it is kept, the service stores your text, comments and images encrypted until the
+      room&rsquo;s deadline. A canvas, a file created from a template and a host on Windows get a room
+      that ends when the host leaves.
       <a href="/privacy">What it keeps</a> is described in the privacy policy. Anyone you give a link to
-      can read the files, and can edit them if the link allows editing; in a kept room they can do so
-      while you are away. A guest who joins from the command line saves a copy on their computer.
+      can read the files, and can edit them if the link allows editing, also while you are away as long
+      as the room is kept. A guest who joins from the command line saves a copy on their computer.
       Closing a room does not erase copies that participants have made. Share links only with people
       you trust.
     </p>
@@ -70,9 +77,9 @@
       extent the law allows, the operator is not liable for loss or damage arising from the use of, or
       the inability to use, the service, including lost edits. Edits made in a browser are saved by the
       host&rsquo;s <code>pedit</code>; a crash or a dropped connection can lose changes that were not yet
-      saved. In a kept room, edits and comments made while the host is away are held by the service,
-      encrypted, until the host runs <code>pedit --resume</code>; if the host does not before the
-      room&rsquo;s deadline, they are deleted with the room. Nothing in these terms limits rights that the
+      saved. Edits and comments made while the host is away are held by the service, encrypted, until the
+      host runs <code>pedit</code> on the file again (or <code>pedit --resume</code>); if the host does
+      not before the room&rsquo;s deadline, they are deleted with the room. Nothing in these terms limits rights that the
       law of your country gives you and that cannot be waived.
     </p>
 

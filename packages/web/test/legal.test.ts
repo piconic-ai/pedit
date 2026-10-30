@@ -36,12 +36,14 @@ describe('terms and privacy pages', () => {
     '%s says what a kept room stores and for how long',
     (_name, html) => {
       expect(html).toContain('pedit --keep')
+      expect(html).toContain('for a day by default')
       expect(html).toMatch(/at most 7 days after the host leaves|up to 7 days/)
     },
   )
 
-  it('privacy says that a kept room keeps its admission tokens unhashed', () => {
-    expect(privacy).toContain('admission tokens as they are')
+  it('privacy says that a room keeps only hashes of its admission tokens', () => {
+    expect(privacy).toContain('hashes of the room&rsquo;s admission tokens')
+    expect(privacy).not.toContain('as they are')
   })
 
   it('terms name the governing law', () => {
