@@ -6,7 +6,7 @@ import type { Readable } from '../store.ts'
 
 export type KeptSyncStatus = 'connecting' | 'saving' | 'kept' | 'synced' | 'retrying' | 'expired'
 export type HeaderStatus = RoomStatus | KeptSyncStatus
-const DOT = 'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8'
+const CLOUD = 'M7 18H6a4 4 0 0 1-.6-7.95 6 6 0 0 1 11.7-1.5A4.5 4.5 0 0 1 18 18Z'
 const SPINNER = 'M12 3a9 9 0 1 1-9 9'
 const WARNING = 'M12 3 2 21h20L12 3zM12 9v5m0 3v1'
 const CLOCK = 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0M12 7v5l3 2'
@@ -21,7 +21,7 @@ const STATUS: Record<HeaderStatus, Description> = {
     label: 'Connected',
     detail:
       'Connected to the room. This connection status does not confirm that edits are saved to the host’s file.',
-    icon: DOT,
+    icon: CLOUD,
     tone: 'ok',
   },
   connecting: {
@@ -33,7 +33,7 @@ const STATUS: Record<HeaderStatus, Description> = {
   waiting: {
     label: 'Waiting for the host…',
     detail: 'Waiting for the host to reconnect before this room can continue.',
-    icon: CLOCK,
+    icon: CLOUD,
     tone: 'working',
   },
   closed: {
@@ -99,14 +99,14 @@ const STATUS: Record<HeaderStatus, Description> = {
   kept: {
     label: 'Edits kept',
     detail: 'Edits kept on the relay; waiting for the host to save them to its file.',
-    icon: 'M7 18H6a4 4 0 0 1-.6-7.95 6 6 0 0 1 11.7-1.5A4.5 4.5 0 0 1 19 17M10 17l3 3 6-6',
+    icon: CLOUD,
     tone: 'working',
   },
   synced: {
     label: 'Saved to the host’s file',
     detail:
       'The host has saved the shared text to the host’s file and checkpointed it on the relay.',
-    icon: DOT,
+    icon: CLOUD,
     tone: 'ok',
   },
   retrying: {
@@ -118,8 +118,16 @@ const STATUS: Record<HeaderStatus, Description> = {
   },
 }
 
-export function RoomStatusIndicator(props: { status: Readable<HeaderStatus> }) {
+export function RoomStatusIndicator(props: {
+  status: Readable<HeaderStatus>
+  hostAway?: Readable<boolean>
+}) {
   const description = () => STATUS[props.status.get()]
+  const cloud = () => description().icon === CLOUD
+  const away = () =>
+    props.hostAway?.get() ?? (props.status.get() === 'waiting' || props.status.get() === 'kept')
+  const detail = () =>
+    cloud() ? `The host is ${away() ? 'away' : 'online'}. ${description().detail}` : description().detail
   const [open, setOpen] = createSignal(false)
   const [hovered, setHovered] = createSignal(false)
   onMount(() => {
@@ -159,10 +167,9 @@ export function RoomStatusIndicator(props: { status: Readable<HeaderStatus> }) {
         className="status"
         data-status={props.status.get()}
         data-tone={description().tone}
-        data-icon={
-          description().icon === DOT ? 'dot' : description().icon === SPINNER ? 'spinner' : 'symbol'
-        }
-        aria-label={description().detail}
+        data-host={cloud() ? (away() ? 'away' : 'online') : undefined}
+        data-icon={cloud() ? 'cloud' : description().icon === SPINNER ? 'spinner' : 'symbol'}
+        aria-label={detail()}
         aria-describedby={tooltipId()}
         ref={(el) => {
           button = el
@@ -200,13 +207,14 @@ export function RoomStatusIndicator(props: { status: Readable<HeaderStatus> }) {
           aria-hidden="true"
         >
           <path d={description().icon} />
+          {cloud() ? <circle className="host-dot" cx="18" cy="18" r="3.5" /> : null}
         </svg>
         <span className="status-label" role="status">
           {description().label}
         </span>
       </button>
       <span className="status-tooltip" role="tooltip" id={tooltipId()} style={position()}>
-        {description().detail}
+        {detail()}
       </span>
     </span>
   )

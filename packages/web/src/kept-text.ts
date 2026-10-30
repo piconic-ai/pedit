@@ -42,6 +42,7 @@ export async function joinKeptText(
     file = new Store<string | null>(null),
     files = new Store<readonly FileEntry[]>([]),
     current = new Store(0),
+    hostAway = new Store(false),
     deadline = new Store<string | null>(null),
     skipped = new Store(0)
   let parts: LayoutParts | undefined
@@ -159,6 +160,7 @@ export async function joinKeptText(
   if (loadVimMode()) settings.setVim(true)
   render(parts.header, 'Header', {
     status,
+    hostAway,
     file,
     view,
     settings,
@@ -197,6 +199,7 @@ export async function joinKeptText(
     try {
       if (loaded && keys.access === 'edit') await client.flush()
       await client.refresh()
+      hostAway.set(client.state.hostAway)
       files.set(client.state.files)
       file.set(
         files.get().find((entry) => entry.id === current.get())?.path || client.state.filename,

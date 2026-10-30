@@ -9,12 +9,16 @@ const mounted: HTMLElement[] = []
 afterEach(() => {
   for (const container of mounted.splice(0)) container.remove()
 })
-function mount(initial: HeaderStatus = 'connected') {
+function mount(initial: HeaderStatus = 'connected', away?: boolean) {
   const status = new Store<HeaderStatus>(initial),
     container = document.createElement('div')
   document.body.append(container)
   mounted.push(container)
-  render(container, 'RoomStatusIndicator', { status })
+  const hostAway = new Store(away ?? false)
+  render(container, 'RoomStatusIndicator', {
+    status,
+    hostAway: away === undefined ? undefined : hostAway,
+  })
   const button = container.querySelector<HTMLButtonElement>('.status'),
     tooltip = container.querySelector<HTMLElement>('[role="tooltip"]'),
     wrapper = container.querySelector<HTMLElement>('.room-status')
@@ -22,7 +26,7 @@ function mount(initial: HeaderStatus = 'connected') {
   const hover = (on: boolean) =>
     wrapper.dispatchEvent(new MouseEvent(on ? 'mouseenter' : 'mouseleave'))
   const visible = () => wrapper.dataset.open === 'true'
-  return { container, status, button, tooltip, wrapper, hover, visible }
+  return { container, status, hostAway, button, tooltip, wrapper, hover, visible }
 }
 it('uses a shared compact status control with an accessible explanation', () => {
   const x = mount()
@@ -95,4 +99,29 @@ it('assigns distinct tooltip descriptions to multiple mounted headers', () => {
   const first = mount(),
     second = mount()
   expect(first.tooltip.id).not.toBe(second.tooltip.id)
+})
+
+it('keeps the same cloud while the dot follows host presence independently of saved status', () => {
+  const x = mount('kept', true)
+  const cloud = x.button.querySelector('path')?.getAttribute('d')
+  expect(x.button.dataset.icon).toBe('cloud')
+  expect(x.button.dataset.host).toBe('away')
+  expect(x.button.querySelector('.host-dot')).not.toBeNull()
+  expect(x.tooltip.textContent).toContain('host is away')
+  x.hostAway.set(false)
+  expect(x.button.dataset.host).toBe('online')
+  expect(x.button.querySelector('path')?.getAttribute('d')).toBe(cloud)
+  expect(x.tooltip.textContent).toContain('host is online')
+  expect(x.tooltip.textContent).toContain('waiting for the host to save')
+  x.status.set('synced')
+  expect(x.button.querySelector('path')?.getAttribute('d')).toBe(cloud)
+  expect(x.tooltip.textContent).toContain('host’s file')
+})
+it('uses the same cloud for connected and waiting live rooms', () => {
+  const x = mount()
+  const cloud = x.button.querySelector('path')?.getAttribute('d')
+  expect(x.button.dataset.host).toBe('online')
+  x.status.set('waiting')
+  expect(x.button.dataset.host).toBe('away')
+  expect(x.button.querySelector('path')?.getAttribute('d')).toBe(cloud)
 })

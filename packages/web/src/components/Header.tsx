@@ -15,6 +15,7 @@ export interface HeaderProps {
   /** The host's file name, once the host has told us. */
   file: Readable<string | null>
   status: Readable<HeaderStatus>
+  hostAway?: Readable<boolean>
   participants?: { people: Readable<readonly Participant[]>; narrow: Readable<boolean> }
   view: ViewSwitch
   settings: SettingsModel
@@ -66,7 +67,7 @@ export function Header(props: HeaderProps) {
           />
         ) : null}
       </span>
-      <RoomStatusIndicator status={props.status} />
+      <RoomStatusIndicator status={props.status} hostAway={props.hostAway} />
       {props.access && ACCESS_CHIPS[props.access] ? (
         <span className="access" title={ACCESS_CHIPS[props.access]?.title}>
           {ACCESS_CHIPS[props.access]?.text}

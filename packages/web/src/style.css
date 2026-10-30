@@ -8,6 +8,7 @@
   --muted: light-dark(#656d76, #8b949e);
   --line: light-dark(#d0d7de, #30363d);
   --accent: light-dark(#0969da, #58a6ff);
+  --pedit-green: #00b769;
   --code-bg: light-dark(#afb8c133, #6e768166);
   --warn-bg: light-dark(#f9ecdf, #2c221a);
   --warn-ink: light-dark(#8a4308, #f5c08a);
@@ -175,17 +176,18 @@ header {
   border-color: var(--line);
   color: var(--ink);
 }
-.room-status .status[data-tone="ok"] {
-  color: var(--accent);
-}
 .room-status .dot {
   width: 18px;
   height: 18px;
   background: none;
 }
-.room-status [data-icon="dot"] path {
-  fill: currentColor;
-  stroke: none;
+.room-status .host-dot {
+  fill: var(--muted);
+  stroke: var(--panel);
+  stroke-width: 2px;
+}
+.room-status [data-host="online"] .host-dot {
+  fill: var(--pedit-green);
 }
 .room-status [data-icon="spinner"] svg {
   animation: room-status-spin 1s linear infinite;
@@ -1497,7 +1499,7 @@ main.editor .cm-vim-panel {
  * top, one in piconic green and one in a peer orange (room.ts). It takes no width, so the text does not shift around it or after it fades.
  */
 .landing h1 {
-  --c: #00b769; /* piconic green */
+  --c: var(--pedit-green);
 }
 .landing p {
   --c: light-dark(#b85a0e, #e08a3e);
