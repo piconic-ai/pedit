@@ -251,6 +251,7 @@ async function joinRoom(
     text: () => (shown.canvas ? toJSON(readCanvas(shown.doc)) : shown.text.toString()),
     keptUntil: away.until,
     skipped: away.skipped,
+    hostClosed: away.hostClosed,
     onReconnect: () => location.reload(),
   })
   // Filled in once the client exists; nothing is sent before it connects.
@@ -536,7 +537,7 @@ async function joinRoom(
   const setStatus = (s: RoomStatus) => {
     const wasLocked = editLocked()
     roomStatus.set(s)
-    away.show(s)
+    away.show(s, client?.closedByHost)
     locked.set(commentsLocked())
     if (isFinalStatus(s)) {
       editor.dispatch({ effects: editable.reconfigure(readOnly) })

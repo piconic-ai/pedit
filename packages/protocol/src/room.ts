@@ -53,7 +53,7 @@ import {
   SETTLE_AFTER_MS,
 } from './fresh.ts'
 import { KeptAway, type KeptSync } from './kept-away-client.ts'
-import { Kind, parseNumbers, splitKind, withKind } from './kinds.ts'
+import { HOST_CLOSED_REASON, Kind, parseNumbers, splitKind, withKind } from './kinds.ts'
 import {
   decodeMessage,
   encodeMessage,
@@ -267,6 +267,8 @@ export class RoomClient {
   status: RoomStatus = 'disconnected'
   /** The relay's time limit in seconds, when it said so on closing an expired room. */
   timeLimitSeconds: number | undefined
+  /** Whether the room is closed because the host ended it with `pedit --close`. */
+  closedByHost = false
 
   private readonly opts: RoomClientOptions
   private readonly kept: KeptAway
@@ -388,6 +390,7 @@ export class RoomClient {
       this.dropRemoteAwareness()
       const final = ev.code === undefined ? undefined : FINAL_CLOSE.get(ev.code)
       if (final && !this.destroyed) {
+        this.closedByHost = final === 'closed' && ev.reason === HOST_CLOSED_REASON
         if (final === 'expired') this.timeLimitSeconds = parseExpiredReason(ev.reason)
         this.setStatus(final)
         return

@@ -92,3 +92,10 @@ export function parseNumbers(word: string, text: string, count: number): number[
     .map((p) => (/^\d{1,16}$/.test(p) ? Number(p) : Number.NaN))
   return numbers.length === count && numbers.every(Number.isSafeInteger) ? numbers : undefined
 }
+
+/**
+ * The reason of the ROOM_CLOSED the relay sends when the host ended a room
+ * kept without it (`pedit --close`), so a guest can tell it from a room that
+ * ended because its host left.
+ */
+export const HOST_CLOSED_REASON = 'the host closed the room'

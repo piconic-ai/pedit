@@ -21,11 +21,12 @@ function mount() {
     text: () => '',
     keptUntil: away.until,
     skipped: away.skipped,
+    hostClosed: away.hostClosed,
     onReconnect: () => {},
   })
-  const set = (s: RoomStatus) => {
+  const set = (s: RoomStatus, closedByHost = false) => {
     status.set(s)
-    away.show(s)
+    away.show(s, closedByHost)
   }
   return {
     away,
@@ -89,6 +90,16 @@ describe('editing while the host is away', () => {
     x.set('log-full')
     expect(x.button.dataset.status).toBe('log-full')
     expect(x.banner.textContent).toMatch(/cannot keep more edits/)
+  })
+
+  it('tells a room the host closed from one that ended', () => {
+    const x = mount()
+    x.set('closed')
+    expect(x.button.dataset.status).toBe('closed')
+    expect(x.banner.textContent).toMatch(/host is not connected/)
+    x.set('closed', true)
+    expect(x.button.dataset.status).toBe('host-closed')
+    expect(x.banner.textContent).toContain('The host closed the room')
   })
 
   it('asks before the page is closed with edits the relay has not logged', () => {

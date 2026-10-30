@@ -27,6 +27,8 @@ export class AwayView {
   readonly hostAway = new Store(false)
   readonly until = new Store<string | null>(null)
   readonly skipped = new Store(0)
+  /** Whether the room ended because the host closed it on purpose. */
+  readonly hostClosed = new Store(false)
   /** Whether the relay has not logged all of this page's edits. */
   pending = false
   #status: RoomStatus = 'connecting'
@@ -36,9 +38,11 @@ export class AwayView {
     this.#keptUntil = keptUntil
   }
 
-  show(status: RoomStatus): void {
+  show(status: RoomStatus, closedByHost = false): void {
     this.#status = status
-    this.header.set(status === 'kept' && this.pending ? 'saving' : status)
+    const byHost = status === 'closed' && closedByHost
+    this.hostClosed.set(byHost)
+    this.header.set(byHost ? 'host-closed' : status === 'kept' && this.pending ? 'saving' : status)
     this.hostAway.set(isHostAway(status))
     const kept = status === 'kept' || status === 'log-full'
     this.until.set(kept ? new Date(this.#keptUntil()).toLocaleString() : null)
