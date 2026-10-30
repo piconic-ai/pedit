@@ -355,7 +355,7 @@ export async function joinKeptText(
             EditorView.editable.of(false),
           ]),
         })
-        status.set('expired')
+        status.set(error.byHost ? 'host-closed' : 'expired')
         return
       }
       status.set('retrying')

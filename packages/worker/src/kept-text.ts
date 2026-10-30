@@ -63,9 +63,20 @@ export async function expireKeptText(
   const state = storage.kv.get<KeptText>('keptText')
   if (!state) return storage.kv.get<boolean>('keptTextClosed') === true
   if (Date.now() < Math.min(state.until, state.total ?? Infinity)) return false
+  await endKeptText(storage, removeBlobs, false)
+  return true
+}
+// Ends the room for good: the ID cannot be used again. byHost tells a guest
+// whose next request is refused that the host closed it, not that it expired.
+async function endKeptText(
+  storage: DurableObjectStorage,
+  removeBlobs: () => Promise<void>,
+  byHost: boolean,
+): Promise<void> {
   storage.transactionSync(() => {
     storage.kv.delete('keptText')
     storage.kv.put('keptTextClosed', true)
+    if (byHost) storage.kv.put('keptTextClosedByHost', true)
     storage.sql.exec('DELETE FROM kept_text_log')
   })
   await storage.deleteAlarm()
@@ -73,7 +84,6 @@ export async function expireKeptText(
   // The room's images go with its text; a failure is left to the bucket's
   // lifecycle rule for `kept/`.
   await removeBlobs()
-  return true
 }
 export async function keptText(
   request: Request,
@@ -84,7 +94,20 @@ export async function keptText(
   removeBlobs: () => Promise<void>,
 ): Promise<Response> {
   const action = new URL(request.url).pathname.split('/').at(-1)
-  if (await expireKeptText(storage, removeBlobs)) return new Response(null, { status: 410 })
+  const closing = action === 'close' && request.method === 'POST'
+  if (closing && !host) return new Response(null, { status: 403 })
+  if (await expireKeptText(storage, removeBlobs))
+    return closing
+      ? new Response(null, { status: 204 })
+      : new Response(null, {
+          status: 410,
+          headers: storage.kv.get('keptTextClosedByHost') ? { 'X-Pedit-Closed': 'host' } : {},
+        })
+  if (closing) {
+    if (!storage.kv.get('keptText')) return new Response(null, { status: 404 })
+    await endKeptText(storage, removeBlobs, true)
+    return new Response(null, { status: 204 })
+  }
   let state = storage.kv.get<KeptText>('keptText')
   const token = request.headers.get('X-Pedit-Admission')
   try {

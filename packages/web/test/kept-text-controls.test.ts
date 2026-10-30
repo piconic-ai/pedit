@@ -178,6 +178,18 @@ it('updates status icons and accessible explanations as saving and connectivity 
   expect(x.editor.state.readOnly).toBe(true)
 })
 
+it('tells a room the host closed from one that expired', async () => {
+  const x = await mount()
+  const status = x.q('.status')
+  vi.mocked(fetch).mockResolvedValue(
+    new Response(null, { status: 410, headers: { 'X-Pedit-Closed': 'host' } }),
+  )
+  await vi.advanceTimersByTimeAsync(1000)
+  await vi.waitFor(() => expect(status.dataset.status).toBe('host-closed'))
+  expect(status.getAttribute('aria-label')).toContain('The host closed the room')
+  expect(x.editor.state.readOnly).toBe(true)
+})
+
 it('keeps the same header controls and view while the host goes offline and returns', async () => {
   const x = await mount()
   const header = x.q('header'),

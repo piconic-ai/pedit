@@ -15,8 +15,9 @@ const LIMIT = 8 * 1024 * 1024
 /** Text files in a kept room; the comments docs paired with them do not count. */
 const MAX_KEPT_FILES = 64
 export class KeptTextClosedError extends Error {
-  constructor() {
-    super('kept room expired')
+  /** The host closed the room, rather than it reaching its deadline. */
+  constructor(readonly byHost = false) {
+    super(byHost ? 'kept room closed by its host' : 'kept room expired')
   }
 }
 
@@ -374,7 +375,7 @@ export class KeptTextClient {
     )
     if (!response.ok && !(method === 'GET' && response.status === 304)) {
       void response.body?.cancel().catch(() => {})
-      if (response.status === 410) throw new KeptTextClosedError()
+      if (response.status === 410) throw new KeptTextClosedError(response.headers.get('X-Pedit-Closed') === 'host')
       throw new Error('kept request refused')
     }
     return response

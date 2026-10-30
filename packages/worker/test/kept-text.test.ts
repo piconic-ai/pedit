@@ -250,7 +250,7 @@ async function keptRoom() {
     )
   const keys = async (prefix: string) =>
     (await env.BLOBS.list({ prefix: `${prefix}/${env.ROOM.idFromName(id).toString()}/` })).objects
-  return { id, editor, reader, blob, keys }
+  return { id, host, editor, reader, blob, keys }
 }
 it('stores and serves images of a kept room while its host is away', async () => {
   const { editor, reader, blob, keys } = await keptRoom()
@@ -288,4 +288,66 @@ it('keeps the images of a kept room across a host that leaves and returns, and d
   })
   expect((await blob(1, 'GET', editor)).status).toBe(410)
   expect(await keys('kept')).toHaveLength(0)
+})
+it('closes a kept room for the host: everything goes, the ID stays dead, closing again is fine', async () => {
+  const { id, host, editor, reader, blob, keys } = await keptRoom()
+  expect((await blob(1, 'PUT', editor, new Uint8Array(8))).status).toBe(201)
+  const send = (action: string, headers: Record<string, string>, method = 'POST') =>
+    app.fetch(
+      new Request(`https://room/api/rooms/${id}/keep${action}`, {
+        method,
+        headers,
+        body: method === 'POST' ? Uint8Array.of(1) : undefined,
+      }),
+      env,
+      createExecutionContext(),
+    )
+  const auth = { Authorization: `Bearer ${host}` }
+  expect((await send('/close', { 'X-Pedit-Admission': editor })).status).toBe(403)
+  expect((await send('/close', { Authorization: `Bearer ${token()}` })).status).toBe(403)
+  expect((await send('/close', auth, 'GET')).status).not.toBe(204)
+  expect((await send('', { 'X-Pedit-Admission': reader }, 'GET')).status).toBe(200)
+  expect((await send('/close', auth)).status).toBe(204)
+  const room = env.ROOM.get(env.ROOM.idFromName(id))
+  await runInDurableObject(room, (_, state) => {
+    expect(state.storage.kv.get('keptText')).toBeUndefined()
+    expect(state.storage.sql.exec('SELECT count(*) AS n FROM kept_text_log').one().n).toBe(0)
+  })
+  expect(await keys('kept')).toHaveLength(0)
+  const gone = await send('', { 'X-Pedit-Admission': reader }, 'GET')
+  expect(gone.status).toBe(410)
+  expect(gone.headers.get('X-Pedit-Closed')).toBe('host')
+  expect(
+    (await send('/append', { 'X-Pedit-Admission': editor, 'X-Pedit-Sender': 'guest' })).status,
+  ).toBe(410)
+  expect((await send('/checkpoint', { ...auth, 'X-Pedit-Cutoff': '0' })).status).toBe(410)
+  expect((await send('/init', auth)).status).toBe(410)
+  expect((await send('/close', auth)).status).toBe(204)
+})
+it('does not say the host closed a room that expired', async () => {
+  const { id, host, reader } = await keptRoom()
+  const room = env.ROOM.get(env.ROOM.idFromName(id))
+  await runInDurableObject(room, (_, state) => {
+    const kept = state.storage.kv.get<{ until: number }>('keptText')
+    state.storage.kv.put('keptText', { ...kept, until: Date.now() - 1 })
+  })
+  const get = () =>
+    app.fetch(
+      new Request(`https://room/api/rooms/${id}/keep`, { headers: { 'X-Pedit-Admission': reader } }),
+      env,
+      createExecutionContext(),
+    )
+  const gone = await get()
+  expect(gone.status).toBe(410)
+  expect(gone.headers.get('X-Pedit-Closed')).toBeNull()
+  const close = await app.fetch(
+    new Request(`https://room/api/rooms/${id}/keep/close`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${host}` },
+    }),
+    env,
+    createExecutionContext(),
+  )
+  expect(close.status).toBe(204)
+  expect((await get()).headers.get('X-Pedit-Closed')).toBeNull()
 })
