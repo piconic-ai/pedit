@@ -6,10 +6,10 @@ the relay can see, read [security design](security-design.md) first.
 
 ## Who runs it
 
-The maintainers of [piconic-ai/pedit](https://github.com/piconic-ai/pedit)
-run it on Cloudflare Workers, Durable Objects and R2.
-<!-- TODO(operator): confirm operator name -->
-It runs the latest release, deployed from this repository
+kobaken (an individual, [kobaken.co](https://kobaken.co); contact
+[kobaken@piconic.ai](mailto:kobaken@piconic.ai)) runs it for
+[piconic-ai/pedit](https://github.com/piconic-ai/pedit) on Cloudflare Workers,
+Durable Objects and R2. It runs the latest release, deployed from this repository
 ([deployment](contributing/deployment.md)).
 
 ## What it keeps
@@ -69,12 +69,32 @@ include country, city, postal code, coordinates and network (ASN)
 ([Workers Logs](https://developers.cloudflare.com/workers/observability/logs/workers-logs/#invocation-logs),
 [`cf` properties](https://developers.cloudflare.com/workers/runtime-apis/request/#incomingrequestcfproperties),
 [query builder](https://developers.cloudflare.com/workers/observability/query-builder/)).
-Which request headers this relay's logs keep is not yet confirmed, in
-particular whether they keep the host token (`Authorization`) or the admission
-token (`Sec-WebSocket-Protocol`, `X-Pedit-Admission`). Neither token can
-decrypt anything.
+A logged request (checked on `POST /api/rooms`) keeps the client's IP address
+(`cf-connecting-ip`, `x-real-ip`), the `user-agent`, `accept`, `accept-encoding` and
+`host` headers, and the `cf` properties: country, city, postal code,
+coordinates, time zone, ASN and organization, and TLS version, cipher and
+client fingerprints. A guest's `GET /api/rooms/:id/ws` entry and a `PUT /api/rooms/:id/blobs/:blobId`
+entry (both checked from a browser) keep request headers whole: the
+`sec-websocket-protocol` header and the `x-pedit-admission` header, so the
+admission token is stored in plain text for the 7 days the logs are kept, and
+also `origin`, `accept-language` and the `sec-ch-ua*` client hints. The CLI
+host's `GET /api/rooms/:id/ws` entry (checked on the Room Durable Object side)
+keeps `sec-websocket-protocol` (the editor token) and `x-pedit-read-admission`
+(the reader token) in plain text and the `user-agent` (`Go-http-client/1.1`),
+but shows `authorization` (the host token) as `********`, so Cloudflare masks
+it. The relay keeps these logs to see which routes fail, and accepts that
+they hold the admission tokens: a token cannot decrypt anything, and stops
+working when its room ends, within 24 hours
+([room admission](contributing/room-admission.md)). The Worker-side entry of
+the host's request has not been looked at.
 <!-- TODO(operator): confirm in the dashboard that webSocketMessage events of the Room Durable Object appear as invocation logs, and whether they name the room. If per-frame logs are not wanted, set observability.logs.invocation_logs to false or lower head_sampling_rate, and update the comment in wrangler.jsonc. -->
-The room ID is in the path; the key never reaches the relay. The Worker's own
+The room ID is in the path; the key never reaches the relay. In the entries
+looked at, the room ID and the blob ID in the path showed as `REDACTED`.
+Nobody redacted them by hand: workerd replaces ID-like parts of a URL in logs
+(`redactUrl` in `src/workerd/api/util.c++`: 32 or more hex digits, or 21 or
+more characters with at least two digits, two upper case and two lower case
+letters). A room ID with fewer than two digits does not match, so some room
+IDs, about one in eight by that rule, are kept as they are. The Worker's own
 log lines are `rate limited <route>`, without the address,
 `failed to delete blobs` with the error, and one JSON line per event that
 ends a session or turns someone away, so a room that closed unexpectedly can
@@ -91,15 +111,20 @@ connected and how long ago the host first came.
 This relay runs on Workers Paid, where Workers Logs keeps logs for 7 days
 ([pricing](https://developers.cloudflare.com/workers/observability/logs/workers-logs/#pricing),
 [Cloudflare Observability pricing](https://developers.cloudflare.com/observability/pricing/)).
-<!-- TODO(operator): open an invocation log of each route in the dashboard (POST /api/rooms, GET /api/rooms/:id/ws as host and as guest, GET and PUT /api/rooms/:id/blobs/:blobId) and list the fields actually kept. Check especially that no Authorization value (host token), Sec-WebSocket-Protocol value or X-Pedit-Admission value (admission token) is kept, and whether the client IP is. Tail Workers redact only headers whose names contain auth, key, secret, token or jwt, which Sec-WebSocket-Protocol and X-Pedit-Admission do not. Turn off invocation_logs, or correct this page, if they are kept. Then replace the sentence "Which request headers this relay's logs keep is not yet confirmed ..." in the first paragraph of this section with what the logs were found to keep. -->
+<!-- TODO(operator): look at the Worker-side (stateless) entry of a host's GET /api/rooms/:id/ws to see whether Authorization is masked there too, and update this section and web/public/privacy.html if it is not. -->
 
 ## In your browser
 
 The editor's own code sets no cookies and loads no analytics or tracking
-scripts. Whether Cloudflare features on the piconic.ai zone add a cookie or
-script of their own, such as the bot-protection cookie `__cf_bm` or a Web
-Analytics beacon, is not yet confirmed.
-<!-- TODO(operator): confirm that no Cloudflare zone feature adds a cookie or a script the repository does not contain: Web Analytics, Zaraz, or Bot Fight Mode / Bot Management (__cf_bm cookie). Then replace the sentence 'Whether Cloudflare features on the piconic.ai zone add ...' with what was found, or drop it if nothing is added. -->
+scripts. The home page and `POST /api/rooms` were checked and set no cookie.
+Cloudflare inserts its Web Analytics script tag
+(`static.cloudflareinsights.com/beacon.min.js`) into the page; the page's
+Content-Security-Policy allows scripts only from the relay itself, so a browser
+should not load it (inferred from the policy, not yet seen in a browser
+console). Responses also carry Network Error Logging headers (`nel`,
+`report-to`, `success_fraction` 0): if a browser cannot reach the relay, it may
+report the failure to Cloudflare.
+<!-- TODO(operator): decide whether to switch off the automatic Web Analytics insertion for piconic.ai in the dashboard, and check in a browser that the beacon is blocked and that no cookie (such as __cf_bm) is set on the WebSocket and asset requests. Then update this paragraph and web/public/privacy.html. -->
 The editor keeps in `localStorage` only the name you typed (`pedit:name`) and
 display preferences: appearance, theme colours, the last Markdown and CSV view,
 Vim mode and the split position (`pedit:appearance`, `pedit:palette`,
@@ -157,20 +182,25 @@ and everything the relay sees. The Worker's code uses the address only to
 count rate limits; Workers Logs may still record it with the request (see
 [logs](#logs)).
 
-## Terms
+## Terms and privacy policy
+
+The terms of use and the privacy policy are served by the relay itself, at
+[`/terms`](https://edit.piconic.ai/terms) and
+[`/privacy`](https://edit.piconic.ai/privacy)
+(sources: `packages/web/public/terms.html` and `privacy.html`). In short:
 
 - Free, with no SLA. It may be limited or stopped at any time. For
   maintenance it can turn away new rooms, or close all rooms, open ones
   included.
-- The relay keeps no document text, and deletes encrypted images when the
-  host leaves; [what it keeps](#what-it-keeps) says what can be left behind,
-  and [logs](#logs) what is logged. Everyone you give the link gets the
-  content, and a CLI guest saves a copy.
 - Use it to edit files with people you invite. Do not use it for content that
   is illegal or harms others, malware, harassment or spam, or to move data
   unrelated to editing. Do not try to get around its limits, enter rooms you
   were not invited to, or load test it ([testing guidelines](../SECURITY.md#testing-guidelines)).
 - Rooms or networks that break these rules may be blocked.
+
+Keep the pages and this document in step: when what the relay keeps or logs
+changes, change `privacy.html` and its "Last updated" date in the same pull
+request.
 
 ## Reporting abuse
 
