@@ -362,12 +362,8 @@ func (h *keptTextHost) sync(ctx context.Context) error {
 			return errors.New("invalid kept UTF-8 text")
 		}
 		file.State, file.Pending = crdt.EncodeStateAsUpdateV1(doc, nil), &next
-		if m := file.Meta; m != nil {
-			pending, e := h.metaPending(file)
-			if e != nil {
-				return e
-			}
-			m.State, m.Pending = crdt.EncodeStateAsUpdateV1(h.files[m.ID].doc, nil), pending
+		if e := h.syncMeta(file); e != nil {
+			return e
 		}
 	}
 	if e := saveKeptState(h.path, h.state); e != nil {

@@ -51,16 +51,7 @@ func prepareKeptFiles(opts KeptTextOptions) ([]keptTextFileState, error) {
 		infos = append(infos, info)
 		files = append(files, file)
 	}
-	snapshots := make([]protocol.KeptFileSnapshot, 0, 2*len(files))
-	for i := range files {
-		if e := attachKeptMeta(opts.Project, &files[i]); e != nil {
-			return nil, e
-		}
-	}
-	for _, entry := range (&keptTextHost{state: keptTextState{Files: files}}).entries() {
-		snapshots = append(snapshots, protocol.KeptFileSnapshot{ID: entry.ID, Path: entry.Path, Update: entry.State})
-	}
-	if e := protocol.CheckKeptBundle(snapshots); e != nil {
+	if e := attachKeptMetas(opts.Project, files); e != nil {
 		return nil, e
 	}
 	return files, nil
@@ -237,10 +228,8 @@ func (h *keptTextHost) finishWrites() error {
 		if e := checkKeptSource(file, h.files[file.ID].bound); e != nil {
 			return e
 		}
-		if file.Meta != nil {
-			if e := h.checkKeptMetaSource(file.Meta); e != nil {
-				return e
-			}
+		if e := h.checkKeptMetaSource(file.Meta); e != nil {
+			return e
 		}
 	}
 	for i := range h.state.Files {
@@ -251,13 +240,8 @@ func (h *keptTextHost) finishWrites() error {
 		if e := saveKeptState(h.path, h.state); e != nil {
 			return e
 		}
-		if file.Meta != nil {
-			if e := h.finishKeptMeta(file.Meta); e != nil {
-				return e
-			}
-			if e := saveKeptState(h.path, h.state); e != nil {
-				return e
-			}
+		if e := h.finishKeptMeta(file.Meta); e != nil {
+			return e
 		}
 	}
 	return nil

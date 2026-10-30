@@ -59,10 +59,18 @@ for await (const line of createInterface({ input: process.stdin })) {
     // A comment on [from, to) of a file, as the web editor makes one.
     const { file = 0, from, to, quote, body } = command.thread
     const pairs = client.state.files
-    const entry = pairs.find((f) => f.format === 'meta' && f.path === `.pedit/meta/${pairs.find((p) => p.id === file).path}.json`)
+    const entry = pairs.find(
+      (f) =>
+        f.format === 'meta' &&
+        f.path === `.pedit/meta/${pairs.find((p) => p.id === file).path}.json`,
+    )
     const text = (file === 0 ? doc : client.getDoc(file)).getText('content')
     const position = (index, assoc) =>
-      btoa(String.fromCharCode(...Y.encodeRelativePosition(Y.createRelativePositionFromTypeIndex(text, index, assoc))))
+      btoa(
+        String.fromCharCode(
+          ...Y.encodeRelativePosition(Y.createRelativePositionFromTypeIndex(text, index, assoc)),
+        ),
+      )
     const meta = client.getDoc(entry.id)
     meta.transact(() => {
       const thread = new Y.Map()

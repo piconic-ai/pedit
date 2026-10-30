@@ -82,6 +82,36 @@ func attachKeptMeta(project string, file *keptTextFileState) error {
 	return nil
 }
 
+// attachKeptMetas pairs each file with its comments doc, then checks that the
+// whole snapshot fits.
+func attachKeptMetas(project string, files []keptTextFileState) error {
+	for i := range files {
+		if e := attachKeptMeta(project, &files[i]); e != nil {
+			return e
+		}
+	}
+	snapshots := make([]protocol.KeptFileSnapshot, 0, 2*len(files))
+	for _, entry := range (&keptTextHost{state: keptTextState{Files: files}}).entries() {
+		snapshots = append(snapshots, protocol.KeptFileSnapshot{ID: entry.ID, Path: entry.Path, Update: entry.State})
+	}
+	return protocol.CheckKeptBundle(snapshots)
+}
+
+// syncMeta journals the file's comments doc as it is now, and the metadata
+// file it makes. A file without comments has nothing to do.
+func (h *keptTextHost) syncMeta(file *keptTextFileState) error {
+	m := file.Meta
+	if m == nil {
+		return nil
+	}
+	pending, err := h.metaPending(file)
+	if err != nil {
+		return err
+	}
+	m.State, m.Pending = crdt.EncodeStateAsUpdateV1(h.files[m.ID].doc, nil), pending
+	return nil
+}
+
 // checkKeptMeta validates a saved comments doc of file against the project.
 func checkKeptMeta(file keptTextFileState, project string) error {
 	m := file.Meta
@@ -140,7 +170,7 @@ func (h *keptTextHost) readKeptMeta(m *keptMetaState) (string, bool) {
 // checkKeptMetaSource refuses a pending write over a file changed outside
 // pedit; the original is preserved.
 func (h *keptTextHost) checkKeptMetaSource(m *keptMetaState) error {
-	if m.Pending == nil {
+	if m == nil || m.Pending == nil {
 		return nil
 	}
 	if current, ok := h.readKeptMeta(m); (ok && current != m.Text && current != *m.Pending) || (!ok && m.Text != "") {
@@ -153,7 +183,7 @@ func (h *keptTextHost) checkKeptMetaSource(m *keptMetaState) error {
 // text file: replaying it after a crash writes nothing twice, and a file that
 // appeared or changed meanwhile is never overwritten.
 func (h *keptTextHost) finishKeptMeta(m *keptMetaState) error {
-	if m.Pending == nil {
+	if m == nil || m.Pending == nil {
 		return nil
 	}
 	bound, err := openMetaFile(h.project, filepath.FromSlash(m.Name), m.Text == "")
@@ -179,5 +209,5 @@ func (h *keptTextHost) finishKeptMeta(m *keptMetaState) error {
 		return errors.New("kept comments file could not be saved")
 	}
 	m.Text, m.Pending = *m.Pending, nil
-	return nil
+	return saveKeptState(h.path, h.state)
 }
