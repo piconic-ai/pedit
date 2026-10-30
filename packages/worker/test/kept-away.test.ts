@@ -1,4 +1,4 @@
-import { runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test'
+import { evictDurableObject, runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test'
 import { env, exports } from 'cloudflare:workers'
 import {
   ADMISSION_HEADER,
@@ -13,6 +13,7 @@ import type { Room as RoomObject } from '../src/room.ts'
 
 const ROOM_CLOSED = 4001
 const ROOM_EXPIRED = 4007
+const CLIENT_OUTDATED = 4002
 const POLICY = 1008
 const DAY = 86400
 // The tests run with ROOM_MAX_SECONDS 7200 and KEEP_MAX_SECONDS 604800.
@@ -549,6 +550,74 @@ describe('a host that drops', () => {
     const guest = await join(room)
     h.ws.close(HOST_LEFT, 'bye')
     expect((await guest.closed).code).toBe(ROOM_CLOSED)
+  })
+})
+
+describe('a kept room and the clients and deploys that meet it', () => {
+  it('keeps the entries when a version 5 host comes back, and tells it to update', async () => {
+    const room = await createRoom()
+    const h = await hostOf(room)
+    const guest = await join(room)
+    await leave(room, h)
+    guest.ws.send(withKind(Kind.Entry, bytes(10)))
+    await until(() => guest.binary.length === 1)
+    const old = await join(room, { host: true, version: 5 })
+    expect((await old.closed).code).toBe(CLIENT_OUTDATED)
+    expect(old.binary).toHaveLength(0)
+    const s = await state(room)
+    expect([s.until === undefined, s.keep, s.log.tail]).toEqual([false, 3600, 1])
+    expect(guest.signals).not.toContain('host back')
+    // The current host takes them in.
+    const back = await hostOf(room, '3600', { after: 0 })
+    await until(() => back.binary.length === 2)
+  })
+
+  it('gives a host that a deploy dropped its grace period and then keeps the room', async () => {
+    const room = await createRoom()
+    const h = await hostOf(room)
+    h.ws.send(withKind(Kind.Snapshot, bytes(9)))
+    await expect.poll(async () => (await state(room)).snapshot).toBe(true)
+    // No close callback ran, and no guest came: only the alarm finds out.
+    await evictDurableObject(stubOf(room), { webSockets: 'close' })
+    expect(await runDurableObjectAlarm(stubOf(room))).toBe(true)
+    expect((await state(room)).snapshot).toBe(true)
+    const grace = await inRoom(room, (_, st) => st.storage.kv.get<number>('hostAwayUntil'))
+    expect(grace).toBeGreaterThan(Date.now())
+    await inRoom(room, (_, st) => {
+      st.storage.kv.put('hostAwayUntil', Date.now() - 1)
+    })
+    await runDurableObjectAlarm(stubOf(room))
+    expect((await state(room)).until).toBeGreaterThan(Date.now())
+  })
+
+  it('serves and deletes an image wherever the host`s keep put it', async () => {
+    const room = await createRoom()
+    const url = (n: string) => `https://pedit.test/api/rooms/${room.id}/blobs/${n.repeat(22)}`
+    const send = (n: string, method: 'PUT' | 'GET') =>
+      exports.default.fetch(url(n), {
+        method,
+        ...(method === 'PUT' ? { body: bytes(1) } : {}),
+        headers: { [ADMISSION_HEADER]: room.admission },
+      })
+    const h = await join(room, { host: true })
+    expect((await send('A', 'PUT')).status).toBe(201)
+    h.ws.close(1001, 'gone')
+    await h.closed
+    const kept = await hostOf(room, '3600')
+    expect((await send('B', 'PUT')).status).toBe(201)
+    expect((await send('A', 'GET')).status).toBe(200)
+    kept.ws.close(1001, 'gone')
+    await kept.closed
+    const plain = await join(room, { host: true })
+    expect((await send('B', 'GET')).status).toBe(200)
+    expect((await send('A', 'GET')).status).toBe(200)
+    plain.ws.close(HOST_LEFT, 'bye')
+    await plain.closed
+    const id = env.ROOM.idFromName(room.id).toString()
+    await expect
+      .poll(async () => (await env.BLOBS.list({ prefix: `kept/${id}/` })).objects.length)
+      .toBe(0)
+    expect((await env.BLOBS.list({ prefix: `rooms/${id}/` })).objects).toHaveLength(0)
   })
 })
 

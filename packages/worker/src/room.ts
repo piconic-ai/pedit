@@ -264,7 +264,7 @@ export class Room extends DurableObject<Env> {
   // Host connections between the start of fetch and the accept or refusal.
   private hostHandshakes = 0
   // Deletes a kept room's images when it expires.
-  private readonly removeKeptBlobs = () => this.deleteBlobs(this.blobPrefix(true))
+  private readonly removeKeptBlobs = () => this.deleteBlobs([this.blobPrefix(true)])
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
@@ -356,6 +356,10 @@ export class Room extends DurableObject<Env> {
     if (this.kept()) return new Response('kept rooms use text synchronization', { status: 409 })
     if (this.ctx.storage.kv.get(CLOSED_KEY) === true)
       return refuse(ROOM_CLOSED, 'room is closed', join.protocol)
+    // A version 5 host cannot take in the entries kept for it, and returning
+    // would discard them: it is told to update, and the room stays kept.
+    if (isHost && join.version === 5 && this.keptAway())
+      return refuse(CLIENT_OUTDATED, 'pedit is outdated; update it', join.protocol)
     // Deploys can drop every socket without a close callback. Only a guest
     // with this session's editor admission may start its missing host grace
     // period: the reader token goes to anyone a link was passed on to.
@@ -626,7 +630,10 @@ export class Room extends DurableObject<Env> {
       // there is nothing left to do. Not armed again until a host connects.
       if (this.sessionOpen()) {
         this.log('alarm found no host')
-        await this.endSession(ROOM_CLOSED, 'the host left')
+        // A host that asked to keep the room gets its grace period, then the
+        // kept state, as if its close had been seen.
+        if (this.canKeep()) await this.waitForHost()
+        else await this.endSession(ROOM_CLOSED, 'the host left')
       }
       return
     }
@@ -958,7 +965,9 @@ export class Room extends DurableObject<Env> {
     }
     const key = this.blobPrefix() + id
     if (request.method === 'GET') {
-      const object = await this.env.BLOBS.get(key)
+      // An image from before the host changed its keep is under the other prefix.
+      const object =
+        (await this.env.BLOBS.get(key)) ?? (await this.env.BLOBS.get(this.blobPrefix(!this.keepsBlobs()) + id))
       if (!object) return new Response('no such blob', { status: 404 })
       return new Response(object.body, {
         headers: {
@@ -1062,14 +1071,17 @@ export class Room extends DurableObject<Env> {
   }
 
   // Deletion failures are left to the bucket's lifecycle rule.
-  private async deleteBlobs(prefix = this.blobPrefix()): Promise<void> {
+  // Without prefixes, the session's images wherever the host's keep put them.
+  private async deleteBlobs(prefixes = [this.blobPrefix(false), this.blobPrefix(true)]): Promise<void> {
     try {
-      let cursor: string | undefined
-      do {
-        const page = await this.env.BLOBS.list({ prefix, cursor })
-        if (page.objects.length > 0) await this.env.BLOBS.delete(page.objects.map((o) => o.key))
-        cursor = page.truncated ? page.cursor : undefined
-      } while (cursor)
+      for (const prefix of prefixes) {
+        let cursor: string | undefined
+        do {
+          const page = await this.env.BLOBS.list({ prefix, cursor })
+          if (page.objects.length > 0) await this.env.BLOBS.delete(page.objects.map((o) => o.key))
+          cursor = page.truncated ? page.cursor : undefined
+        } while (cursor)
+      }
     } catch (error) {
       console.error('failed to delete blobs', error)
     }
@@ -1079,8 +1091,12 @@ export class Room extends DurableObject<Env> {
   // A kept room's blobs, and those of a room its host asked to keep, live under
   // their own prefix, which the bucket's one-day lifecycle rule for `rooms/`
   // leaves alone (docs/public-relay.md).
-  private blobPrefix(kept = this.kept() || this.keepSeconds() > 0): string {
+  private blobPrefix(kept = this.keepsBlobs()): string {
     return `${kept ? 'kept' : 'rooms'}/${this.ctx.id.toString()}/`
+  }
+
+  private keepsBlobs(): boolean {
+    return this.kept() || this.keepSeconds() > 0
   }
 
   private usage(): Usage {
