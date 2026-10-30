@@ -321,14 +321,8 @@ func (h *keptTextHost) sync(ctx context.Context) error {
 	if _, e := keptTextRequest(ctx, h.client, &h.state, h.room, "GET", action, nil, headers, &read); e != nil {
 		return e
 	}
-	if read.KeepUntil > 0 {
-		h.meta.Until = read.KeepUntil
-		if h.state.Until != read.KeepUntil && h.state.Initialized {
-			h.state.Until = read.KeepUntil
-			if e := saveKeptState(h.path, h.state); e != nil {
-				return e
-			}
-		}
+	if e := h.trackDeadline(read.KeepUntil); e != nil {
+		return e
 	}
 	before := h.skipped
 	if e := h.applyRead(read); e != nil {
@@ -748,4 +742,17 @@ func (h *keptTextHost) dropEndedRecord(err error, notify func()) {
 	if gone && h.nothingPending() && os.Remove(h.path) == nil && notify != nil {
 		notify()
 	}
+}
+
+// trackDeadline keeps the saved record's deadline equal to the relay's.
+func (h *keptTextHost) trackDeadline(until int64) error {
+	if until <= 0 {
+		return nil
+	}
+	h.meta.Until = until
+	if h.state.Until == until || !h.state.Initialized {
+		return nil
+	}
+	h.state.Until = until
+	return saveKeptState(h.path, h.state)
 }
