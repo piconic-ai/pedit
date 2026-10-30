@@ -3,13 +3,10 @@ package session
 import (
 	"errors"
 	"fmt"
-	"io/fs"
-	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/piconic-ai/pedit/internal/meta"
-	"github.com/piconic-ai/pedit/internal/protocol"
 	"github.com/reearth/ygo/crdt"
 )
 
@@ -31,57 +28,6 @@ type keptMetaState struct {
 	Pending *string `json:",omitempty"`
 }
 
-// attachKeptMeta gives file a paired comments doc, loaded from its metadata
-// file if there is one, unless its comments cannot be kept: a file outside
-// the project, or under .pedit/meta/ itself. A metadata file pedit cannot
-// read or open is left as it is and that file offers no comments, as in a live
-// room.
-func attachKeptMeta(project string, file *keptTextFileState) error {
-	root, err := os.OpenRoot(project)
-	if err != nil {
-		return errors.New("cannot open the kept project")
-	}
-	defer root.Close()
-	rel, ok := projectPath(root, file.File)
-	if !ok || keepsComments(root, file.File) || protocol.CheckPath(rel) != nil || protocol.CheckPath(protocol.MetaPath(file.Path)) != nil {
-		return nil
-	}
-	name := metaDir + "/" + rel + ".json"
-	loaded := &meta.File{Path: rel}
-	text := ""
-	if bound, err := openMetaFile(root, filepath.FromSlash(name), false); err == nil {
-		defer bound.Close()
-		if size, ok := bound.Size(); ok {
-			data, readable := bound.Read()
-			if size > meta.MaxFileBytes || !readable {
-				return nil
-			}
-			if loaded, err = meta.Parse([]byte(data)); err != nil {
-				return nil
-			}
-			loaded.Path, text = rel, data
-		}
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	content := crdt.New()
-	defer content.Destroy()
-	if err := applyKeptText(content, file.State); err != nil {
-		return err
-	}
-	tracker := meta.NewTracker(content)
-	defer tracker.Close()
-	doc := crdt.New(crdt.WithGC(false))
-	defer doc.Destroy()
-	meta.Load(doc, loaded, tracker)
-	// Every peer refuses comments larger: they could not take the state.
-	if meta.DocSize(doc) > meta.MaxDocBytes {
-		return nil
-	}
-	file.Meta = &keptMetaState{ID: keptMetaIDBase + file.ID, Name: name, State: crdt.EncodeStateAsUpdateV1(doc, nil), Text: text}
-	return nil
-}
-
 // followComments makes each text file with comments follow its anchors from
 // here on, before any edit can delete the character one points at.
 func (h *keptTextHost) followComments() {
@@ -93,21 +39,6 @@ func (h *keptTextHost) followComments() {
 		comments.paired, text.comments, text.tracker = text, comments, meta.NewTracker(text.doc)
 		text.tracker.Learn(comments.doc)
 	}
-}
-
-// attachKeptMetas pairs each file with its comments doc, then checks that the
-// whole snapshot fits.
-func attachKeptMetas(project string, files []keptTextFileState) error {
-	for i := range files {
-		if e := attachKeptMeta(project, &files[i]); e != nil {
-			return e
-		}
-	}
-	snapshots := make([]protocol.KeptFileSnapshot, 0, 2*len(files))
-	for _, entry := range (&keptTextHost{state: keptTextState{Files: files}}).entries() {
-		snapshots = append(snapshots, protocol.KeptFileSnapshot{ID: entry.ID, Path: entry.Path, Update: entry.State})
-	}
-	return protocol.CheckKeptBundle(snapshots)
 }
 
 // syncMeta journals the file's comments doc as it is now, and the metadata

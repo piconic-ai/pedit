@@ -1,14 +1,8 @@
 package session
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"testing"
 
 	"github.com/piconic-ai/pedit/internal/protocol"
@@ -17,9 +11,8 @@ import (
 
 // keptLocalRoom returns a host about to resume a kept room whose checkpoint
 // holds three lines and whose log holds one guest edit to line 1, with the
-// source file on disk set to local. The counter counts checkpoints that cut
-// the log.
-func keptLocalRoom(t *testing.T, local string, guestEdit bool) (*keptTextHost, *int) {
+// source file on disk set to local, and what the relay replays to it.
+func keptLocalRoom(t *testing.T, local string, guestEdit bool) (*keptTextHost, keptTextRead) {
 	t.Helper()
 	keys, _, _, _ := keptFixFrames(t)
 	const base = "one\ntwo\nthree\n"
@@ -44,26 +37,16 @@ func keptLocalRoom(t *testing.T, local string, guestEdit bool) (*keptTextHost, *
 	if err := os.WriteFile(path, []byte(local), 0600); err != nil {
 		t.Fatal(err)
 	}
-	entries, tail := []any{map[string]any{"id": 1, "body": frame}}, 1
+	read := keptTextRead{Snapshot: snapshot, Tail: 1, Entries: []keptTextEntry{{ID: 1, Body: frame}}}
 	if !guestEdit {
-		entries, tail = []any{}, 0
+		read = keptTextRead{Snapshot: snapshot}
 	}
-	cuts := new(int)
-	client := &http.Client{Transport: keepFixTransport(func(r *http.Request) (*http.Response, error) {
-		body := []byte(`{"keepSeconds":60,"keepUntil":1000000000000}`)
-		if r.Method == "GET" {
-			body, _ = json.Marshal(map[string]any{"snapshot": snapshot, "entries": entries, "cutoff": 0, "tail": tail})
-		} else if r.Header.Get("X-Pedit-Cutoff") == strconv.Itoa(tail) {
-			*cuts++
-		}
-		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(bytes.NewReader(body))}, nil
-	})}
 	state := keptTextState{Project: dir, Origin: "https://example.test", Files: []keptTextFileState{{ID: 0, Path: "notes.md", File: path, State: checkpoint, Text: base}}}
-	return &keptTextHost{state: state, keys: keys, path: filepath.Join(dir, "state.json"), room: "abcdefghijklmnopqrstuv", client: client}, cuts
+	return &keptTextHost{state: state, keys: keys, path: filepath.Join(dir, "state.json"), room: "abcdefghijklmnopqrstuv"}, read
 }
 
 func TestKeptResumeMergesLocalEditsMadeWhileAway(t *testing.T) {
-	h, cuts := keptLocalRoom(t, "one\ntwo\nthree (host)\n", true)
+	h, read := keptLocalRoom(t, "one\ntwo\nthree (host)\n", true)
 	if err := h.openFiles(); err != nil {
 		t.Fatal(err)
 	}
@@ -71,20 +54,18 @@ func TestKeptResumeMergesLocalEditsMadeWhileAway(t *testing.T) {
 	if err := h.restore(); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.sync(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	takeInRead(t, h, read)
 	got, _ := os.ReadFile(h.state.Files[0].File)
 	if string(got) != "one (guest)\ntwo\nthree (host)\n" {
 		t.Fatalf("edits not merged: %q", got)
 	}
-	if *cuts != 1 || h.after != 1 {
-		t.Fatalf("log not truncated after the write: %d %d", *cuts, h.after)
+	if h.after != 1 {
+		t.Fatalf("log not truncated after the write: %d", h.after)
 	}
 }
 
 func TestKeptResumeUnchangedLocalFileBehavesAsBefore(t *testing.T) {
-	h, cuts := keptLocalRoom(t, "one\ntwo\nthree\n", true)
+	h, read := keptLocalRoom(t, "one\ntwo\nthree\n", true)
 	if err := h.openFiles(); err != nil {
 		t.Fatal(err)
 	}
@@ -92,17 +73,15 @@ func TestKeptResumeUnchangedLocalFileBehavesAsBefore(t *testing.T) {
 	if err := h.restore(); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.sync(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	takeInRead(t, h, read)
 	got, _ := os.ReadFile(h.state.Files[0].File)
-	if string(got) != "one (guest)\ntwo\nthree\n" || *cuts != 1 {
-		t.Fatalf("unexpected result: %q %d", got, *cuts)
+	if string(got) != "one (guest)\ntwo\nthree\n" || h.after != 1 {
+		t.Fatalf("unexpected result: %q %d", got, h.after)
 	}
 }
 
 func TestKeptResumeInvalidLocalFileStopsWithoutOverwriting(t *testing.T) {
-	h, cuts := keptLocalRoom(t, "one\n\xff\xfe\n", true)
+	h, _ := keptLocalRoom(t, "one\n\xff\xfe\n", true)
 	if err := h.openFiles(); err != nil {
 		t.Fatal(err)
 	}
@@ -111,8 +90,8 @@ func TestKeptResumeInvalidLocalFileStopsWithoutOverwriting(t *testing.T) {
 		t.Fatal("unmergeable local file accepted")
 	}
 	got, _ := os.ReadFile(h.state.Files[0].File)
-	if string(got) != "one\n\xff\xfe\n" || *cuts != 0 {
-		t.Fatalf("file or log touched: %q %d", got, *cuts)
+	if string(got) != "one\n\xff\xfe\n" || h.after != 0 {
+		t.Fatalf("file or log touched: %q %d", got, h.after)
 	}
 }
 
@@ -136,7 +115,7 @@ func TestKeptResumeUnmergeableFileDoesNotBlockOtherFiles(t *testing.T) {
 }
 
 func TestKeptResumePublishesLocalEditsWithoutGuestEdits(t *testing.T) {
-	h, cuts := keptLocalRoom(t, "one\ntwo\nthree (host)\n", false)
+	h, read := keptLocalRoom(t, "one\ntwo\nthree (host)\n", false)
 	if err := h.openFiles(); err != nil {
 		t.Fatal(err)
 	}
@@ -144,11 +123,15 @@ func TestKeptResumePublishesLocalEditsWithoutGuestEdits(t *testing.T) {
 	if err := h.restore(); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.sync(context.Background()); err != nil {
+	frame := takeInRead(t, h, read)
+	_, raw, err := protocol.OpenKeptTextSnapshot(h.keys, frame)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if *cuts != 1 {
-		t.Fatal("local edits were not checkpointed to the relay")
+	checkpointed := crdt.New()
+	defer checkpointed.Destroy()
+	if err := applyKeptText(checkpointed, raw); err != nil || checkpointed.GetText("content").ToString() != "one\ntwo\nthree (host)\n" {
+		t.Fatalf("local edits were not in the checkpoint: %v", err)
 	}
 }
 

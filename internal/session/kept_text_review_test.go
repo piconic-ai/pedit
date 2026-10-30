@@ -1,7 +1,6 @@
 package session
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"os"
@@ -22,7 +21,7 @@ func TestReviewResumeRejectsInvalidPendingStateBeforeWritingSource(t *testing.T)
 	hash := sha256.Sum256([]byte(token))
 	room := base64.RawURLEncoding.EncodeToString(hash[:])[:22]
 	pending := "corrupted pending text"
-	state := keptTextState{Project: dir, Origin: "https://example.test", Fragment: protocol.GenerateEditSecret(), HostToken: token, Keep: 60, Initialized: true, Files: []keptTextFileState{{ID: 0, Path: filepath.Base(file), File: file, State: []byte{1, 2, 3}, Text: "original", Pending: &pending}}}
+	state := keptTextState{Project: dir, Origin: "https://example.test", Fragment: protocol.GenerateEditSecret(), HostToken: token, Keep: 60, Initialized: true, Socket: true, Files: []keptTextFileState{{ID: 0, Path: filepath.Base(file), File: file, State: []byte{1, 2, 3}, Text: "original", Pending: &pending}}}
 	path := keptTestStatePath(t, dir, room)
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		t.Fatal(err)
@@ -30,8 +29,8 @@ func TestReviewResumeRejectsInvalidPendingStateBeforeWritingSource(t *testing.T)
 	if err := saveKeptState(path, state); err != nil {
 		t.Fatal(err)
 	}
-	link := state.Origin + "/r/" + room + "?keep=1#" + state.Fragment
-	if err := RunKeptText(context.Background(), KeptTextOptions{Project: dir, Resume: link}, nil, nil); err == nil {
+	link := state.Origin + "/r/" + room + "#" + state.Fragment
+	if _, err := openAway(KeptTextOptions{Project: dir, Resume: link}); err == nil {
 		t.Fatal("invalid saved document accepted")
 	}
 	got, err := os.ReadFile(file)

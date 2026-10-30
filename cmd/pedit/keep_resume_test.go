@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -14,11 +15,11 @@ const testRoom = "AAAAAAAAAAAAAAAAAAAAAA"
 
 func TestResumeArguments(t *testing.T) {
 	for args, want := range map[string]commandArgs{
-		"--resume":                             {ResumeAny: true},
-		"--resume " + testRoom:                 {Resume: testRoom},
-		"--resume=" + testRoom:                 {Resume: testRoom},
-		"--resume -AAAAAAAAAAAAAAAAAAAAA":      {Resume: "-AAAAAAAAAAAAAAAAAAAAA"},
-		"--resume https://x.test/r/a?keep=1#k": {Resume: "https://x.test/r/a?keep=1#k"},
+		"--resume":                        {ResumeAny: true},
+		"--resume " + testRoom:            {Resume: testRoom},
+		"--resume=" + testRoom:            {Resume: testRoom},
+		"--resume -AAAAAAAAAAAAAAAAAAAAA": {Resume: "-AAAAAAAAAAAAAAAAAAAAA"},
+		"--resume https://x.test/r/a#k":   {Resume: "https://x.test/r/a#k"},
 	} {
 		got, err := parseArgs(strings.Fields(args))
 		if err != nil || got.Resume != want.Resume || got.ResumeAny != want.ResumeAny {
@@ -107,26 +108,18 @@ func TestKeepHint(t *testing.T) {
 		}
 	}
 	var out bytes.Buffer
-	printKeepHint(&out, testRoom, false, "")
-	if !strings.HasSuffix(out.String(), "run in this directory:\n  pedit --resume\n") || !strings.HasPrefix(out.String(), "Leave with Ctrl+C.") {
+	printKeepHint(&out, testRoom, false, "a.md")
+	if !strings.HasSuffix(out.String(), "run in this directory:\n  pedit a.md\n") || !strings.HasPrefix(out.String(), "Leave with Ctrl+C.") {
 		t.Fatal(out.String())
-	}
-	out.Reset()
-	printKeepHint(&out, testRoom, true, "")
-	if !strings.HasSuffix(out.String(), "  pedit --resume "+testRoom+"\n") {
-		t.Fatal(out.String())
-	}
-	if keptRoomOf("https://x.test/r/"+testRoom+"?keep=1#k") != testRoom {
-		t.Fatal("room of link")
 	}
 }
 
 func TestCloseArguments(t *testing.T) {
 	for args, want := range map[string]commandArgs{
-		"--close":                             {Close: true, ResumeAny: true},
-		"--close " + testRoom:                 {Close: true, Resume: testRoom},
-		"--close=" + testRoom:                 {Close: true, Resume: testRoom},
-		"--close https://x.test/r/a?keep=1#k": {Close: true, Resume: "https://x.test/r/a?keep=1#k"},
+		"--close":                      {Close: true, ResumeAny: true},
+		"--close " + testRoom:          {Close: true, Resume: testRoom},
+		"--close=" + testRoom:          {Close: true, Resume: testRoom},
+		"--close https://x.test/r/a#k": {Close: true, Resume: "https://x.test/r/a#k"},
 	} {
 		got, err := parseArgs(strings.Fields(args))
 		if err != nil || got.Close != want.Close || got.Resume != want.Resume || got.ResumeAny != want.ResumeAny {
@@ -137,5 +130,30 @@ func TestCloseArguments(t *testing.T) {
 		if _, err := parseArgs(args); err == nil {
 			t.Fatalf("accepted %v", args)
 		}
+	}
+}
+
+func TestResumeOffersOnlyRoomsKeptByTheRelay(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("kept rooms are not supported on Windows")
+	}
+	root := keptProject(t, "")
+	old := "CCCCCCCCCCCCCCCCCCCCCC"
+	soon := time.Now().Add(time.Hour)
+	keptHere(t, root, old, false, soon, filepath.Join(root, "b.md"))
+	var out, errw bytes.Buffer
+	opts := commandArgs{ResumeAny: true}
+	if code := chooseResume(&opts, &out, &errw); code != 1 || !strings.Contains(errw.String(), "no kept room") {
+		t.Fatalf("an old polling room was offered: %d %q", code, errw.String())
+	}
+	errw.Reset()
+	opts = commandArgs{Resume: old}
+	if code := chooseResume(&opts, &out, &errw); code != 1 || !strings.Contains(errw.String(), "no kept room "+old) {
+		t.Fatalf("an old polling room was resumed: %d %q", code, errw.String())
+	}
+	keptHere(t, root, testRoom, true, soon, filepath.Join(root, "a.md"))
+	opts = commandArgs{Resume: testRoom}
+	if code := chooseResume(&opts, &out, &errw); code != 0 || opts.File != "a.md" {
+		t.Fatalf("a kept room was not found: %+v %d", opts, code)
 	}
 }

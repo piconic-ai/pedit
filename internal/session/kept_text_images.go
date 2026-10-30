@@ -2,30 +2,16 @@ package session
 
 import (
 	"context"
-	"time"
 
 	"github.com/piconic-ai/pedit/internal/attach"
 	"github.com/piconic-ai/pedit/internal/protocol"
 )
-
-// imageRetry is how long a sync that has nothing else to do waits before it
-// fetches again the images it could not.
-const imageRetry = 30 * time.Second
 
 // journalAndSaveImages records the new text in the journal, then saves its
 // images.
 func (h *keptTextHost) journalAndSaveImages(ctx context.Context) error {
 	if e := saveKeptState(h.path, h.state); e != nil {
 		return e
-	}
-	return h.saveImages(ctx)
-}
-
-// retryImages fetches again, now and then, the images a transient failure
-// left out. They stay on the relay until the room's deadline.
-func (h *keptTextHost) retryImages(ctx context.Context) error {
-	if !h.imagesFailed || time.Now().Before(h.imageRetryAt) {
-		return nil
 	}
 	return h.saveImages(ctx)
 }
@@ -46,7 +32,7 @@ func (h *keptTextHost) saveImages(ctx context.Context) error {
 		blobKeys.Admission = h.keys.EditAdmission
 		h.blobKeys = blobKeys
 	}
-	h.imagesFailed, h.imageRetryAt = false, time.Now().Add(imageRetry)
+	h.imagesFailed = false
 	for _, file := range h.state.Files {
 		// Through the directory the text is written in, which stays the one
 		// opened at the start even if its path is later swapped for a link.

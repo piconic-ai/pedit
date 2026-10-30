@@ -1,9 +1,6 @@
 package session
 
 import (
-	"context"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 )
 
@@ -26,19 +23,27 @@ func TestListKeptTextZeroOneAndSeveralRecords(t *testing.T) {
 	}
 }
 
+func TestListKeptTextLeavesOutTheOlderPollingRooms(t *testing.T) {
+	isolateKeptUserConfig(t)
+	project := t.TempDir()
+	keptRecord(t, project, "https://example.test", 1, 2000, nil, false)
+	room, _, _ := pruneRecord(t, project, "https://example.test", 2, 1000, nil)
+	records, err := ListKeptText(project)
+	if err != nil || len(records) != 1 || records[0].Room != room {
+		t.Fatalf("%+v %v", records, err)
+	}
+}
+
 func TestKeptTextResumeByRoomID(t *testing.T) {
 	isolateKeptUserConfig(t)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusGone) }))
-	defer server.Close()
 	project := t.TempDir()
-	room, path, _ := pruneRecord(t, project, server.URL, 1, 1, nil)
-	ended := 0
-	err := RunKeptText(context.Background(), KeptTextOptions{Project: project, Resume: room, OnEnded: func() { ended++ }}, nil, nil)
-	if err == nil || ended != 1 || exists(path) {
-		t.Fatalf("room ID did not reach the relay: err=%v ended=%d", err, ended)
+	room, path, _ := pruneRecord(t, project, "https://example.test", 1, 1, nil)
+	h := keptTextHost{}
+	if err := h.prepare(KeptTextOptions{Project: project, Resume: room}); err != nil || h.path != path {
+		t.Fatalf("room ID did not find the record: %v %q", err, h.path)
 	}
 	other := t.TempDir()
-	if err := RunKeptText(context.Background(), KeptTextOptions{Project: other, Resume: room}, nil, nil); err == nil {
+	if err := (&keptTextHost{}).prepare(KeptTextOptions{Project: other, Resume: room}); err == nil {
 		t.Fatal("resumed a room this project has no record of")
 	}
 }

@@ -2,10 +2,6 @@ package session
 
 import (
 	"bytes"
-	"context"
-	"encoding/json"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,7 +44,7 @@ func TestKeptCommentsAreKeptAndWrittenOnResume(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	files, err := prepareKeptFiles(KeptTextOptions{File: notes, Project: dir})
+	files, err := prepareKeptFiles(dir, notes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,27 +88,17 @@ func TestKeptCommentsAreKeptAndWrittenOnResume(t *testing.T) {
 	}
 	h.closeFiles()
 
-	entry := func(id uint32, update []byte) map[string]any {
+	entry := func(i uint64, id uint32, update []byte) keptTextEntry {
 		frame, err := protocol.SealKeptFileUpdate(keys, id, update)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return map[string]any{"id": 0, "body": frame}
+		return keptTextEntry{ID: i, Body: frame}
 	}
-	entries := []any{entry(m.ID, threadUpdate), entry(77, threadUpdate), entry(0, threadUpdate)}
-	for i, e := range entries {
-		e.(map[string]any)["id"] = i + 1
-	}
-	client := &http.Client{Transport: keepFixTransport(func(r *http.Request) (*http.Response, error) {
-		body := []byte(`{"keepSeconds":60,"keepUntil":1000000000000}`)
-		if r.Method == "GET" {
-			body, _ = json.Marshal(map[string]any{"snapshot": snapshot, "entries": entries, "cutoff": 0, "tail": 3})
-		}
-		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(bytes.NewReader(body))}, nil
-	})}
+	read := keptTextRead{Snapshot: snapshot, Tail: 3, Entries: []keptTextEntry{entry(1, m.ID, threadUpdate), entry(2, 77, threadUpdate), entry(3, 0, threadUpdate)}}
 	statePath := filepath.Join(t.TempDir(), "state.json")
 	resume := func(state keptTextState) *keptTextHost {
-		host := &keptTextHost{state: state, keys: keys, path: statePath, room: "abcdefghijklmnopqrstuv", client: client}
+		host := &keptTextHost{state: state, keys: keys, path: statePath, room: "abcdefghijklmnopqrstuv"}
 		if err := host.openFiles(); err != nil {
 			t.Fatal(err)
 		}
@@ -122,9 +108,7 @@ func TestKeptCommentsAreKeptAndWrittenOnResume(t *testing.T) {
 		return host
 	}
 	host := resume(state)
-	if err := host.sync(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	takeInRead(t, host, read)
 	// An unknown file ID, and a comments update for a text file, are skipped and counted.
 	if host.skipped != 2 {
 		t.Fatalf("skipped %d, want 2", host.skipped)
@@ -149,9 +133,7 @@ func TestKeptCommentsAreKeptAndWrittenOnResume(t *testing.T) {
 	}
 	again := resume(after)
 	defer again.closeFiles()
-	if err := again.sync(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	takeInRead(t, again, read)
 	replayed, _ := os.ReadFile(metaName)
 	if !bytes.Equal(replayed, written) {
 		t.Fatalf("replay changed the metadata file:\n%s\n%s", written, replayed)
@@ -166,7 +148,7 @@ func TestKeptCommentsCreateOnlyWithAThreadAndNeverForOutsideFiles(t *testing.T) 
 			t.Fatal(err)
 		}
 	}
-	files, err := prepareKeptFiles(KeptTextOptions{File: inside, Project: dir})
+	files, err := prepareKeptFiles(dir, inside)
 	if err != nil || files[0].Meta == nil {
 		t.Fatalf("file in the project has no comments doc: %v", err)
 	}
@@ -182,7 +164,7 @@ func TestKeptCommentsCreateOnlyWithAThreadAndNeverForOutsideFiles(t *testing.T) 
 	if _, err := os.Stat(filepath.Join(dir, ".pedit")); !os.IsNotExist(err) {
 		t.Fatal("pedit made .pedit/meta without a thread")
 	}
-	outFiles, err := prepareKeptFiles(KeptTextOptions{File: away, Project: dir})
+	outFiles, err := prepareKeptFiles(dir, away)
 	if err != nil || outFiles[0].Meta != nil {
 		t.Fatalf("file outside the project got a comments doc: %v", err)
 	}

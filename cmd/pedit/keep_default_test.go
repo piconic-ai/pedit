@@ -13,8 +13,9 @@ import (
 	"time"
 )
 
-// keptHere writes the resume record of a kept room of the project at root.
-func keptHere(t *testing.T, root, room string, live bool, until time.Time, files ...string) {
+// keptHere writes the resume record of a kept room of the project at root;
+// without socket it is the record of the older, polling kind of room.
+func keptHere(t *testing.T, root, room string, socket bool, until time.Time, files ...string) {
 	t.Helper()
 	config, err := os.UserConfigDir()
 	if err != nil {
@@ -29,7 +30,7 @@ func keptHere(t *testing.T, root, room string, live bool, until time.Time, files
 	for i, f := range files {
 		list = append(list, map[string]any{"ID": i, "File": f, "Path": filepath.Base(f)})
 	}
-	data, err := json.Marshal(map[string]any{"Project": root, "Files": list, "Initialized": true, "Socket": live, "Until": until.UnixMilli()})
+	data, err := json.Marshal(map[string]any{"Project": root, "Files": list, "Initialized": true, "Socket": socket, "Until": until.UnixMilli()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +139,7 @@ func TestFileResumesTheRoomThatHoldsIt(t *testing.T) {
 	}
 }
 
-func TestFileDoesNotResumeAnExpiredOrPollingRoom(t *testing.T) {
+func TestFileDoesNotResumeAnExpiredOrOldRoom(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("kept rooms are not supported on Windows")
 	}
@@ -156,7 +157,7 @@ func TestFileDoesNotResumeAnExpiredOrPollingRoom(t *testing.T) {
 	}
 }
 
-func TestFileDoesNotResumeAgainstKeepZeroConfigOrPollingMode(t *testing.T) {
+func TestFileDoesNotResumeAgainstKeepZeroConfig(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("kept rooms are not supported on Windows")
 	}
@@ -173,10 +174,6 @@ func TestFileDoesNotResumeAgainstKeepZeroConfigOrPollingMode(t *testing.T) {
 	opts, _ = parseArgs([]string{"--keep", "1d", "a.md"})
 	if resumeHeld(&opts, &out, &errw); opts.Resume != testRoom {
 		t.Fatalf("--keep resumes even when the config says keep: 0: %+v", opts)
-	}
-	opts, _ = parseArgs([]string{"--keep-polling", "1d", "a.md"})
-	if code := resumeHeld(&opts, &out, &errw); code != 0 || opts.Resume != "" {
-		t.Fatalf("--keep-polling: %+v %d", opts, code)
 	}
 }
 

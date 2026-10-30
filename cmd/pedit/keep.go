@@ -78,7 +78,7 @@ func applyConfigKeep(opts *commandArgs) error {
 // that holds the file, as --resume does. The room's set of files is fixed, so
 // a file it does not hold is an error. --keep 0 asks for a separate room.
 func resumeHeld(opts *commandArgs, stdout, stderr io.Writer) (code int) {
-	if opts.File == "" || opts.KeepOff || opts.Polling || opts.Room != "" || opts.Resume != "" || opts.ResumeAny || opts.Template != "" || opts.Directory != "" {
+	if opts.File == "" || opts.KeepOff || opts.Room != "" || opts.Resume != "" || opts.ResumeAny || opts.Template != "" || opts.Directory != "" {
 		return 0
 	}
 	cwd, err := os.Getwd()
@@ -102,7 +102,7 @@ func resumeHeld(opts *commandArgs, stdout, stderr io.Writer) (code int) {
 	}
 	now := time.Now().UnixMilli()
 	for _, r := range records {
-		if !r.Live || r.Until > 0 && r.Until <= now || !slices.Contains(r.Files, files[0]) {
+		if r.Until > 0 && r.Until <= now || !slices.Contains(r.Files, files[0]) {
 			continue
 		}
 		for i, file := range files {
@@ -133,18 +133,11 @@ func formatKeep(seconds int64) string {
 }
 
 // printKeepHint tells how to come back; others is whether this project has
-// another kept room. A live room is taken up again with pedit <file>; the
-// polling one, which has no file here, with pedit --resume.
+// another kept room. The room is taken up again with pedit <file>.
 func printKeepHint(w io.Writer, room string, others bool, file string) {
-	resume := "pedit --resume"
+	resume := "pedit " + file
 	if others {
-		resume += " " + room
-	}
-	if file != "" {
-		resume = "pedit " + file
-		if others {
-			resume += "  (or: pedit --resume " + room + ")"
-		}
+		resume += "  (or: pedit --resume " + room + ")"
 	}
 	fmt.Fprintf(w, "Leave with Ctrl+C. To take in the edits later, run in this directory:\n  %s\n", resume)
 }
@@ -186,9 +179,8 @@ func pickKept(records []session.KeptTextRecord, in io.Reader, interactive bool, 
 }
 
 // chooseResume settles which room --resume or --close is about, asking when
-// the project has several, and tells whether it is a live one, which the
-// relay keeps. For a live room it sets the files from its record.
-func chooseResume(opts *commandArgs, stdout, stderr io.Writer) (live bool, code int) {
+// the project has several, and sets the files from its record.
+func chooseResume(opts *commandArgs, stdout, stderr io.Writer) (code int) {
 	cwd, err := os.Getwd()
 	var cfg config
 	if err == nil {
@@ -200,23 +192,24 @@ func chooseResume(opts *commandArgs, stdout, stderr io.Writer) (live bool, code 
 	}
 	if err != nil {
 		fmt.Fprintln(stderr, "pedit:", err)
-		return false, 1
+		return 1
 	}
 	if opts.ResumeAny {
 		room, code := pickKept(records, os.Stdin, isTerminal(os.Stdin), stdout, stderr)
 		if code != 0 {
-			return false, code
+			return code
 		}
 		opts.Resume, opts.ResumeAny = room, false
 	}
 	for _, r := range records {
-		if r.Live && (r.Room == opts.Resume || strings.Contains(opts.Resume, "/r/"+r.Room)) {
+		if r.Room == opts.Resume || strings.Contains(opts.Resume, "/r/"+r.Room) {
 			shown := displayPaths(r.Files)
 			opts.Resume, opts.File, opts.More = r.Room, shown[0], shown[1:]
-			return true, 0
+			return 0
 		}
 	}
-	return false, 0
+	fmt.Fprintf(stderr, "pedit: no kept room %s in this project\n", opts.Resume)
+	return 1
 }
 
 // displayPaths shows a record's paths as displayPath does, so --resume names
@@ -229,7 +222,9 @@ func displayPaths(paths []string) []string {
 	return shown
 }
 
-func runKeep(opts commandArgs, stdout, stderr io.Writer) int {
+// closeKept takes in the edits of the kept room that opts.Resume names, then
+// ends the room.
+func closeKept(opts commandArgs, stdout, stderr io.Writer) int {
 	cwd, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintln(stderr, "pedit:", err)
@@ -240,39 +235,23 @@ func runKeep(opts commandArgs, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "pedit:", err)
 		return 1
 	}
-	server := cfg.Server
-	if opts.Resume != "" {
-		server = ""
-	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	err = session.RunKeptText(ctx, session.KeptTextOptions{
-		File: opts.File, More: opts.More, Project: cfg.root, Server: server, Resume: opts.Resume, Keep: opts.Keep, Close: opts.Close,
+	err = session.CloseKept(ctx, session.KeptTextOptions{
+		File: opts.File, Project: cfg.root, Resume: opts.Resume,
 		OnSkipped: func(count int) { fmt.Fprintf(stdout, "Skipped %d invalid updates.\n", count) },
-		OnPruned:  func(n int) { fmt.Fprintf(stdout, "Removed %d resume record(s) of finished rooms.\n", n) },
+		OnPruned: func(n int) {
+			fmt.Fprintf(stdout, "Removed %d resume record(s) of rooms kept by an older version.\n", n)
+		},
 		OnImageError: func(path string, err error) {
 			fmt.Fprintf(stdout, "Could not save an image of %s: %v\n", path, err)
 		},
-		OnEnded: func() { fmt.Fprintln(stdout, "The room is over; removed its resume record.") },
-	}, func(link string, seconds, until int64) {
-		fmt.Fprintln(stdout, link)
-		if opts.Keep > time.Duration(seconds)*time.Second {
-			fmt.Fprintf(stdout, "Relay capped keep time to %s.\n", formatKeep(seconds))
-		} else {
-			fmt.Fprintf(stdout, "Room keep time: %s.", formatKeep(seconds))
-		}
-		fmt.Fprintf(stdout, " Room stays open until %s.\n", time.UnixMilli(until).Format(time.RFC3339))
-		printKeepHint(stdout, keptRoomOf(link), otherKeptRooms(cfg.root, keptRoomOf(link)), "")
-	}, func(until int64) {
-		fmt.Fprintf(stdout, "Room stays open until %s.\n", time.UnixMilli(until).Format(time.RFC3339))
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, "pedit:", err)
 		return 1
 	}
-	if opts.Close {
-		fmt.Fprintln(stdout, "Closed the room; its link no longer works.")
-	}
+	fmt.Fprintln(stdout, "Closed the room; its link no longer works.")
 	return 0
 }
 

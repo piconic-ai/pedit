@@ -2,20 +2,11 @@ package session
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/piconic-ai/pedit/internal/filewriter"
-	"github.com/piconic-ai/pedit/internal/protocol"
-	"github.com/reearth/ygo/crdt"
 )
 
 func TestKeptTextPendingWriteRecoveryAndExternalChange(t *testing.T) {
@@ -69,98 +60,39 @@ func TestKeptTextPendingWriteRecoveryAndExternalChange(t *testing.T) {
 	}
 }
 
-func TestKeptTextResumesAfterCommittedCheckpointResponseIsLost(t *testing.T) {
-	isolateKeptUserConfig(t)
-	dir := t.TempDir()
-	file := filepath.Join(dir, "notes.md")
-	if err := os.WriteFile(file, []byte("base"), 0600); err != nil {
+// If the connection drops after the host wrote what it took in, before the
+// relay confirmed the checkpoint, the next resume starts from the record and
+// takes the same log in again without duplicating an edit.
+func TestKeptTextResumesAfterTheCheckpointWasNotConfirmed(t *testing.T) {
+	h, read := keptLocalRoom(t, "one\ntwo\nthree\n", true)
+	if err := h.openFiles(); err != nil {
 		t.Fatal(err)
 	}
-	token := base64.RawURLEncoding.EncodeToString(make([]byte, 32))
-	hash := sha256.Sum256([]byte(token))
-	room := base64.RawURLEncoding.EncodeToString(hash[:])[:22]
-	var keys *protocol.RoomKeys
-	var snapshot []byte
-	initCalls, checkpoints := 0, 0
-	var fullLink string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/rooms" {
-			json.NewEncoder(w).Encode(map[string]string{"id": room, "hostToken": token})
-			return
-		}
-		if r.Header.Get("Authorization") != "Bearer "+token {
-			w.WriteHeader(403)
-			return
-		}
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/init"):
-			initCalls++
-			var state keptTextState
-			if err := readKeptState(keptTestStatePath(t, dir, room), &state); err != nil {
-				t.Error("network initialization preceded private durable state")
-			}
-			link, err := protocol.ParseFragment(state.Fragment)
-			if err != nil {
-				t.Fatal(err)
-			}
-			keys, err = protocol.DeriveRoomKeys(link, room)
-			if err != nil {
-				t.Fatal(err)
-			}
-			doc := crdt.New()
-			defer doc.Destroy()
-			if err := crdt.ApplyUpdateV1(doc, state.Files[0].State, nil); err != nil {
-				t.Fatal(err)
-			}
-			text := doc.GetText("content")
-			offset := len(text.ToString())
-			doc.Transact(func(tx *crdt.Transaction) { text.Insert(tx, offset, " guest", nil) })
-			snapshot, err = protocol.SealKeptBundle(keys, []protocol.KeptFileSnapshot{
-				{ID: 0, Path: "notes.md", Update: crdt.EncodeStateAsUpdateV1(doc, nil)},
-				{ID: state.Files[0].Meta.ID, Path: protocol.MetaPath("notes.md"), Update: state.Files[0].Meta.State},
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-		case r.Method == http.MethodGet:
-			json.NewEncoder(w).Encode(map[string]any{"snapshot": snapshot, "entries": []any{}, "tail": 0})
-			return
-		case strings.HasSuffix(r.URL.Path, "/checkpoint"):
-			checkpoints++
-			if checkpoints == 1 {
-				w.WriteHeader(503)
-				return
-			}
-		}
-		json.NewEncoder(w).Encode(map[string]int64{"keepSeconds": 60, "keepUntil": time.Now().Add(time.Minute).UnixMilli()})
-	}))
-	defer server.Close()
-	opts := KeptTextOptions{File: file, Project: dir, Server: server.URL, Keep: 7 * 24 * time.Hour}
-	if err := RunKeptText(context.Background(), opts, nil, nil); err == nil {
-		t.Fatal("lost checkpoint response reported success")
-	}
-	data, _ := os.ReadFile(file)
-	if string(data) != "base guest" {
-		t.Fatal("did not persist before checkpoint request")
-	}
-	var state keptTextState
-	if err := readKeptState(keptTestStatePath(t, dir, room), &state); err != nil {
+	if err := h.restore(); err != nil {
 		t.Fatal(err)
 	}
-	fullLink = server.URL + "/r/" + room + "?keep=1#" + state.Fragment
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	left := false
-	if err := RunKeptText(ctx, KeptTextOptions{Project: dir, Resume: fullLink}, func(link string, seconds, until int64) {
-		if link != fullLink || seconds != 60 {
-			t.Error("wrong resumed room")
-		}
-		cancel()
-	}, func(until int64) { left = true }); err != nil {
+	if _, err := h.intake(context.Background(), read); err != nil {
 		t.Fatal(err)
 	}
-	data, _ = os.ReadFile(file)
-	if initCalls != 1 || !left || string(data) != "base guest" {
-		t.Fatal("resume reset room or duplicated update")
+	h.closeFiles()
+	file := h.state.Files[0].File
+	if got, _ := os.ReadFile(file); string(got) != "one (guest)\ntwo\nthree\n" {
+		t.Fatalf("did not persist before the checkpoint: %q", got)
+	}
+	var saved keptTextState
+	if err := readKeptState(h.path, &saved); err != nil {
+		t.Fatal(err)
+	}
+	again := keptTextHost{state: saved, keys: h.keys, path: h.path, room: h.room}
+	if err := again.openFiles(); err != nil {
+		t.Fatal(err)
+	}
+	defer again.closeFiles()
+	if err := again.restore(); err != nil {
+		t.Fatal(err)
+	}
+	takeInRead(t, &again, read)
+	if got, _ := os.ReadFile(file); string(got) != "one (guest)\ntwo\nthree\n" || again.after != 1 {
+		t.Fatalf("resume duplicated the update: %q", got)
 	}
 }

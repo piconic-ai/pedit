@@ -81,7 +81,7 @@ func TestCloseSavesAnEntryThatCameWhileCheckpointing(t *testing.T) {
 		}
 		before(c)
 	}
-	if err := RunKeptText(context.Background(), KeptTextOptions{Project: a.project, Resume: a.id, Close: true, Dial: a.relay.Dial}, nil, nil); err != nil {
+	if err := CloseKept(context.Background(), closeOptions(a)); err != nil {
 		t.Fatal(err)
 	}
 	if got := readText(t, a.file); got != "late notes\n" {

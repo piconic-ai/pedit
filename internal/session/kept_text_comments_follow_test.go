@@ -1,11 +1,6 @@
 package session
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -41,7 +36,7 @@ func keptCommentsFollowDeletion(t *testing.T, withGap bool) {
 	if err := os.WriteFile(metaName, saved, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	files, err := prepareKeptFiles(KeptTextOptions{File: notes, Project: dir})
+	files, err := prepareKeptFiles(dir, notes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +51,7 @@ func keptCommentsFollowDeletion(t *testing.T, withGap bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entries := []any{map[string]any{"id": 1, "body": frame}}
+	entries := []keptTextEntry{{ID: 1, Body: frame}}
 	if withGap {
 		// Only the second of two edits arrives: it needs the first, which is
 		// not in the log, so the batch is pruned and rebuilt.
@@ -68,17 +63,9 @@ func keptCommentsFollowDeletion(t *testing.T, withGap bool) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		entries = append(entries, map[string]any{"id": 2, "body": gap})
+		entries = append(entries, keptTextEntry{ID: 2, Body: gap})
 	}
-	var snapshot []byte
-	client := &http.Client{Transport: keepFixTransport(func(r *http.Request) (*http.Response, error) {
-		body := []byte(`{"keepSeconds":60,"keepUntil":1000000000000}`)
-		if r.Method == "GET" {
-			body, _ = json.Marshal(map[string]any{"snapshot": snapshot, "entries": entries, "cutoff": 0, "tail": len(entries)})
-		}
-		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(bytes.NewReader(body))}, nil
-	})}
-	host := &keptTextHost{state: keptTextState{Project: dir, Files: files}, keys: keys, path: filepath.Join(t.TempDir(), "state.json"), room: "abcdefghijklmnopqrstuv", client: client}
+	host := &keptTextHost{state: keptTextState{Project: dir, Files: files}, keys: keys, path: filepath.Join(t.TempDir(), "state.json"), room: "abcdefghijklmnopqrstuv"}
 	if err := host.openFiles(); err != nil {
 		t.Fatal(err)
 	}
@@ -86,12 +73,11 @@ func keptCommentsFollowDeletion(t *testing.T, withGap bool) {
 	if err := host.restore(); err != nil {
 		t.Fatal(err)
 	}
-	if snapshot, err = host.snapshot(); err != nil {
+	snapshot, err := host.snapshot()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := host.sync(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	takeInRead(t, host, keptTextRead{Snapshot: snapshot, Entries: entries, Tail: uint64(len(entries))})
 	if withGap && host.skipped != 1 {
 		t.Fatalf("the update with a missing dependency was not pruned: skipped %d", host.skipped)
 	}
