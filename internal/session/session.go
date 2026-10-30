@@ -12,8 +12,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -172,25 +170,12 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 		return nil, err
 	}
 	opts.Root = root
-	if (opts.Keep > 0 || opts.Resume != "") && runtime.GOOS == "windows" {
-		return nil, errors.New("--keep and --resume require Unix file permissions; Windows is not supported")
+	res, err := beginKeep(ctx, &opts)
+	if err != nil {
+		return nil, err
 	}
-	if opts.OnKeep == nil {
-		opts.OnKeep = func(int64) {}
-	}
-	var res *resumed
-	if opts.Resume != "" {
-		var err error
-		if res, err = resumeAway(ctx, &opts); err != nil {
-			return nil, err
-		}
-		// Left on purpose, so that the relay keeps the room, if Start fails.
-		defer func() {
-			if res != nil {
-				_ = res.conn.Leave()
-			}
-		}()
-	}
+	// Left on purpose, so that the relay keeps the room, if Start fails.
+	defer func() { res.abandon() }()
 	project, noProject := openProject(opts.Project)
 	defer func() {
 		if project != nil {
@@ -224,16 +209,9 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 	}
 
 	server := strings.TrimRight(opts.Server, "/")
-	var room *room
-	var key string
-	if res != nil {
-		room, key = res.roomInfo(), res.state.Fragment
-	} else {
-		var err error
-		if room, err = createRoom(ctx, opts.HTTPClient, server, opts.Header); err != nil {
-			return nil, err
-		}
-		key = protocol.GenerateEditSecret()
+	room, key, err := openRoom(ctx, opts, server, res)
+	if err != nil {
+		return nil, err
 	}
 	rawKey, err := protocol.DecodeKey(key)
 	if err != nil {
@@ -246,26 +224,7 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 	wsURL := "ws" + strings.TrimPrefix(server, "http") + "/api/rooms/" + room.ID + "/ws"
 
 	aw := awareness.New(uint64(doc.ClientID()))
-	name := opts.Name
-	if name == "" {
-		name = "host"
-	}
-	user := map[string]any{"name": name}
-	if opts.Avatar != "" {
-		user["avatar"] = opts.Avatar
-	}
-	state := map[string]any{
-		"role": "host",
-		"name": name,
-		"user": user,
-		"file": filepath.Base(opts.File),
-		// Browsers let people paste images only when the host says it saves them.
-		"attachments": map[string]any{"dir": attach.Dir, "maxBytes": attach.MaxBytes},
-	}
-	if _, ok := shared.(*canvasContent); ok {
-		state["format"] = formatCanvas
-	}
-	aw.SetLocalState(state)
+	aw.SetLocalState(hostAwareness(opts, shared))
 	blobKeys, err := protocol.DeriveBlobKeys(keys.FrameKey)
 	if err != nil {
 		return nil, err
@@ -304,29 +263,7 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 		OnWritten:        s.notices.written,
 		OnExternalChange: s.scheduleSyncFromDisk,
 	})
-	header := opts.Header.Clone()
-	if header == nil {
-		header = http.Header{}
-	}
-	// Marks us as the host: the room closes for everyone once we leave, and
-	// waits a while for us when we drop.
-	header.Set("Authorization", "Bearer "+room.HostToken)
-	dial := opts.Dial
-	var onKind func(byte, []byte)
-	var onText func(string)
-	if opts.Keep > 0 || res != nil {
-		// A relay that keeps rooms needs to hear how long, and how far into
-		// its log this host is.
-		header.Set(protocol.KeepHeader, strconv.FormatInt(int64(opts.Keep/time.Second), 10))
-		header.Set(protocol.AfterHeader, "0")
-		if res != nil {
-			header.Set(protocol.KeepHeader, strconv.FormatInt(res.state.Keep, 10))
-			header.Set(protocol.AfterHeader, strconv.FormatUint(res.state.After, 10))
-			dial = res.dialer(dial)
-		}
-		onKind = func(kind byte, payload []byte) { s.away.onKind(kind, payload) }
-		onText = func(text string) { s.away.onText(text) }
-	}
+	header, dial := hostHeader(opts, room.HostToken, res)
 	s.Client, err = protocol.NewClient(protocol.ClientOptions{
 		URL:       wsURL,
 		RoomID:    room.ID,
@@ -336,17 +273,10 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 		Header:    header,
 		Host:      true,
 		Dial:      dial,
-		OnKind:    onKind,
-		OnText:    onText,
-		OnStatus: func(st protocol.Status) {
-			if st == protocol.StatusConnected && s.away != nil {
-				go s.away.connected()
-			}
-			if opts.OnStatus != nil {
-				opts.OnStatus(st)
-			}
-		},
-		OnError: onError,
+		OnKind:    s.onKind,
+		OnText:    s.onText,
+		OnStatus:  s.onStatus,
+		OnError:   onError,
 		// Set below, before the client connects.
 		OnAttachment:     func(m protocol.Attachment) { s.attachments.Handle(m) },
 		OnCanvas:         func(m protocol.CanvasMessage) { s.handleCanvas(m) },
@@ -405,6 +335,30 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 	// Session owns the directory handles from here.
 	bound, project, res = nil, nil, nil
 	return s, nil
+}
+
+// hostAwareness is what the host tells the room about itself.
+func hostAwareness(opts Options, shared content) map[string]any {
+	name := opts.Name
+	if name == "" {
+		name = "host"
+	}
+	user := map[string]any{"name": name}
+	if opts.Avatar != "" {
+		user["avatar"] = opts.Avatar
+	}
+	state := map[string]any{
+		"role": "host",
+		"name": name,
+		"user": user,
+		"file": filepath.Base(opts.File),
+		// Browsers let people paste images only when the host says it saves them.
+		"attachments": map[string]any{"dir": attach.Dir, "maxBytes": attach.MaxBytes},
+	}
+	if _, ok := shared.(*canvasContent); ok {
+		state["format"] = formatCanvas
+	}
+	return state
 }
 
 // displayName reads a peer's name the way the web editor does: from

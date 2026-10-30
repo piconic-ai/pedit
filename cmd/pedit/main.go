@@ -123,19 +123,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "pedit:", err)
 		return 1
 	}
-	if opts.Polling {
-		return runKeep(opts, stdout, stderr)
-	}
-	if opts.Resume != "" || opts.ResumeAny {
-		// A room kept by the relay while its host is away is taken up as a
-		// live session; the polling mode's rooms, and closing, as before.
-		live, code := chooseResume(&opts, stdout, stderr)
-		if code != 0 {
-			return code
-		}
-		if opts.Close || !live {
-			return runKeep(opts, stdout, stderr)
-		}
+	if code, done := routeKept(&opts, stdout, stderr); done {
+		return code
 	}
 	out := newUI(stdout, isTerminal(stdout), os.Getenv("NO_COLOR") != "")
 	latest := startUpdateCheck(getVersion(), out.tty)
@@ -214,12 +203,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	out.resumable = resumable
 	var ended atomic.Value // the final protocol.Status, once the server turned us away
 	shown := func(path string) string { return shownPath(path, file, arg, cwd) }
-	keeps := opts.Keep > 0 || opts.Resume != ""
-	// The record of a kept room lists all its files, so they start with it.
-	more, later := []string(nil), opts.More
-	if keeps {
-		more, later = opts.More, nil
-	}
+	more, later := splitMore(opts)
 	s, err := start(ctx, signIn, session.Options{
 		File:      file,
 		More:      more,
@@ -281,14 +265,50 @@ func run(args []string, stdout, stderr io.Writer) int {
 		os.Exit(130)
 	}()
 	st, _ := ended.Load().(protocol.Status)
-	kept := func() bool { return st == "" && !s.KeptUntil().IsZero() }
+	code := leave(out, stderr, s, arg, scratch, st == "", cfg.root)
+	code = max(code, hostEnded(out, arg, st, s.Client.TimeLimit(), selfUpgradeCommand))
+	notifyUpdate(out, latest)
+	return code
+}
+
+// routeKept runs the kept modes that are not a live session: the polling one,
+// closing, and resuming a polling room. A room kept by the relay while its host
+// is away is taken up as a live session, with its files set from the record.
+func routeKept(opts *commandArgs, stdout, stderr io.Writer) (code int, done bool) {
+	if opts.Polling {
+		return runKeep(*opts, stdout, stderr), true
+	}
+	if opts.Resume == "" && !opts.ResumeAny {
+		return 0, false
+	}
+	live, code := chooseResume(opts, stdout, stderr)
+	if code != 0 {
+		return code, true
+	}
+	if opts.Close || !live {
+		return runKeep(*opts, stdout, stderr), true
+	}
+	return 0, false
+}
+
+// splitMore tells which of the files after the first start with the room and
+// which are added once it runs. The record of a kept room lists all its files.
+func splitMore(opts commandArgs) (start, later []string) {
+	if opts.Keep > 0 || opts.Resume != "" {
+		return opts.More, nil
+	}
+	return nil, opts.More
+}
+
+// leave saves the files and leaves the room. For a room the relay keeps, and
+// that the user left (stopped), it says until when and how to take it up.
+func leave(out *ui, stderr io.Writer, s *session.Session, arg string, scratch, stopped bool, project string) int {
+	kept := func() bool { return stopped && !s.KeptUntil().IsZero() }
 	code := finish(out, stderr, arg, scratch, s.Stop, kept)
 	if kept() {
 		room := keptRoomOf(s.URL)
-		out.keptHint(s.KeptUntil(), room, otherKeptRooms(cfg.root, room))
+		out.keptHint(s.KeptUntil(), room, otherKeptRooms(project, room))
 	}
-	code = max(code, hostEnded(out, arg, st, s.Client.TimeLimit(), selfUpgradeCommand))
-	notifyUpdate(out, latest)
 	return code
 }
 

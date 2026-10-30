@@ -76,25 +76,11 @@ func (s *Session) startAway(hostToken, fragment string, res *resumed) error {
 		if a.granted = res.keep; a.granted == 0 {
 			a.granted = res.state.Keep
 		}
-		if len(h.state.Files) != len(a.files) {
-			return errors.New("the files differ from the resume record")
-		}
-	} else {
-		h.state = keptTextState{Project: project, Origin: s.server, Fragment: fragment, HostToken: hostToken, Socket: true, Keep: int64(s.opts.Keep / time.Second)}
-		for i, f := range a.files {
-			path, err := keptPath(project, f.file, len(a.files) > 1)
-			if err != nil {
-				return err
-			}
-			if _, ok := f.content.(*textContent); !ok {
-				return errors.New("--keep shares text files, not " + filepath.Base(f.file))
-			}
-			file := keptTextFileState{ID: uint32(i), Path: path, File: f.file}
-			if f.meta != nil {
-				file.Meta = &keptMetaState{ID: keptMetaIDBase + uint32(i), Name: filepath.ToSlash(f.meta.name)}
-			}
-			h.state.Files = append(h.state.Files, file)
-		}
+	} else if h.state, err = a.newRecord(project, fragment, hostToken); err != nil {
+		return err
+	}
+	if len(h.state.Files) != len(a.files) {
+		return errors.New("the files differ from the resume record")
 	}
 	for i, file := range h.state.Files {
 		f := a.files[i]
@@ -113,6 +99,26 @@ func (s *Session) startAway(hostToken, fragment string, res *resumed) error {
 	a.stopped.Add(1)
 	go a.loop()
 	return nil
+}
+
+// newRecord lists the files a new kept room starts with.
+func (a *keepAway) newRecord(project, fragment, hostToken string) (keptTextState, error) {
+	state := keptTextState{Project: project, Origin: a.s.server, Fragment: fragment, HostToken: hostToken, Socket: true, Keep: int64(a.s.opts.Keep / time.Second)}
+	for i, f := range a.files {
+		path, err := keptPath(project, f.file, len(a.files) > 1)
+		if err != nil {
+			return state, err
+		}
+		if _, ok := f.content.(*textContent); !ok {
+			return state, errors.New("--keep shares text files, not " + filepath.Base(f.file))
+		}
+		file := keptTextFileState{ID: uint32(i), Path: path, File: f.file}
+		if f.meta != nil {
+			file.Meta = &keptMetaState{ID: keptMetaIDBase + uint32(i), Name: filepath.ToSlash(f.meta.name)}
+		}
+		state.Files = append(state.Files, file)
+	}
+	return state, nil
 }
 
 func (a *keepAway) follow(doc *crdt.Doc) {

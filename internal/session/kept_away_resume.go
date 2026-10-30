@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -71,6 +72,79 @@ func (r *resumed) dialer(dial protocol.Dialer) protocol.Dialer {
 			return first, nil
 		}
 		return dial(ctx, url, header)
+	}
+}
+
+// beginKeep prepares a session that keeps its room, or takes one in again.
+func beginKeep(ctx context.Context, opts *Options) (*resumed, error) {
+	if (opts.Keep > 0 || opts.Resume != "") && runtime.GOOS == "windows" {
+		return nil, errors.New("--keep and --resume require Unix file permissions; Windows is not supported")
+	}
+	if opts.OnKeep == nil {
+		opts.OnKeep = func(int64) {}
+	}
+	if opts.Resume == "" {
+		return nil, nil
+	}
+	return resumeAway(ctx, opts)
+}
+
+// abandon leaves the room on purpose, so that the relay keeps it, if the
+// session could not start with it.
+func (r *resumed) abandon() {
+	if r != nil {
+		_ = r.conn.Leave()
+	}
+}
+
+// openRoom creates the room, or finds the one being taken in, with its key.
+func openRoom(ctx context.Context, opts Options, server string, res *resumed) (*room, string, error) {
+	if res != nil {
+		return res.roomInfo(), res.state.Fragment, nil
+	}
+	r, err := createRoom(ctx, opts.HTTPClient, server, opts.Header)
+	return r, protocol.GenerateEditSecret(), err
+}
+
+// hostHeader is the handshake of the host: its token marks it as the host, so
+// the room closes for everyone once it leaves, and a relay that keeps rooms
+// hears how long, and how far into its log the host is.
+func hostHeader(opts Options, token string, res *resumed) (http.Header, protocol.Dialer) {
+	header := opts.Header.Clone()
+	if header == nil {
+		header = http.Header{}
+	}
+	header.Set("Authorization", "Bearer "+token)
+	dial := opts.Dial
+	if opts.Keep > 0 || res != nil {
+		keep, after := int64(opts.Keep/time.Second), uint64(0)
+		if res != nil {
+			keep, after, dial = res.state.Keep, res.state.After, res.dialer(dial)
+		}
+		header.Set(protocol.KeepHeader, strconv.FormatInt(keep, 10))
+		header.Set(protocol.AfterHeader, strconv.FormatUint(after, 10))
+	}
+	return header, dial
+}
+
+func (s *Session) onKind(kind byte, payload []byte) {
+	if s.away != nil {
+		s.away.onKind(kind, payload)
+	}
+}
+
+func (s *Session) onText(text string) {
+	if s.away != nil {
+		s.away.onText(text)
+	}
+}
+
+func (s *Session) onStatus(st protocol.Status) {
+	if st == protocol.StatusConnected && s.away != nil {
+		go s.away.connected()
+	}
+	if s.opts.OnStatus != nil {
+		s.opts.OnStatus(st)
 	}
 }
 
@@ -178,28 +252,9 @@ func wsURL(origin, room string) string {
 
 // takeIn reads the replay, takes it in and checkpoints.
 func (r *resumed) takeIn(ctx context.Context, h *keptTextHost) error {
-	var read keptTextRead
-	for done := false; !done; {
-		kind, payload, err := r.next(ctx)
-		if err != nil {
-			return err
-		}
-		switch kind {
-		case protocol.KindReplay:
-			read.Snapshot = payload
-		case protocol.KindLogged:
-			id, entry, ok := protocol.DecodeLogged(payload)
-			if !ok {
-				return errors.New("invalid log entry from the relay")
-			}
-			read.Entries = append(read.Entries, keptTextEntry{ID: id, Body: entry})
-		case protocol.KindLogEnd:
-			tail, ok := protocol.DecodeLogEnd(payload)
-			if !ok {
-				return errors.New("invalid log end from the relay")
-			}
-			read.Tail, done = tail, true
-		}
+	read, err := r.replay(ctx)
+	if err != nil {
+		return err
 	}
 	frame, err := h.intake(ctx, read)
 	if err != nil {
@@ -211,6 +266,39 @@ func (r *resumed) takeIn(ctx context.Context, h *keptTextHost) error {
 	if err := r.conn.Write(ctx, protocol.EncodeCheckpoint(read.Tail, frame)); err != nil {
 		return err
 	}
+	return r.awaitCheckpoint(ctx, h)
+}
+
+// replay reads what the relay sends a returning host: the snapshot if the
+// host holds less than the relay's cutoff, the entries after it, the tail.
+func (r *resumed) replay(ctx context.Context) (read keptTextRead, err error) {
+	for done := false; !done; {
+		kind, payload, e := r.next(ctx)
+		if e != nil {
+			return read, e
+		}
+		switch kind {
+		case protocol.KindReplay:
+			read.Snapshot = payload
+		case protocol.KindLogged:
+			id, entry, ok := protocol.DecodeLogged(payload)
+			if !ok {
+				return read, errors.New("invalid log entry from the relay")
+			}
+			read.Entries = append(read.Entries, keptTextEntry{ID: id, Body: entry})
+		case protocol.KindLogEnd:
+			tail, ok := protocol.DecodeLogEnd(payload)
+			if !ok {
+				return read, errors.New("invalid log end from the relay")
+			}
+			read.Tail, done = tail, true
+		}
+	}
+	return read, nil
+}
+
+// awaitCheckpoint waits for the relay's answer to the checkpoint.
+func (r *resumed) awaitCheckpoint(ctx context.Context, h *keptTextHost) error {
 	for {
 		kind, payload, err := r.next(ctx)
 		if err != nil {

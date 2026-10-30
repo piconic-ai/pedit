@@ -493,24 +493,30 @@ func (c *Client) serve(conn Conn) error {
 			}
 			return err
 		}
-		if c.Version() >= 6 {
-			kind, payload, ok := SplitKind(data)
-			if !ok {
-				continue
+		if frame, ok := c.unwrap(data); ok {
+			if err := c.receive(frame); err != nil {
+				c.onError(err)
 			}
-			if kind != KindLive {
-				// A kind of a later version is ignored.
-				if c.opts.OnKind != nil {
-					c.opts.OnKind(kind, payload)
-				}
-				continue
-			}
-			data = payload
-		}
-		if err := c.receive(data); err != nil {
-			c.onError(err)
 		}
 	}
+}
+
+// unwrap takes the kind byte off a version 6 message and reports whether the
+// rest is a live frame. Other kinds go to OnKind; one a later version added is
+// ignored there.
+func (c *Client) unwrap(data []byte) ([]byte, bool) {
+	if c.Version() < 6 {
+		return data, true
+	}
+	kind, payload, ok := SplitKind(data)
+	switch {
+	case !ok:
+	case kind == KindLive:
+		return payload, true
+	case c.opts.OnKind != nil:
+		c.opts.OnKind(kind, payload)
+	}
+	return nil, false
 }
 
 // SendMessage queues a message of a kind other than KindLive (WithKind) on the
