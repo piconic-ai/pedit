@@ -86,7 +86,7 @@ func describeKept(r session.KeptTextRecord) string {
 func pickKept(records []session.KeptTextRecord, in io.Reader, interactive bool, stdout, stderr io.Writer) (string, int) {
 	switch len(records) {
 	case 0:
-		fmt.Fprintln(stderr, "pedit: no kept room to resume in this project")
+		fmt.Fprintln(stderr, "pedit: no kept room in this project")
 		return "", 1
 	case 1:
 		return records[0].Room, 0
@@ -96,14 +96,14 @@ func pickKept(records []session.KeptTextRecord, in io.Reader, interactive bool, 
 		fmt.Fprintf(stdout, "%d) %s\n", i+1, describeKept(r))
 	}
 	if !interactive {
-		fmt.Fprintln(stderr, "pedit: several kept rooms in this project; pass a room ID: pedit --resume <room>")
+		fmt.Fprintln(stderr, "pedit: several kept rooms in this project; pass a room ID too")
 		return "", 1
 	}
 	fmt.Fprintf(stdout, "Which one? [1-%d] ", len(records))
 	line, _ := bufio.NewReader(in).ReadString('\n')
 	n, err := strconv.Atoi(strings.TrimSpace(line))
 	if err != nil || n < 1 || n > len(records) {
-		fmt.Fprintln(stderr, "pedit: not a choice; pass a room ID: pedit --resume <room>")
+		fmt.Fprintln(stderr, "pedit: not a choice; pass a room ID too")
 		return "", 1
 	}
 	return records[n-1].Room, 0
@@ -139,7 +139,7 @@ func runKeep(opts commandArgs, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	err = session.RunKeptText(ctx, session.KeptTextOptions{
-		File: opts.File, More: opts.More, Project: cfg.root, Server: server, Resume: opts.Resume, Keep: opts.Keep,
+		File: opts.File, More: opts.More, Project: cfg.root, Server: server, Resume: opts.Resume, Keep: opts.Keep, Close: opts.Close,
 		OnSkipped: func(count int) { fmt.Fprintf(stdout, "Skipped %d invalid updates.\n", count) },
 		OnPruned:  func(n int) { fmt.Fprintf(stdout, "Removed %d resume record(s) of finished rooms.\n", n) },
 		OnImageError: func(path string, err error) {
@@ -161,6 +161,9 @@ func runKeep(opts commandArgs, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintln(stderr, "pedit:", err)
 		return 1
+	}
+	if opts.Close {
+		fmt.Fprintln(stdout, "Closed the room; its link no longer works.")
 	}
 	return 0
 }

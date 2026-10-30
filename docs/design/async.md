@@ -56,6 +56,18 @@ unseen updates or serve an older snapshot to a new guest. Expiry deletes the
 room's active ciphertext. The interop test exercises publication, departure,
 new guests, replay, resumed intake, truncation and expiry against a local relay.
 
+`pedit --close [room|link]` ends a kept room from the host. It runs one resume
+(fetch, merge, durable writes of every file, comments and image, checkpoint), then
+sends `POST /keep/close` with the host token and the last log entry it took in
+(`X-Pedit-Tail`; the relay answers 409 and keeps the room if a guest appended since,
+and the host reads again and retries), then removes the record. The relay
+deletes the snapshot, log and `kept/` blobs and leaves the closed marker, as expiry
+does, so the ID is dead; a close of a closed or expired room succeeds. If any save
+fails the host neither closes nor removes the record. Later requests answer 410;
+the Worker adds `X-Pedit-Closed: host` when the host closed the room, so a guest's
+next refresh shows "Closed by host" instead of the expiry text. Unsent guest edits
+are lost, as on expiry.
+
 ## Work still to design
 
 The following proposals concern broader asynchronous rooms and are not part

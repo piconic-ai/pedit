@@ -4,7 +4,14 @@ import { createSignal, onCleanup, onMount } from '@barefootjs/client'
 import type { RoomStatus } from '@pedit/protocol'
 import type { Readable } from '../store.ts'
 
-export type KeptSyncStatus = 'connecting' | 'saving' | 'kept' | 'synced' | 'retrying' | 'expired'
+export type KeptSyncStatus =
+  | 'connecting'
+  | 'saving'
+  | 'kept'
+  | 'synced'
+  | 'retrying'
+  | 'expired'
+  | 'host-closed'
 export type HeaderStatus = RoomStatus | KeptSyncStatus
 const CLOUD = 'M7 18H6a4 4 0 0 1-.6-7.95 6 6 0 0 1 11.7-1.5A4.5 4.5 0 0 1 18 18Z'
 const SPINNER = 'M12 3a9 9 0 1 1-9 9'
@@ -87,6 +94,13 @@ const STATUS: Record<HeaderStatus, Description> = {
   expired: {
     label: 'Time limit',
     detail: 'This room has expired and ended. Editing is no longer available.',
+    icon: CLOCK,
+    tone: 'ended',
+  },
+  'host-closed': {
+    label: 'Closed by host',
+    detail:
+      'The host closed the room. Editing is no longer available, and edits not yet sent are lost.',
     icon: CLOCK,
     tone: 'ended',
   },

@@ -84,6 +84,7 @@ Options:
   -d, --directory <dir>  Save a new file here (overrides config output)
   --keep <duration>     Keep text files open after leaving (for example 7d; 0 turns off keep from config)
   --resume [room|link]  Resume a kept room hosted from this project
+  --close [room|link]   Take in a kept room's edits, then close it for good
   -h, --help             Show this help
   -v, --version          Show the version
 

@@ -63,9 +63,20 @@ export async function expireKeptText(
   const state = storage.kv.get<KeptText>('keptText')
   if (!state) return storage.kv.get<boolean>('keptTextClosed') === true
   if (Date.now() < Math.min(state.until, state.total ?? Infinity)) return false
+  await endKeptText(storage, removeBlobs, false)
+  return true
+}
+// Ends the room for good: the ID cannot be used again. byHost tells a guest
+// whose next request is refused that the host closed it, not that it expired.
+async function endKeptText(
+  storage: DurableObjectStorage,
+  removeBlobs: () => Promise<void>,
+  byHost: boolean,
+): Promise<void> {
   storage.transactionSync(() => {
     storage.kv.delete('keptText')
     storage.kv.put('keptTextClosed', true)
+    if (byHost) storage.kv.put('keptTextClosedByHost', true)
     storage.sql.exec('DELETE FROM kept_text_log')
   })
   await storage.deleteAlarm()
@@ -73,7 +84,31 @@ export async function expireKeptText(
   // The room's images go with its text; a failure is left to the bucket's
   // lifecycle rule for `kept/`.
   await removeBlobs()
-  return true
+}
+// Answers a request for a room that is gone, or one that the host closes now.
+async function closedOrClosing(
+  request: Request,
+  action: string | undefined,
+  storage: DurableObjectStorage,
+  host: boolean,
+  removeBlobs: () => Promise<void>,
+): Promise<Response | undefined> {
+  const closing = action === 'close' && request.method === 'POST'
+  if (closing && !host) return new Response(null, { status: 403 })
+  if (await expireKeptText(storage, removeBlobs)) {
+    if (closing) return Response.json({})
+    const byHost = storage.kv.get('keptTextClosedByHost')
+    return new Response(null, { status: 410, headers: byHost ? { 'X-Pedit-Closed': 'host' } : {} })
+  }
+  if (!closing) return undefined
+  const state = storage.kv.get<KeptText>('keptText')
+  if (!state) return new Response(null, { status: 404 })
+  // The host names the last update it took in; one that came later is not
+  // lost, the room stays open (nothing awaits between this check and the teardown).
+  if (request.headers.get('X-Pedit-Tail') !== String(state.tail))
+    return new Response(null, { status: 409 })
+  await endKeptText(storage, removeBlobs, true)
+  return Response.json({})
 }
 export async function keptText(
   request: Request,
@@ -84,7 +119,8 @@ export async function keptText(
   removeBlobs: () => Promise<void>,
 ): Promise<Response> {
   const action = new URL(request.url).pathname.split('/').at(-1)
-  if (await expireKeptText(storage, removeBlobs)) return new Response(null, { status: 410 })
+  const early = await closedOrClosing(request, action, storage, host, removeBlobs)
+  if (early) return early
   let state = storage.kv.get<KeptText>('keptText')
   const token = request.headers.get('X-Pedit-Admission')
   try {

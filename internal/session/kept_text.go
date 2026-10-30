@@ -36,6 +36,9 @@ type KeptTextOptions struct {
 	OnSkipped                     func(int)
 	OnPruned                      func(int) // records of finished rooms removed at start
 	OnEnded                       func()    // this room's record removed because the room is over
+	// Close takes in the room's edits, then ends the room on the relay and
+	// removes its record, instead of keeping it open (see closeRoom).
+	Close bool
 	// OnImageError reports an image a kept text refers to that could not be
 	// saved beside its file (once per image and file).
 	OnImageError func(path string, err error)
@@ -116,6 +119,7 @@ type keptTextHost struct {
 	imageErrors  map[string]bool
 	imagesFailed bool      // some image could not be saved at the last try
 	imageRetryAt time.Time // when an unchanged sync tries those again
+	closed       bool      // the relay has closed the room
 }
 
 // RunKeptText keeps the relay open when the host leaves. Source changes made
@@ -140,21 +144,14 @@ func RunKeptText(ctx context.Context, opts KeptTextOptions, ready func(string, i
 	if e := h.connect(ctx); e != nil {
 		return e
 	}
-	defer func() {
-		away, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_, e := keptTextRequest(away, h.client, &h.state, h.room, "POST", "/away", nil, nil, &h.meta)
-		if e != nil && runErr == nil {
-			runErr = e
-		}
-		if e == nil && ctx.Err() != nil && leave != nil {
-			leave(h.meta.Until)
-		}
-	}()
+	defer h.leave(ctx, &runErr, leave)
 	h.state.Initialized = true
 	h.state.Until = h.meta.Until
 	if e := saveKeptState(h.path, h.state); e != nil {
 		return e
+	}
+	if opts.Close {
+		return h.closeRoom(ctx)
 	}
 	if e := h.sync(ctx); e != nil {
 		return e
@@ -405,6 +402,52 @@ func (h *keptTextHost) sync(ctx context.Context) error {
 		}
 	}
 	return e
+}
+
+// leave tells the relay the host is away, unless the room was just closed.
+func (h *keptTextHost) leave(ctx context.Context, runErr *error, notify func(int64)) {
+	if h.closed {
+		return
+	}
+	away, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, e := keptTextRequest(away, h.client, &h.state, h.room, "POST", "/away", nil, nil, &h.meta)
+	if e != nil && *runErr == nil {
+		*runErr = e
+	}
+	if e == nil && ctx.Err() != nil && notify != nil {
+		notify(h.meta.Until)
+	}
+}
+
+// closeRoom does what a resume does once (fetch the log, merge, write every
+// file with its comments and images, cut the log), then asks the relay to end
+// the room and removes the record. Any failure before the close leaves the room
+// open and the record in place; the record goes only after the relay confirmed.
+//
+// The close names the last log entry the host took in. A guest edit that
+// arrived since makes the relay answer 409 and keep the room, and the host
+// takes that edit in and tries again.
+func (h *keptTextHost) closeRoom(ctx context.Context) error {
+	for attempt := 0; ; attempt++ {
+		if e := h.sync(ctx); e != nil {
+			return e
+		}
+		if h.imagesFailed || !h.nothingPending() {
+			return errors.New("could not save everything to your files; the room is left open")
+		}
+		header := http.Header{"X-Pedit-Tail": {strconv.FormatUint(h.after, 10)}}
+		status, e := keptTextRequest(ctx, h.client, &h.state, h.room, "POST", "/close", nil, header, &struct{}{})
+		if status == http.StatusConflict && attempt < 3 {
+			continue
+		}
+		if e != nil {
+			return e
+		}
+		break
+	}
+	h.closed = true
+	return os.Remove(h.path)
 }
 
 func (h *keptTextHost) applyRead(read keptTextRead) error {
