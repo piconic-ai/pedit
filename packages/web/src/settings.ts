@@ -37,10 +37,15 @@ export interface PanelBox {
 
 /**
  * Where the panel opens: right under the gear, wherever the header has
- * wrapped it to, kept on screen and scrolling inside if it is too tall.
+ * wrapped it to, kept on screen and scrolling inside if it is too tall. The
+ * info panel opens the same way, narrower.
  */
-export function panelBox(gear: Pick<DOMRect, 'right' | 'bottom'>, viewport: number): PanelBox {
-  const width = Math.min(PANEL_WIDTH, viewport - 2 * EDGE)
+export function panelBox(
+  gear: Pick<DOMRect, 'right' | 'bottom'>,
+  viewport: number,
+  widest = PANEL_WIDTH,
+): PanelBox {
+  const width = Math.min(widest, viewport - 2 * EDGE)
   const left = Math.max(EDGE, Math.min(gear.right - width, viewport - width - EDGE))
   const top = gear.bottom + 6
   return { width, left, top, maxHeight: `calc(var(--app-height, 100dvh) - ${top + EDGE}px)` }

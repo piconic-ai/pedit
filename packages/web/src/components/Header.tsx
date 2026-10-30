@@ -1,11 +1,13 @@
 'use client'
 
 import type { Access, FileEntry } from '@pedit/protocol'
+import type { InfoLink } from '../info.ts'
 import type { Participant } from '../room.ts'
 import type { SettingsModel } from '../settings.ts'
 import type { Readable } from '../store.ts'
 import type { ViewSwitch } from '../view.ts'
 import { CommentCount } from './FileTabs.tsx'
+import { Info } from './Info.tsx'
 import { Participants } from './Participants.tsx'
 import { type HeaderStatus, RoomStatusIndicator } from './RoomStatusIndicator.tsx'
 import { Settings } from './Settings.tsx'
@@ -31,6 +33,8 @@ export interface HeaderProps {
   access?: Access
   /** Opens the Share menu next to its button; no button without it. */
   onShare?: (button: HTMLElement) => void
+  /** The links of the info panel (info.ts); no info button without them. */
+  info?: readonly InfoLink[]
 }
 
 /** What the header says of a link below edit, and its longer explanation. */
@@ -43,8 +47,8 @@ const ACCESS_CHIPS: Partial<Record<Access, { text: string; title: string }>> = {
 const BUBBLE = 'M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-7l-4 3.5V16H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z'
 
 /**
- * The top bar: file name, connection status, participants, view buttons and
- * settings. On narrow screens the participants collapse to a row of faces;
+ * The top bar: file name, connection status, participants, view buttons,
+ * settings and info. On narrow screens the participants collapse to a row of faces;
  * tapping it shows their names, and the row folds again whenever the screen
  * changes width class. Screen readers get the names either way, since CSS
  * only hides them visually.
@@ -112,6 +116,7 @@ export function Header(props: HeaderProps) {
         </button>
       ) : null}
       <Settings model={props.settings} />
+      {props.info ? <Info links={props.info} /> : null}
     </header>
   )
 }
