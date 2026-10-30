@@ -341,7 +341,9 @@ type commandArgs struct {
 	// Resume is a share link or room ID; ResumeAny is --resume without a value.
 	Resume    string
 	ResumeAny bool
-	File      string
+	// Close is --close: --resume's room, taken in and then ended on the relay.
+	Close bool
+	File  string
 	// More are further files to share in the same room.
 	More []string
 	// Room is a share link to join instead of a file to share.
@@ -363,7 +365,7 @@ func parseArgs(args []string) (commandArgs, error) {
 		option, value, hasValue := strings.Cut(arg, "=")
 		var err error
 		switch option {
-		case "--keep", "--resume":
+		case "--keep", "--resume", "--close":
 			value, i, err = keptOptionValue(args, i, option, value, hasValue)
 			if err == nil {
 				err = opts.setKeptOption(option, value)
@@ -392,24 +394,27 @@ func parseArgs(args []string) (commandArgs, error) {
 	return opts, nil
 }
 
-// keptOptionValue finds the value of --keep or --resume. A bare --resume has
+// keptOptionValue finds the value of --keep, --resume or --close. A bare --resume has
 // none (the empty value) and takes no argument; a room ID may begin with "-".
 func keptOptionValue(args []string, i int, option, value string, hasValue bool) (string, int, error) {
 	if hasValue {
 		return value, i, nil
 	}
 	next := optionValue(args, i+1)
-	if option == "--resume" && i+1 < len(args) && roomIDArg.MatchString(args[i+1]) {
+	if option != "--keep" && i+1 < len(args) && roomIDArg.MatchString(args[i+1]) {
 		next = args[i+1]
 	}
-	if next == "" && option == "--resume" {
+	if next == "" && option != "--keep" {
 		return "", i, nil
 	}
 	return next, i + 1, nil
 }
 
 func (o *commandArgs) setKeptOption(option, value string) error {
-	if value == "" && option == "--resume" && !o.ResumeAny {
+	if option == "--close" {
+		o.Close = true
+	}
+	if value == "" && option != "--keep" && !o.ResumeAny {
 		return o.setResumeAny()
 	}
 	if value == "" {
@@ -522,7 +527,7 @@ func (o *commandArgs) check() error {
 	}
 	if resuming && (o.Resume != "" && !isShareLink(o.Resume) && !roomIDArg.MatchString(o.Resume) ||
 		o.File != "" || o.Room != "" || o.Template != "" || o.Directory != "") {
-		return errors.New("--resume takes only a room ID or a share link, or nothing")
+		return errors.New("--resume and --close take only a room ID or a share link, or nothing")
 	}
 
 	if o.File != "" && o.Directory != "" {

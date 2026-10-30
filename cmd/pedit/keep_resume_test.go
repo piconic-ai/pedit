@@ -120,3 +120,22 @@ func TestKeepHint(t *testing.T) {
 		t.Fatal("room of link")
 	}
 }
+
+func TestCloseArguments(t *testing.T) {
+	for args, want := range map[string]commandArgs{
+		"--close":                             {Close: true, ResumeAny: true},
+		"--close " + testRoom:                 {Close: true, Resume: testRoom},
+		"--close=" + testRoom:                 {Close: true, Resume: testRoom},
+		"--close https://x.test/r/a?keep=1#k": {Close: true, Resume: "https://x.test/r/a?keep=1#k"},
+	} {
+		got, err := parseArgs(strings.Fields(args))
+		if err != nil || got.Close != want.Close || got.Resume != want.Resume || got.ResumeAny != want.ResumeAny {
+			t.Fatalf("%q: %+v %v", args, got, err)
+		}
+	}
+	for _, args := range [][]string{{"--close", "short"}, {"--close", "a.md"}, {"--close", "--resume"}, {"--resume", "--close"}, {"--close", testRoom, "--close"}, {"--keep", "1d", "a.md", "--close"}} {
+		if _, err := parseArgs(args); err == nil {
+			t.Fatalf("accepted %v", args)
+		}
+	}
+}

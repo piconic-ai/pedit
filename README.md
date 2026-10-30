@@ -105,6 +105,13 @@ merges a save from another editor. A file that cannot be read or is not valid
 UTF-8 is preserved and stops automatic recovery. These two host
 commands currently require Unix file permissions and are unavailable on Windows.
 
+To end a kept room before its deadline, run `pedit --close` (it takes the same room ID or link as `--resume`,
+and picks or asks the same way). It first does what `--resume` does once: takes in the guests' edits, comments and
+images and saves them to your files. Only then does it ask the relay to delete everything it holds for the room
+(text, log and images) and make the link stop working for good, and remove the resume record. If any
+file cannot be saved, the room stays open and the record stays, so you can fix that and run it again. Guests who
+have the page open are told that the host closed the room; edits they had not yet sent are lost.
+
 Collaborators who would rather stay in their own editor join from the command
 line instead. Given the link, `pedit` mirrors the shared file to a temporary
 copy and keeps it in sync both ways until they leave or the host closes the

@@ -98,7 +98,7 @@ export async function keptText(
   if (closing && !host) return new Response(null, { status: 403 })
   if (await expireKeptText(storage, removeBlobs))
     return closing
-      ? new Response(null, { status: 204 })
+      ? Response.json({})
       : new Response(null, {
           status: 410,
           headers: storage.kv.get('keptTextClosedByHost') ? { 'X-Pedit-Closed': 'host' } : {},
@@ -106,7 +106,7 @@ export async function keptText(
   if (closing) {
     if (!storage.kv.get('keptText')) return new Response(null, { status: 404 })
     await endKeptText(storage, removeBlobs, true)
-    return new Response(null, { status: 204 })
+    return Response.json({})
   }
   let state = storage.kv.get<KeptText>('keptText')
   const token = request.headers.get('X-Pedit-Admission')

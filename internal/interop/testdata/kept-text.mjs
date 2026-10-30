@@ -162,7 +162,14 @@ for await (const line of createInterface({ input: process.stdin })) {
     if (!response.ok) throw new Error('could not insert unsupported-root log entry')
   }
   if (command.replay && previous) await fetch(previous.input, previous.init)
-  await client.refresh()
+  try {
+    await client.refresh()
+  } catch (error) {
+    // The relay answered 410: report whether the host closed the room.
+    if (typeof error?.byHost !== 'boolean') throw error
+    process.stdout.write(JSON.stringify({ gone: true, byHost: error.byHost }) + '\n')
+    continue
+  }
   send()
 }
 client.close()

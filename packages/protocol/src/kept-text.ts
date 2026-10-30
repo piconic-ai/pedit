@@ -16,8 +16,10 @@ const LIMIT = 8 * 1024 * 1024
 const MAX_KEPT_FILES = 64
 export class KeptTextClosedError extends Error {
   /** The host closed the room, rather than it reaching its deadline. */
-  constructor(readonly byHost = false) {
+  readonly byHost: boolean
+  constructor(byHost = false) {
     super(byHost ? 'kept room closed by its host' : 'kept room expired')
+    this.byHost = byHost
   }
 }
 

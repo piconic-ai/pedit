@@ -38,7 +38,10 @@ With `--keep`, the relay stores an encrypted text snapshot and a bounded log
 of encrypted, editor-signed Yjs updates in the room's SQLite storage. A host
 truncates the log only after saving the edits locally. Guests can read and
 edit while the host is away. The relay deletes the snapshot and log at the
-keep deadline or total room limit. A marker prevents reuse of the closed room.
+keep deadline or total room limit, or at once when the host runs `pedit --close`,
+which also deletes the room's images. The host does that only after saving every
+edit to its files. A marker prevents reuse of the closed room; later requests get
+HTTP 410, with a header telling a room the host closed from one that expired.
 A kept room also keeps the encrypted images guests paste, in R2 under `kept/`
 instead of `rooms/`, whether or not the host is connected: they are not deleted
 when the host leaves, only when the room expires or ends, within the same

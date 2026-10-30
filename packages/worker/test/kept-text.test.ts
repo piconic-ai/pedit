@@ -305,9 +305,9 @@ it('closes a kept room for the host: everything goes, the ID stays dead, closing
   const auth = { Authorization: `Bearer ${host}` }
   expect((await send('/close', { 'X-Pedit-Admission': editor })).status).toBe(403)
   expect((await send('/close', { Authorization: `Bearer ${token()}` })).status).toBe(403)
-  expect((await send('/close', auth, 'GET')).status).not.toBe(204)
+  expect((await send('/close', auth, 'GET')).status).not.toBe(200)
   expect((await send('', { 'X-Pedit-Admission': reader }, 'GET')).status).toBe(200)
-  expect((await send('/close', auth)).status).toBe(204)
+  expect((await send('/close', auth)).status).toBe(200)
   const room = env.ROOM.get(env.ROOM.idFromName(id))
   await runInDurableObject(room, (_, state) => {
     expect(state.storage.kv.get('keptText')).toBeUndefined()
@@ -322,7 +322,7 @@ it('closes a kept room for the host: everything goes, the ID stays dead, closing
   ).toBe(410)
   expect((await send('/checkpoint', { ...auth, 'X-Pedit-Cutoff': '0' })).status).toBe(410)
   expect((await send('/init', auth)).status).toBe(410)
-  expect((await send('/close', auth)).status).toBe(204)
+  expect((await send('/close', auth)).status).toBe(200)
 })
 it('does not say the host closed a room that expired', async () => {
   const { id, host, reader } = await keptRoom()
@@ -348,6 +348,6 @@ it('does not say the host closed a room that expired', async () => {
     env,
     createExecutionContext(),
   )
-  expect(close.status).toBe(204)
+  expect(close.status).toBe(200)
   expect((await get()).headers.get('X-Pedit-Closed')).toBeNull()
 })
