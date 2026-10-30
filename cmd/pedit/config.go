@@ -19,7 +19,7 @@ import (
 type config struct {
 	Server string `yaml:"server"`
 	Output string `yaml:"output"`
-	// Keep is a duration like --keep: share files in a kept room by default.
+	// Keep is a duration like --keep, or 0 for no kept room: how long a room is kept by default (1d).
 	Keep string `yaml:"keep"`
 	root string
 }
@@ -87,7 +87,7 @@ func decodeConfig(path string, data []byte, c *config) error {
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return fmt.Errorf("%s: server must be an http or https URL", path)
 	}
-	if c.Keep != "" {
+	if c.Keep != "" && c.Keep != "0" {
 		if _, err := parseKeepDuration(c.Keep); err != nil {
 			return fmt.Errorf("%s: keep: %w", path, err)
 		}

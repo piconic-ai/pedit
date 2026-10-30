@@ -174,7 +174,7 @@ func TestGoHostKeepsAWebSocketRoomWhileAway(t *testing.T) {
 	}
 	// A guest that is in the room when the host leaves is told it is kept.
 	early := dialAwayGuest(t, relay, link, "")
-	if out := host.stop(t); !strings.Contains(out, "Room stays open until") || !strings.Contains(out, "pedit --resume") {
+	if out := host.stop(t); !strings.Contains(out, "Room stays open until") || !strings.Contains(out, "pedit notes.md") {
 		t.Fatalf("Ctrl+C did not say how long the room stays:\n%s", out)
 	}
 	var kept string

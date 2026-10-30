@@ -83,7 +83,8 @@ Options:
   --<name>              Template shorthand (for example, --canvas)
   -d, --directory <dir>  Save a new file here (overrides config output)
   --keep <duration>     Keep the room open after you leave (for example 7d), so guests can
-                        go on editing; 0 turns off keep from config
+                        go on editing; the default is 1d, and 0 ends the room when you leave.
+                        pedit <file> takes up the kept room that holds the file
   --resume [room|link]  Take up a kept room again: your files get what was written meanwhile
   --close [room|link]   Take in a kept room's edits, then close it for good
   --keep-polling <duration>  The older kept room that you take in by polling the relay
@@ -118,6 +119,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "pedit:", err)
 		fmt.Fprintln(stderr, usage)
 		return 2
+	}
+	if code := resumeHeld(&opts, stdout, stderr); code != 0 {
+		return code
 	}
 	if err := applyConfigKeep(&opts); err != nil {
 		fmt.Fprintln(stderr, "pedit:", err)
@@ -307,7 +311,7 @@ func leave(out *ui, stderr io.Writer, s *session.Session, arg string, scratch, s
 	code := finish(out, stderr, arg, scratch, s.Stop, kept)
 	if kept() {
 		room := keptRoomOf(s.URL)
-		out.keptHint(s.KeptUntil(), room, otherKeptRooms(project, room))
+		out.keptHint(s.KeptUntil(), room, otherKeptRooms(project, room), displayPath(arg))
 	}
 	return code
 }

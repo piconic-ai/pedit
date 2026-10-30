@@ -72,8 +72,8 @@ If the connection drops, keep `pedit` running. It reconnects with the same
 link and merges edits made while disconnected. The terminal keeps an offline
 notice and confirms when syncing resumes. While the host is away, the browser
 pauses editing; edits already made or still in transit merge when the host
-returns. The public relay keeps guests waiting for up to two minutes. When the
-host asked for the room to be kept (`--keep`), the browser does not pause: the
+returns. The public relay keeps guests waiting for up to two minutes. In a kept
+room (the default, see below), the browser does not pause: the
 header says the host is away and until when, text files and their comments stay
 editable and images can be pasted, and the relay keeps each edit, which shows as
 sending until the relay has it. The host takes the edits in on its return, and
@@ -84,27 +84,33 @@ Text, canvas changes, and comments save during the session, including while
 edits continue. Saves normally start about a second after the first pending
 change. A crash can lose changes still in memory, in transit, or waiting for a
 save; failed or slow disk writes can extend that window. Ctrl+C flushes pending
-changes and closes the room. Running `pedit` again creates a new link.
+changes and closes the room (a kept room stays open for you to come back to). Without
+a keep (`--keep 0`), running `pedit` again creates a new link.
 
-For asynchronous text review, run `pedit --keep 7d notes.md` or
-`pedit --keep 7d notes.md todo.md` to share several text files in one room. It is the live room
-described above, with a keep: pedit asks the relay to leave the room open for that long once you
-leave. The relay caps the duration and pedit reports the effective value. While you are here nothing
-else changes; the relay also holds an encrypted snapshot of the files, which pedit refreshes now and
-then and sends once more when you press Ctrl+C. Ctrl+C then saves the files, leaves the room open and
-prints its deadline. Guests stay connected, the link keeps working, and what they write while you are away waits on the relay,
-encrypted, until you are back. In the same project, run `pedit --resume` to take the room up again: pedit connects as the host,
-merges what you changed in your files meanwhile with the guests' edits, saves the files, tells the relay it can drop
-what it held, and carries on as a live room (Ctrl+C keeps it again). With one kept room it resumes that room, with several it lists them
-and asks which (or pass the room ID, `pedit --resume <room>`; the room's link works too). After `--keep` opens the room, pedit prints this command. To keep every room you
-share, set `keep: 7d` in `.pedit/config.yaml` (same syntax as `--keep`; `--keep` on the command line wins and
-`--keep 0` turns it off for one run). A relay that cannot keep rooms (a self-hosted one that is not updated)
-ends the room when you leave, as without `--keep`, and pedit says so. Resume information stays in a private 0600 record under
-`pedit/keep/` in your user configuration directory, outside the project. pedit
-removes that record once the room is over (when `--resume` finds the relay room expired, and at the next
-`--keep` or `--resume` in the same project for rooms past their deadline), never while a write is pending or the relay may still hold
-entries. The older mode, `pedit --keep-polling 7d notes.md`, creates a kept room that pedit takes in by polling the relay over HTTP and
-that guests open with `?keep=1`; it stays until it is removed, and `--resume` and `--close` work on its rooms too.
+A room opened from existing text files is kept for a day by default. When you press Ctrl+C,
+pedit saves the files and leaves the room open on the relay, and prints its deadline. Guests stay
+connected, the link keeps working, and what they write while you are away waits on the relay,
+encrypted, until you are back. In the same project, run `pedit notes.md` again (or `pedit --resume`)
+to take the room up: pedit connects as the host, merges what you changed in your files meanwhile
+with the guests' edits, saves the files, tells the relay it can drop what it held, and carries on as
+a live room (Ctrl+C keeps it again). `pedit --resume` alone picks the one kept room, or lists them
+and asks which (or pass the room ID, `pedit --resume <room>`; the room's link works too).
+`pedit --close` takes in the edits and closes the room for good.
+
+`--keep 7d` keeps the room for that long instead (up to the relay's cap, 7 days on the public
+relay; pedit reports the effective value). `--keep 0` opens a room that stores nothing and ends
+when you leave. To change the default for a project, set `keep: 7d` in `.pedit/config.yaml`
+(same syntax as `--keep`; `keep: 0` turns keep off). The command line wins over the config, and
+the config over the default. Keep applies to `pedit <file>` and `pedit <file> <file>...` for existing
+text files; a scratch room (`pedit` with no file, `--template`, `--directory`), a canvas and
+joining a link (`pedit <link>`) are not kept. If a kept room already holds the file, `pedit <file>`
+resumes it; its set of files is fixed, so a file it does not hold is an error: run `pedit --close`
+first, or `pedit --keep 0` for a separate room. A relay that cannot keep rooms (a self-hosted
+one that is not updated) ends the room when you leave, and pedit says so. Resume information stays in a
+private 0600 record under `pedit/keep/` in your user configuration directory, outside the
+project. pedit removes that record once the room is over (when `--resume` finds the relay room
+expired, and at the next run in the same project for rooms past their deadline), never while a
+write is pending or the relay may still hold entries.
 A kept room shares the fixed set of text files it started with (up to 64; no file can be added later), with their comments and pasted images:
 guests can paste images (PNG, JPEG, GIF or WebP, within the public relay's image limits) as in a live room, and the relay keeps them,
 encrypted, until the room's deadline. On `--resume` pedit saves each image the merged text refers to under `assets/`
@@ -278,7 +284,7 @@ Run `pedit` at a Git repository root to create `.pedit/config.yaml` and
 ```yaml
 server: https://edit.piconic.ai
 output: notes
-keep: 7d   # optional: pedit <file> then behaves as pedit --keep 7d <file>
+keep: 7d   # optional: how long pedit <file> keeps its room (1d if unset, 0 turns it off)
 ```
 
 Add your own template files directly to `.pedit/templates/`:

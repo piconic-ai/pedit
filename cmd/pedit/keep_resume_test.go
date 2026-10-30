@@ -107,12 +107,12 @@ func TestKeepHint(t *testing.T) {
 		}
 	}
 	var out bytes.Buffer
-	printKeepHint(&out, testRoom, false)
+	printKeepHint(&out, testRoom, false, "")
 	if !strings.HasSuffix(out.String(), "run in this directory:\n  pedit --resume\n") || !strings.HasPrefix(out.String(), "Leave with Ctrl+C.") {
 		t.Fatal(out.String())
 	}
 	out.Reset()
-	printKeepHint(&out, testRoom, true)
+	printKeepHint(&out, testRoom, true, "")
 	if !strings.HasSuffix(out.String(), "  pedit --resume "+testRoom+"\n") {
 		t.Fatal(out.String())
 	}
