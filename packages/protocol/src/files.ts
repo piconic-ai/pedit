@@ -62,7 +62,7 @@ export function metaFiles(files: FileEntry[]): Map<number, number> {
 }
 
 /** The path whose `metaPath` is `path`, if it is one. */
-const metaTarget = (path: string): string | undefined =>
+export const metaTarget = (path: string): string | undefined =>
   path.startsWith(META_PREFIX) && path.endsWith(META_SUFFIX)
     ? path.slice(META_PREFIX.length, -META_SUFFIX.length)
     : undefined
