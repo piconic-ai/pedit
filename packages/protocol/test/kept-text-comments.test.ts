@@ -88,7 +88,13 @@ function room1() {
 }
 function client(k: RoomKeys, fetcher: typeof fetch) {
   const doc = new Y.Doc(),
-    c = new KeptTextClient({ origin: 'https://example.test', roomId: room, keys: k, doc, fetch: fetcher })
+    c = new KeptTextClient({
+      origin: 'https://example.test',
+      roomId: room,
+      keys: k,
+      doc,
+      fetch: fetcher,
+    })
   cleanup.push(() => {
     c.close()
     doc.destroy()
@@ -122,7 +128,10 @@ it('applies a log entry that targets the comments doc, and queues a local thread
     f.comments.getMap('comments').set('t2', thread)
     thread.set('quote', 'hello')
   })
-  const entry = { id: 1, body: await signed(k, fileDomain, fileUpdate(META, updates[0] as Uint8Array)) }
+  const entry = {
+    id: 1,
+    body: await signed(k, fileDomain, fileUpdate(META, updates[0] as Uint8Array)),
+  }
   const bodies: Uint8Array[] = []
   const x = client(k, async (_, init) => {
     if (init?.method !== 'POST') return read(snapshot, [entry])
@@ -141,7 +150,9 @@ it('applies a log entry that targets the comments doc, and queues a local thread
   expect(bodies).toHaveLength(1)
   const plain = await decrypt(k.frameKey, bodies[0] as Uint8Array)
   expect(plain.subarray(0, fileDomain.length)).toEqual(fileDomain)
-  expect(new DataView(plain.buffer, plain.byteOffset + fileDomain.length, 4).getUint32(0)).toBe(META)
+  expect(new DataView(plain.buffer, plain.byteOffset + fileDomain.length, 4).getUint32(0)).toBe(
+    META,
+  )
 })
 
 it('skips and counts unknown ids and updates of the wrong root', async () => {
@@ -152,14 +163,17 @@ it('skips and counts unknown ids and updates of the wrong root', async () => {
   extra.getMap('extra').set('bad', true)
   const text = source()
   text.getText('content').insert(0, 'x')
-  const entries = []
+  const entries: { id: number; body: string }[] = []
   for (const [id, update] of [
     [123, Y.encodeStateAsUpdate(f.comments)],
     [META, Y.encodeStateAsUpdate(extra)],
     [META, Y.encodeStateAsUpdate(text)],
     [0, Y.encodeStateAsUpdate(f.comments)],
   ] satisfies [number, Uint8Array][])
-    entries.push({ id: entries.length + 1, body: await signed(k, fileDomain, fileUpdate(id, update)) })
+    entries.push({
+      id: entries.length + 1,
+      body: await signed(k, fileDomain, fileUpdate(id, update)),
+    })
   const x = client(k, async () => read(snapshot, entries))
   await x.client.refresh()
   expect(x.client.state.skipped).toBe(4)
@@ -171,7 +185,9 @@ it('counts only text files toward the 64-file cap', async () => {
     update = Y.encodeStateAsUpdate(source())
   const texts = Array.from({ length: 64 }, (_, id) => ({ id, path: `${id}.md`, update }))
   const metas = texts.map((t) => ({ id: META + t.id, path: metaPath(t.path), update }))
-  const ok = client(k, async () => read(await signed(k, bundleDomain, bundle([...texts, ...metas]))))
+  const ok = client(k, async () =>
+    read(await signed(k, bundleDomain, bundle([...texts, ...metas]))),
+  )
   await ok.client.refresh()
   expect(ok.client.state.files).toHaveLength(128)
   const extra = { id: 64, path: '64.md', update }

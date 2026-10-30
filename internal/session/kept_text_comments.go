@@ -34,8 +34,8 @@ type keptMetaState struct {
 // attachKeptMeta gives file a paired comments doc, loaded from its metadata
 // file if there is one, unless its comments cannot be kept: a file outside
 // the project, or under .pedit/meta/ itself. A metadata file pedit cannot
-// read is an error: it would be left alone, but guests would comment into the
-// void.
+// read or open is left as it is and that file offers no comments, as in a live
+// room.
 func attachKeptMeta(project string, file *keptTextFileState) error {
 	root, err := os.OpenRoot(project)
 	if err != nil {
@@ -52,20 +52,17 @@ func attachKeptMeta(project string, file *keptTextFileState) error {
 	if bound, err := openMetaFile(root, filepath.FromSlash(name), false); err == nil {
 		defer bound.Close()
 		if size, ok := bound.Size(); ok {
-			if size > meta.MaxFileBytes {
-				return fmt.Errorf("%s is larger than %d bytes", name, meta.MaxFileBytes)
-			}
-			data, ok := bound.Read()
-			if !ok {
-				return fmt.Errorf("cannot read %s", name)
+			data, readable := bound.Read()
+			if size > meta.MaxFileBytes || !readable {
+				return nil
 			}
 			if loaded, err = meta.Parse([]byte(data)); err != nil {
-				return fmt.Errorf("%s cannot be read, and is left as it is: %w", name, err)
+				return nil
 			}
 			loaded.Path, text = rel, data
 		}
 	} else if !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("cannot open %s: %w", name, err)
+		return nil
 	}
 	content := crdt.New()
 	defer content.Destroy()
@@ -79,7 +76,7 @@ func attachKeptMeta(project string, file *keptTextFileState) error {
 	meta.Load(doc, loaded, tracker)
 	// Every peer refuses comments larger: they could not take the state.
 	if meta.DocSize(doc) > meta.MaxDocBytes {
-		return fmt.Errorf("the comments in %s are too large to share", name)
+		return nil
 	}
 	file.Meta = &keptMetaState{ID: keptMetaIDBase + file.ID, Name: name, State: crdt.EncodeStateAsUpdateV1(doc, nil), Text: text}
 	return nil

@@ -11,13 +11,13 @@ import { AlwaysLoad } from './alwaysload.ts'
 import { type Appearance, applyText, loadAppearance, resolveTheme } from './appearance.ts'
 import { commentMarks } from './commentmarks.ts'
 import {
-  type CommentTarget,
   CommentsView,
+  type CommentTarget,
   followFocus,
   type ShownThread,
   sameTarget,
-  textTarget,
   type ThreadList,
+  textTarget,
 } from './comments.ts'
 import type { LayoutParts } from './components/Layout.tsx'
 import type { KeptSyncStatus } from './components/RoomStatusIndicator.tsx'
@@ -31,8 +31,8 @@ import './components/Header.tsx'
 import './components/FileTabs.tsx'
 import './components/KeptTextNotice.tsx'
 import './components/CommentsPanel.tsx'
-import { ContextMenu } from './menu.ts'
 import { lockedUndo } from './lockedundo.ts'
+import { ContextMenu } from './menu.ts'
 import { Store } from './store.ts'
 
 export async function joinKeptText(

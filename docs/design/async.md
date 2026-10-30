@@ -36,8 +36,8 @@ project, or whose pairing path cannot be listed, has no comments doc. The Worker
 stays an opaque relay.
 
 On `--keep`, an existing `.pedit/meta/<path>.json` is loaded into the doc,
-anchors re-found by their saved text; a file pedit cannot read stops `--keep`
-and is left alone. On `--resume`, after the text writes of the same file, the
+anchors re-found by their saved text; a file pedit cannot read is left
+alone and that file offers no comments, as in a live room. On `--resume`, after the text writes of the same file, the
 doc is rendered with the live room's code (`meta.Read`, `meta.Render`, anchors
 placed on the merged text, keys of a newer pedit kept) and written through the
 same journal as the text: a pending text is recorded before any write, the file

@@ -40,10 +40,10 @@ import {
   loadCommentsOpen,
   OpenCounts,
   type ShownThread,
-  saveCommentsOpen,
   sameTarget,
-  textTarget,
+  saveCommentsOpen,
   type ThreadList,
+  textTarget,
 } from './comments.ts'
 import { copyText } from './copy.ts'
 import { delimiterFor } from './csv.ts'

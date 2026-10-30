@@ -115,7 +115,10 @@ func TestKeptTextResumesAfterCommittedCheckpointResponseIsLost(t *testing.T) {
 			text := doc.GetText("content")
 			offset := len(text.ToString())
 			doc.Transact(func(tx *crdt.Transaction) { text.Insert(tx, offset, " guest", nil) })
-			snapshot, err = protocol.SealKeptText(keys, crdt.EncodeStateAsUpdateV1(doc, nil))
+			snapshot, err = protocol.SealKeptBundle(keys, []protocol.KeptFileSnapshot{
+				{ID: 0, Path: "notes.md", Update: crdt.EncodeStateAsUpdateV1(doc, nil)},
+				{ID: state.Files[0].Meta.ID, Path: protocol.MetaPath("notes.md"), Update: state.Files[0].Meta.State},
+			})
 			if err != nil {
 				t.Fatal(err)
 			}

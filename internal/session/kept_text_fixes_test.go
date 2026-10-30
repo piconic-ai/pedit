@@ -200,14 +200,10 @@ func TestKeptTextStoresCredentialsOutsideProject(t *testing.T) {
 	if h.path != want {
 		t.Fatalf("credential file remains in project: %s", h.path)
 	}
-	h.files = map[uint32]*keptTextDocument{0: {doc: crdt.New()}}
-	defer h.files[0].doc.Destroy()
-	bound, e := filewriter.OpenBound(file)
-	if e != nil {
+	if e := h.openFiles(); e != nil {
 		t.Fatal(e)
 	}
-	defer bound.Close()
-	h.files[0].bound = bound
+	defer h.closeFiles()
 	if e := h.restore(); e != nil {
 		t.Fatal(e)
 	}

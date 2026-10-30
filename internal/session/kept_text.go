@@ -734,7 +734,7 @@ func syncKeptDirectory(path string) error {
 
 func (s keptTextState) hasPending() bool {
 	for _, file := range s.Files {
-		if file.Pending != nil {
+		if file.Pending != nil || (file.Meta != nil && file.Meta.Pending != nil) {
 			return true
 		}
 	}
