@@ -95,3 +95,40 @@ func TestKeptCloseKeepsTheRecordWhenTheRelayRefuses(t *testing.T) {
 		t.Fatal("record removed although the relay did not close")
 	}
 }
+
+func TestKeptCloseTakesInAnEditThatArrivedBeforeTheClose(t *testing.T) {
+	h, _ := keptLocalRoom(t, "one\ntwo\nthree\n", true)
+	calls, _ := closeRelay(h)
+	var tails []string
+	relay := h.client.Transport
+	h.client = &http.Client{Transport: keepFixTransport(func(r *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(r.URL.Path, "/close") {
+			tails = append(tails, r.Header.Get("X-Pedit-Tail"))
+			if len(tails) == 1 { // a guest edit slipped in after the host's last read
+				return &http.Response{StatusCode: 409, Header: http.Header{}, Body: http.NoBody}, nil
+			}
+		}
+		if r.Method == "GET" && r.URL.RawQuery == "after=1" { // nothing newer than the log entry already read
+			*calls = append(*calls, "GET /keep")
+			body := `{"entries":[],"cutoff":1,"tail":1}`
+			return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
+		}
+		return relay.RoundTrip(r)
+	})}
+	openKeptRoom(t, h)
+	if err := h.closeRoom(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	gets := 0
+	for _, c := range *calls {
+		if c == "GET /keep" {
+			gets++
+		}
+	}
+	if gets != 2 || len(tails) != 2 || tails[1] != "1" {
+		t.Fatalf("did not read again before the second close: %v %v", *calls, tails)
+	}
+	if _, err := os.Stat(h.path); !os.IsNotExist(err) {
+		t.Fatal("record kept after a successful close")
+	}
+}

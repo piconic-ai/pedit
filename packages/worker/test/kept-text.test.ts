@@ -307,7 +307,15 @@ it('closes a kept room for the host: everything goes, the ID stays dead, closing
   expect((await send('/close', { Authorization: `Bearer ${token()}` })).status).toBe(403)
   expect((await send('/close', auth, 'GET')).status).not.toBe(200)
   expect((await send('', { 'X-Pedit-Admission': reader }, 'GET')).status).toBe(200)
-  expect((await send('/close', auth)).status).toBe(200)
+  expect((await send('/close', auth)).status).toBe(409)
+  expect((await send('/close', { ...auth, 'X-Pedit-Tail': '1' })).status).toBe(409)
+  // An edit that arrived after the host's last intake keeps the room open.
+  expect(
+    (await send('/append', { 'X-Pedit-Admission': editor, 'X-Pedit-Sender': 'guest' })).status,
+  ).toBe(200)
+  expect((await send('/close', { ...auth, 'X-Pedit-Tail': '0' })).status).toBe(409)
+  expect((await send('', { 'X-Pedit-Admission': reader }, 'GET')).status).toBe(200)
+  expect((await send('/close', { ...auth, 'X-Pedit-Tail': '1' })).status).toBe(200)
   const room = env.ROOM.get(env.ROOM.idFromName(id))
   await runInDurableObject(room, (_, state) => {
     expect(state.storage.kv.get('keptText')).toBeUndefined()

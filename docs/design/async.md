@@ -58,7 +58,9 @@ new guests, replay, resumed intake, truncation and expiry against a local relay.
 
 `pedit --close [room|link]` ends a kept room from the host. It runs one resume
 (fetch, merge, durable writes of every file, comments and image, checkpoint), then
-sends `POST /keep/close` with the host token, then removes the record. The relay
+sends `POST /keep/close` with the host token and the last log entry it took in
+(`X-Pedit-Tail`; the relay answers 409 and keeps the room if a guest appended since,
+and the host reads again and retries), then removes the record. The relay
 deletes the snapshot, log and `kept/` blobs and leaves the closed marker, as expiry
 does, so the ID is dead; a close of a closed or expired room succeeds. If any save
 fails the host neither closes nor removes the record. Later requests answer 410;

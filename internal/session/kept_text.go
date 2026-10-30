@@ -424,15 +424,27 @@ func (h *keptTextHost) leave(ctx context.Context, runErr *error, notify func(int
 // file with its comments and images, cut the log), then asks the relay to end
 // the room and removes the record. Any failure before the close leaves the room
 // open and the record in place; the record goes only after the relay confirmed.
+//
+// The close names the last log entry the host took in. A guest edit that
+// arrived since makes the relay answer 409 and keep the room, and the host
+// takes that edit in and tries again.
 func (h *keptTextHost) closeRoom(ctx context.Context) error {
-	if e := h.sync(ctx); e != nil {
-		return e
-	}
-	if h.imagesFailed || !h.nothingPending() {
-		return errors.New("could not save everything to your files; the room is left open")
-	}
-	if _, e := keptTextRequest(ctx, h.client, &h.state, h.room, "POST", "/close", nil, nil, &struct{}{}); e != nil {
-		return e
+	for attempt := 0; ; attempt++ {
+		if e := h.sync(ctx); e != nil {
+			return e
+		}
+		if h.imagesFailed || !h.nothingPending() {
+			return errors.New("could not save everything to your files; the room is left open")
+		}
+		header := http.Header{"X-Pedit-Tail": {strconv.FormatUint(h.after, 10)}}
+		status, e := keptTextRequest(ctx, h.client, &h.state, h.room, "POST", "/close", nil, header, &struct{}{})
+		if status == http.StatusConflict && attempt < 3 {
+			continue
+		}
+		if e != nil {
+			return e
+		}
+		break
 	}
 	h.closed = true
 	return os.Remove(h.path)

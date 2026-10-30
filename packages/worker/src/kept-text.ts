@@ -101,7 +101,12 @@ async function closedOrClosing(
     return new Response(null, { status: 410, headers: byHost ? { 'X-Pedit-Closed': 'host' } : {} })
   }
   if (!closing) return undefined
-  if (!storage.kv.get('keptText')) return new Response(null, { status: 404 })
+  const state = storage.kv.get<KeptText>('keptText')
+  if (!state) return new Response(null, { status: 404 })
+  // The host names the last update it took in; one that came later is not
+  // lost, the room stays open (nothing awaits between this check and the teardown).
+  if (request.headers.get('X-Pedit-Tail') !== String(state.tail))
+    return new Response(null, { status: 409 })
   await endKeptText(storage, removeBlobs, true)
   return Response.json({})
 }
