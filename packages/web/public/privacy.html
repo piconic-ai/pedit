@@ -60,10 +60,13 @@
     </p>
     <p>
       Request headers are kept too. This includes the token your browser sends to be admitted to a room
-      (in the <code>Sec-WebSocket-Protocol</code> header). That token cannot decrypt anything, but it lets
-      its holder open a connection to that room while the room exists; a room lasts at most 24 hours.
-      Not yet confirmed: whether the host token and the token sent with image requests are kept as well.
-      This page will be updated when that is confirmed or the logging is changed.
+      (in the <code>Sec-WebSocket-Protocol</code> header of the connection and the
+      <code>X-Pedit-Admission</code> header of image requests), and headers such as <code>Origin</code> and
+      the browser&rsquo;s language and client hints. That token cannot decrypt anything, but it lets its
+      holder open a connection to that room while the room exists; a room lasts at most 24 hours.
+      Not yet confirmed: whether the host token, which the <code>pedit</code> command line tool sends when it
+      opens a room, is kept as well. This page will be updated when that is confirmed or the logging is
+      changed.
     </p>
 
     <h2>Cloudflare</h2>
