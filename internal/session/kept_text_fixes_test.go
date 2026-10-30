@@ -477,3 +477,83 @@ func TestKeptTextRejectsExtraRootSnapshot(t *testing.T) {
 		t.Fatal("extra root snapshot accepted")
 	}
 }
+
+func TestKeptTextUpgradesLegacySnapshotFilenameOnce(t *testing.T) {
+	for _, incomingName := range []string{"", "old-name.md"} {
+		t.Run(incomingName, func(t *testing.T) {
+			keys, baseline, _, _ := keptFixFrames(t)
+			legacy, _ := protocol.SealKeptText(keys, baseline)
+			if incomingName != "" {
+				legacy, _ = protocol.SealKeptTextSnapshot(keys, incomingName, baseline)
+			}
+			dir := t.TempDir()
+			file := filepath.Join(dir, "議事録.md")
+			if err := os.WriteFile(file, []byte("base"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			bound, err := filewriter.OpenBound(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer bound.Close()
+			checkpoints := 0
+			client := &http.Client{Transport: keepFixTransport(func(r *http.Request) (*http.Response, error) {
+				body := []byte(`{"keepSeconds":60,"keepUntil":1000000000000}`)
+				if r.Method == http.MethodGet {
+					body, _ = json.Marshal(map[string]any{"snapshot": legacy, "entries": []any{}, "tail": 0})
+				} else {
+					checkpoints++
+					frame, _ := io.ReadAll(r.Body)
+					name, raw, err := protocol.OpenKeptTextSnapshot(keys, frame)
+					if err != nil || name != filepath.Base(file) || !bytes.Equal(raw, baseline) {
+						t.Errorf("checkpoint metadata: %q %v", name, err)
+					}
+					if bytes.Contains(frame, []byte(filepath.Base(file))) {
+						t.Error("filename sent in plaintext")
+					}
+					legacy = frame
+				}
+				return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(bytes.NewReader(body))}, nil
+			})}
+			h := keptTextHost{state: keptTextState{File: file, Text: "base", State: baseline, Origin: "https://example.test"}, path: filepath.Join(dir, "state.json"), room: "abcdefghijklmnopqrstuv", keys: keys, bound: bound, client: client, doc: crdt.New(crdt.WithGC(false))}
+			defer func() { h.doc.Destroy() }()
+			if err := applyKeptText(h.doc, baseline); err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				if err := h.sync(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if checkpoints != 1 {
+				t.Fatalf("legacy upgrade checkpoints=%d", checkpoints)
+			}
+		})
+	}
+}
+
+func TestKeptTextInitializationIncludesEncryptedBasename(t *testing.T) {
+	keys, baseline, _, _ := keptFixFrames(t)
+	initialized := false
+	h := keptTextHost{keys: keys, state: keptTextState{File: "/private/project/議事録.md", State: baseline, Origin: "https://example.test", Keep: 60}, room: "abcdefghijklmnopqrstuv"}
+	h.client = &http.Client{Transport: keepFixTransport(func(r *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(r.URL.Path, "/init") {
+			initialized = true
+			frame, _ := io.ReadAll(r.Body)
+			name, raw, err := protocol.OpenKeptTextSnapshot(keys, frame)
+			if err != nil || name != "議事録.md" || !bytes.Equal(raw, baseline) {
+				t.Errorf("initial snapshot %q %v", name, err)
+			}
+			if strings.Contains(r.URL.String(), "議事録") || strings.Contains(r.Header.Get("X-Pedit-Filename"), "議事録") {
+				t.Error("plaintext filename metadata")
+			}
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"keepSeconds":60,"keepUntil":1000000000000}`))}, nil
+	})}
+	if err := h.connect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !initialized {
+		t.Fatal("missing initialization")
+	}
+}

@@ -180,7 +180,7 @@ func TestKeptTextVerticalSlice(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(project, ".pedit/config.yaml"), []byte("server: "+relay+"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	file := filepath.Join(project, "notes.md")
+	file := filepath.Join(project, "日本語😀.md")
 	if err := os.WriteFile(file, []byte("notes"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -194,9 +194,9 @@ func TestKeptTextVerticalSlice(t *testing.T) {
 		return string(raw)
 	}
 	git("init", "-q")
-	git("add", "-f", ".pedit/config.yaml", "notes.md")
+	git("add", "-f", ".pedit/config.yaml", "日本語😀.md")
 	beforeProjectState := git("status", "--porcelain", "--", ".pedit")
-	host := keptCommand(t, project, binary, "--keep", "7d", "notes.md")
+	host := keptCommand(t, project, binary, "--keep", "7d", "日本語😀.md")
 	link := host.link(t)
 	if !strings.Contains(host.line(t), "60s") {
 		t.Fatal("relay keep cap was not reported")
@@ -205,6 +205,7 @@ func TestKeptTextVerticalSlice(t *testing.T) {
 	old := keptCommand(t, project, "node", script, dir, link)
 	type guestState struct {
 		Text       string
+		Filename   string
 		HostAway   bool
 		KeepUntil  int64
 		LogEntries int
@@ -225,7 +226,7 @@ func TestKeptTextVerticalSlice(t *testing.T) {
 		}
 		return read(p)
 	}
-	if read(old).Text != "notes" {
+	if got := read(old); got.Text != "notes" || got.Filename != filepath.Base(file) {
 		t.Fatal("initial browser document")
 	}
 	if got := command(old, `{"append":" online"}`); got.Text != "notes online" {
@@ -246,7 +247,7 @@ func TestKeptTextVerticalSlice(t *testing.T) {
 		t.Fatal("unsupported signed root poisoned existing guest or skipped count missing")
 	}
 	newcomer := keptCommand(t, project, "node", script, dir, link)
-	if got := read(newcomer); got.Text != away.Text || !got.HostAway || got.Skipped != 2 {
+	if got := read(newcomer); got.Text != away.Text || got.Filename != filepath.Base(file) || !got.HostAway || got.Skipped != 2 {
 		t.Fatal("new guest cannot open current text while host away")
 	}
 	final := "notes online away newcomer"
@@ -270,7 +271,7 @@ func TestKeptTextVerticalSlice(t *testing.T) {
 		return json.NewDecoder(response.Body).Decode(&state) == nil && state.Entries == 0
 	}, "relay log truncated after host save")
 	checkpointGuest := keptCommand(t, project, "node", script, dir, link)
-	if got := read(checkpointGuest); got.Text != final || got.Skipped != 0 {
+	if got := read(checkpointGuest); got.Text != final || got.Filename != filepath.Base(file) || got.Skipped != 0 {
 		t.Fatal("brand-new browser cannot load host checkpoint after rejecting invalid roots")
 	}
 	if !strings.Contains(strings.Join(resumed.seen, "\n"), "Skipped 2 invalid updates.") {

@@ -187,20 +187,20 @@ it('keeps an edit pending during a read until its append is acknowledged', async
     await readStarted.wait
     if (!captured.doc || !captured.status) throw new Error('room was not mounted')
     captured.doc.getText('content').insert(5, ' unsent')
-    expect(captured.status.get()).toBe('Saving your edits…')
+    expect(captured.status.get()).toBe('saving')
     read.release()
     await poll
     await captured.client?.refresh()
     const sending = vi.advanceTimersByTimeAsync(1000)
     await appendStarted.wait
     expect(posts).toBe(1)
-    expect(captured.status.get()).not.toBe('Edits kept')
+    expect(captured.status.get()).not.toBe('kept')
     const warn = new Event('beforeunload', { cancelable: true })
     window.dispatchEvent(warn)
     expect(warn.defaultPrevented).toBe(true)
     append.release()
     await sending
-    await vi.waitFor(() => expect(captured.status?.get()).toBe('Edits kept'))
+    await vi.waitFor(() => expect(captured.status?.get()).toBe('kept'))
     const clean = new Event('beforeunload', { cancelable: true })
     window.dispatchEvent(clean)
     expect(clean.defaultPrevented).toBe(false)
@@ -220,7 +220,7 @@ it('retries an initial read failure and only enables editing after loading the r
     }),
   )
   await joinKeptText(document.createElement('div'), room, fragment, [])
-  expect(captured.status?.get()).toBe('Could not load the room. Retrying…')
+  expect(captured.status?.get()).toBe('retrying')
   expect(captured.editor?.state.readOnly).toBe(true)
   expect(vi.getTimerCount()).toBeGreaterThan(0)
   await vi.advanceTimersByTimeAsync(1000)
@@ -253,4 +253,46 @@ it('publishes skipped invalid-entry count in the browser header while loading va
   expect(captured.doc?.getText('content').toString()).toBe('hello')
   expect(captured.editor?.state.readOnly).toBe(false)
   expect(captured.skipped?.get()).toBe(1)
+})
+
+it('distinguishes a relay-held update from a host checkpoint', async () => {
+  const encrypted = await snapshot()
+  let hostAway = true,
+    tail = 0,
+    cutoff = 0
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () =>
+      Response.json({
+        snapshot: encrypted,
+        entries: [],
+        tail,
+        cutoff,
+        hostAway,
+        keepUntil: Date.now() + 60000,
+      }),
+    ),
+  )
+  await joinKeptText(document.createElement('div'), room, fragment, [])
+  expect(captured.status?.get()).toBe('kept')
+  hostAway = false
+  tail = 1
+  // Host presence alone cannot acknowledge a file write.
+  // Supply an invalid entry so the client still advances the real relay cursor.
+  vi.mocked(fetch).mockImplementation(async () =>
+    Response.json({
+      snapshot: encrypted,
+      entries: cutoff ? [] : [{ id: 1, body: '!' }],
+      tail,
+      cutoff,
+      hostAway,
+      keepUntil: Date.now() + 60000,
+    }),
+  )
+  await vi.advanceTimersByTimeAsync(1000)
+  await vi.waitFor(() => expect(captured.client?.state.after).toBe(1))
+  expect(captured.status?.get()).toBe('kept')
+  cutoff = 1
+  await vi.advanceTimersByTimeAsync(1000)
+  await vi.waitFor(() => expect(captured.status?.get()).toBe('synced'))
 })

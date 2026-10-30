@@ -59,17 +59,18 @@ type keptTextRead struct {
 var keptTextRoomID = regexp.MustCompile(`^[A-Za-z0-9_-]{22}$`)
 
 type keptTextHost struct {
-	state      keptTextState
-	room, path string
-	client     *http.Client
-	keys       *protocol.RoomKeys
-	bound      *filewriter.BoundFile
-	doc        *crdt.Doc
-	meta       keptTextMeta
-	after      uint64
-	etag       string
-	skipped    int
-	onSkipped  func(int)
+	snapshotName string
+	state        keptTextState
+	room, path   string
+	client       *http.Client
+	keys         *protocol.RoomKeys
+	bound        *filewriter.BoundFile
+	doc          *crdt.Doc
+	meta         keptTextMeta
+	after        uint64
+	etag         string
+	skipped      int
+	onSkipped    func(int)
 }
 
 // RunKeptText keeps the relay open when the host leaves. Source changes made
@@ -245,7 +246,7 @@ func (h *keptTextHost) restore() error {
 	if e := applyKeptText(h.doc, h.state.State); e != nil || !completeKeptText(h.doc) || h.doc.GetText("content").ToString() != expected {
 		return errors.New("invalid saved kept document")
 	}
-	if _, e := protocol.SealKeptText(h.keys, h.state.State); e != nil {
+	if _, e := protocol.SealKeptTextSnapshot(h.keys, filepath.Base(h.state.File), h.state.State); e != nil {
 		return e
 	}
 	if e := finishKeptWrite(h.path, &h.state, h.bound); e != nil {
@@ -256,7 +257,7 @@ func (h *keptTextHost) restore() error {
 
 func (h *keptTextHost) connect(ctx context.Context) error {
 	if !h.state.Initialized {
-		frame, e := protocol.SealKeptText(h.keys, h.state.State)
+		frame, e := protocol.SealKeptTextSnapshot(h.keys, filepath.Base(h.state.File), h.state.State)
 		if e != nil {
 			return e
 		}
@@ -290,11 +291,12 @@ func (h *keptTextHost) sync(ctx context.Context) error {
 	if h.skipped != before && h.onSkipped != nil {
 		h.onSkipped(h.skipped)
 	}
-	if read.Unchanged {
+	if read.Unchanged && h.snapshotName == filepath.Base(h.state.File) {
 		return nil
 	}
 	encoded := crdt.EncodeStateAsUpdateV1(h.doc, nil)
-	if bytes.Equal(encoded, h.state.State) && len(read.Entries) == 0 {
+	if bytes.Equal(encoded, h.state.State) && len(read.Entries) == 0 &&
+		h.snapshotName == filepath.Base(h.state.File) {
 		h.after = read.Tail
 		return nil
 	}
@@ -302,7 +304,7 @@ func (h *keptTextHost) sync(ctx context.Context) error {
 	if !utf8.ValidString(next) {
 		return errors.New("invalid kept UTF-8 text")
 	}
-	frame, e := protocol.SealKeptText(h.keys, encoded)
+	frame, e := protocol.SealKeptTextSnapshot(h.keys, filepath.Base(h.state.File), encoded)
 	if e != nil {
 		return e
 	}
@@ -316,6 +318,7 @@ func (h *keptTextHost) sync(ctx context.Context) error {
 	_, e = keptTextRequest(ctx, h.client, &h.state, h.room, "POST", "/checkpoint", frame, http.Header{"X-Pedit-Cutoff": {strconv.FormatUint(read.Tail, 10)}}, &h.meta)
 	if e == nil {
 		h.after = read.Tail
+		h.snapshotName = filepath.Base(h.state.File)
 	}
 	return e
 }
@@ -358,9 +361,14 @@ func (h *keptTextHost) applyRead(read keptTextRead) error {
 	return h.pruneIncomplete(base, accepted)
 }
 func (h *keptTextHost) applySnapshot(frame []byte) error {
-	if e := h.applyFrame(frame); e != nil {
+	name, update, e := protocol.OpenKeptTextSnapshot(h.keys, frame)
+	if e != nil {
 		return e
 	}
+	if e := h.applyUpdate(update); e != nil {
+		return e
+	}
+	h.snapshotName = name
 	if !completeKeptText(h.doc) {
 		return errors.New("incomplete kept snapshot")
 	}
@@ -372,8 +380,13 @@ func (h *keptTextHost) applyFrame(frame []byte) error {
 	if e != nil {
 		return e
 	}
+	return h.applyUpdate(update)
+}
+
+func (h *keptTextHost) applyUpdate(update []byte) error {
 	candidate := crdt.New(crdt.WithGC(false))
-	if e = crdt.ApplyUpdateV1(candidate, crdt.EncodeStateAsUpdateV1(h.doc, nil), nil); e == nil {
+	e := crdt.ApplyUpdateV1(candidate, crdt.EncodeStateAsUpdateV1(h.doc, nil), nil)
+	if e == nil {
 		e = applyKeptText(candidate, update)
 	}
 	if e != nil {

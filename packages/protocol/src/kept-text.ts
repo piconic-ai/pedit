@@ -5,6 +5,7 @@ import { decrypt, encrypt } from './cipher.ts'
 import { MAX_FRAME_BYTES } from './frame.ts'
 
 const DOMAIN = new TextEncoder().encode('pedit kept text v1\0')
+const SNAPSHOT_DOMAIN = new TextEncoder().encode('pedit kept snapshot v1\0')
 const LIMIT = 8 * 1024 * 1024
 const UPDATE_LIMIT = MAX_FRAME_BYTES - DOMAIN.length - 64 - 28
 export class KeptTextClosedError extends Error {
@@ -23,8 +24,23 @@ export type KeptTextOptions = {
   onStatus?: (status: KeptTextStatus) => void
 }
 
+export type KeptTextState = {
+  hostAway: boolean
+  keepUntil: number
+  logEntries: number
+  skipped: number
+  after: number
+  filename: string | null
+}
 export class KeptTextClient {
-  readonly state = { hostAway: false, keepUntil: 0, logEntries: 0, skipped: 0, after: 0 }
+  readonly state: KeptTextState = {
+    hostAway: false,
+    keepUntil: 0,
+    logEntries: 0,
+    skipped: 0,
+    after: 0,
+    filename: null,
+  }
   private readonly url: string
   private readonly abort = new AbortController()
   private readonly sender = crypto.randomUUID()
@@ -78,13 +94,16 @@ export class KeptTextClient {
         if (entry.id <= previous || entry.id > value.tail) throw new Error('invalid kept entry')
         previous = entry.id
       }
+      let filename = this.state.filename
       const base = copyDoc(this.options.doc)
       try {
         if (value.snapshot !== undefined) {
           const empty = new Y.Doc()
           let snapshot: Y.Doc | undefined
           try {
-            snapshot = trial(empty, await this.open(value.snapshot))
+            const opened = await this.open(value.snapshot, true)
+            filename = opened.filename
+            snapshot = trial(empty, opened.update)
             if (incomplete(snapshot)) throw new Error('invalid kept snapshot')
             Y.applyUpdate(base, Y.encodeStateAsUpdate(snapshot))
           } finally {
@@ -100,6 +119,7 @@ export class KeptTextClient {
           this.abort.signal.throwIfAborted()
           Y.applyUpdate(this.options.doc, Y.encodeStateAsUpdate(result.doc), this)
           this.state.skipped += result.skipped
+          this.state.filename = filename
         } finally {
           result.doc.destroy()
         }
@@ -121,7 +141,7 @@ export class KeptTextClient {
     try {
       for (const entry of entries) {
         try {
-          const update = await this.open(entry.body),
+          const { update } = await this.open(entry.body),
             next = trial(probe, update)
           probe.destroy()
           probe = next
@@ -263,7 +283,10 @@ export class KeptTextClient {
     }
     return response
   }
-  private async open(value: string): Promise<Uint8Array> {
+  private async open(
+    value: string,
+    snapshot = false,
+  ): Promise<{ update: Uint8Array; filename: string | null }> {
     if (value.length > Math.ceil(MAX_FRAME_BYTES / 3) * 4) throw new Error('kept frame too large')
     const decoded = atob(value)
     if (btoa(decoded) !== value) throw new Error('invalid kept frame')
@@ -272,8 +295,7 @@ export class KeptTextClient {
     const plain = await decrypt(this.options.keys.frameKey, ciphertext)
     const message = plain.subarray(0, plain.length - 64)
     if (
-      message.length <= DOMAIN.length ||
-      !DOMAIN.every((byte, i) => message[i] === byte) ||
+      plain.length <= 64 ||
       !(await crypto.subtle.verify(
         'Ed25519',
         this.options.keys.editKey,
@@ -282,7 +304,23 @@ export class KeptTextClient {
       ))
     )
       throw new Error('invalid kept signature')
-    return message.slice(DOMAIN.length)
+    if (SNAPSHOT_DOMAIN.every((byte, i) => message[i] === byte)) {
+      if (!snapshot) throw new Error('snapshot is not a text update')
+      const payload = message.subarray(SNAPSHOT_DOMAIN.length)
+      if (payload.length < 2) throw new Error('invalid kept snapshot')
+      const size = new DataView(payload.buffer, payload.byteOffset, payload.byteLength).getUint16(0)
+      if (size < 1 || size > 4096 || size >= payload.length - 2)
+        throw new Error('invalid kept filename')
+      const filename = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
+        payload.subarray(2, 2 + size),
+      )
+      if (filename === '.' || filename === '..' || /[/\\\0]/.test(filename))
+        throw new Error('invalid kept filename')
+      return { filename, update: payload.slice(2 + size) }
+    }
+    if (message.length <= DOMAIN.length || !DOMAIN.every((byte, i) => message[i] === byte))
+      throw new Error('invalid kept domain')
+    return { filename: null, update: message.slice(DOMAIN.length) }
   }
 }
 function join(a: Uint8Array, b: Uint8Array): Uint8Array {

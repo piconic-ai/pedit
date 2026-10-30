@@ -40,8 +40,12 @@ async function mount() {
   const keys = await deriveRoomKeys(link, room),
     doc = new Y.Doc()
   doc.getText('content').insert(0, '# Hello')
-  const domain = new TextEncoder().encode('pedit kept text v1\0'),
-    update = Y.encodeStateAsUpdate(doc)
+  const domain = new TextEncoder().encode('pedit kept snapshot v1\0'),
+    name = new TextEncoder().encode('notes.md'),
+    update = new Uint8Array(2 + name.length + Y.encodeStateAsUpdate(doc).length)
+  new DataView(update.buffer).setUint16(0, name.length)
+  update.set(name, 2)
+  update.set(Y.encodeStateAsUpdate(doc), 2 + name.length)
   const message = new Uint8Array(domain.length + update.length)
   message.set(domain)
   message.set(update, domain.length)
@@ -82,6 +86,10 @@ async function mount() {
 it('restores ordinary view controls and updates the actual Markdown preview', async () => {
   const x = await mount()
   expect(x.q('[aria-label="Settings"]')).toBeTruthy()
+  expect(x.q('.file').textContent).toBe('notes.md')
+  expect(x.q('.kept-status').getAttribute('aria-label')).toContain('waiting for the host')
+  expect(x.q('.kept-status svg')).toBeTruthy()
+  expect(x.container.textContent).not.toContain('Shared text')
   x.q('button[data-mode="split"]').click()
   expect(x.q('main').dataset.view).toBe('split')
   expect(x.q('.splitter-host [role="separator"]')).toBeTruthy()
@@ -125,4 +133,22 @@ it('applies ordinary text, theme and Vim settings to the actual retained editor'
   field('Vim keybindings').dispatchEvent(new Event('change', { bubbles: true }))
   await vi.waitFor(() => expect(x.container.querySelector('.cm-vim-panel')).toBeTruthy())
   expect(x.editor.state.readOnly).toBe(false)
+})
+
+it('updates status icons and accessible explanations as saving and connectivity change', async () => {
+  const x = await mount()
+  const status = x.q('.kept-status')
+  expect(status.dataset.phase).toBe('kept')
+  x.editor.dispatch({ changes: { from: x.editor.state.doc.length, insert: '!' } })
+  await vi.waitFor(() => expect(status.dataset.phase).toBe('saving'))
+  expect(status.getAttribute('aria-label')).toContain('Sending')
+  vi.mocked(fetch).mockRejectedValueOnce(new Error('offline'))
+  await vi.advanceTimersByTimeAsync(1000)
+  await vi.waitFor(() => expect(status.dataset.phase).toBe('retrying'))
+  expect(status.getAttribute('title')).toContain('Retrying')
+  vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 410 }))
+  await vi.advanceTimersByTimeAsync(1000)
+  await vi.waitFor(() => expect(status.dataset.phase).toBe('expired'))
+  expect(status.getAttribute('aria-label')).toContain('expired')
+  expect(x.editor.state.readOnly).toBe(true)
 })

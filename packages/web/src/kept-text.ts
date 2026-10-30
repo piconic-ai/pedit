@@ -9,6 +9,7 @@ import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next'
 import * as Y from 'yjs'
 import { AlwaysLoad } from './alwaysload.ts'
 import { type Appearance, applyText, loadAppearance, resolveTheme } from './appearance.ts'
+import type { KeptSyncStatus } from './components/KeptTextHeader.tsx'
 import type { LayoutParts } from './components/Layout.tsx'
 import { PreviewPane } from './pane.ts'
 import { lineWrapping, settingsModel } from './settings-model.ts'
@@ -35,7 +36,8 @@ export async function joinKeptText(
   if (!link) throw new Error('invalid room link')
   const keys = await deriveRoomKeys(link, id),
     doc = new Y.Doc()
-  const status = new Store('Connecting…'),
+  const status = new Store<KeptSyncStatus>('connecting'),
+    file = new Store<string | null>(null),
     deadline = new Store<string | null>(null),
     skipped = new Store(0)
   let parts: LayoutParts | undefined
@@ -53,15 +55,13 @@ export async function joinKeptText(
     keys,
     doc,
     onStatus: (value) => {
-      if (value === 'pending') pending = true
-      if (value === 'kept') pending = false
-      status.set(
-        value === 'pending'
-          ? 'Saving your edits…'
-          : value === 'kept'
-            ? 'Edits kept'
-            : 'Edits have not been sent. Retrying…',
-      )
+      if (value === 'pending') {
+        pending = true
+        status.set('saving')
+      } else if (value === 'kept') {
+        if (pending) status.set('kept')
+        pending = false
+      } else status.set('retrying')
     },
   })
   const history = lockedUndo(yUndoManagerKeymap, () => editor.state.readOnly).map((binding) => ({
@@ -150,6 +150,7 @@ export async function joinKeptText(
   if (loadVimMode()) settings.setVim(true)
   render(parts.header, 'KeptTextHeader', {
     status,
+    file,
     deadline,
     skipped,
     view,
@@ -165,7 +166,10 @@ export async function joinKeptText(
     try {
       if (loaded && keys.access === 'edit') await client.flush()
       await client.refresh()
+      file.set(client.state.filename)
       skipped.set(client.state.skipped)
+      if (!pending)
+        status.set(client.state.hostAway || client.state.logEntries > 0 ? 'kept' : 'synced')
       deadline.set(client.state.hostAway ? new Date(client.state.keepUntil).toLocaleString() : null)
       if (!loaded) {
         loaded = true
@@ -175,8 +179,7 @@ export async function joinKeptText(
             EditorView.editable.of(keys.access === 'edit'),
           ]),
         })
-        status.set('Connected')
-      } else if (keys.access !== 'edit') status.set('Connected')
+      }
     } catch (error) {
       if (stopped) return
       if (error instanceof KeptTextClosedError) {
@@ -189,10 +192,10 @@ export async function joinKeptText(
             EditorView.editable.of(false),
           ]),
         })
-        status.set('This room has expired.')
+        status.set('expired')
         return
       }
-      status.set(loaded ? 'Connection lost. Retrying…' : 'Could not load the room. Retrying…')
+      status.set('retrying')
     } finally {
       running = false
     }
