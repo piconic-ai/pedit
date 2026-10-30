@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -56,13 +57,17 @@ func keptProject(t *testing.T, config string) string {
 
 func TestDefaultKeepIsOneDay(t *testing.T) {
 	keptProject(t, "")
+	day := 24 * time.Hour
+	if runtime.GOOS == "windows" {
+		day = 0 // kept rooms are not supported there, so nothing is kept by default
+	}
 	for _, c := range []struct {
 		args []string
 		want time.Duration
 		off  bool
 	}{
-		{[]string{"a.md"}, 24 * time.Hour, false},
-		{[]string{"a.md", "b.md"}, 24 * time.Hour, false},
+		{[]string{"a.md"}, day, false},
+		{[]string{"a.md", "b.md"}, day, false},
 		{[]string{"--keep", "7d", "a.md"}, 7 * 24 * time.Hour, false},
 		{[]string{"--keep", "0", "a.md"}, 0, true},
 		{[]string{"c.canvas"}, 0, false},
@@ -94,6 +99,9 @@ func TestConfigKeepZeroTurnsKeepOff(t *testing.T) {
 }
 
 func TestFileResumesTheRoomThatHoldsIt(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("kept rooms are not supported on Windows")
+	}
 	root := keptProject(t, "")
 	a, b := filepath.Join(root, "a.md"), filepath.Join(root, "b.md")
 	soon := time.Now().Add(time.Hour)
@@ -131,6 +139,9 @@ func TestFileResumesTheRoomThatHoldsIt(t *testing.T) {
 }
 
 func TestFileDoesNotResumeAnExpiredOrPollingRoom(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("kept rooms are not supported on Windows")
+	}
 	root := keptProject(t, "")
 	a := filepath.Join(root, "a.md")
 	keptHere(t, root, testRoom, true, time.Now().Add(-time.Hour), a)
@@ -142,6 +153,30 @@ func TestFileDoesNotResumeAnExpiredOrPollingRoom(t *testing.T) {
 	}
 	if err := applyConfigKeep(&opts); err != nil || opts.Keep != 24*time.Hour {
 		t.Fatalf("a new room is kept for a day: %+v %v", opts, err)
+	}
+}
+
+func TestFileDoesNotResumeAgainstKeepZeroConfigOrPollingMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("kept rooms are not supported on Windows")
+	}
+	root := keptProject(t, "keep: 0\n")
+	keptHere(t, root, testRoom, true, time.Now().Add(time.Hour), filepath.Join(root, "a.md"))
+	var out, errw bytes.Buffer
+	opts, _ := parseArgs([]string{"a.md"})
+	if code := resumeHeld(&opts, &out, &errw); code != 0 || opts.Resume != "" {
+		t.Fatalf("keep: 0 in the config: %+v %d", opts, code)
+	}
+	if err := applyConfigKeep(&opts); err != nil || !opts.KeepOff {
+		t.Fatalf("keep: 0 in the config: %+v %v", opts, err)
+	}
+	opts, _ = parseArgs([]string{"--keep", "1d", "a.md"})
+	if resumeHeld(&opts, &out, &errw); opts.Resume != testRoom {
+		t.Fatalf("--keep resumes even when the config says keep: 0: %+v", opts)
+	}
+	opts, _ = parseArgs([]string{"--keep-polling", "1d", "a.md"})
+	if code := resumeHeld(&opts, &out, &errw); code != 0 || opts.Resume != "" {
+		t.Fatalf("--keep-polling: %+v %d", opts, code)
 	}
 }
 

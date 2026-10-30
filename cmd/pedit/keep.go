@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strconv"
@@ -56,6 +57,9 @@ func applyConfigKeep(opts *commandArgs) error {
 	case "0":
 		opts.KeepOff = true
 	case "":
+		if runtime.GOOS == "windows" {
+			return nil // kept rooms need Unix file permissions
+		}
 		// A canvas cannot be kept, and a file that does not exist yet is
 		// created from a template, not shared as it is.
 		for _, file := range append([]string{opts.File}, opts.More...) {
@@ -74,7 +78,7 @@ func applyConfigKeep(opts *commandArgs) error {
 // that holds the file, as --resume does. The room's set of files is fixed, so
 // a file it does not hold is an error. --keep 0 asks for a separate room.
 func resumeHeld(opts *commandArgs, stdout, stderr io.Writer) (code int) {
-	if opts.File == "" || opts.KeepOff || opts.Room != "" || opts.Resume != "" || opts.ResumeAny || opts.Template != "" || opts.Directory != "" {
+	if opts.File == "" || opts.KeepOff || opts.Polling || opts.Room != "" || opts.Resume != "" || opts.ResumeAny || opts.Template != "" || opts.Directory != "" {
 		return 0
 	}
 	cwd, err := os.Getwd()
@@ -82,7 +86,7 @@ func resumeHeld(opts *commandArgs, stdout, stderr io.Writer) (code int) {
 		return 0
 	}
 	cfg, err := loadConfig(cwd)
-	if err != nil {
+	if err != nil || cfg.Keep == "0" && opts.Keep == 0 {
 		return 0
 	}
 	records, err := session.ListKeptText(cfg.root)
