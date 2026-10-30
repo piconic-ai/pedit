@@ -138,8 +138,8 @@ func TestKeptTextSkipsInvalidEntryAndCheckpointsPastIt(t *testing.T) {
 				json.NewEncoder(w).Encode(map[string]int64{"keepSeconds": 60, "keepUntil": time.Now().Add(time.Minute).UnixMilli()})
 			}))
 			defer server.Close()
-			h := keptTextHost{state: keptTextState{File: file, Text: "base", State: baseline, Origin: server.URL}, path: filepath.Join(dir, "state.json"), room: "abcdefghijklmnopqrstuv", client: server.Client(), keys: keys, bound: bound, doc: doc}
-			defer func() { h.doc.Destroy() }()
+			h := keptTextHost{state: keptTextState{Origin: server.URL, Files: []keptTextFileState{{ID: 0, Path: filepath.Base(file), File: file, Text: "base", State: baseline}}}, path: filepath.Join(dir, "state.json"), room: "abcdefghijklmnopqrstuv", client: server.Client(), keys: keys, files: map[uint32]*keptTextDocument{0: {bound: bound, doc: doc}}}
+			defer func() { h.files[0].doc.Destroy() }()
 			var notices []int
 			h.onSkipped = func(count int) { notices = append(notices, count) }
 			if e := h.sync(context.Background()); e != nil {
@@ -200,14 +200,14 @@ func TestKeptTextStoresCredentialsOutsideProject(t *testing.T) {
 	if h.path != want {
 		t.Fatalf("credential file remains in project: %s", h.path)
 	}
-	h.doc = crdt.New()
-	defer h.doc.Destroy()
+	h.files = map[uint32]*keptTextDocument{0: {doc: crdt.New()}}
+	defer h.files[0].doc.Destroy()
 	bound, e := filewriter.OpenBound(file)
 	if e != nil {
 		t.Fatal(e)
 	}
 	defer bound.Close()
-	h.bound = bound
+	h.files[0].bound = bound
 	if e := h.restore(); e != nil {
 		t.Fatal(e)
 	}
@@ -311,9 +311,9 @@ func TestKeptTextHostPollsFromLastTail(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]any{"entries": []any{}, "cutoff": 0, "tail": 1})
 	}))
 	defer server.Close()
-	h := keptTextHost{state: keptTextState{File: file, Text: "base", State: baseline, Origin: server.URL}, room: "abcdefghijklmnopqrstuv", path: filepath.Join(dir, "state.json"), client: server.Client(), keys: keys, bound: bound, doc: crdt.New()}
-	defer func() { h.doc.Destroy() }()
-	if e := applyKeptText(h.doc, baseline); e != nil {
+	h := keptTextHost{state: keptTextState{Origin: server.URL, Files: []keptTextFileState{{ID: 0, Path: filepath.Base(file), File: file, Text: "base", State: baseline}}}, room: "abcdefghijklmnopqrstuv", path: filepath.Join(dir, "state.json"), client: server.Client(), keys: keys, files: map[uint32]*keptTextDocument{0: {bound: bound, doc: crdt.New()}}}
+	defer func() { h.files[0].doc.Destroy() }()
+	if e := applyKeptText(h.files[0].doc, baseline); e != nil {
 		t.Fatal(e)
 	}
 	if e := h.sync(context.Background()); e != nil {
@@ -346,8 +346,8 @@ func TestKeptTextRetainsDependenciesAcrossSkippedEntry(t *testing.T) {
 		}
 		return frame
 	}
-	h := keptTextHost{keys: keys, doc: crdt.New()}
-	defer func() { h.doc.Destroy() }()
+	h := keptTextHost{keys: keys, files: map[uint32]*keptTextDocument{0: {doc: crdt.New()}}, state: keptTextState{Files: []keptTextFileState{{ID: 0, Path: "notes.md"}}}}
+	defer func() { h.files[0].doc.Destroy() }()
 	read := keptTextRead{Snapshot: seal(baseline), Tail: 3}
 	for i, frame := range [][]byte{seal(last), {1}, seal(first)} {
 		read.Entries = append(read.Entries, struct {
@@ -358,7 +358,7 @@ func TestKeptTextRetainsDependenciesAcrossSkippedEntry(t *testing.T) {
 	if e := h.applyRead(read); e != nil {
 		t.Fatal(e)
 	}
-	if h.doc.GetText("content").ToString() != "base first second" || h.skipped != 1 {
+	if h.files[0].doc.GetText("content").ToString() != "base first second" || h.skipped != 1 {
 		t.Fatal("candidate clone lost pending dependency or counted valid out-of-order entry")
 	}
 }
@@ -368,15 +368,15 @@ func TestKeptTextInvalidSnapshotIsFatalAndIsolated(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	h := keptTextHost{keys: keys, doc: crdt.New()}
-	defer func() { h.doc.Destroy() }()
-	if e := applyKeptText(h.doc, baseline); e != nil {
+	h := keptTextHost{keys: keys, files: map[uint32]*keptTextDocument{0: {doc: crdt.New()}}, state: keptTextState{Files: []keptTextFileState{{ID: 0, Path: "notes.md"}}}}
+	defer func() { h.files[0].doc.Destroy() }()
+	if e := applyKeptText(h.files[0].doc, baseline); e != nil {
 		t.Fatal(e)
 	}
 	if e := h.applyRead(keptTextRead{Snapshot: bad}); e == nil {
 		t.Fatal("invalid snapshot was skipped")
 	}
-	if h.skipped != 0 || h.doc.GetText("content").ToString() != "base" {
+	if h.skipped != 0 || h.files[0].doc.GetText("content").ToString() != "base" {
 		t.Fatal("invalid snapshot mutated live state")
 	}
 }
@@ -396,15 +396,15 @@ func TestKeptTextReloadsSnapshotWhenCutoffPassesCursor(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	h := keptTextHost{keys: keys, doc: crdt.New(), after: 1}
-	defer func() { h.doc.Destroy() }()
-	if e := applyKeptText(h.doc, baseline); e != nil {
+	h := keptTextHost{keys: keys, after: 1, files: map[uint32]*keptTextDocument{0: {doc: crdt.New()}}, state: keptTextState{Files: []keptTextFileState{{ID: 0, Path: "notes.md"}}}}
+	defer func() { h.files[0].doc.Destroy() }()
+	if e := applyKeptText(h.files[0].doc, baseline); e != nil {
 		t.Fatal(e)
 	}
 	if e := h.applyRead(keptTextRead{Snapshot: snapshot, Cutoff: 3, Tail: 3}); e != nil {
 		t.Fatal(e)
 	}
-	if h.doc.GetText("content").ToString() != "base first second" {
+	if h.files[0].doc.GetText("content").ToString() != "base first second" {
 		t.Fatal("new snapshot did not fill compacted tail")
 	}
 	if e := h.applyRead(keptTextRead{Cutoff: 3, Tail: 3}); e == nil {
@@ -444,8 +444,8 @@ func TestKeptTextSkipsUnresolvableEntryAfterResolvingBatchDependencies(t *testin
 		}
 		return frame
 	}
-	h := keptTextHost{keys: keys, doc: crdt.New()}
-	defer func() { h.doc.Destroy() }()
+	h := keptTextHost{keys: keys, files: map[uint32]*keptTextDocument{0: {doc: crdt.New()}}, state: keptTextState{Files: []keptTextFileState{{ID: 0, Path: "notes.md"}}}}
+	defer func() { h.files[0].doc.Destroy() }()
 	read := keptTextRead{Snapshot: seal(baseline), Tail: 3}
 	for i, frame := range [][]byte{seal(last), seal(dangling), seal(first)} {
 		read.Entries = append(read.Entries, struct {
@@ -456,7 +456,7 @@ func TestKeptTextSkipsUnresolvableEntryAfterResolvingBatchDependencies(t *testin
 	if e := h.applyRead(read); e != nil {
 		t.Fatalf("unresolved entry poisoned batch: %v", e)
 	}
-	if h.doc.GetText("content").ToString() != "base first second" || h.skipped != 1 || !completeKeptText(h.doc) {
+	if h.files[0].doc.GetText("content").ToString() != "base first second" || h.skipped != 1 || !completeKeptText(h.files[0].doc) {
 		t.Fatal("lost valid out-of-order edits while skipping unresolvable entry")
 	}
 }
@@ -471,8 +471,8 @@ func TestKeptTextRejectsExtraRootSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := keptTextHost{keys: keys, doc: crdt.New(crdt.WithGC(false))}
-	defer func() { h.doc.Destroy() }()
+	h := keptTextHost{keys: keys, files: map[uint32]*keptTextDocument{0: {doc: crdt.New(crdt.WithGC(false))}}, state: keptTextState{Files: []keptTextFileState{{ID: 0, Path: "notes.md"}}}}
+	defer func() { h.files[0].doc.Destroy() }()
 	if err := h.applySnapshot(frame); err == nil {
 		t.Fatal("extra root snapshot accepted")
 	}
@@ -515,9 +515,9 @@ func TestKeptTextUpgradesLegacySnapshotFilenameOnce(t *testing.T) {
 				}
 				return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(bytes.NewReader(body))}, nil
 			})}
-			h := keptTextHost{state: keptTextState{File: file, Text: "base", State: baseline, Origin: "https://example.test"}, path: filepath.Join(dir, "state.json"), room: "abcdefghijklmnopqrstuv", keys: keys, bound: bound, client: client, doc: crdt.New(crdt.WithGC(false))}
-			defer func() { h.doc.Destroy() }()
-			if err := applyKeptText(h.doc, baseline); err != nil {
+			h := keptTextHost{state: keptTextState{Origin: "https://example.test", Files: []keptTextFileState{{ID: 0, Path: filepath.Base(file), File: file, Text: "base", State: baseline}}}, path: filepath.Join(dir, "state.json"), room: "abcdefghijklmnopqrstuv", keys: keys, client: client, files: map[uint32]*keptTextDocument{0: {bound: bound, doc: crdt.New(crdt.WithGC(false))}}}
+			defer func() { h.files[0].doc.Destroy() }()
+			if err := applyKeptText(h.files[0].doc, baseline); err != nil {
 				t.Fatal(err)
 			}
 			for range 2 {
@@ -535,7 +535,7 @@ func TestKeptTextUpgradesLegacySnapshotFilenameOnce(t *testing.T) {
 func TestKeptTextInitializationIncludesEncryptedBasename(t *testing.T) {
 	keys, baseline, _, _ := keptFixFrames(t)
 	initialized := false
-	h := keptTextHost{keys: keys, state: keptTextState{File: "/private/project/議事録.md", State: baseline, Origin: "https://example.test", Keep: 60}, room: "abcdefghijklmnopqrstuv"}
+	h := keptTextHost{keys: keys, state: keptTextState{Origin: "https://example.test", Keep: 60, Files: []keptTextFileState{{ID: 0, Path: filepath.Base("/private/project/議事録.md"), File: "/private/project/議事録.md", State: baseline}}}, room: "abcdefghijklmnopqrstuv"}
 	h.client = &http.Client{Transport: keepFixTransport(func(r *http.Request) (*http.Response, error) {
 		if strings.HasSuffix(r.URL.Path, "/init") {
 			initialized = true
@@ -556,4 +556,11 @@ func TestKeptTextInitializationIncludesEncryptedBasename(t *testing.T) {
 	if !initialized {
 		t.Fatal("missing initialization")
 	}
+}
+
+func finishTestKeptWrite(path string, state *keptTextState, bound *filewriter.BoundFile) error {
+	h := keptTextHost{path: path, state: *state, files: map[uint32]*keptTextDocument{0: {bound: bound}}}
+	err := h.finishWrites()
+	*state = h.state
+	return err
 }

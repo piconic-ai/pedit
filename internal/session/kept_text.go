@@ -27,16 +27,26 @@ import (
 
 type KeptTextOptions struct {
 	File, Project, Server, Resume string
+	More                          []string
 	Keep                          time.Duration
 	OnSkipped                     func(int)
 }
 type keptTextState struct {
-	File, Project, Origin, Fragment, HostToken string
-	Keep                                       int64
-	State                                      []byte
-	Text                                       string
-	Pending                                    *string `json:",omitempty"`
-	Initialized                                bool
+	Project, Origin, Fragment, HostToken string
+	Keep                                 int64
+	Files                                []keptTextFileState
+	Initialized                          bool
+}
+type keptTextFileState struct {
+	ID         uint32
+	Path, File string
+	State      []byte
+	Text       string
+	Pending    *string `json:",omitempty"`
+}
+type keptTextDocument struct {
+	doc   *crdt.Doc
+	bound *filewriter.BoundFile
 }
 type keptTextMeta struct {
 	Seconds int64 `json:"keepSeconds"`
@@ -59,18 +69,17 @@ type keptTextRead struct {
 var keptTextRoomID = regexp.MustCompile(`^[A-Za-z0-9_-]{22}$`)
 
 type keptTextHost struct {
-	snapshotName string
-	state        keptTextState
-	room, path   string
-	client       *http.Client
-	keys         *protocol.RoomKeys
-	bound        *filewriter.BoundFile
-	doc          *crdt.Doc
-	meta         keptTextMeta
-	after        uint64
-	etag         string
-	skipped      int
-	onSkipped    func(int)
+	snapshotNames map[uint32]string
+	state         keptTextState
+	room, path    string
+	client        *http.Client
+	keys          *protocol.RoomKeys
+	files         map[uint32]*keptTextDocument
+	meta          keptTextMeta
+	after         uint64
+	etag          string
+	skipped       int
+	onSkipped     func(int)
 }
 
 // RunKeptText keeps the relay open when the host leaves. Source changes made
@@ -83,13 +92,10 @@ func RunKeptText(ctx context.Context, opts KeptTextOptions, ready func(string, i
 	if e := h.prepare(ctx, opts); e != nil {
 		return e
 	}
-	bound, e := filewriter.OpenBound(h.state.File)
-	if e != nil {
-		return errors.New("cannot open kept file")
+	if e := h.openFiles(); e != nil {
+		return e
 	}
-	defer bound.Close()
-	h.bound, h.doc = bound, crdt.New(crdt.WithGC(false))
-	defer func() { h.doc.Destroy() }()
+	defer h.closeFiles()
 	if e := h.restore(); e != nil {
 		return e
 	}
@@ -158,15 +164,16 @@ func (h *keptTextHost) prepare(ctx context.Context, opts KeptTextOptions) error 
 	}
 	h.path = filepath.Join(directory, h.room+".json")
 	digest := sha256.Sum256([]byte(h.state.HostToken))
-	if !filepath.IsAbs(h.state.File) ||
-		filepath.Clean(h.state.File) != h.state.File ||
-		h.state.Project != project || h.state.Keep <= 0 ||
+	if h.state.Project != project || h.state.Keep <= 0 ||
 		base64.RawURLEncoding.EncodeToString(digest[:])[:22] != h.room {
 		return errors.New("invalid saved kept state or project")
 	}
+	if len(h.state.Files) < 1 || len(h.state.Files) > 64 {
+		return errors.New("invalid saved kept inventory")
+	}
 	if opts.File != "" {
 		file, e := filepath.Abs(opts.File)
-		if e != nil || file != h.state.File {
+		if e != nil || file != h.state.Files[0].File {
 			return errors.New("resume file differs from saved host state")
 		}
 	}
@@ -212,52 +219,39 @@ func (h *keptTextHost) create(ctx context.Context, opts KeptTextOptions) error {
 		(origin.Scheme != "https" && origin.Scheme != "http") {
 		return errors.New("invalid kept server")
 	}
-	file, e := filepath.Abs(opts.File)
+	files, e := prepareKeptFiles(opts)
 	if e != nil {
-		return errors.New("invalid kept file")
-	}
-	input, e := os.Open(file)
-	if e != nil {
-		return errors.New("cannot read kept file")
-	}
-	data, e := io.ReadAll(io.LimitReader(input, protocol.MaxFrameBytes+1))
-	input.Close()
-	if e != nil || isCanvas(file) || len(data) > protocol.MaxFrameBytes || !utf8.Valid(data) {
-		return errors.New("cannot read kept UTF-8 file")
+		return e
 	}
 	r, e := createRoom(ctx, h.client, origin.String(), nil)
 	if e != nil || !keptTextRoomID.MatchString(r.ID) {
 		return errors.New("could not create kept room")
 	}
 	h.room = r.ID
-	doc := crdt.New()
-	defer doc.Destroy()
-	text := doc.GetText("content")
-	doc.Transact(func(tx *crdt.Transaction) { text.Insert(tx, 0, string(data), nil) })
-	h.state = keptTextState{File: file, Origin: origin.String(), Fragment: protocol.GenerateEditSecret(), HostToken: r.HostToken, Keep: int64(opts.Keep / time.Second), State: crdt.EncodeStateAsUpdateV1(doc, nil), Text: string(data)}
+	h.state = keptTextState{Files: files, Origin: origin.String(), Fragment: protocol.GenerateEditSecret(), HostToken: r.HostToken, Keep: int64(opts.Keep / time.Second)}
 	return nil
 }
 
 func (h *keptTextHost) restore() error {
-	expected := h.state.Text
-	if h.state.Pending != nil {
-		expected = *h.state.Pending
+	for _, file := range h.state.Files {
+		expected := file.Text
+		if file.Pending != nil {
+			expected = *file.Pending
+		}
+		doc := h.files[file.ID].doc
+		if e := applyKeptText(doc, file.State); e != nil || !completeKeptText(doc) || doc.GetText("content").ToString() != expected {
+			return errors.New("invalid saved kept document")
+		}
 	}
-	if e := applyKeptText(h.doc, h.state.State); e != nil || !completeKeptText(h.doc) || h.doc.GetText("content").ToString() != expected {
-		return errors.New("invalid saved kept document")
-	}
-	if _, e := protocol.SealKeptTextSnapshot(h.keys, filepath.Base(h.state.File), h.state.State); e != nil {
+	if _, e := h.snapshot(); e != nil {
 		return e
 	}
-	if e := finishKeptWrite(h.path, &h.state, h.bound); e != nil {
-		return e
-	}
-	return saveKeptState(h.path, h.state)
+	return h.finishWrites()
 }
 
 func (h *keptTextHost) connect(ctx context.Context) error {
 	if !h.state.Initialized {
-		frame, e := protocol.SealKeptTextSnapshot(h.keys, filepath.Base(h.state.File), h.state.State)
+		frame, e := h.snapshot()
 		if e != nil {
 			return e
 		}
@@ -291,34 +285,36 @@ func (h *keptTextHost) sync(ctx context.Context) error {
 	if h.skipped != before && h.onSkipped != nil {
 		h.onSkipped(h.skipped)
 	}
-	if read.Unchanged && h.snapshotName == filepath.Base(h.state.File) {
-		return nil
-	}
-	encoded := crdt.EncodeStateAsUpdateV1(h.doc, nil)
-	if bytes.Equal(encoded, h.state.State) && len(read.Entries) == 0 &&
-		h.snapshotName == filepath.Base(h.state.File) {
+	if (read.Unchanged || len(read.Entries) == 0) && h.unchanged() {
 		h.after = read.Tail
 		return nil
 	}
-	next := h.doc.GetText("content").ToString()
-	if !utf8.ValidString(next) {
-		return errors.New("invalid kept UTF-8 text")
-	}
-	frame, e := protocol.SealKeptTextSnapshot(h.keys, filepath.Base(h.state.File), encoded)
+	frame, e := h.snapshot()
 	if e != nil {
 		return e
 	}
-	h.state.State, h.state.Pending = encoded, &next
+	for i := range h.state.Files {
+		file := &h.state.Files[i]
+		doc := h.files[file.ID].doc
+		next := doc.GetText("content").ToString()
+		if !utf8.ValidString(next) {
+			return errors.New("invalid kept UTF-8 text")
+		}
+		file.State, file.Pending = crdt.EncodeStateAsUpdateV1(doc, nil), &next
+	}
 	if e := saveKeptState(h.path, h.state); e != nil {
 		return e
 	}
-	if e := finishKeptWrite(h.path, &h.state, h.bound); e != nil {
+	if e := h.finishWrites(); e != nil {
 		return e
 	}
 	_, e = keptTextRequest(ctx, h.client, &h.state, h.room, "POST", "/checkpoint", frame, http.Header{"X-Pedit-Cutoff": {strconv.FormatUint(read.Tail, 10)}}, &h.meta)
 	if e == nil {
 		h.after = read.Tail
-		h.snapshotName = filepath.Base(h.state.File)
+		h.snapshotNames = map[uint32]string{}
+		for _, file := range h.state.Files {
+			h.snapshotNames[file.ID] = file.Path
+		}
 	}
 	return e
 }
@@ -342,48 +338,71 @@ func (h *keptTextHost) applyRead(read keptTextRead) error {
 	} else if h.after == 0 || read.Cutoff > h.after {
 		return errors.New("missing kept snapshot")
 	}
-	base := crdt.EncodeStateAsUpdateV1(h.doc, nil)
-	accepted := make([][]byte, 0, len(read.Entries))
+	return h.applyEntries(read, previous)
+}
+func (h *keptTextHost) applyEntries(read keptTextRead, previous uint64) error {
+	base := map[uint32][]byte{}
+	accepted := map[uint32][][]byte{}
+	for id, file := range h.files {
+		base[id] = crdt.EncodeStateAsUpdateV1(file.doc, nil)
+	}
 	for _, entry := range read.Entries {
 		if entry.ID <= previous || entry.ID > read.Tail {
 			return errors.New("invalid kept log order")
 		}
 		previous = entry.ID
-		if e := h.applyFrame(entry.Body); e != nil {
+		id, update, e := protocol.OpenKeptFileUpdate(h.keys, entry.Body)
+		file := h.files[id]
+		if e != nil || file == nil {
+			h.skipped++
+			continue
+		}
+		if e := file.applyUpdate(update); e != nil {
 			h.skipped++
 		} else {
-			accepted = append(accepted, entry.Body)
+			accepted[id] = append(accepted[id], update)
 		}
 	}
 	if previous != read.Tail {
 		return errors.New("incomplete kept log")
 	}
-	return h.pruneIncomplete(base, accepted)
-}
-func (h *keptTextHost) applySnapshot(frame []byte) error {
-	name, update, e := protocol.OpenKeptTextSnapshot(h.keys, frame)
-	if e != nil {
-		return e
-	}
-	if e := h.applyUpdate(update); e != nil {
-		return e
-	}
-	h.snapshotName = name
-	if !completeKeptText(h.doc) {
-		return errors.New("incomplete kept snapshot")
+	for id, file := range h.files {
+		skipped, e := file.pruneIncomplete(base[id], accepted[id])
+		h.skipped += skipped
+		if e != nil {
+			return e
+		}
 	}
 	return nil
 }
-
-func (h *keptTextHost) applyFrame(frame []byte) error {
-	update, e := protocol.OpenKeptText(h.keys, frame)
+func (h *keptTextHost) applySnapshot(frame []byte) error {
+	files, e := protocol.OpenKeptBundle(h.keys, frame)
 	if e != nil {
 		return e
 	}
-	return h.applyUpdate(update)
+	if len(files) != len(h.state.Files) {
+		return errors.New("kept snapshot file inventory differs")
+	}
+	names := map[uint32]string{}
+	for i, file := range files {
+		local := h.state.Files[i]
+		if file.ID != local.ID || (len(files) > 1 && file.Path != local.Path) {
+			return errors.New("kept snapshot file inventory differs")
+		}
+		target := h.files[file.ID]
+		if e := target.applyUpdate(file.Update); e != nil {
+			return e
+		}
+		if !completeKeptText(target.doc) {
+			return errors.New("incomplete kept snapshot")
+		}
+		names[file.ID] = file.Path
+	}
+	h.snapshotNames = names
+	return nil
 }
 
-func (h *keptTextHost) applyUpdate(update []byte) error {
+func (h *keptTextDocument) applyUpdate(update []byte) error {
 	candidate := crdt.New(crdt.WithGC(false))
 	e := crdt.ApplyUpdateV1(candidate, crdt.EncodeStateAsUpdateV1(h.doc, nil), nil)
 	if e == nil {
@@ -398,11 +417,12 @@ func (h *keptTextHost) applyUpdate(update []byte) error {
 	return nil
 }
 
-func (h *keptTextHost) pruneIncomplete(base []byte, accepted [][]byte) error {
+func (h *keptTextDocument) pruneIncomplete(base []byte, accepted [][]byte) (int, error) {
+	skipped := 0
 	for !completeKeptText(h.doc) {
 		projection, e := crdt.EncodeStateFromSnapshot(h.doc, crdt.CaptureSnapshot(h.doc))
 		if e != nil {
-			return errors.New("cannot inspect incomplete kept updates")
+			return skipped, errors.New("cannot inspect incomplete kept updates")
 		}
 		complete := make([][]byte, 0, len(accepted))
 		for _, frame := range accepted {
@@ -413,27 +433,26 @@ func (h *keptTextHost) pruneIncomplete(base []byte, accepted [][]byte) error {
 		if len(complete) == len(accepted) {
 			complete = nil
 		}
-		h.skipped += len(accepted) - len(complete)
+		skipped += len(accepted) - len(complete)
 		accepted = complete
 		h.doc.Destroy()
 		h.doc = crdt.New(crdt.WithGC(false))
 		if e := applyKeptText(h.doc, base); e != nil {
-			return e
+			return skipped, e
 		}
 		for _, frame := range accepted {
-			if e := h.applyFrame(frame); e != nil {
-				return e
+			if e := h.applyUpdate(frame); e != nil {
+				return skipped, e
 			}
 		}
 	}
-	return nil
+	return skipped, nil
 }
-func (h *keptTextHost) frameIntegrated(projection, frame []byte) bool {
+func (h *keptTextDocument) frameIntegrated(projection, frame []byte) bool {
 	candidate := crdt.New()
 	defer candidate.Destroy()
-	update, e := protocol.OpenKeptText(h.keys, frame)
-	return e == nil && crdt.ApplyUpdateV1(candidate, projection, nil) == nil &&
-		applyKeptText(candidate, update) == nil && completeKeptText(candidate)
+	return crdt.ApplyUpdateV1(candidate, projection, nil) == nil &&
+		applyKeptText(candidate, frame) == nil && completeKeptText(candidate)
 }
 
 func applyKeptText(doc *crdt.Doc, update []byte) (err error) {
@@ -547,10 +566,20 @@ func readKeptState(path string, s *keptTextState) error {
 		return errors.New("kept host state changed")
 	}
 	raw, e := io.ReadAll(io.LimitReader(f, 8*protocol.MaxFrameBytes+1))
+	saved := struct {
+		*keptTextState
+		File    string
+		State   []byte
+		Text    string
+		Pending *string
+	}{keptTextState: s}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
-	if e != nil || len(raw) > 8*protocol.MaxFrameBytes || decoder.Decode(s) != nil || decoder.Decode(new(any)) != io.EOF {
+	if e != nil || len(raw) > 8*protocol.MaxFrameBytes || decoder.Decode(&saved) != nil || decoder.Decode(new(any)) != io.EOF {
 		return errors.New("invalid kept host state")
+	}
+	if len(s.Files) == 0 && saved.File != "" {
+		s.Files = []keptTextFileState{{ID: 0, Path: filepath.Base(saved.File), File: saved.File, State: saved.State, Text: saved.Text, Pending: saved.Pending}}
 	}
 	return nil
 }
@@ -581,7 +610,7 @@ func saveKeptState(path string, s keptTextState) error {
 	return nil
 }
 
-func finishKeptWrite(path string, s *keptTextState, bound *filewriter.BoundFile) error {
+func finishKeptWrite(s *keptTextFileState, bound *filewriter.BoundFile) error {
 	text, ok := bound.Read()
 	if !ok || (text != s.Text && (s.Pending == nil || text != *s.Pending)) {
 		return errors.New("kept file changed outside pedit; original preserved")
@@ -604,7 +633,7 @@ func finishKeptWrite(path string, s *keptTextState, bound *filewriter.BoundFile)
 
 	s.Text = *s.Pending
 	s.Pending = nil
-	return saveKeptState(path, *s)
+	return nil
 }
 func syncKeptDirectory(path string) error {
 	dir, e := os.Open(path)

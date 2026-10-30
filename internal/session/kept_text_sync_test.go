@@ -47,12 +47,12 @@ func TestKeptTextSyncFollowsRenamedParent(t *testing.T) {
 				}
 			}
 			next := "after"
-			state := keptTextState{File: file, Text: "before", Pending: &next}
+			state := keptTextState{Files: []keptTextFileState{{ID: 0, Path: filepath.Base(file), File: file, Text: "before", Pending: &next}}}
 			path := filepath.Join(dir, "state.keep.json")
 			if err := saveKeptState(path, state); err != nil {
 				t.Fatal(err)
 			}
-			if err := finishKeptWrite(path, &state, bound); err != nil {
+			if err := finishTestKeptWrite(path, &state, bound); err != nil {
 				t.Fatalf("sync anchored source: %v", err)
 			}
 			got, err := os.ReadFile(filepath.Join(moved, "notes.md"))
@@ -66,7 +66,7 @@ func TestKeptTextSyncFollowsRenamedParent(t *testing.T) {
 				}
 			}
 			var saved keptTextState
-			if err := readKeptState(path, &saved); err != nil || saved.Pending != nil || saved.Text != "after" {
+			if err := readKeptState(path, &saved); err != nil || saved.Files[0].Pending != nil || saved.Files[0].Text != "after" {
 				t.Fatal("did not complete anchored write journal")
 			}
 		})
@@ -100,12 +100,12 @@ func TestKeptTextUncertainSyncRetainsPending(t *testing.T) {
 		}
 	})
 	next := "after"
-	state := keptTextState{File: file, Text: "before", Pending: &next}
+	state := keptTextState{Files: []keptTextFileState{{ID: 0, Path: filepath.Base(file), File: file, Text: "before", Pending: &next}}}
 	path := filepath.Join(dir, "state.keep.json")
 	if err := saveKeptState(path, state); err != nil {
 		t.Fatal(err)
 	}
-	if err := finishKeptWrite(path, &state, bound); err == nil {
+	if err := finishTestKeptWrite(path, &state, bound); err == nil {
 		t.Fatal("unavailable directory sync reported success")
 	}
 	got, err := os.ReadFile(file)
@@ -113,17 +113,17 @@ func TestKeptTextUncertainSyncRetainsPending(t *testing.T) {
 		t.Fatal("did not exercise uncertainty after source write")
 	}
 	var saved keptTextState
-	if err := readKeptState(path, &saved); err != nil || saved.Pending == nil || saved.Text != "before" {
+	if err := readKeptState(path, &saved); err != nil || saved.Files[0].Pending == nil || saved.Files[0].Text != "before" {
 		t.Fatal("uncertain sync discarded pending journal")
 	}
 	if err := os.Chmod(docs, 0700); err != nil {
 		t.Fatal(err)
 	}
 	bound.SetTestHook(nil)
-	if err := finishKeptWrite(path, &saved, bound); err != nil {
+	if err := finishTestKeptWrite(path, &saved, bound); err != nil {
 		t.Fatalf("retry sync: %v", err)
 	}
-	if err := readKeptState(path, &saved); err != nil || saved.Pending != nil || saved.Text != "after" {
+	if err := readKeptState(path, &saved); err != nil || saved.Files[0].Pending != nil || saved.Files[0].Text != "after" {
 		t.Fatal("confirmed sync did not complete journal")
 	}
 }

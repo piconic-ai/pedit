@@ -108,6 +108,7 @@ it('loads signed text without enqueueing, preserves exact ciphertext after a los
       skipped: 0,
       after: 1,
       filename: null,
+      files: [],
     })
   } finally {
     x.source.destroy()

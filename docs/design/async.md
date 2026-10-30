@@ -2,11 +2,16 @@
 
 ## Implemented text review
 
-`pedit --keep 7d notes.md` publishes one encrypted Yjs text document. The relay
+`pedit --keep 7d notes.md todo.md` publishes a fixed set of encrypted Yjs text
+documents, one per file. A signed encrypted snapshot carries their stable IDs,
+relative display paths and states; signed updates identify their target file.
+The host writes only the original local paths in its private record. The relay
 caps retention, keeps an encrypted snapshot and update log, and serves browser
 guests after the host leaves. `pedit --resume <link>` restores the original
 Yjs identifiers from a mode-0600 record outside the project, merges signed updates, saves the
-file and recovery state, then checkpoints and truncates the observed log prefix.
+files and recovery state, then checkpoints and truncates the observed log prefix.
+All source writes and the recovery journal are durable before the shared log
+cutoff advances. Restart finishes any partially completed journal writes.
 Repeated Yjs text updates are idempotent. This path is separate from the live
 nonce handshake and never accepts canvas, comment or attachment operations.
 Signatures authenticate editor access, not freshness. A relay can withhold

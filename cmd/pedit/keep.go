@@ -47,7 +47,7 @@ func runKeep(opts commandArgs, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	err = session.RunKeptText(ctx, session.KeptTextOptions{
-		File: opts.File, Project: cfg.root, Server: server, Resume: opts.Resume, Keep: opts.Keep,
+		File: opts.File, More: opts.More, Project: cfg.root, Server: server, Resume: opts.Resume, Keep: opts.Keep,
 		OnSkipped: func(count int) { fmt.Fprintf(stdout, "Skipped %d invalid updates.\n", count) },
 	}, func(link string, seconds, until int64) {
 		fmt.Fprintln(stdout, link)

@@ -472,8 +472,8 @@ func (o *commandArgs) addArg(arg string, hasValue bool) error {
 
 // check rejects combinations that are each fine alone.
 func (o *commandArgs) check() error {
-	if o.Keep > 0 && (o.File == "" || len(o.More) > 0 || o.Room != "" || o.Template != "" || o.Directory != "" || o.Resume != "") {
-		return errors.New("--keep shares exactly one existing text file")
+	if o.Keep > 0 && (o.File == "" || o.Room != "" || o.Template != "" || o.Directory != "" || o.Resume != "") {
+		return errors.New("--keep shares existing text files")
 	}
 	if o.Resume != "" && (!isShareLink(o.Resume) || o.File != "" || o.Room != "" || o.Template != "" || o.Directory != "") {
 		return errors.New("--resume requires only a share link")

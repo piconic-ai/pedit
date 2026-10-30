@@ -2,7 +2,7 @@ import { render } from '@barefootjs/client/runtime'
 import { markdown } from '@codemirror/lang-markdown'
 import { Compartment, EditorState, type Extension, Prec } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
-import { deriveRoomKeys, parseFragment } from '@pedit/protocol'
+import { deriveRoomKeys, type FileEntry, parseFragment } from '@pedit/protocol'
 import { KeptTextClient, KeptTextClosedError } from '@pedit/protocol/kept-text'
 import { basicSetup } from 'codemirror'
 import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next'
@@ -18,6 +18,7 @@ import { readerTheme, ThemeSwitcher } from './themes.ts'
 import { NARROW_QUERY, ViewSwitch } from './view.ts'
 import { loadVimMode, VimToggle, vimExtension } from './vim.ts'
 import './components/Header.tsx'
+import './components/FileTabs.tsx'
 import './components/KeptTextNotice.tsx'
 import { lockedUndo } from './lockedundo.ts'
 import { Store } from './store.ts'
@@ -39,6 +40,8 @@ export async function joinKeptText(
     doc = new Y.Doc()
   const status = new Store<KeptSyncStatus>('connecting'),
     file = new Store<string | null>(null),
+    files = new Store<readonly FileEntry[]>([]),
+    current = new Store(0),
     deadline = new Store<string | null>(null),
     skipped = new Store(0)
   let parts: LayoutParts | undefined
@@ -77,41 +80,46 @@ export async function joinKeptText(
     fontMode = new Compartment(),
     wrapMode = new Compartment(),
     vimMode = new Compartment()
-  const text = doc.getText('content'),
-    undo = new Y.UndoManager(text)
+  const text = doc.getText('content')
+  const undo = new Y.UndoManager(text)
+  const undos = new Map([[0, undo]])
+  let shown = { text, undo }
+  const reader = readerTheme()
   applyText(appearance)
+  const extensions = (text: Y.Text, undo: Y.UndoManager, from?: EditorState): Extension[] => {
+    const held = (compartment: Compartment, initial: Extension) =>
+      (from && compartment.get(from)) ?? initial
+    return [
+      vimMode.of(held(vimMode, [])),
+      basicSetup,
+      Prec.high([
+        keymap.of(history),
+        EditorView.domEventHandlers({
+          beforeinput(event, view) {
+            const key =
+              event.inputType === 'historyUndo'
+                ? 'Mod-z'
+                : event.inputType === 'historyRedo'
+                  ? 'Mod-Shift-z'
+                  : undefined
+            if (!key) return false
+            event.preventDefault()
+            history.find((binding) => binding.key === key)?.run(view)
+            return true
+          },
+        }),
+      ]),
+      markdown(),
+      themeMode.of(held(themeMode, theme)),
+      fontMode.of(held(fontMode, reader)),
+      wrapMode.of(held(wrapMode, lineWrapping(appearance.wrap))),
+      editable.of(held(editable, [EditorState.readOnly.of(true), EditorView.editable.of(false)])),
+      yCollab(text, null, { undoManager: undo }),
+    ]
+  }
   const editor: EditorView = new EditorView({
     parent: parts.source,
-    state: EditorState.create({
-      doc: doc.getText('content').toString(),
-      extensions: [
-        vimMode.of([]),
-        basicSetup,
-        Prec.high([
-          keymap.of(history),
-          EditorView.domEventHandlers({
-            beforeinput(event, view) {
-              const key =
-                event.inputType === 'historyUndo'
-                  ? 'Mod-z'
-                  : event.inputType === 'historyRedo'
-                    ? 'Mod-Shift-z'
-                    : undefined
-              if (!key) return false
-              event.preventDefault()
-              history.find((binding) => binding.key === key)?.run(view)
-              return true
-            },
-          }),
-        ]),
-        markdown(),
-        themeMode.of(theme),
-        fontMode.of(readerTheme()),
-        wrapMode.of(lineWrapping(appearance.wrap)),
-        editable.of([EditorState.readOnly.of(true), EditorView.editable.of(false)]),
-        yCollab(text, null, { undoManager: undo }),
-      ],
-    }),
+    state: EditorState.create({ doc: text.toString(), extensions: extensions(text, undo) }),
   })
   const follow = () => {
     if (parts?.main.dataset.view === 'split') preview.follow(editor)
@@ -135,8 +143,8 @@ export async function joinKeptText(
   editor.scrollDOM.addEventListener('scroll', follow)
   const vim = new VimToggle(editor, vimMode, () =>
     vimExtension({
-      undo: () => (editor.state.readOnly ? null : undo.undo()),
-      redo: () => (editor.state.readOnly ? null : undo.redo()),
+      undo: () => (editor.state.readOnly ? null : shown.undo.undo()),
+      redo: () => (editor.state.readOnly ? null : shown.undo.redo()),
     }),
   )
   const settings = settingsModel(
@@ -156,6 +164,29 @@ export async function joinKeptText(
     settings,
     access: keys.access === 'edit' ? 'edit' : 'read',
   })
+  const openFile = (id: number) => {
+    const entry = files.get().find((file) => file.id === id)
+    const next = client.getDoc(id)
+    if (!entry || !next || current.get() === id) return
+    const text = next.getText('content')
+    let undo = undos.get(id)
+    if (!undo) {
+      undo = new Y.UndoManager(text)
+      undos.set(id, undo)
+    }
+    shown = { text, undo }
+    editor.setState(
+      EditorState.create({
+        doc: text.toString(),
+        extensions: extensions(text, undo, editor.state),
+      }),
+    )
+    preview.setText(text)
+    current.set(id)
+    file.set(entry.path)
+    follow()
+  }
+  render(parts.files, 'FileTabs', { files, current, onOpen: openFile })
   render(parts.banner, 'KeptTextNotice', { deadline, skipped })
   let stopped = false,
     loaded = false,
@@ -166,7 +197,10 @@ export async function joinKeptText(
     try {
       if (loaded && keys.access === 'edit') await client.flush()
       await client.refresh()
-      file.set(client.state.filename)
+      files.set(client.state.files)
+      file.set(
+        files.get().find((entry) => entry.id === current.get())?.path || client.state.filename,
+      )
       skipped.set(client.state.skipped)
       if (!pending)
         status.set(client.state.hostAway || client.state.logEntries > 0 ? 'kept' : 'synced')
@@ -216,12 +250,12 @@ export async function joinKeptText(
       window.removeEventListener('beforeunload', warnPending)
       stopped = true
       clearInterval(timer)
-      client.close()
       narrow.removeEventListener('change', resize)
       settings.destroy()
       preview.active = false
       editor.destroy()
-      undo.destroy()
+      for (const undo of undos.values()) undo.destroy()
+      client.close()
       doc.destroy()
     },
     { once: true },

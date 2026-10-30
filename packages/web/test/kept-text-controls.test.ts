@@ -32,7 +32,7 @@ afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
-async function mount() {
+async function mount(multiple = false) {
   const room = 'AAECAwQFBgcICQoLDA0ODw',
     fragment = 'A'.repeat(43)
   const link = parseFragment(fragment)
@@ -40,12 +40,37 @@ async function mount() {
   const keys = await deriveRoomKeys(link, room),
     doc = new Y.Doc()
   doc.getText('content').insert(0, '# Hello')
-  const domain = new TextEncoder().encode('pedit kept snapshot v1\0'),
-    name = new TextEncoder().encode('notes.md'),
-    update = new Uint8Array(2 + name.length + Y.encodeStateAsUpdate(doc).length)
+  let domain = new TextEncoder().encode('pedit kept snapshot v1\0')
+  const name = new TextEncoder().encode('notes.md')
+  let update = new Uint8Array(2 + name.length + Y.encodeStateAsUpdate(doc).length)
   new DataView(update.buffer).setUint16(0, name.length)
   update.set(name, 2)
   update.set(Y.encodeStateAsUpdate(doc), 2 + name.length)
+  if (multiple) {
+    domain = new TextEncoder().encode('pedit kept files snapshot v1\0')
+    const other = new Y.Doc()
+    other.getText('content').insert(0, '# Todo')
+    const entries = [
+      { id: 0, name, state: Y.encodeStateAsUpdate(doc) },
+      { id: 1, name: new TextEncoder().encode('todo.md'), state: Y.encodeStateAsUpdate(other) },
+    ]
+    update = new Uint8Array(
+      2 + entries.reduce((size, entry) => size + 10 + entry.name.length + entry.state.length, 0),
+    )
+    const view = new DataView(update.buffer)
+    view.setUint16(0, 2)
+    let offset = 2
+    for (const entry of entries) {
+      view.setUint32(offset, entry.id)
+      view.setUint16(offset + 4, entry.name.length)
+      update.set(entry.name, offset + 6)
+      offset += 6 + entry.name.length
+      view.setUint32(offset, entry.state.length)
+      update.set(entry.state, offset + 4)
+      offset += 4 + entry.state.length
+    }
+    other.destroy()
+  }
   const message = new Uint8Array(domain.length + update.length)
   message.set(domain)
   message.set(update, domain.length)
@@ -183,4 +208,61 @@ it('keeps the same header controls and view while the host goes offline and retu
   expect(x.q('main').dataset.view).toBe('split')
   expect(x.container.querySelector('.people')).toBeNull()
   expect(x.container.querySelector('.comments-button')).toBeNull()
+})
+
+it('switches retained files without losing pending edits, preview or settings', async () => {
+  const x = await mount(true)
+  expect(
+    [...x.container.querySelectorAll('.file-tabs button')].map((el) => el.textContent),
+  ).toEqual(['notes.md', 'todo.md'])
+  const notes = x.q('.file-tabs button[title="notes.md"]'),
+    todo = x.q('.file-tabs button[title="todo.md"]')
+  x.q('button[data-mode="split"]').click()
+  x.q('[popover]').style.setProperty('display', 'block')
+  const wrapRow = [...x.container.querySelectorAll('.settings-row')].find(
+    (row) => row.querySelector('.settings-text > span')?.textContent === 'Wrap long lines',
+  )
+  const wrap = wrapRow?.querySelector('input')
+  if (!(wrap instanceof HTMLInputElement)) throw new Error('missing wrapping setting')
+  wrap.checked = false
+  wrap.dispatchEvent(new Event('change', { bubbles: true }))
+  expect(x.editor.contentDOM.classList.contains('cm-lineWrapping')).toBe(false)
+
+  x.editor.dispatch({ changes: { from: x.editor.state.doc.length, insert: ' notes edit' } })
+  todo.click()
+  expect(x.q('.file').textContent).toBe('todo.md')
+  expect(x.editor.contentDOM.classList.contains('cm-lineWrapping')).toBe(false)
+  expect(x.editor.state.doc.toString()).toBe('# Todo')
+  x.editor.dispatch({ changes: { from: x.editor.state.doc.length, insert: ' todo edit' } })
+  await vi.waitFor(() => expect(x.q('.preview h1').textContent).toBe('Todo todo edit'))
+  notes.click()
+  expect(x.editor.state.doc.toString()).toBe('# Hello notes edit')
+  expect(x.q('main').dataset.view).toBe('split')
+  const warn = new Event('beforeunload', { cancelable: true })
+  window.dispatchEvent(warn)
+  expect(warn.defaultPrevented).toBe(true)
+  await vi.advanceTimersByTimeAsync(1000)
+  await vi.waitFor(() => expect(x.q('.status').dataset.status).toBe('kept'))
+  const posts = vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'POST')
+  expect(posts).toHaveLength(2)
+  todo.click()
+  expect(x.editor.state.doc.toString()).toBe('# Todo todo edit')
+})
+it('keeps undo local to each retained file and never undoes its loaded snapshot', async () => {
+  const x = await mount(true)
+  const undo = () =>
+    x.editor.contentDOM.dispatchEvent(
+      new InputEvent('beforeinput', { inputType: 'historyUndo', bubbles: true, cancelable: true }),
+    )
+  x.editor.dispatch({ changes: { from: 7, insert: ' local notes' } })
+  x.q('.file-tabs button[title="todo.md"]').click()
+  undo()
+  expect(x.editor.state.doc.toString()).toBe('# Todo')
+  x.editor.dispatch({ changes: { from: 6, insert: ' local todo' } })
+  undo()
+  expect(x.editor.state.doc.toString()).toBe('# Todo')
+  x.q('.file-tabs button[title="notes.md"]').click()
+  expect(x.editor.state.doc.toString()).toBe('# Hello local notes')
+  undo()
+  expect(x.editor.state.doc.toString()).toBe('# Hello')
 })

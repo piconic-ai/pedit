@@ -30,13 +30,25 @@ const client = new KeptTextClient({
 await client.refresh()
 const send = () =>
   process.stdout.write(
-    JSON.stringify({ text: doc.getText('content').toString(), ...client.state }) + '\n',
+    JSON.stringify({
+      text: doc.getText('content').toString(),
+      ...client.state,
+      documents: Object.fromEntries(
+        client.state.files.map((file) => [
+          file.id,
+          client.getDoc(file.id).getText('content').toString(),
+        ]),
+      ),
+    }) + '\n',
   )
 send()
 for await (const line of createInterface({ input: process.stdin })) {
   const command = JSON.parse(line)
   if (command.append) {
-    doc.getText('content').insert(doc.getText('content').length, command.append)
+    const target =
+      command.file === undefined || command.file === 0 ? doc : client.getDoc(command.file)
+    if (!target) throw new Error('unknown fixture file')
+    target.getText('content').insert(target.getText('content').length, command.append)
     await client.flush()
   }
   if (command.garbage) {

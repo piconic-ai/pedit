@@ -82,7 +82,7 @@ Options:
   -t, --template <name>  Use a template filename or type (csv, canvas, md)
   --<name>              Template shorthand (for example, --canvas)
   -d, --directory <dir>  Save a new file here (overrides config output)
-  --keep <duration>     Keep one text file open after leaving (for example 7d)
+  --keep <duration>     Keep text files open after leaving (for example 7d)
   --resume <link>       Resume a kept room hosted from this project
   -h, --help             Show this help
   -v, --version          Show the version

@@ -42,6 +42,7 @@ vi.mock('@barefootjs/client/runtime', async (load) => ({
     props.onReady?.({
       header,
       banner: document.createElement('div'),
+      files: document.createElement('div'),
       main,
       source,
       comments,

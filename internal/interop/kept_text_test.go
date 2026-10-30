@@ -332,3 +332,113 @@ func TestKeptTextVerticalSlice(t *testing.T) {
 		return json.NewDecoder(response.Body).Decode(&state) == nil && state.Bytes == 0
 	}, "expired room ciphertext deleted without a host or guest request")
 }
+
+func TestKeptMultipleFilesRoundTrip(t *testing.T) {
+	if os.Getenv("PEDIT_INTEROP") != "1" {
+		t.Skip("set PEDIT_INTEROP=1")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("kept host requires Unix permissions")
+	}
+	cache, cacheErr := exec.Command("go", "env", "GOMODCACHE").Output()
+	if cacheErr != nil {
+		t.Fatal(cacheErr)
+	}
+	t.Setenv("GOMODCACHE", strings.TrimSpace(string(cache)))
+	userConfig := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", userConfig)
+	if runtime.GOOS == "darwin" {
+		t.Setenv("HOME", userConfig)
+	}
+	dir, relay := protocolDir(t), keptRelay(t)
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(t.TempDir(), "pedit")
+	build := exec.Command("go", "build", "-o", binary, "./cmd/pedit")
+	build.Dir = root
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build CLI: %v\n%s", err, output)
+	}
+	project := t.TempDir()
+	if err := os.Mkdir(filepath.Join(project, ".pedit"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, ".pedit/config.yaml"), []byte("server: "+relay+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for name, text := range map[string]string{"notes.md": "notes", "todo.md": "todo"} {
+		if err := os.WriteFile(filepath.Join(project, name), []byte(text), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	host := keptCommand(t, project, binary, "--keep", "7d", "notes.md", "todo.md")
+	link := host.link(t)
+	script := filepath.Join(root, "internal/interop/testdata/kept-text.mjs")
+	guest := keptCommand(t, project, "node", script, dir, link)
+	type state struct {
+		Documents map[string]string
+		Files     []struct {
+			ID   uint32
+			Path string
+		}
+		HostAway   bool
+		LogEntries int
+	}
+	read := func(p *keptProcess) state {
+		t.Helper()
+		var s state
+		if err := json.Unmarshal([]byte(p.line(t)), &s); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	send := func(p *keptProcess, command string) state {
+		t.Helper()
+		if _, err := fmt.Fprintln(p.input, command); err != nil {
+			t.Fatal(err)
+		}
+		return read(p)
+	}
+	initial := read(guest)
+	if initial.HostAway || len(initial.Files) != 2 || initial.Files[0].Path != "notes.md" || initial.Files[1].Path != "todo.md" || initial.Documents["0"] != "notes" || initial.Documents["1"] != "todo" {
+		t.Fatalf("host online: %+v", initial)
+	}
+	send(guest, `{"file":0,"append":" online"}`)
+	send(guest, `{"file":1,"append":" online"}`)
+	saved := func(notes, todo string) bool {
+		a, _ := os.ReadFile(filepath.Join(project, "notes.md"))
+		b, _ := os.ReadFile(filepath.Join(project, "todo.md"))
+		return string(a) == notes && string(b) == todo
+	}
+	prototest.WaitFor(t, 5*time.Second, func() bool { return saved("notes online", "todo online") }, "both online files saved")
+	host.stop(t)
+	send(guest, `{"file":0,"append":" away"}`)
+	away := send(guest, `{"file":1,"append":" away"}`)
+	if !away.HostAway || away.Documents["0"] != "notes online away" || away.Documents["1"] != "todo online away" {
+		t.Fatalf("away guest: %+v", away)
+	}
+	if !saved("notes online", "todo online") {
+		t.Fatal("offline edits reached an absent host")
+	}
+	newcomer := keptCommand(t, project, "node", script, dir, link)
+	opened := read(newcomer)
+	if !opened.HostAway || opened.Documents["0"] != away.Documents["0"] || opened.Documents["1"] != away.Documents["1"] {
+		t.Fatalf("offline newcomer: %+v", opened)
+	}
+	send(newcomer, `{"file":0,"append":" newcomer"}`)
+	send(newcomer, `{"file":1,"append":" newcomer"}`)
+	resumed := keptCommand(t, project, binary, "--resume", link)
+	resumed.link(t)
+	prototest.WaitFor(t, 5*time.Second, func() bool { return saved("notes online away newcomer", "todo online away newcomer") }, "both resumed files durably saved")
+	prototest.WaitFor(t, 5*time.Second, func() bool { return send(newcomer, `{}`).LogEntries == 0 }, "bundle log truncated after all file saves")
+	fresh := keptCommand(t, project, "node", script, dir, link)
+	final := read(fresh)
+	if final.Documents["0"] != "notes online away newcomer" || final.Documents["1"] != "todo online away newcomer" || len(final.Files) != 2 {
+		t.Fatalf("new guest checkpoint: %+v", final)
+	}
+	send(newcomer, `{"replay":true}`)
+	prototest.WaitFor(t, 5*time.Second, func() bool { return saved("notes online away newcomer", "todo online away newcomer") }, "replayed multi-file update is idempotent")
+	resumed.stop(t)
+}

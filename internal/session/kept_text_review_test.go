@@ -22,7 +22,7 @@ func TestReviewResumeRejectsInvalidPendingStateBeforeWritingSource(t *testing.T)
 	hash := sha256.Sum256([]byte(token))
 	room := base64.RawURLEncoding.EncodeToString(hash[:])[:22]
 	pending := "corrupted pending text"
-	state := keptTextState{File: file, Project: dir, Origin: "https://example.test", Fragment: protocol.GenerateEditSecret(), HostToken: token, Keep: 60, State: []byte{1, 2, 3}, Text: "original", Pending: &pending, Initialized: true}
+	state := keptTextState{Project: dir, Origin: "https://example.test", Fragment: protocol.GenerateEditSecret(), HostToken: token, Keep: 60, Initialized: true, Files: []keptTextFileState{{ID: 0, Path: filepath.Base(file), File: file, State: []byte{1, 2, 3}, Text: "original", Pending: &pending}}}
 	path := keptTestStatePath(t, dir, room)
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		t.Fatal(err)

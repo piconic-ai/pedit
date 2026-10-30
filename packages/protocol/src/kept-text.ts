@@ -2,12 +2,15 @@ import * as decoding from 'lib0/decoding'
 import * as Y from 'yjs'
 import type { RoomKeys } from './access.ts'
 import { decrypt, encrypt } from './cipher.ts'
+import type { FileEntry } from './files.ts'
 import { MAX_FRAME_BYTES } from './frame.ts'
+import { checkPath, MAX_PATH_BYTES } from './path.ts'
 
 const DOMAIN = new TextEncoder().encode('pedit kept text v1\0')
 const SNAPSHOT_DOMAIN = new TextEncoder().encode('pedit kept snapshot v1\0')
+const BUNDLE_DOMAIN = new TextEncoder().encode('pedit kept files snapshot v1\0')
+const FILE_DOMAIN = new TextEncoder().encode('pedit kept file update v1\0')
 const LIMIT = 8 * 1024 * 1024
-const UPDATE_LIMIT = MAX_FRAME_BYTES - DOMAIN.length - 64 - 28
 export class KeptTextClosedError extends Error {
   constructor() {
     super('kept room expired')
@@ -31,6 +34,7 @@ export type KeptTextState = {
   skipped: number
   after: number
   filename: string | null
+  files: readonly FileEntry[]
 }
 export class KeptTextClient {
   readonly state: KeptTextState = {
@@ -40,12 +44,16 @@ export class KeptTextClient {
     skipped: 0,
     after: 0,
     filename: null,
+    files: [],
   }
   private readonly url: string
   private readonly abort = new AbortController()
   private readonly sender = crypto.randomUUID()
   private work: Promise<void> = Promise.resolve()
-  private readonly pending: Uint8Array[] = []
+  private readonly pending: FileUpdate[] = []
+  private readonly docs = new Map<number, Y.Doc>()
+  private readonly records = new Map<number, (update: Uint8Array, origin: unknown) => void>()
+  private bundled = false
   private prepared: { body: Uint8Array; count: number } | undefined
   private loaded = false
   private etag: string | null = null
@@ -66,15 +74,24 @@ export class KeptTextClient {
     )
       throw new Error('invalid kept room')
     this.url = `${url.origin}/api/rooms/${options.roomId}/keep`
-    options.doc.on('update', this.record)
+    this.docs.set(0, options.doc)
+    this.listen(0, options.doc)
   }
-  private readonly record = (update: Uint8Array, origin: unknown): void => {
+  getDoc(id: number): Y.Doc | undefined {
+    return this.docs.get(id)
+  }
+  private listen(id: number, doc: Y.Doc): void {
+    const record = (update: Uint8Array, origin: unknown) => this.record(id, update, origin)
+    this.records.set(id, record)
+    doc.on('update', record)
+  }
+  private record(id: number, update: Uint8Array, origin: unknown): void {
     if (origin === this) return
     if (this.options.keys.access !== 'edit') {
       this.denied = true
       return
     }
-    this.pending.push(Uint8Array.from(update))
+    this.pending.push({ id, update: Uint8Array.from(update) })
     this.options.onStatus?.('pending')
   }
   refresh(): Promise<void> {
@@ -94,55 +111,103 @@ export class KeptTextClient {
         if (entry.id <= previous || entry.id > value.tail) throw new Error('invalid kept entry')
         previous = entry.id
       }
-      let filename = this.state.filename
-      const base = copyDoc(this.options.doc)
+      const bases = new Map([...this.docs].map(([id, doc]) => [id, copyDoc(doc)])),
+        results = new Map<number, Y.Doc>()
+      let display = {
+        filename: this.state.filename,
+        files: this.state.files,
+        bundled: this.bundled,
+      }
       try {
-        if (value.snapshot !== undefined) {
-          const empty = new Y.Doc()
-          let snapshot: Y.Doc | undefined
-          try {
-            const opened = await this.open(value.snapshot, true)
-            filename = opened.filename
-            snapshot = trial(empty, opened.update)
-            if (incomplete(snapshot)) throw new Error('invalid kept snapshot')
-            Y.applyUpdate(base, Y.encodeStateAsUpdate(snapshot))
-          } finally {
-            empty.destroy()
-            snapshot?.destroy()
-          }
-        }
-        const result = await this.entries(
-          base,
-          value.entries.filter((entry) => entry.id > this.state.after),
-        )
-        try {
-          this.abort.signal.throwIfAborted()
-          Y.applyUpdate(this.options.doc, Y.encodeStateAsUpdate(result.doc), this)
-          this.state.skipped += result.skipped
-          this.state.filename = filename
-        } finally {
-          result.doc.destroy()
-        }
+        if (value.snapshot !== undefined)
+          display = this.snapshotBases(await this.open(value.snapshot, true), bases)
+        const skipped = await this.logEntries(value.entries, bases, results)
+        this.abort.signal.throwIfAborted()
+        this.commitDocs(results)
+        this.state.skipped += skipped
+        this.state.filename = display.filename
+        this.state.files = display.files
+        this.bundled = display.bundled
       } finally {
-        base.destroy()
+        for (const doc of bases.values()) doc.destroy()
+        for (const doc of results.values()) doc.destroy()
       }
       this.loaded = true
       this.etag = response.headers.get('ETag')
       this.metadata(value)
     })
   }
-  private async entries(
-    base: Y.Doc,
+  private snapshotBases(opened: OpenedSnapshot, bases: Map<number, Y.Doc>) {
+    if (this.bundled && (opened.kind !== 'bundle' || !sameFiles(this.state.files, opened.files)))
+      throw new Error('changed kept manifest')
+    const snapshots =
+      opened.kind === 'bundle'
+        ? opened.files
+        : [{ id: 0, path: opened.filename, update: opened.update }]
+    const listed = snapshots.flatMap((file) =>
+      file.path === null ? [] : [{ id: file.id, path: file.path, format: 'text' }],
+    )
+    for (const file of snapshots) {
+      let base = bases.get(file.id)
+      if (!base) {
+        base = new Y.Doc()
+        base.getText('content')
+        bases.set(file.id, base)
+      }
+      mergeSnapshot(base, file.update)
+    }
+    return {
+      filename: snapshots[0]?.path ?? null,
+      files: sameFiles(this.state.files, listed) ? this.state.files : listed,
+      bundled: opened.kind === 'bundle',
+    }
+  }
+  private async logEntries(
     entries: Snapshot['entries'],
-  ): Promise<{ doc: Y.Doc; skipped: number }> {
+    bases: ReadonlyMap<number, Y.Doc>,
+    results: Map<number, Y.Doc>,
+  ): Promise<number> {
+    let skipped = 0
+    const updates = new Map<number, Uint8Array[]>()
+    for (const entry of entries) {
+      if (entry.id <= this.state.after) continue
+      try {
+        const opened = await this.open(entry.body)
+        if (!bases.has(opened.id)) throw new Error('unknown kept file')
+        const list = updates.get(opened.id) ?? []
+        list.push(opened.update)
+        updates.set(opened.id, list)
+      } catch {
+        skipped++
+      }
+    }
+    for (const [id, base] of bases) {
+      const result = this.entries(base, updates.get(id) ?? [])
+      results.set(id, result.doc)
+      skipped += result.skipped
+    }
+    return skipped
+  }
+  private commitDocs(results: ReadonlyMap<number, Y.Doc>): void {
+    for (const [id, result] of results) {
+      let doc = this.docs.get(id)
+      if (!doc) {
+        doc = new Y.Doc()
+        doc.getText('content')
+        this.docs.set(id, doc)
+        this.listen(id, doc)
+      }
+      Y.applyUpdate(doc, Y.encodeStateAsUpdate(result), this)
+    }
+  }
+  private entries(base: Y.Doc, entries: readonly Uint8Array[]): { doc: Y.Doc; skipped: number } {
     let probe = copyDoc(base),
       skipped = 0
     const accepted: Uint8Array[] = []
     try {
-      for (const entry of entries) {
+      for (const update of entries) {
         try {
-          const { update } = await this.open(entry.body),
-            next = trial(probe, update)
+          const next = trial(probe, update)
           probe.destroy()
           probe = next
           accepted.push(update)
@@ -215,26 +280,41 @@ export class KeptTextClient {
   private async prepare(count: number): Promise<{ body: Uint8Array; count: number }> {
     const signer = this.options.keys.signer
     if (signer?.access !== 'edit') throw new Error('edit link required')
+    const first = this.pending[0]
+    if (!first) throw new Error('missing kept edit')
+    let contiguous = 1
+    while (contiguous < count && this.pending[contiguous]?.id === first.id) contiguous++
+    count = contiguous
+    const domain = this.bundled || first.id !== 0 ? FILE_DOMAIN : DOMAIN
+    const limit = MAX_FRAME_BYTES - domain.length - 64 - 28 - (domain === FILE_DOMAIN ? 4 : 0)
+    const merge = (length: number) =>
+      Y.mergeUpdates(this.pending.slice(0, length).map((entry) => entry.update))
     let low = 1,
       high = count - 1,
       fit = count,
-      update: Uint8Array | undefined = Y.mergeUpdates(this.pending.slice(0, count))
-    if (update.length > UPDATE_LIMIT) {
+      update: Uint8Array | undefined = merge(count)
+    if (update.length > limit) {
       update = undefined
       fit = 0
     }
     if (update) high = 0
     while (low <= high) {
       const mid = Math.floor((low + high) / 2),
-        merged = Y.mergeUpdates(this.pending.slice(0, mid))
-      if (merged.length <= UPDATE_LIMIT) {
+        merged = merge(mid)
+      if (merged.length <= limit) {
         fit = mid
         update = merged
         low = mid + 1
       } else high = mid - 1
     }
     if (!update) throw new Error('kept edit too large')
-    const message = join(DOMAIN, update)
+    let payload = update
+    if (domain === FILE_DOMAIN) {
+      payload = new Uint8Array(4 + update.length)
+      new DataView(payload.buffer).setUint32(0, first.id)
+      payload.set(update, 4)
+    }
+    const message = join(domain, payload)
     const signature = new Uint8Array(
       await crypto.subtle.sign('Ed25519', signer.key, Uint8Array.from(message)),
     )
@@ -242,7 +322,11 @@ export class KeptTextClient {
   }
   close(): void {
     this.abort.abort()
-    this.options.doc.off('update', this.record)
+    for (const [id, doc] of this.docs) {
+      const record = this.records.get(id)
+      if (record) doc.off('update', record)
+      if (id !== 0) doc.destroy()
+    }
   }
   private run(work: () => Promise<void>): Promise<void> {
     const next = this.work
@@ -283,10 +367,9 @@ export class KeptTextClient {
     }
     return response
   }
-  private async open(
-    value: string,
-    snapshot = false,
-  ): Promise<{ update: Uint8Array; filename: string | null }> {
+  private open(value: string, snapshot: true): Promise<OpenedSnapshot>
+  private open(value: string, snapshot?: false): Promise<FileUpdate>
+  private async open(value: string, snapshot = false): Promise<OpenedSnapshot | FileUpdate> {
     if (value.length > Math.ceil(MAX_FRAME_BYTES / 3) * 4) throw new Error('kept frame too large')
     const decoded = atob(value)
     if (btoa(decoded) !== value) throw new Error('invalid kept frame')
@@ -304,24 +387,107 @@ export class KeptTextClient {
       ))
     )
       throw new Error('invalid kept signature')
-    if (SNAPSHOT_DOMAIN.every((byte, i) => message[i] === byte)) {
-      if (!snapshot) throw new Error('snapshot is not a text update')
-      const payload = message.subarray(SNAPSHOT_DOMAIN.length)
-      if (payload.length < 2) throw new Error('invalid kept snapshot')
-      const size = new DataView(payload.buffer, payload.byteOffset, payload.byteLength).getUint16(0)
-      if (size < 1 || size > 4096 || size >= payload.length - 2)
-        throw new Error('invalid kept filename')
-      const filename = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
-        payload.subarray(2, 2 + size),
-      )
-      if (filename === '.' || filename === '..' || /[/\\\0]/.test(filename))
-        throw new Error('invalid kept filename')
-      return { filename, update: payload.slice(2 + size) }
-    }
-    if (message.length <= DOMAIN.length || !DOMAIN.every((byte, i) => message[i] === byte))
-      throw new Error('invalid kept domain')
-    return { filename: null, update: message.slice(DOMAIN.length) }
+    return snapshot ? decodeSnapshot(message) : decodeUpdate(message)
   }
+}
+type FileUpdate = { id: number; update: Uint8Array }
+type BundleFile = FileUpdate & { path: string }
+type OpenedSnapshot =
+  | { kind: 'bundle'; files: BundleFile[] }
+  | { kind: 'legacy'; filename: string | null; update: Uint8Array }
+function payloadFor(message: Uint8Array, domain: Uint8Array): Uint8Array | undefined {
+  return domain.every((byte, i) => message[i] === byte) ? message.slice(domain.length) : undefined
+}
+function decodeUpdate(message: Uint8Array): FileUpdate {
+  const payload = payloadFor(message, FILE_DOMAIN)
+  if (payload) {
+    if (payload.length <= 4) throw new Error('invalid kept file update')
+    return {
+      id: new DataView(payload.buffer, payload.byteOffset, 4).getUint32(0),
+      update: payload.slice(4),
+    }
+  }
+  const legacy = payloadFor(message, DOMAIN)
+  if (!legacy?.length) throw new Error('invalid kept domain')
+  return { id: 0, update: legacy }
+}
+function decodeSnapshot(message: Uint8Array): OpenedSnapshot {
+  const bundle = payloadFor(message, BUNDLE_DOMAIN)
+  if (bundle) return { kind: 'bundle', files: decodeBundle(bundle) }
+  const payload = payloadFor(message, SNAPSHOT_DOMAIN)
+  if (payload) {
+    if (payload.length < 2) throw new Error('invalid kept snapshot')
+    const size = new DataView(payload.buffer, payload.byteOffset, payload.byteLength).getUint16(0)
+    if (size < 1 || size > 4096 || size >= payload.length - 2)
+      throw new Error('invalid kept filename')
+    const filename = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
+      payload.subarray(2, 2 + size),
+    )
+    if (filename === '.' || filename === '..' || /[/\\\0]/.test(filename))
+      throw new Error('invalid kept filename')
+    return { kind: 'legacy', filename, update: payload.slice(2 + size) }
+  }
+  const legacy = payloadFor(message, DOMAIN)
+  if (!legacy?.length) throw new Error('invalid kept snapshot domain')
+  return { kind: 'legacy', filename: null, update: legacy }
+}
+function mergeSnapshot(base: Y.Doc, update: Uint8Array): void {
+  const empty = new Y.Doc()
+  let snapshot: Y.Doc | undefined
+  try {
+    snapshot = trial(empty, update)
+    if (incomplete(snapshot)) throw new Error('invalid kept snapshot')
+    Y.applyUpdate(base, Y.encodeStateAsUpdate(snapshot))
+  } finally {
+    empty.destroy()
+    snapshot?.destroy()
+  }
+}
+function sameFiles(
+  a: readonly Pick<FileEntry, 'id' | 'path'>[],
+  b: readonly Pick<FileEntry, 'id' | 'path'>[],
+): boolean {
+  return (
+    a.length === b.length && a.every((file, i) => file.id === b[i]?.id && file.path === b[i]?.path)
+  )
+}
+function decodeBundle(payload: Uint8Array): BundleFile[] {
+  const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength)
+  const count = view.getUint16(0),
+    files: BundleFile[] = [],
+    ids = new Set<number>(),
+    paths = new Set<string>()
+  if (count < 1 || count > 64) throw new Error('invalid kept file count')
+  let at = 2
+  for (let i = 0; i < count; i++) {
+    const id = view.getUint32(at)
+    at += 4
+    const size = view.getUint16(at)
+    at += 2
+    if (size < 1 || size > MAX_PATH_BYTES || at + size > payload.length)
+      throw new Error('invalid kept path')
+    const path = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
+      payload.subarray(at, at + size),
+    )
+    at += size
+    const length = view.getUint32(at)
+    at += 4
+    if (
+      (i === 0 && id !== 0) ||
+      ids.has(id) ||
+      paths.has(path) ||
+      checkPath(path) ||
+      length === 0 ||
+      at + length > payload.length
+    )
+      throw new Error('invalid kept file')
+    ids.add(id)
+    paths.add(path)
+    files.push({ id, path, update: payload.slice(at, at + length) })
+    at += length
+  }
+  if (at !== payload.length) throw new Error('invalid kept bundle trailing bytes')
+  return files
 }
 function join(a: Uint8Array, b: Uint8Array): Uint8Array {
   const result = new Uint8Array(a.length + b.length)

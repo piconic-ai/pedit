@@ -207,6 +207,7 @@ To report a vulnerability instead, see [SECURITY.md](../SECURITY.md).
 | Session length | 24 hours from the host's first connection |
 | Kept room after departure | Up to 7 days; the CLI reports any clamp |
 | Kept room total life | At least the effective keep duration; measured from publication |
+| Kept text snapshot | 1 MiB of ciphertext for all files together; at most 64 text files, fixed when the room opens |
 | Kept text log | 4 MiB of encrypted editing history before the host checkpoints; a 10,000-entry abuse guard also applies |
 | Kept room requests | 1,200 a minute from one network |
 

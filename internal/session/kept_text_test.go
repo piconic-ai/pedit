@@ -28,7 +28,7 @@ func TestKeptTextPendingWriteRecoveryAndExternalChange(t *testing.T) {
 				t.Fatal(err)
 			}
 			pending := "after"
-			s := keptTextState{File: file, Text: "before", Pending: &pending}
+			s := keptTextState{Files: []keptTextFileState{{ID: 0, Path: filepath.Base(file), File: file, Text: "before", Pending: &pending}}}
 			if err := saveKeptState(path, s); err != nil {
 				t.Fatal(err)
 			}
@@ -45,7 +45,7 @@ func TestKeptTextPendingWriteRecoveryAndExternalChange(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer bound.Close()
-			err = finishKeptWrite(path, &reopened, bound)
+			err = finishTestKeptWrite(path, &reopened, bound)
 			data, _ := os.ReadFile(file)
 			if disk == "external" {
 				if err == nil || string(data) != "external" {
@@ -56,7 +56,7 @@ func TestKeptTextPendingWriteRecoveryAndExternalChange(t *testing.T) {
 			if err != nil || string(data) != "after" {
 				t.Fatalf("resume write: %v", err)
 			}
-			if err := readKeptState(path, &reopened); err != nil || reopened.Pending != nil || reopened.Text != "after" {
+			if err := readKeptState(path, &reopened); err != nil || reopened.Files[0].Pending != nil || reopened.Files[0].Text != "after" {
 				t.Fatal("journal not completed")
 			}
 			if err := os.Chmod(path, 0644); err != nil {
@@ -109,7 +109,7 @@ func TestKeptTextResumesAfterCommittedCheckpointResponseIsLost(t *testing.T) {
 			}
 			doc := crdt.New()
 			defer doc.Destroy()
-			if err := crdt.ApplyUpdateV1(doc, state.State, nil); err != nil {
+			if err := crdt.ApplyUpdateV1(doc, state.Files[0].State, nil); err != nil {
 				t.Fatal(err)
 			}
 			text := doc.GetText("content")
