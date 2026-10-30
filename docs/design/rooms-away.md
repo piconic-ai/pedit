@@ -159,8 +159,8 @@ While the host is here, a kind 1 entry (from a guest that has not heard
 mode: the update must belong to a root of its doc, leave nothing waiting on
 missing items, and come with a valid signature; an entry that fails is counted
 and skipped. A host that dropped for so long that the room went into the kept
-state is sent the log on reconnecting, and leaves it to Yjs: its guests sync with
-it when it is back. The log is cut by the next resume's checkpoint.
+state is sent the log on reconnecting: it takes the entries in like entries of
+kind 1 and checkpoints at the tail.
 
 `pedit --resume [room]` reads the record. It first merges the edits made to the
 files while it was away into the record's documents, as a live room merges a

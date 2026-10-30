@@ -41,7 +41,8 @@ type keepAway struct {
 	dirty   bool
 	granted int64  // seconds the relay keeps the room, once it said so
 	told    int64  // what OnKeep was last called with; -1 before
-	after   uint64 // the last entry of the relay's log taken in, at resuming
+	after   uint64 // the last entry of the relay's log taken in
+	logged  bool   // entries of the log were taken in since the last checkpoint
 	skipped int
 	kick    chan struct{}
 	done    chan struct{}
@@ -241,7 +242,19 @@ func (a *keepAway) saveRecord(leaving bool) error {
 	return saveKeptState(a.h.path, state)
 }
 
-// onText takes the relay's word on the keep.
+// checkpoint tells the relay it can drop its log up to tail, which the live
+// docs hold.
+func (a *keepAway) checkpoint(tail uint64) {
+	a.recMu.Lock()
+	frame, err := a.h.snapshot()
+	a.recMu.Unlock()
+	if err == nil {
+		a.s.Client.SendMessage(protocol.EncodeCheckpoint(tail, frame))
+	}
+	a.report(err)
+}
+
+// onText takes the relay's word on the keep and on checkpoints.
 func (a *keepAway) onText(text string) {
 	if seconds, _, ok := protocol.ParseKeep(text); ok {
 		a.mu.Lock()
@@ -252,6 +265,11 @@ func (a *keepAway) onText(text string) {
 			a.report(a.saveRecord(false))
 		}
 		a.tell(seconds)
+	} else if cutoff, _, ok := protocol.ParseCheckpoint(text); ok {
+		a.mu.Lock()
+		a.after, a.logged = cutoff, false
+		a.mu.Unlock()
+		a.report(a.saveRecord(false))
 	} else if text == protocol.CheckpointRefused || text == protocol.LogFull {
 		a.report(errors.New("the relay said: " + text))
 	}
@@ -264,12 +282,31 @@ func (a *keepAway) report(err error) {
 }
 
 // onKind takes in the entries guests send while the host is here but has not
-// been heard of yet (kind 1). The log the relay replays to a host that dropped
-// for so long that the room was kept without it is left to Yjs: its guests
-// sync with the host when it is back.
+// been heard of yet (kind 1), and the log the relay replays to a host that
+// dropped for so long that the room was kept without it (kinds 4 and 6): the
+// host checkpoints once it has it.
 func (a *keepAway) onKind(kind byte, payload []byte) {
-	if kind == protocol.KindEntry {
+	switch kind {
+	case protocol.KindEntry:
 		a.takeIn(payload)
+	case protocol.KindLogged:
+		id, entry, ok := protocol.DecodeLogged(payload)
+		a.mu.Lock()
+		fresh := ok && id > a.after
+		if fresh {
+			a.after, a.logged = id, true
+		}
+		a.mu.Unlock()
+		if fresh {
+			a.takeIn(entry)
+		}
+	case protocol.KindLogEnd:
+		a.mu.Lock()
+		logged := a.logged
+		a.mu.Unlock()
+		if tail, ok := protocol.DecodeLogEnd(payload); ok && logged {
+			a.checkpoint(tail)
+		}
 	}
 }
 

@@ -401,6 +401,12 @@ func (h *keptTextHost) intake(ctx context.Context, read keptTextRead) ([]byte, e
 		h.after = read.Tail
 		return nil, h.retryImages(ctx)
 	}
+	return h.persist(ctx)
+}
+
+// persist journals the documents as they are, saves the images they refer to
+// and the files, and returns the snapshot to checkpoint.
+func (h *keptTextHost) persist(ctx context.Context) ([]byte, error) {
 	frame, e := h.snapshot()
 	if e != nil {
 		return nil, e

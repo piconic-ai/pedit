@@ -362,6 +362,23 @@ func closeLive(ctx context.Context, opts KeptTextOptions) error {
 	return h.closeAway(ctx, opts.Dial)
 }
 
+// takeInLate takes in the entries that came while the host was already here,
+// which the relay passed on without keeping.
+func (h *keptTextHost) takeInLate(ctx context.Context, late [][]byte) error {
+	if len(late) == 0 {
+		return nil
+	}
+	read := keptTextRead{Tail: h.after + uint64(len(late))}
+	for i, body := range late {
+		read.Entries = append(read.Entries, keptTextEntry{ID: h.after + uint64(i) + 1, Body: body})
+	}
+	if err := h.applyEntries(read, h.after); err != nil {
+		return err
+	}
+	_, err := h.persist(ctx)
+	return err
+}
+
 // closeAway takes in the room's edits, then ends the room on the relay. The
 // relay ends only a room whose host is away, so the host leaves again once it
 // has taken in the log, and asks. It then connects once more: a room that was
@@ -384,6 +401,9 @@ func (h *keptTextHost) closeAway(ctx context.Context, dial protocol.Dialer) erro
 		err = r.takeIn(ctx, h)
 		if roomClosed(err) {
 			return os.Remove(h.path)
+		}
+		if err == nil {
+			err = h.takeInLate(ctx, r.late)
 		}
 		if err == nil && (h.imagesFailed || !h.nothingPending()) {
 			err = errors.New("could not save everything to your files; the room is left open")
