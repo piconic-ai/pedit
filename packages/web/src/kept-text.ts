@@ -1,13 +1,14 @@
 import { render } from '@barefootjs/client/runtime'
-import { Compartment, EditorState, type Extension } from '@codemirror/state'
-import { EditorView } from '@codemirror/view'
+import { Compartment, EditorState, type Extension, Prec } from '@codemirror/state'
+import { EditorView, keymap } from '@codemirror/view'
 import { deriveRoomKeys, parseFragment } from '@pedit/protocol'
 import { KeptTextClient, KeptTextClosedError } from '@pedit/protocol/kept-text'
 import { basicSetup } from 'codemirror'
-import { yCollab } from 'y-codemirror.next'
+import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next'
 import * as Y from 'yjs'
 import type { LayoutParts } from './components/Layout.tsx'
 import './components/KeptTextHeader.tsx'
+import { lockedUndo } from './lockedundo.ts'
 import { Store } from './store.ts'
 
 export async function joinKeptText(
@@ -50,13 +51,37 @@ export async function joinKeptText(
       )
     },
   })
+  const history = lockedUndo(yUndoManagerKeymap, () => editor.state.readOnly).map((binding) => ({
+    ...binding,
+    run(view: EditorView) {
+      binding.run?.(view)
+      return true
+    },
+  }))
   const editable = new Compartment()
-  const editor = new EditorView({
+  const editor: EditorView = new EditorView({
     parent: parts.source,
     state: EditorState.create({
       doc: doc.getText('content').toString(),
       extensions: [
         basicSetup,
+        Prec.high([
+          keymap.of(history),
+          EditorView.domEventHandlers({
+            beforeinput(event, view) {
+              const key =
+                event.inputType === 'historyUndo'
+                  ? 'Mod-z'
+                  : event.inputType === 'historyRedo'
+                    ? 'Mod-Shift-z'
+                    : undefined
+              if (!key) return false
+              event.preventDefault()
+              history.find((binding) => binding.key === key)?.run(view)
+              return true
+            },
+          }),
+        ]),
         theme,
         EditorView.lineWrapping,
         editable.of([EditorState.readOnly.of(true), EditorView.editable.of(false)]),

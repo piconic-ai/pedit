@@ -52,6 +52,7 @@ vi.mock('@codemirror/view', async (load) => {
   return {
     ...real,
     EditorView: class {
+      static domEventHandlers = real.EditorView.domEventHandlers
       static lineWrapping = real.EditorView.lineWrapping
       static editable = real.EditorView.editable
       state: EditorState
@@ -70,7 +71,10 @@ vi.mock('@codemirror/view', async (load) => {
   }
 })
 vi.mock('codemirror', () => ({ basicSetup: [] }))
-vi.mock('y-codemirror.next', () => ({ yCollab: () => [] }))
+vi.mock('y-codemirror.next', async (load) => ({
+  ...(await load<typeof import('y-codemirror.next')>()),
+  yCollab: () => [],
+}))
 vi.mock('../src/components/KeptTextHeader.tsx', () => ({}))
 const { joinKeptText } = await import('../src/kept-text.ts')
 const room = 'AAECAwQFBgcICQoLDA0ODw',

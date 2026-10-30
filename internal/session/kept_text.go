@@ -418,14 +418,14 @@ func finishKeptWrite(path string, s *keptTextState, bound *filewriter.BoundFile)
 			return errors.New("kept file changed or could not be saved")
 		}
 	}
-	f, e := os.OpenFile(s.File, os.O_RDWR, 0)
-	if e != nil {
-		return errors.New("cannot sync kept file")
-	}
-	e = errors.Join(f.Sync(), f.Close(), syncKeptDirectory(filepath.Dir(s.File)))
-	if current, ok := bound.Read(); e != nil || !ok || current != *s.Pending {
+
+	if e := bound.Sync(); e != nil {
 		return errors.New("kept file save uncertain")
 	}
+	if current, ok := bound.Read(); !ok || current != *s.Pending {
+		return errors.New("kept file save uncertain")
+	}
+
 	s.Text = *s.Pending
 	s.Pending = nil
 	return saveKeptState(path, *s)
