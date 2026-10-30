@@ -68,10 +68,15 @@ A logged request (checked on `POST /api/rooms`) keeps the client's IP address
 (`cf-connecting-ip`, `x-real-ip`), the `user-agent`, `accept`, `accept-encoding` and
 `host` headers, and the `cf` properties: country, city, postal code,
 coordinates, time zone, ASN and organization, and TLS version, cipher and
-client fingerprints. Whether the entries for `GET /api/rooms/:id/ws` and the
-blob routes also keep the host token (`Authorization`) or the admission token
-(`Sec-WebSocket-Protocol`, `X-Pedit-Admission`) is not yet confirmed. Neither
-token can decrypt anything.
+client fingerprints. A guest's `GET /api/rooms/:id/ws` entry (checked from a browser) keeps the
+`sec-websocket-protocol` header in full, so the admission token is stored in
+plain text for the 7 days the logs are kept. The token cannot decrypt
+anything, and a room ends within 24 hours, but
+[room admission](contributing/room-admission.md) says it must never appear in
+an application log and that custom infrastructure must redact it, so this is
+a gap to close. Whether the host token (`Authorization`, sent by the CLI) and
+the `X-Pedit-Admission` header of the blob routes are kept too is not yet
+confirmed.
 <!-- TODO(operator): confirm in the dashboard that webSocketMessage events of the Room Durable Object appear as invocation logs, and whether they name the room. If per-frame logs are not wanted, set observability.logs.invocation_logs to false or lower head_sampling_rate, and update the comment in wrangler.jsonc. -->
 The room ID is in the path; the key never reaches the relay. The Worker's own
 log lines are `rate limited <route>`, without the address,
@@ -90,7 +95,7 @@ connected and how long ago the host first came.
 This relay runs on Workers Paid, where Workers Logs keeps logs for 7 days
 ([pricing](https://developers.cloudflare.com/workers/observability/logs/workers-logs/#pricing),
 [Cloudflare Observability pricing](https://developers.cloudflare.com/observability/pricing/)).
-<!-- TODO(operator): open an invocation log of GET /api/rooms/:id/ws (host and guest) and GET and PUT /api/rooms/:id/blobs/:blobId, and check that no Authorization value (host token), Sec-WebSocket-Protocol value or X-Pedit-Admission value (admission token) is kept. Tail Workers redact only headers whose names contain auth, key, secret, token or jwt, which Sec-WebSocket-Protocol and X-Pedit-Admission do not. Turn off invocation_logs, or correct this page, if they are kept. Then replace the last two sentences of the first paragraph of this section and the matching paragraph of web/public/privacy.html. -->
+<!-- TODO(operator): decide how to stop the admission token being logged: the Workers Logs invocation logs keep request headers whole, so turn off observability.logs.invocation_logs (production and previews) or find a way to redact Sec-WebSocket-Protocol and X-Pedit-Admission. Open the CLI host's GET /api/rooms/:id/ws entry and a blob entry to see whether Authorization and X-Pedit-Admission are kept. Then update this section and web/public/privacy.html. -->
 
 ## In your browser
 

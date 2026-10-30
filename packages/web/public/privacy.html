@@ -59,9 +59,11 @@
       encrypted and is not logged.
     </p>
     <p>
-      Not yet confirmed: whether the entries for WebSocket and image requests also keep two tokens that
-      cannot decrypt anything (the host token and the admission token). This page will be updated when
-      it is confirmed.
+      Request headers are kept too. This includes the token your browser sends to be admitted to a room
+      (in the <code>Sec-WebSocket-Protocol</code> header). That token cannot decrypt anything, but it lets
+      its holder open a connection to that room while the room exists; a room lasts at most 24 hours.
+      Not yet confirmed: whether the host token and the token sent with image requests are kept as well.
+      This page will be updated when that is confirmed or the logging is changed.
     </p>
 
     <h2>Cloudflare</h2>
