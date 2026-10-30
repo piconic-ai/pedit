@@ -17,7 +17,7 @@ import {
 } from '../src/index.ts'
 import { sealKeptUpdate } from '../src/kept-text.ts'
 import { decodeUint64, encodeLogEnd, encodeLogged, Kind, withKind } from '../src/kinds.ts'
-import { type FakeSocket, editKeys, lowerKeys, Relay, sealBundle } from '../src/testing.ts'
+import { editKeys, type FakeSocket, lowerKeys, Relay, sealBundle } from '../src/testing.ts'
 
 const clients: RoomClient[] = []
 afterEach(async () => {
@@ -28,7 +28,7 @@ const settle = () => new Promise((r) => setTimeout(r, 20))
 const textUpdate = (apply: (text: Y.Text) => void, from?: Y.Doc) => {
   const doc = new Y.Doc()
   if (from) Y.applyUpdate(doc, Y.encodeStateAsUpdate(from))
-  let update = new Uint8Array()
+  let update: Uint8Array = new Uint8Array()
   doc.on('update', (u: Uint8Array) => {
     update = u
   })
@@ -42,6 +42,7 @@ interface Member {
   relay: Relay
   statuses: RoomStatus[]
   syncs: KeptSync[]
+  skipped: number[]
   manifests: { id: number; path: string; format: string }[][]
   socket: () => FakeSocket
   say: (data: string | Uint8Array) => Promise<void>
@@ -49,7 +50,7 @@ interface Member {
 
 async function member(keys: RoomKeys, relay = new Relay()): Promise<Member> {
   const doc = new Y.Doc()
-  const m = { statuses: [], syncs: [], manifests: [] } as unknown as Member
+  const m = { statuses: [], syncs: [], skipped: [], manifests: [] } as unknown as Member
   const client = new RoomClient({
     admissionToken: 'A'.repeat(43),
     url: 'ws://test/room',
@@ -61,6 +62,7 @@ async function member(keys: RoomKeys, relay = new Relay()): Promise<Member> {
     maxBackoffMs: 1,
     onStatus: (s) => m.statuses.push(s),
     onKeptSync: (s) => m.syncs.push(s),
+    onKeptSkipped: (n) => m.skipped.push(n),
     onManifest: (files) => m.manifests.push(files),
   })
   clients.push(client)
@@ -144,13 +146,13 @@ describe('a room kept while its host is away', () => {
     await m.say(encodeLogged(3, new Uint8Array([1, 2, 3])))
     // An update that puts a second root type in the doc.
     const stray = new Y.Doc()
-    let bad = new Uint8Array()
+    let bad: Uint8Array = new Uint8Array()
     stray.on('update', (u: Uint8Array) => {
       bad = u
     })
     stray.getMap('other').set('a', 1)
     await m.say(encodeLogged(4, await sealKeptUpdate(keys, 0, bad)))
-    expect(m.client.keptSkipped).toBe(3)
+    expect(m.skipped.at(-1)).toBe(3)
     expect(m.doc.getText('content').toString()).toBe('abc')
   })
 
@@ -159,7 +161,7 @@ describe('a room kept while its host is away', () => {
     const m = await member(keys)
     const notes = textUpdate((t) => t.insert(0, 'notes'))
     const comments = new Y.Doc()
-    let meta = new Uint8Array()
+    let meta: Uint8Array = new Uint8Array()
     comments.on('update', (u: Uint8Array) => {
       meta = u
     })

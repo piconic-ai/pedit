@@ -401,7 +401,10 @@ export type OpenedSnapshot =
   | { kind: 'bundle'; files: BundleFile[] }
   | { kind: 'legacy'; filename: string | null; update: Uint8Array }
 /** Applies kept entries to a copy of `base`, skipping and counting those that do not hold. */
-export function probeEntries(base: Y.Doc, entries: readonly Uint8Array[]): { doc: Y.Doc; skipped: number } {
+export function probeEntries(
+  base: Y.Doc,
+  entries: readonly Uint8Array[],
+): { doc: Y.Doc; skipped: number } {
   let probe = copyDoc(base),
     skipped = 0
   const accepted: Uint8Array[] = []

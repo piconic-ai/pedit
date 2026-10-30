@@ -23,9 +23,12 @@ export interface KeptHooks {
   /** The files the host's snapshot lists. */
   manifest(files: FileEntry[]): void
   sync(state: KeptSync): void
+  /** How many entries and snapshots did not hold, in all. */
+  skipped(count: number): void
 }
 
-const same = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((x, i) => x === b[i])
+const same = (a: Uint8Array, b: Uint8Array) =>
+  a.length === b.length && a.every((x, i) => x === b[i])
 
 /**
  * The browser's side of a room kept while its host is away
@@ -90,7 +93,7 @@ export class KeptAway {
     const result = probeEntries(doc, updates)
     Y.applyUpdate(doc, Y.encodeStateAsUpdate(result.doc), this.origin)
     result.doc.destroy()
-    this.skipped += result.skipped
+    this.skip(result.skipped)
   }
 
   /** Takes a message of kind 1, 4, 5 or 6 from the relay. */
@@ -101,8 +104,14 @@ export class KeptAway {
       else if (kind === Kind.Logged) await this.logged(payload)
       else if (kind === Kind.Entry) await this.take(payload)
     } catch {
-      this.skipped++
+      this.skip(1)
     }
+  }
+
+  private skip(count: number): void {
+    if (count === 0) return
+    this.skipped += count
+    this.hooks.skipped(this.skipped)
   }
 
   private logEnd(tail: number | undefined): void {
@@ -138,7 +147,7 @@ export class KeptAway {
       if (missing) throw new Error('incomplete kept update')
       Y.applyUpdate(target.doc, update, this.origin)
     } catch {
-      this.skipped++
+      this.skip(1)
     }
   }
 

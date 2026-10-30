@@ -81,7 +81,7 @@ Yjs sync when the host returns. A version 5 host cannot keep a room.
   closed. Images can be added by editors and fetched by anyone with a link,
   under `kept/`.
 - **Join.** A peer is sent kind 5, kind 4 for every entry after its
-  `X-Pedit-After` header (default: the cutoff), then kind 6. With an `after`
+  `X-Pedit-After` header or `after` query parameter (default: the cutoff), then kind 6. With an `after`
   that is at least the cutoff it holds the snapshot already and gets no kind 5.
 - **The host returns.** It connects with its token and `X-Pedit-After`. It is
   sent kind 5 only if `after` is below the cutoff, then the entries after
@@ -96,6 +96,42 @@ Yjs sync when the host returns. A version 5 host cannot keep a room.
 - **Closing.** `POST /keep/close` with the host token and `X-Pedit-Tail` ends a
   kept room early, after the host took in every entry (a later entry gives 409).
   It does the same teardown, closing peers with `ROOM_CLOSED`.
+
+## Clients
+
+The browser (`RoomClient` in `packages/protocol`, `packages/web`) speaks version
+6 and does this:
+
+- **Kept.** On `kept <until-ms>` the client enters the `kept` status: the
+  editor stays editable, and the header and banner say that the host is away,
+  until when the room is kept, and that edits are kept. The two minutes of
+  grace, and a relay of version 5, still mean `host away`: the status is
+  `waiting` and the editor is read-only. `log full` is the status `log-full`:
+  read-only again, as no further edit would be kept.
+- **Edits.** While the room is kept, an edit of a text file or its comments is
+  not a live update but a kind 1 entry: one document per entry, named by its
+  file ID, signed and encrypted as in kept text mode (`sealKeptUpdate`, shared
+  with `KeptTextClient`). It is pending, and the header says `sending`, until
+  the same entry comes back as kind 4 with an ID, which acknowledges it. A
+  connection that drops keeps its pending entries and sends the unacknowledged
+  ones again after the next kind 6. Only edit links send entries; a read link
+  never does, and a comment link cannot comment while the host is away. A canvas
+  is not kept.
+- **Joining.** Kind 5 is opened as a kept bundle: the files it lists become the
+  room's manifest, and a file the page opens later is built from it and from
+  the entries since. Kind 4 entries are verified (the editors' signature, the
+  kept-text checks of `trial`) and applied; one that does not hold is skipped
+  and counted, and the banner says how many. Kind 6 gives the cursor `after`.
+- **Reconnecting.** A browser cannot set `X-Pedit-After` on a WebSocket, so it
+  sends the cursor as the query parameter `after=<id>` on the `/ws` URL, which
+  the relay reads when the header is absent.
+- **Images.** The page uploads to the blob routes with the room's admission
+  token, as in kept text mode, and links the image under `assets/`; the host
+  saves it on its return.
+- **Host back.** The client drops what it holds, shows `connected`, and greets
+  the room as on connecting: a fresh handshake, and a sync step 1 and its state
+  for every document, so the host reconciles what it missed. The page asks
+  before it is closed with entries still pending.
 
 ## What the relay learns
 

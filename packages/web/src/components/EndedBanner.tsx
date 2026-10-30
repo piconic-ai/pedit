@@ -15,6 +15,10 @@ export interface EndedBannerProps {
   /** The relay's time limit in seconds, once it has said so. */
   timeLimit?: Readable<number | undefined>
   onReconnect: () => void
+  /** While the host is away and the relay keeps the room: until when, as the person reads it. */
+  keptUntil?: Readable<string | null>
+  /** How many kept edits did not hold, and were left out. */
+  skipped?: Readable<number>
   clipboard?: Pick<Clipboard, 'writeText'>
   resetMs?: number
 }
@@ -55,7 +59,15 @@ function message(status: RoomStatus, limit: number | undefined): string | undefi
  */
 export function EndedBanner(props: EndedBannerProps) {
   const status = () => props.status.get()
-  const why = () => message(status(), props.timeLimit?.get())
+  const why = () => {
+    if (status() === 'kept') {
+      const left = props.skipped?.get() ?? 0
+      return `The host is away. This room stays open until ${props.keptUntil?.get() ?? 'then'}, and your edits are kept for the host to take in.${left ? ` Skipped invalid updates: ${left}.` : ''}`
+    }
+    if (status() === 'log-full')
+      return 'The host is away and the relay cannot keep more edits. Copy the text to save what you wrote since.'
+    return message(status(), props.timeLimit?.get())
+  }
   const [copy, setCopy] = createSignal<keyof typeof LABELS>('idle')
   let timer: ReturnType<typeof setTimeout> | undefined
   onCleanup(() => clearTimeout(timer))
@@ -76,7 +88,7 @@ export function EndedBanner(props: EndedBannerProps) {
       <button
         type="button"
         onClick={() => props.onReconnect()}
-        hidden={status() === 'expired' || status() === 'waiting'}
+        hidden={['expired', 'waiting', 'kept', 'log-full'].includes(status())}
       >
         {status() === 'client-outdated' ? 'Reload' : 'Reconnect'}
       </button>

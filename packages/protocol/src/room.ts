@@ -155,6 +155,8 @@ export interface RoomClientOptions {
   onStatus?: (status: RoomStatus) => void
   /** While the room is kept: whether the relay has logged all of this client's edits. */
   onKeptSync?: (state: KeptSync) => void
+  /** How many entries of the kept room did not hold, and were left out, in all. */
+  onKeptSkipped?: (count: number) => void
   onError?: (error: unknown) => void
   onAttachment?: (attachment: Attachment) => void
   onCanvas?: (message: CanvasMessage) => void
@@ -317,6 +319,7 @@ export class RoomClient {
       docOf: (id) => (id === 0 ? { doc: this.doc, comments: false } : this.files.get(id)),
       manifest: (files) => opts.onManifest?.(files),
       sync: (state) => opts.onKeptSync?.(state),
+      skipped: (count) => opts.onKeptSkipped?.(count),
     })
     this.doc.on('update', this.handleDocUpdate)
     this.awareness.on('update', this.handleAwarenessUpdate)
@@ -326,11 +329,6 @@ export class RoomClient {
   /** When the relay stops keeping the room, in ms since the epoch, while the host is away. */
   get keptUntil(): number {
     return this.kept.until
-  }
-
-  /** How many entries of a kept room did not hold, and were left out. */
-  get keptSkipped(): number {
-    return this.kept.skipped
   }
 
   connect(): void {

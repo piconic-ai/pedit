@@ -246,3 +246,7 @@ export async function sealBundle(keys: RoomKeys, files: BundleFile[]): Promise<U
   const signature = new Uint8Array(await crypto.subtle.sign('Ed25519', keys.signer.key, message))
   return encrypt(keys.frameKey, new Uint8Array([...message, ...signature]))
 }
+
+/** For tests that run the Room and have no yjs of their own. */
+export { Awareness } from 'y-protocols/awareness'
+export * as Y from 'yjs'

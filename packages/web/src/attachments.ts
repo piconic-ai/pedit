@@ -63,6 +63,9 @@ export function whyNoImages(
   if (status === 'expired') return 'This room reached its time limit.'
   if (status === 'too-large') return 'The document is too large to share.'
   if (status === 'waiting') return 'The host is away. Try again once they are back.'
+  // The relay keeps the images of a kept room, and the host takes them in when it is back.
+  if (status === 'kept') return null
+  if (status === 'log-full') return 'The room cannot keep more while the host is away.'
   if (status !== 'connected' || !hostHere) return 'Connecting to the host. Try again in a moment.'
   if (!host) return "The host's pedit is too old to save images."
   return null
@@ -118,9 +121,10 @@ export interface AttachmentsOptions {
   /**
    * A kept room (kept-text.ts) has no host to answer: an upload is done once
    * the relay holds it, the link is the one the host writes on resume, and an
-   * image the relay lacks is missing, not asked for.
+   * image the relay lacks is missing, not asked for. A function says it
+   * for a room that is kept only while its host is away.
    */
-  kept?: boolean
+  kept?: boolean | (() => boolean)
 }
 
 /** What the preview shows for an image link (see preview.ts). */
@@ -298,8 +302,13 @@ export class Attachments implements ImageResolver {
     }
   }
 
+  #kept(): boolean {
+    const kept = this.#opts.kept
+    return typeof kept === 'function' ? kept() : kept === true
+  }
+
   async #upload(file: Blob, to: number | undefined): Promise<string> {
-    const host = this.#opts.kept ? KEPT_HOST : this.host
+    const host = this.#kept() ? KEPT_HOST : this.host
     if (!host) throw new AttachmentError(MESSAGES.unsupported)
     let image: Awaited<ReturnType<typeof prepareImage>>
     try {
@@ -316,7 +325,7 @@ export class Attachments implements ImageResolver {
     const waiting = this.#pending.get(hash)
     if (waiting) return waiting.promise
     await this.#put(hash, await encryptBlob(this.#opts.keys, image.bytes))
-    if (this.#opts.kept) {
+    if (this.#kept()) {
       this.#remember(hash, image.bytes, image.type)
       return `${KEPT_HOST.dir}/${hash}.${EXTENSION_OF[image.type]}`
     }
@@ -355,7 +364,7 @@ export class Attachments implements ImageResolver {
       if (res.status === 404 && this.#announcedWhileLoading.has(hash)) {
         res = await this.#fetch(url, init)
       }
-      if (res.status === 404 && this.#opts.kept) throw new Error('blob: 404')
+      if (res.status === 404 && this.#kept()) throw new Error('blob: 404')
       if (res.status === 404) {
         this.#want(hash)
         return
