@@ -276,6 +276,14 @@ describe('panelBox', () => {
     expect(panelBox({ right: 300, bottom: 80 }, 250)).toMatchObject({ left: 8, width: 234 })
   })
 
+  it('opens no wider than asked, for the info panel', () => {
+    expect(panelBox({ right: 1270, bottom: 40 }, 1280, 220)).toMatchObject({
+      left: 1050,
+      width: 220,
+    })
+    expect(panelBox({ right: 200, bottom: 40 }, 200, 220)).toMatchObject({ left: 8, width: 184 })
+  })
+
   it('is applied when the panel opens', () => {
     const { q, openPanel } = mount()
     Object.defineProperty(document.documentElement, 'clientWidth', {

@@ -47,6 +47,7 @@ import { copyText } from './copy.ts'
 import { delimiterFor } from './csv.ts'
 import { keepAlive } from './expiry.ts'
 import { avatarFor, fetchIdentity } from './identity.ts'
+import { infoLinks } from './info.ts'
 import { JsonPane } from './jsonpane.ts'
 import { resolveLanguage } from './language.ts'
 import { ContextMenu, isMac } from './menu.ts'
@@ -498,6 +499,7 @@ async function joinRoom(
       onToggle: () => panel.toggle(),
     },
     access: keys.access,
+    info: infoLinks(location.hostname),
     onShare: (button: HTMLElement) => {
       const at = button.getBoundingClientRect()
       const links = shareLinks(location.origin, id, keys.fragments, metaOf.size > 0)
