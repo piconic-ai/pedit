@@ -799,3 +799,63 @@ describe('the keep counts from the host leaving', () => {
     expect((await h.closed).code).toBe(ROOM_EXPIRED)
   })
 })
+
+describe('the room`s whole life', () => {
+  const LIFE = 604800
+  const open = (room: Room, secondsAgo: number) =>
+    inRoom(room, (_, st) => {
+      st.storage.kv.put('openedAt', Date.now() - secondsAgo * 1000)
+      // A host that came back lately, so the session limit is not what ends the room.
+      st.storage.kv.put('hostSince', Date.now())
+    })
+
+  it('caps the keep at the end of the life, with the alarm there', async () => {
+    const room = await createRoom()
+    const h = await hostOf(room, String(DAY))
+    const guest = await join(room)
+    await open(room, LIFE - 3600)
+    await leave(room, h)
+    await until(() => guest.signals.some((s) => s.startsWith('kept ')))
+    const s = await state(room)
+    expect(Math.abs(s.until! - (s.opened! + LIFE * 1000))).toBeLessThan(5)
+    expect(guest.signals).toContain(`kept ${s.until}`)
+    expect(s.alarm).toBe(s.until)
+  })
+
+  it('refuses a host that returns after the life, and tears the room down', async () => {
+    const room = await createRoom()
+    const h = await hostOf(room, String(DAY))
+    const guest = await join(room)
+    await leave(room, h)
+    await until(() => guest.signals.some((s) => s.startsWith('kept ')))
+    await open(room, LIFE + 1)
+    const back = await hostOf(room, String(DAY), { after: 0 })
+    expect((await back.closed).code).toBe(ROOM_EXPIRED)
+    expect((await guest.closed).code).toBe(ROOM_EXPIRED)
+  })
+
+  it('ends a connected host at the life, not at a fresh session limit', async () => {
+    const room = await createRoom()
+    const h = await hostOf(room, String(DAY))
+    await until(() => h.signals.length === 1)
+    await open(room, LIFE - 3600)
+    await inRoom(room, (_, st) => {
+      st.storage.kv.put('hostSince', Date.now() - (ROOM_SECONDS - 7200) * 1000)
+    })
+    const alarm = (await state(room)).alarm
+    expect(Math.abs(alarm! - (Date.now() + 3600_000))).toBeLessThan(5000)
+    await open(room, LIFE + 1)
+    await runDurableObjectAlarm(stubOf(room))
+    const closed = await h.closed
+    expect(closed.code).toBe(ROOM_EXPIRED)
+    expect(closed.reason).toContain(`${LIFE} seconds`)
+  })
+
+  it('still ends a room without a keep when the host leaves', async () => {
+    const room = await createRoom()
+    const h = await hostOf(room, undefined)
+    const guest = await join(room)
+    h.ws.close(HOST_LEFT, 'bye')
+    expect((await guest.closed).code).toBe(ROOM_CLOSED)
+  })
+})

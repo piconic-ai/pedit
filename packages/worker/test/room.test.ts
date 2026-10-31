@@ -476,9 +476,12 @@ describe('rooms', () => {
       quotaBytes: 100 * 1024 * 1024,
       quotaCount: 500,
       roomSeconds: Number.POSITIVE_INFINITY,
+      lifeSeconds: 7 * 86400,
       hostGraceSeconds: 120,
     })
     expect(limits({ ROOM_MAX_SECONDS: '86400' }).roomSeconds).toBe(86400)
+    expect(limits({ ROOM_LIFE_SECONDS: '3600' }).lifeSeconds).toBe(3600)
+    expect(limits({ ROOM_LIFE_SECONDS: 'x' }).lifeSeconds).toBe(604800)
     expect(limits({ HOST_GRACE_SECONDS: '30' }).hostGraceSeconds).toBe(30)
     for (const bad of ['0', '-1', '1.5', 'many', '']) {
       expect(limits({ HOST_GRACE_SECONDS: bad }).hostGraceSeconds).toBe(120)
@@ -1150,7 +1153,8 @@ describe('room lifetime', () => {
     const room = await createRoom()
     const h = await host(room)
     await withVars(room, { ROOM_MAX_SECONDS: undefined })
-    await backdate(room, 10 * 365 * 24 * 3600 * 1000)
+    // Within the room's life (7 days unless set), which no session limit changes.
+    await backdate(room, 3 * 24 * 3600 * 1000)
     expect(await ranAlarm(room)).toBe(true)
     expect(h.ws.readyState).toBe(WebSocket.OPEN)
     const s = await state(room)
