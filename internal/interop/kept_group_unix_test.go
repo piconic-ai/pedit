@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os/exec"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -44,7 +45,28 @@ func stopKeptGroup(cmd *exec.Cmd, exited <-chan struct{}) {
 
 // keptGroupAlive reports whether any process of the group led by pid runs.
 func keptGroupAlive(pid int) bool {
-	return !errors.Is(syscall.Kill(-pid, 0), syscall.ESRCH)
+	return keptRunning(1, pid)
+}
+
+// keptRunning reports whether a process runs whose ps column (0 pid, 1 pgid)
+// is id. A zombie does not count: kill(2) still reaches one, and where PID 1
+// reaps no orphans (a container without an init) it stays until the end.
+func keptRunning(column, id int) bool {
+	out, err := exec.Command("ps", "-A", "-o", "pid=,pgid=,stat=").Output()
+	if err != nil {
+		target := id
+		if column == 1 {
+			target = -id
+		}
+		return !errors.Is(syscall.Kill(target, 0), syscall.ESRCH)
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 3 && fields[column] == strconv.Itoa(id) && !strings.HasPrefix(fields[2], "Z") {
+			return true
+		}
+	}
+	return false
 }
 
 // A process the command starts, which also ignores SIGTERM, is gone once the
@@ -62,7 +84,7 @@ func TestKeptCommandStopsItsGroup(t *testing.T) {
 	if keptGroupAlive(leader) {
 		t.Errorf("process group %d still runs", leader)
 	}
-	if err := syscall.Kill(child, 0); !errors.Is(err, syscall.ESRCH) {
-		t.Errorf("child %d still runs: %v", child, err)
+	if keptRunning(0, child) {
+		t.Errorf("child %d still runs", child)
 	}
 }
