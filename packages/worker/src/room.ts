@@ -124,7 +124,7 @@ export interface Limits {
   /** All attachments of a session together, encrypted, and their number. */
   quotaBytes: number
   quotaCount: number
-  /** How long a room lasts, from its host's first connection. */
+  /** How long a host's session lasts, from its first connection or its return to a kept room. */
   roomSeconds: number
   /** How long a room waits for a host that dropped before it closes. */
   hostGraceSeconds: number
@@ -196,6 +196,10 @@ const READ_ADMISSION_KEY = 'readAdmissionHash'
 // When the host first connected, in ms since the epoch. Never deleted: once
 // the room is over it is the tombstone that stops its ID being used again.
 const OPENED_KEY = 'openedAt'
+// When the host's current presence began, in ms since the epoch: set when it
+// returns to a kept room; absent, it is `openedAt`. The session limit counts
+// from it. A reconnect within the grace period does not change it.
+const HOST_SINCE_KEY = 'hostSince'
 // Until when, in ms since the epoch, the room waits for a host that dropped.
 const AWAY_KEY = 'hostAwayUntil'
 // How long the host asked to have the room kept, clamped (0: not kept).
@@ -441,7 +445,10 @@ export class Room extends DurableObject<Env> {
       // The host returns to a room kept without it: it is sent what was
       // written, and the room is its own again.
       const kept = this.keptAway()
-      if (kept) this.sendReplay(server, join.after, true)
+      if (kept) {
+        kv.put(HOST_SINCE_KEY, Date.now())
+        this.sendReplay(server, join.after, true)
+      }
       if (this.awayUntil() !== undefined || kept) this.hostReturned()
       await this.ctx.storage.setAlarm(this.nextAlarm())
     } else if (this.keptAway()) {
@@ -564,35 +571,34 @@ export class Room extends DurableObject<Env> {
     return this.ctx.storage.kv.get<number>(OPENED_KEY)
   }
 
-  // The room's deadline, or Infinity without a limit or before its host came.
+  // The end of the host's session, or Infinity without a limit or before its
+  // host came. A kept room has no such deadline: only its keep counts.
   private deadline(): number {
-    const opened = this.openedAt()
-    if (opened === undefined) return Number.POSITIVE_INFINITY
-    return opened + Math.max(limits(this.env).roomSeconds, this.keepSeconds()) * 1000
+    const since = this.ctx.storage.kv.get<number>(HOST_SINCE_KEY) ?? this.openedAt()
+    if (since === undefined) return Number.POSITIVE_INFINITY
+    return since + limits(this.env).roomSeconds * 1000
   }
 
-  // What the close reason says the room lasts: a room kept for longer than
-  // the relay's limit lasts as long as the keep, and one without a limit ends
-  // with its keep.
+  // What the close reason says the room lasts: the keep for a kept room, else
+  // the session limit (the keep when the relay sets none).
   private lifeSeconds(): number {
     const room = limits(this.env).roomSeconds
-    return Number.isFinite(room) ? Math.max(room, this.keepSeconds()) : this.keepSeconds()
+    return Number.isFinite(room) && !this.keptAway() ? room : this.keepSeconds()
   }
 
   // Date.now() rather than the `now` seam: the tests stop that one at 0.
   private expired(): boolean {
-    const keptUntil = this.ctx.storage.kv.get<number>(KEPT_AWAY_KEY) ?? Number.POSITIVE_INFINITY
+    const keptUntil = this.ctx.storage.kv.get<number>(KEPT_AWAY_KEY)
     return (
-      Date.now() >= Math.min(this.deadline(), keptUntil) ||
-      this.ctx.storage.kv.get(EXPIRED_KEY) === true
+      Date.now() >= (keptUntil ?? this.deadline()) || this.ctx.storage.kv.get(EXPIRED_KEY) === true
     )
   }
 
   // The hourly check, or the deadline or the end of a grace period if one
-  // comes sooner. A room kept without its host is checked at its deadline only.
+  // comes sooner. A room kept without its host is checked at the end of its keep only.
   private nextAlarm(): number {
     const keptUntil = this.ctx.storage.kv.get<number>(KEPT_AWAY_KEY)
-    if (keptUntil !== undefined) return Math.min(this.deadline(), keptUntil)
+    if (keptUntil !== undefined) return keptUntil
     return Math.min(
       this.deadline(),
       this.awayUntil() ?? Number.POSITIVE_INFINITY,
@@ -879,11 +885,8 @@ export class Room extends DurableObject<Env> {
    */
   private async enterKeptAway(except?: WebSocket): Promise<void> {
     const kv = this.ctx.storage.kv
-    const until = Math.min(Date.now() + this.keepSeconds() * 1000, this.deadline())
-    if (until <= Date.now()) {
-      await this.expire()
-      return
-    }
+    // The keep counts from the host's leaving, not from the room's opening.
+    const until = Date.now() + this.keepSeconds() * 1000
     kv.put(KEPT_AWAY_KEY, until)
     kv.delete(AWAY_KEY)
     this.log('kept away', { untilSeconds: Math.round((until - Date.now()) / 1000) })
@@ -933,8 +936,7 @@ export class Room extends DurableObject<Env> {
   // The room reached its time limit: everyone goes, with the session's data.
   // Its `openedAt` stays, so the room ID is never opened again.
   private async expire(): Promise<void> {
-    // A room kept for less than the deadline ends before it: remembered, so
-    // the ID is not opened again.
+    // Remembered, so the ID is not opened again.
     this.ctx.storage.kv.put(EXPIRED_KEY, true)
     await this.endSession(ROOM_EXPIRED, expiredReason(this.lifeSeconds()))
   }
