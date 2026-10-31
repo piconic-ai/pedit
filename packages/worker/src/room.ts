@@ -573,7 +573,7 @@ export class Room extends DurableObject<Env> {
     const { guests, readers } = limits(this.env)
     const reading = this.ctx.getWebSockets(READER_TAG).length
     if (role === 'reader') return reading >= readers
-    const editing = this.ctx.getWebSockets().length - reading
+    const editing = this.peers().length - reading
     if (editing >= MAX_PEERS) return true
     if (isHost) return false
     return editing - this.hosts().length >= guests
@@ -641,7 +641,7 @@ export class Room extends DurableObject<Env> {
   // Whether there is anything of a session left to clean up.
   private sessionOpen(): boolean {
     return (
-      this.ctx.storage.kv.get(ADMISSION_KEY) !== undefined || this.ctx.getWebSockets().length > 0
+      this.ctx.storage.kv.get(ADMISSION_KEY) !== undefined || this.peers().length > 0
     )
   }
 
@@ -848,7 +848,7 @@ export class Room extends DurableObject<Env> {
         message: `room: ${event}`,
         room: this.ctx.id.toString(),
         hosts,
-        guests: this.ctx.getWebSockets().length - hosts,
+        guests: this.peers().length - hosts,
         openSeconds: opened === undefined ? null : Math.round((Date.now() - opened) / 1000),
         ...fields,
       }),
@@ -870,6 +870,12 @@ export class Room extends DurableObject<Env> {
 
   private refused(ws: WebSocket): boolean {
     return this.ctx.getTags(ws).includes(REFUSED_TAG)
+  }
+
+  // The peers in the room: a socket accepted only to be refused, which the
+  // runtime may still list while its close handshake is pending, takes no place.
+  private peers(): WebSocket[] {
+    return this.ctx.getWebSockets().filter((ws) => !this.refused(ws))
   }
 
   private isHost(ws: WebSocket): boolean {

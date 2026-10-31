@@ -431,7 +431,9 @@ describe('rooms', () => {
     for (let i = 0; i < READERS; i++) await connect(room.id, asReader(room))
     const late = await connect(room.id, asReader(room))
     expect((await late.closed).code).toBe(ROOM_FULL)
-    // Readers do not take editors' places.
+    // Readers do not take editors' places, and neither do sockets accepted
+    // only to be refused, which the runtime may list until their close is done.
+    for (let i = 0; i < MAX_PEERS; i++) await connect(room.id, asReader(room))
     const editor = await connect(room.id)
     expect(editor.ws.readyState).toBe(WebSocket.OPEN)
   })
