@@ -260,7 +260,7 @@ func TestKeptRoomEndToEnd(t *testing.T) {
 	for line := range closer.lines {
 		closing = append(closing, line)
 	}
-	if err := <-closer.done; err != nil || !strings.Contains(strings.Join(closing, "\n"), "Closed the room") {
+	if err := closer.wait(); err != nil || !strings.Contains(strings.Join(closing, "\n"), "Closed the room") {
 		t.Fatalf("--close: %v\n%s", err, strings.Join(closing, "\n"))
 	}
 	for _, g := range []*roomGuest{first, second} {

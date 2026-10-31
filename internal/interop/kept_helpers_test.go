@@ -21,10 +21,12 @@ import (
 type keptProcess struct {
 	cmd   *exec.Cmd
 	lines chan string
-	done  chan error
-	input io.WriteCloser
-	log   string
-	seen  []string
+	// exited closes once the process has ended; err is then its Wait result.
+	exited chan struct{}
+	err    error
+	input  io.WriteCloser
+	log    string
+	seen   []string
 }
 
 func keptCommand(t *testing.T, directory string, args ...string) *keptProcess {
@@ -32,6 +34,7 @@ func keptCommand(t *testing.T, directory string, args ...string) *keptProcess {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	cmd.Dir = directory
+	keptGroup(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -48,7 +51,7 @@ func keptCommand(t *testing.T, directory string, args ...string) *keptProcess {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	p := &keptProcess{cmd: cmd, lines: make(chan string, 64), done: make(chan error, 1), input: input, log: log.Name()}
+	p := &keptProcess{cmd: cmd, lines: make(chan string, 64), exited: make(chan struct{}), input: input, log: log.Name()}
 	go func() {
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
@@ -56,20 +59,28 @@ func keptCommand(t *testing.T, directory string, args ...string) *keptProcess {
 		}
 		close(p.lines)
 	}()
-	go func() { p.done <- cmd.Wait() }()
+	go func() {
+		p.err = cmd.Wait()
+		close(p.exited)
+	}()
 	t.Cleanup(func() {
-		cancel()
-		cmd.Process.Kill()
 		input.Close()
-		// A process still writing into a temporary directory fails its removal.
-		select {
-		case <-p.done:
-		case <-time.After(5 * time.Second):
-		}
+		// Stop the whole group, not only wrangler's node: the workerd and
+		// esbuild it starts would otherwise outlive the test (#362). A process
+		// still writing into a temporary directory also fails its removal.
+		stopKeptGroup(cmd, p.exited)
+		cancel()
 		log.Close()
 	})
 	return p
 }
+
+// wait returns once the process has ended, with its Wait result.
+func (p *keptProcess) wait() error {
+	<-p.exited
+	return p.err
+}
+
 func (p *keptProcess) line(t *testing.T) string {
 	t.Helper()
 	select {
@@ -106,9 +117,9 @@ func (p *keptProcess) stop(t *testing.T) string {
 		t.Fatal(err)
 	}
 	select {
-	case err := <-p.done:
-		if err != nil {
-			t.Fatalf("CLI stop: %v", err)
+	case <-p.exited:
+		if p.err != nil {
+			t.Fatalf("CLI stop: %v", p.err)
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("CLI did not stop")
@@ -135,7 +146,14 @@ func keptRelay(t *testing.T) string {
 	if _, err := os.Stat(binary); err != nil {
 		t.Fatal("run pnpm install before kept-room interop test")
 	}
-	relay := keptCommand(t, filepath.Join(root, "packages/worker"), binary, "dev", "--local", "--config", filepath.Join(root, "internal/interop/testdata/keep-relay/wrangler.jsonc"), "--port", fmt.Sprint(port), "--persist-to", t.TempDir())
+	var relay *keptProcess
+	// Cleanups run last first, so this one checks after the relay's own.
+	t.Cleanup(func() {
+		if relay != nil && keptGroupAlive(relay.cmd.Process.Pid) {
+			t.Errorf("local relay left processes running after cleanup")
+		}
+	})
+	relay = keptCommand(t, filepath.Join(root, "packages/worker"), binary, "dev", "--local", "--config", filepath.Join(root, "internal/interop/testdata/keep-relay/wrangler.jsonc"), "--port", fmt.Sprint(port), "--persist-to", t.TempDir())
 	go func() {
 		for range relay.lines {
 		}
