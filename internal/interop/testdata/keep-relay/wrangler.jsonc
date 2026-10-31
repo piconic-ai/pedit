@@ -2,7 +2,12 @@
   "name": "pedit-kept-text-interop",
   "main": "worker.ts",
   "compatibility_date": "2026-08-20",
-  "vars": { "KEEP_MAX_SECONDS": "60", "HOST_GRACE_SECONDS": "2", "ROOM_MAX_SECONDS": "86400", "ROOM_LIFE_SECONDS": "604800" },
+  "vars": {
+    "KEEP_MAX_SECONDS": "60",
+    "HOST_GRACE_SECONDS": "2",
+    "ROOM_MAX_SECONDS": "86400",
+    "ROOM_LIFE_SECONDS": "604800"
+  },
   "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "edit-blobs" }],
   "durable_objects": { "bindings": [{ "name": "ROOM", "class_name": "Room" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }]
