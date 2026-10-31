@@ -1,5 +1,27 @@
 # Changelog
 
+## [v0.3.0](https://github.com/piconic-ai/pedit/compare/v0.2.0...v0.3.0) - 2026-10-31
+
+- Read the ping intervals once, when a connection is dialled by @kfly8 in https://github.com/piconic-ai/pedit/pull/346
+- Describe kept rooms in the privacy policy and terms of use by @kfly8 in https://github.com/piconic-ai/pedit/pull/343
+- Resume a kept room without pasting its link by @kfly8 in https://github.com/piconic-ai/pedit/pull/345
+- Close a kept room from the host with pedit --close by @kfly8 in https://github.com/piconic-ai/pedit/pull/348
+- Keep a WebSocket room open while its host is away (relay) by @kfly8 in https://github.com/piconic-ai/pedit/pull/350
+- Edit in the browser while the host is away (WebSocket rooms) by @kfly8 in https://github.com/piconic-ai/pedit/pull/351
+- Keep a WebSocket room while the CLI host is away by @kfly8 in https://github.com/piconic-ai/pedit/pull/352
+- Test the kept room end to end and polish what the host and guest see by @kfly8 in https://github.com/piconic-ai/pedit/pull/353
+- Remove the HTTP kept room endpoints and the ?keep=1 page by @kfly8 in https://github.com/piconic-ai/pedit/pull/354
+- Keep a room for a day by default and resume it with pedit <file> by @kfly8 in https://github.com/piconic-ai/pedit/pull/355
+- Say in the terms, privacy and relay notes that a room is kept for a day by default by @kfly8 in https://github.com/piconic-ai/pedit/pull/356
+- Remove --keep-polling and the polling kept room host by @kfly8 in https://github.com/piconic-ai/pedit/pull/357
+- Count a room's keep from the moment its host leaves by @kfly8 in https://github.com/piconic-ai/pedit/pull/358
+- Bound a room's life from its opening to its end with ROOM_LIFE_SECONDS by @kfly8 in https://github.com/piconic-ai/pedit/pull/359
+- Tell a peer that joins a closed room that the host closed it, and offer no Reconnect by @kfly8 in https://github.com/piconic-ai/pedit/pull/361
+- Stop the kept-room relay's whole process group when a test ends by @kfly8 in https://github.com/piconic-ai/pedit/pull/363
+- Add the kept/ lifecycle backstop to the deploy scripts by @kfly8 in https://github.com/piconic-ai/pedit/pull/364
+- Count no zombie as a running process of a kept-relay group by @kfly8 in https://github.com/piconic-ai/pedit/pull/365
+- Add pedit close and pedit rooms; print Room: <id> by @kfly8 in https://github.com/piconic-ai/pedit/pull/366
+
 ## [v0.1.20](https://github.com/piconic-ai/pedit/compare/v0.1.19...v0.1.20) - 2026-10-30
 
 - chore(deps): bump the actions group with 5 updates by @dependabot[bot] in https://github.com/piconic-ai/pedit/pull/277
