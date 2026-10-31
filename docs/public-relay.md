@@ -63,6 +63,9 @@ add them; anyone with the room's link can fetch them. The bucket needs a second
 lifecycle rule expiring `kept/` after 8 days (the public cap on keeping is
 seven) as a backstop for a deletion that failed; the operator adds it by hand,
 as the release deploy only manages the `rooms/` rule.
+Because a room the host keeps resuming has no total life, that backstop can
+delete an image older than 8 days from a room that is still valid; the image
+then answers 404.
 The relay learns ciphertext sizes, request times, and opaque sender identifiers
 and counts. It receives no plaintext or URL-fragment key. A relay can still
 withhold or replay data; a signature does not prove freshness or availability.
