@@ -640,9 +640,7 @@ export class Room extends DurableObject<Env> {
 
   // Whether there is anything of a session left to clean up.
   private sessionOpen(): boolean {
-    return (
-      this.ctx.storage.kv.get(ADMISSION_KEY) !== undefined || this.peers().length > 0
-    )
+    return this.ctx.storage.kv.get(ADMISSION_KEY) !== undefined || this.peers().length > 0
   }
 
   /**
