@@ -136,18 +136,20 @@ deletion leaves behind.
 
 Production's deploy (`pnpm run deploy:production`,
 `packages/scripts/deploy-production.mjs`) publishes the Worker, then adds the
-`expire-rooms` rule to `edit-blobs` if it is missing, keeping the bucket's
-other rules, such as Cloudflare's default multipart-abort rule. If it cannot
-check or add the rule, for example because the build token lacks Workers R2
-Storage (edit), the build log shows a warning and the deploy still succeeds;
-add the rule by hand. Previews and the lab do not run that script. Add the rule
-to a new bucket once (`lifecycle add` does not check for an existing rule of
-the same name):
+`expire-rooms` rule (`rooms/`, 1 day) and the `expire-kept` rule (`kept/`,
+8 days: a day more than `ROOM_LIFE_SECONDS`) to `edit-blobs` if either is
+missing, keeping the bucket's other rules, such as Cloudflare's default
+multipart-abort rule. If it cannot check or add a rule, for example because
+the build token lacks Workers R2 Storage (edit), the build log shows a warning
+and the deploy still succeeds; add the rule by hand. Previews and the lab do
+not run that script. Add the rules to a new bucket once (`lifecycle add` does
+not check for an existing rule of the same name):
 
 ```sh
 for bucket in edit-blobs edit-blobs-preview edit-lab-blobs; do
   pnpm --dir packages --filter @pedit/worker exec wrangler r2 bucket create "$bucket"
   pnpm --dir packages --filter @pedit/worker exec wrangler r2 bucket lifecycle add "$bucket" expire-rooms rooms/ --expire-days 1
+  pnpm --dir packages --filter @pedit/worker exec wrangler r2 bucket lifecycle add "$bucket" expire-kept kept/ --expire-days 8
 done
 ```
 

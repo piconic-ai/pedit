@@ -25,6 +25,9 @@ const multipart = rule(
 )
 const expire = (action = 'Expire objects after 1 days', enabled = 'Yes', prefix = 'rooms/') =>
   rule('expire-rooms', enabled, prefix, action)
+const expireKept = (action = 'Expire objects after 8 days', enabled = 'Yes', prefix = 'kept/') =>
+  rule('expire-kept', enabled, prefix, action)
+const both = `${header}${multipart}\n\n${expire()}\n\n${expireKept()}`
 
 function setup({
   list = header + "There are no lifecycle rules for bucket 'edit-blobs'.",
@@ -57,11 +60,24 @@ test('a failed deploy fails and touches no lifecycle rules', () => {
   assert.equal(calls.run.length, 1)
 })
 
-test('adds the rule when the bucket has none, without set or --force', () => {
+test('adds both rules when the bucket has none, without set or --force', () => {
   const { calls, deps } = setup()
   deployProduction(deps)
   assert.deepEqual(calls.run[0], ['--filter', '@pedit/worker', 'run', 'deploy'])
-  assert.equal(calls.run.length, 2)
+  assert.equal(calls.run.length, 3)
+  assert.deepEqual(afterWrangler(calls.run[2]), [
+    'r2',
+    'bucket',
+    'lifecycle',
+    'add',
+    'edit-blobs',
+    'expire-kept',
+    'kept/',
+    '--expire-days',
+    '8',
+    '--config',
+    configPath,
+  ])
   assert.deepEqual(afterWrangler(calls.run[1]), [
     'r2',
     'bucket',
@@ -89,15 +105,24 @@ test('adds the rule when the bucket has none, without set or --force', () => {
   assert.deepEqual(calls.warn, [])
 })
 
-test('adds the rule beside the default multipart rule', () => {
+test('adds the rules beside the default multipart rule', () => {
   const { calls, deps } = setup({ list: `${header}${multipart}` })
   deployProduction(deps)
-  assert.equal(calls.run.length, 2)
+  assert.equal(calls.run.length, 3)
   assert.equal(afterWrangler(calls.run[1])[3], 'add')
+  assert.equal(afterWrangler(calls.run[2])[3], 'add')
 })
 
-test('leaves a bucket that has the rule alone, without a warning', () => {
+test('adds only the kept rule to a bucket deployed before kept rooms', () => {
   const { calls, deps } = setup({ list: `${header}${multipart}\n\n${expire()}` })
+  deployProduction(deps)
+  assert.equal(calls.run.length, 2)
+  assert.equal(afterWrangler(calls.run[1])[5], 'expire-kept')
+  assert.deepEqual(calls.warn, [])
+})
+
+test('leaves a bucket that has both rules alone, without a warning', () => {
+  const { calls, deps } = setup({ list: both })
   deployProduction(deps)
   assert.equal(calls.run.length, 1)
   assert.deepEqual(calls.warn, [])
@@ -105,9 +130,10 @@ test('leaves a bucket that has the rule alone, without a warning', () => {
 
 test('warns about a rule that differs, and leaves it alone', () => {
   for (const list of [
-    expire('Expire objects after 7 days'),
-    expire('Expire objects after 1 days', 'No'),
-    expire('Expire objects after 1 days', 'Yes', '(all prefixes)'),
+    `${expire('Expire objects after 7 days')}\n\n${expireKept()}`,
+    `${expire('Expire objects after 1 days', 'No')}\n\n${expireKept()}`,
+    `${expire('Expire objects after 1 days', 'Yes', '(all prefixes)')}\n\n${expireKept()}`,
+    `${expire()}\n\n${expireKept('Expire objects after 1 days')}`,
   ]) {
     const { calls, deps } = setup({ list: header + list })
     deployProduction(deps)
@@ -124,10 +150,11 @@ test('only warns when the rules cannot be listed', () => {
   assert.match(calls.warn[0], /Worker is deployed.*could not be checked or added.*by hand/)
 })
 
-test('only warns when the rule cannot be added', () => {
+test('only warns when a rule cannot be added', () => {
   const { calls, deps } = setup({ runFails: (args) => args.includes('add') })
   deployProduction(deps)
-  assert.match(calls.warn[0], /could not be checked or added: boom/)
+  assert.equal(calls.warn.length, 1)
+  assert.match(calls.warn[0], /"expire-rooms".*could not be checked or added: boom/)
 })
 
 test('adds nothing when it cannot read the listing', () => {

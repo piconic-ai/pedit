@@ -55,9 +55,12 @@ test('cleanup uses the provisioned bucket after deployment, including jurisdicti
     '--file',
   ])
   const policy = JSON.parse(readFileSync(cleanup[10], 'utf8'))
-  assert.equal(policy.rules.length, 1)
+  assert.equal(policy.rules.length, 2)
   assert.equal(policy.rules[0].conditions.prefix, 'rooms/')
   assert.equal(policy.rules[0].deleteObjectsTransition.condition.maxAge, 86400)
+  // A day longer than the default ROOM_LIFE_SECONDS, so no live room loses an image.
+  assert.equal(policy.rules[1].conditions.prefix, 'kept/')
+  assert.equal(policy.rules[1].deleteObjectsTransition.condition.maxAge, 8 * 86400)
   assert.ok(cleanup.includes('--force'))
   assert.deepEqual(cleanup.slice(-2), ['--jurisdiction', 'eu'])
   assert.equal(calls[1].at(-1), cleanup[cleanup.indexOf('--config') + 1])
