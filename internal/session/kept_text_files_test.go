@@ -1,11 +1,8 @@
 package session
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -33,40 +30,15 @@ func TestKeptFilesRecoverPartialWriteBeforeCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entries := []any{}
+	read := keptTextRead{Snapshot: snapshot, Tail: 3}
 	for i, id := range []uint32{0, 99, 1} {
 		frame, err := protocol.SealKeptFileUpdate(keys, id, first)
 		if err != nil {
 			t.Fatal(err)
 		}
-		entries = append(entries, map[string]any{"id": i + 1, "body": frame})
+		read.Entries = append(read.Entries, keptTextEntry{ID: uint64(i + 1), Body: frame})
 	}
-	checkpoints := 0
-	client := &http.Client{Transport: keepFixTransport(func(r *http.Request) (*http.Response, error) {
-		var body []byte
-		if r.Method == "GET" {
-			body, _ = json.Marshal(map[string]any{"snapshot": snapshot, "entries": entries, "cutoff": 0, "tail": 3})
-		} else {
-			checkpoints++
-			if r.Header.Get("X-Pedit-Cutoff") != "3" {
-				t.Error("checkpoint did not advance past unknown file")
-			}
-			for _, path := range paths {
-				raw, _ := os.ReadFile(path)
-				if string(raw) != "base first" {
-					t.Error("checkpoint before all durable source writes")
-				}
-			}
-			frame, _ := io.ReadAll(r.Body)
-			files, err := protocol.OpenKeptBundle(keys, frame)
-			if err != nil || len(files) != 2 {
-				t.Error("invalid multifile checkpoint")
-			}
-			body = []byte(`{"keepSeconds":60,"keepUntil":1000000000000}`)
-		}
-		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(bytes.NewReader(body))}, nil
-	})}
-	h := keptTextHost{state: state, keys: keys, path: filepath.Join(dir, "state.json"), room: "abcdefghijklmnopqrstuv", client: client}
+	h := keptTextHost{state: state, keys: keys, path: filepath.Join(dir, "state.json"), room: "abcdefghijklmnopqrstuv"}
 	if err := h.openFiles(); err != nil {
 		t.Fatal(err)
 	}
@@ -86,11 +58,11 @@ func TestKeptFilesRecoverPartialWriteBeforeCheckpoint(t *testing.T) {
 			}
 		}
 	})
-	if err := h.sync(context.Background()); err == nil {
+	if _, err := h.intake(context.Background(), read); err == nil {
 		t.Fatal("second source conflict was ignored")
 	}
-	if !triggered || checkpoints != 0 || h.after != 0 || h.skipped != 1 {
-		t.Fatalf("premature cutoff or missing unknown-ID skip: %v %d %d %d", triggered, checkpoints, h.after, h.skipped)
+	if !triggered || h.after != 0 || h.skipped != 1 {
+		t.Fatalf("premature cutoff or missing unknown-ID skip: %v %d %d", triggered, h.after, h.skipped)
 	}
 	var saved keptTextState
 	if err := readKeptState(h.path, &saved); err != nil || saved.Files[0].Pending != nil || saved.Files[1].Pending == nil {
@@ -100,7 +72,7 @@ func TestKeptFilesRecoverPartialWriteBeforeCheckpoint(t *testing.T) {
 	if err := os.WriteFile(paths[1], []byte("base"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	resumed := keptTextHost{state: saved, keys: keys, path: h.path, room: h.room, client: client}
+	resumed := keptTextHost{state: saved, keys: keys, path: h.path, room: h.room}
 	if err := resumed.openFiles(); err != nil {
 		t.Fatal(err)
 	}
@@ -108,11 +80,15 @@ func TestKeptFilesRecoverPartialWriteBeforeCheckpoint(t *testing.T) {
 	if err := resumed.restore(); err != nil {
 		t.Fatal(err)
 	}
-	if err := resumed.sync(context.Background()); err != nil {
-		t.Fatal(err)
+	frame := takeInRead(t, &resumed, read)
+	files, err := protocol.OpenKeptBundle(keys, frame)
+	if err != nil || len(files) != 2 || resumed.after != 3 {
+		t.Fatalf("recovery did not checkpoint past the unknown file: %d %v", resumed.after, err)
 	}
-	if checkpoints != 1 || resumed.after != 3 {
-		t.Fatal("recovery did not checkpoint exactly once")
+	for _, path := range paths {
+		if raw, _ := os.ReadFile(path); string(raw) != "base first" {
+			t.Errorf("%s = %q", path, raw)
+		}
 	}
 }
 
@@ -140,27 +116,25 @@ func TestKeptFilesPreflightPreservesAllSources(t *testing.T) {
 	}
 }
 
-func TestKeptFilesRejectAliasesAndOutsideProjectBeforeRoomCreation(t *testing.T) {
-	isolateKeptUserConfig(t)
-	dir := t.TempDir()
-	first := filepath.Join(dir, "first.md")
-	os.WriteFile(first, []byte("hello"), 0600)
-	alias := filepath.Join(dir, "alias.md")
-	if err := os.Link(first, alias); err != nil {
+func TestKeepRefusesAliasesAndFilesOutsideTheProject(t *testing.T) {
+	a := newAwayRoom(t, "hello\n")
+	alias := filepath.Join(a.project, "alias.md")
+	if err := os.Link(a.file, alias); err != nil {
 		t.Fatal(err)
 	}
 	outside := filepath.Join(t.TempDir(), "outside.md")
-	os.WriteFile(outside, []byte("outside"), 0600)
-	calls := 0
-	client := &http.Client{Transport: keepFixTransport(func(*http.Request) (*http.Response, error) { calls++; return nil, io.EOF })}
-	for _, second := range []string{first, alias, outside} {
-		h := keptTextHost{client: client}
-		if err := h.prepare(context.Background(), KeptTextOptions{File: first, More: []string{second}, Project: dir, Server: "https://example.test", Keep: time.Hour}); err == nil {
-			t.Fatal("invalid file list accepted")
-		}
+	if err := os.WriteFile(outside, []byte("outside"), 0600); err != nil {
+		t.Fatal(err)
 	}
-	if calls != 0 {
-		t.Fatal("created room before validating sources")
+	for _, second := range []string{a.file, alias, outside} {
+		opts := a.options()
+		opts.Keep = time.Hour
+		opts.More = []string{second}
+		s, err := Start(context.Background(), opts)
+		if err == nil {
+			_ = s.Stop()
+			t.Fatalf("kept %s with the first file", second)
+		}
 	}
 }
 

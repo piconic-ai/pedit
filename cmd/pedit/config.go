@@ -336,9 +336,6 @@ func templateName(name string) string {
 
 type commandArgs struct {
 	Keep time.Duration
-	// Polling is --keep-polling: the older kept room, taken in by polling the
-	// relay over HTTP, in place of --keep's live room kept by the relay.
-	Polling bool
 	// KeepOff is --keep 0: no kept room this run, whatever the configuration says.
 	KeepOff bool
 	// Resume is a share link or room ID; ResumeAny is --resume without a value.
@@ -368,7 +365,7 @@ func parseArgs(args []string) (commandArgs, error) {
 		option, value, hasValue := strings.Cut(arg, "=")
 		var err error
 		switch option {
-		case "--keep", "--keep-polling", "--resume", "--close":
+		case "--keep", "--resume", "--close":
 			value, i, err = keptOptionValue(args, i, option, value, hasValue)
 			if err == nil {
 				err = opts.setKeptOption(option, value)
@@ -404,7 +401,7 @@ func keptOptionValue(args []string, i int, option, value string, hasValue bool) 
 		return value, i, nil
 	}
 	next := optionValue(args, i+1)
-	keeps := option == "--keep" || option == "--keep-polling"
+	keeps := option == "--keep"
 	if !keeps && i+1 < len(args) && roomIDArg.MatchString(args[i+1]) {
 		next = args[i+1]
 	}
@@ -418,7 +415,7 @@ func (o *commandArgs) setKeptOption(option, value string) error {
 	if option == "--close" {
 		o.Close = true
 	}
-	keeps := option == "--keep" || option == "--keep-polling"
+	keeps := option == "--keep"
 	if value == "" && !keeps && !o.ResumeAny {
 		return o.setResumeAny()
 	}
@@ -426,7 +423,6 @@ func (o *commandArgs) setKeptOption(option, value string) error {
 		return errors.New(option + " requires a value")
 	}
 	if keeps {
-		o.Polling = option == "--keep-polling"
 		if o.Keep != 0 || o.KeepOff {
 			return errors.New("specify keep once")
 		}

@@ -9,19 +9,10 @@ import (
 	"github.com/piconic-ai/pedit/internal/protocol"
 )
 
-func TestKeepPollingArgument(t *testing.T) {
+func TestKeepArgumentWithSeveralFiles(t *testing.T) {
 	opts, err := parseArgs([]string{"--keep", "7d", "a.md", "b.md"})
-	if err != nil || opts.Keep != 7*24*time.Hour || opts.Polling || opts.File != "a.md" || len(opts.More) != 1 {
+	if err != nil || opts.Keep != 7*24*time.Hour || opts.File != "a.md" || len(opts.More) != 1 {
 		t.Fatalf("--keep: %+v, %v", opts, err)
-	}
-	opts, err = parseArgs([]string{"--keep-polling=1d", "a.md"})
-	if err != nil || opts.Keep != 24*time.Hour || !opts.Polling {
-		t.Fatalf("--keep-polling: %+v, %v", opts, err)
-	}
-	for _, args := range [][]string{{"--keep-polling", "a.md"}, {"--keep-polling", "1d", "--resume"}, {"--keep", "1d", "--keep-polling", "1d", "a.md"}} {
-		if _, err := parseArgs(args); err == nil {
-			t.Errorf("%v: accepted", args)
-		}
 	}
 }
 

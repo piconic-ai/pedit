@@ -1,61 +1,15 @@
 package session
 
 import (
-	"bytes"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/piconic-ai/pedit/internal/filewriter"
 	"github.com/piconic-ai/pedit/internal/protocol"
 	"github.com/reearth/ygo/crdt"
 )
-
-func prepareKeptFiles(opts KeptTextOptions) ([]keptTextFileState, error) {
-	paths := append([]string{opts.File}, opts.More...)
-	if len(paths) > protocol.MaxKeptFiles {
-		return nil, errors.New("kept rooms support at most 64 text files")
-	}
-	project, e := filepath.Abs(opts.Project)
-	if e != nil {
-		return nil, e
-	}
-	files := make([]keptTextFileState, 0, len(paths))
-	infos := []os.FileInfo{}
-	names := map[string]bool{}
-	root, _ := openProject(project)
-	if root != nil {
-		defer root.Close()
-	}
-	for i, path := range paths {
-		if absolute, e := filepath.Abs(path); e == nil && keepsComments(root, absolute) {
-			return nil, errKeepsComments
-		}
-		file, info, e := readKeptSource(path, project, uint32(i), len(paths) > 1)
-		if e != nil {
-			return nil, e
-		}
-		key := protocol.PathKey(file.Path)
-		if names[key] {
-			return nil, errors.New("duplicate kept file path")
-		}
-		for _, previous := range infos {
-			if os.SameFile(info, previous) {
-				return nil, errors.New("duplicate kept source file")
-			}
-		}
-		names[key] = true
-		infos = append(infos, info)
-		files = append(files, file)
-	}
-	if e := attachKeptMetas(opts.Project, files); e != nil {
-		return nil, e
-	}
-	return files, nil
-}
 
 // keptPath is the path a kept file is known by in the room: its name, or with
 // several files its path in the project, which they must all be inside.
@@ -69,42 +23,8 @@ func keptPath(project, absolute string, multi bool) (string, error) {
 	}
 	return filepath.ToSlash(relative), nil
 }
-func readKeptSource(path, project string, id uint32, multi bool) (keptTextFileState, os.FileInfo, error) {
-	file := keptTextFileState{ID: id}
-	absolute, e := filepath.Abs(path)
-	if e != nil {
-		return file, nil, e
-	}
-	file.File = absolute
-	if file.Path, e = keptPath(project, absolute, multi); e != nil {
-		return file, nil, e
-	}
-	if protocol.CheckPath(file.Path) != nil {
-		return file, nil, errors.New("invalid kept file path")
-	}
-	input, e := os.Open(absolute)
-	if e != nil {
-		return file, nil, errors.New("cannot read kept file")
-	}
-	defer input.Close()
-	info, e := input.Stat()
-	if e != nil || !info.Mode().IsRegular() {
-		return file, nil, errors.New("kept source must be a regular file")
-	}
-	data, e := io.ReadAll(io.LimitReader(input, protocol.MaxFrameBytes+1))
-	if e != nil || isCanvas(absolute) || len(data) > protocol.MaxFrameBytes || !utf8.Valid(data) {
-		return file, nil, errors.New("cannot read kept UTF-8 file")
-	}
-	doc := crdt.New()
-	defer doc.Destroy()
-	text := doc.GetText("content")
-	doc.Transact(func(tx *crdt.Transaction) { text.Insert(tx, 0, string(data), nil) })
-	file.State, file.Text = crdt.EncodeStateAsUpdateV1(doc, nil), string(data)
-	return file, info, nil
-}
 func (h *keptTextHost) openFiles() error {
 	h.files = map[uint32]*keptTextDocument{}
-	h.snapshotNames = map[uint32]string{}
 	if len(h.state.Files) == 0 || len(h.state.Files) > 64 || h.state.Files[0].ID != 0 {
 		return errors.New("invalid saved kept inventory")
 	}
@@ -224,14 +144,6 @@ func (h *keptTextHost) snapshot() ([]byte, error) {
 		return protocol.SealKeptTextSnapshot(h.keys, files[0].Path, files[0].Update)
 	}
 	return protocol.SealKeptBundle(h.keys, files)
-}
-func (h *keptTextHost) unchanged() bool {
-	for _, entry := range h.entries() {
-		if h.snapshotNames[entry.ID] != entry.Path || !bytes.Equal(crdt.EncodeStateAsUpdateV1(h.files[entry.ID].doc, nil), entry.State) {
-			return false
-		}
-	}
-	return true
 }
 func (h *keptTextHost) finishWrites() error {
 	// Preflight the entire batch before exchanging any source; the saved journal

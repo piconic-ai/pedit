@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -65,7 +67,7 @@ func TestCloseTakesInTheLogLeavesAndAsksTheRelayToEndTheRoom(t *testing.T) {
 		}
 		before(c)
 	}
-	err := RunKeptText(context.Background(), KeptTextOptions{Project: a.project, Resume: a.id, Close: true, Dial: a.relay.Dial}, nil, nil)
+	err := CloseKept(context.Background(), closeOptions(a))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,5 +80,170 @@ func TestCloseTakesInTheLogLeavesAndAsksTheRelayToEndTheRoom(t *testing.T) {
 	}
 	if _, err := os.Stat(keptTestStatePath(t, a.project, a.id)); err == nil {
 		t.Fatal("the record outlived the room")
+	}
+}
+
+// closeAsks makes the relay answer --close's request with the status that
+// answer gives for the n-th ask, and, once it answered 200, turn the host away
+// as it does a room that was ended. tails holds what each ask named.
+func (a *awayRoom) closeAsks(answer func(n int) int) (tails *[]string) {
+	tails = new([]string)
+	var mu sync.Mutex
+	ended := false
+	a.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/rooms/"+a.id+"/keep/close" {
+			_, _ = w.Write([]byte("{}"))
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		*tails = append(*tails, r.Header.Get("X-Pedit-Tail"))
+		status := answer(len(*tails))
+		ended = ended || status == http.StatusOK
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte("{}"))
+	})
+	before := a.relay.OnDial
+	a.relay.OnDial = func(c *prototest.ScriptConn) {
+		mu.Lock()
+		over := ended
+		mu.Unlock()
+		if over {
+			c.CloseWith(protocol.RoomClosed)
+			return
+		}
+		before(c)
+	}
+	return tails
+}
+
+func closeOptions(a *awayRoom) KeptTextOptions {
+	return KeptTextOptions{Project: a.project, Resume: a.id, Dial: a.relay.Dial}
+}
+
+func TestCloseKeepsRoomAndRecordWhenTheWriteFails(t *testing.T) {
+	a := newAwayRoom(t, "notes\n")
+	_, guest := keepAndLeave(t, a)
+	a.script(1, protocol.EncodeLogged(1, guest.insert(0, "guest ")), protocol.EncodeLogEnd(1))
+	tails := a.closeAsks(func(int) int { return http.StatusOK })
+	// A write was under way when the host left, and the file was changed by
+	// another editor since: the host cannot tell which edit is whose.
+	record := a.record()
+	pending := "guest notes\n"
+	record.Files[0].Pending = &pending
+	if err := saveKeptState(keptTestStatePath(t, a.project, a.id), record); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(a.file, []byte("external\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := CloseKept(context.Background(), closeOptions(a)); err == nil {
+		t.Fatal("closed after a failed write")
+	}
+	if len(*tails) != 0 {
+		t.Fatalf("asked the relay to end the room: %v", *tails)
+	}
+	if got := readText(t, a.file); got != "external\n" {
+		t.Fatalf("file = %q", got)
+	}
+	if _, err := os.Stat(keptTestStatePath(t, a.project, a.id)); err != nil {
+		t.Fatal("record removed although the room stayed open")
+	}
+}
+
+func TestCloseKeepsTheRecordWhenTheRelayRefuses(t *testing.T) {
+	a := newAwayRoom(t, "notes\n")
+	_, guest := keepAndLeave(t, a)
+	a.script(1, protocol.EncodeLogged(1, guest.insert(0, "guest ")), protocol.EncodeLogEnd(1))
+	tails := a.closeAsks(func(int) int { return http.StatusServiceUnavailable })
+	if err := CloseKept(context.Background(), closeOptions(a)); err == nil {
+		t.Fatal("reported a close the relay refused")
+	}
+	if len(*tails) != 1 || readText(t, a.file) != "guest notes\n" {
+		t.Fatalf("asked %v, file %q", *tails, readText(t, a.file))
+	}
+	if _, err := os.Stat(keptTestStatePath(t, a.project, a.id)); err != nil {
+		t.Fatal("record removed although the relay did not close")
+	}
+}
+
+// A guest edit that arrived after the host's last read makes the relay answer
+// 409 and keep the room: the host takes that edit in and asks again.
+func TestCloseTakesInAnEditThatArrivedBeforeTheClose(t *testing.T) {
+	a := newAwayRoom(t, "notes\n")
+	_, guest := keepAndLeave(t, a)
+	a.script(1, protocol.EncodeLogged(1, guest.insert(0, "one ")), protocol.EncodeLogEnd(1))
+	tails := a.closeAsks(func(n int) int {
+		if n == 1 {
+			a.script(2, protocol.EncodeLogged(2, guest.insert(0, "two ")), protocol.EncodeLogEnd(2))
+			return http.StatusConflict
+		}
+		return http.StatusOK
+	})
+	if err := CloseKept(context.Background(), closeOptions(a)); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(*tails, ",") != "1,2" || readText(t, a.file) != "two one notes\n" {
+		t.Fatalf("asked %v, file %q", *tails, readText(t, a.file))
+	}
+	if _, err := os.Stat(keptTestStatePath(t, a.project, a.id)); err == nil {
+		t.Fatal("record kept after a successful close")
+	}
+}
+
+// A relay that turns the returning host away because the room expired has
+// nothing left to resume: the record goes, unless a write is pending.
+func TestResumeOfAnExpiredRoomRemovesTheRecord(t *testing.T) {
+	for _, pending := range []bool{false, true} {
+		a := newAwayRoom(t, "notes\n")
+		keepAndLeave(t, a)
+		a.relay.OnDial = func(c *prototest.ScriptConn) { c.CloseWith(protocol.RoomExpired) }
+		path := keptTestStatePath(t, a.project, a.id)
+		if pending {
+			record := a.record()
+			text := "x"
+			record.Files[0].Pending = &text
+			if err := saveKeptState(path, record); err != nil {
+				t.Fatal(err)
+			}
+		}
+		opts := a.options()
+		opts.Resume = a.id
+		if s, err := Start(context.Background(), opts); err == nil {
+			_ = s.Stop()
+			t.Fatal("resumed an expired room")
+		}
+		if _, err := os.Stat(path); (err == nil) != pending {
+			t.Fatalf("pending %v: record present %v", pending, err == nil)
+		}
+	}
+}
+
+// A resumed host that stays connected past the deadline it left with, then
+// dies, is kept by the relay for a fresh period: while the host is here the
+// record has no deadline, so it is never pruned as long past.
+func TestRecordHasNoDeadlineWhileTheHostIsConnected(t *testing.T) {
+	a := newAwayRoom(t, "notes\n")
+	_, guest := keepAndLeave(t, a)
+	record := a.record()
+	record.Until = 1
+	if err := saveKeptState(keptTestStatePath(t, a.project, a.id), record); err != nil {
+		t.Fatal(err)
+	}
+	a.script(1, protocol.EncodeLogged(1, guest.insert(0, "guest ")), protocol.EncodeLogEnd(1))
+	opts := a.options()
+	opts.Resume = a.id
+	s, err := Start(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Stop() })
+	prototest.WaitFor(t, wait, func() bool { return a.record().After == 1 }, "the record to follow the checkpoint")
+	if until := a.record().Until; until != 0 {
+		t.Fatalf("a connected host's record says it ends at %d", until)
+	}
+	pruned := 0
+	if err := PruneKept(a.project, func(n int) { pruned = n }); err != nil || pruned != 0 {
+		t.Fatalf("pruned %d: %v", pruned, err)
 	}
 }

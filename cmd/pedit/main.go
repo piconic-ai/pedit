@@ -87,7 +87,6 @@ Options:
                         pedit <file> takes up the kept room that holds the file
   --resume [room|link]  Take up a kept room again: your files get what was written meanwhile
   --close [room|link]   Take in a kept room's edits, then close it for good
-  --keep-polling <duration>  The older kept room that you take in by polling the relay
   -h, --help             Show this help
   -v, --version          Show the version
 
@@ -275,22 +274,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return code
 }
 
-// routeKept runs the kept modes that are not a live session: the polling one,
-// closing, and resuming a polling room. A room kept by the relay while its host
-// is away is taken up as a live session, with its files set from the record.
+// routeKept runs --close. A room kept by the relay while its host is away is taken up
+// by --resume as a live session, with its files set from the record.
 func routeKept(opts *commandArgs, stdout, stderr io.Writer) (code int, done bool) {
-	if opts.Polling {
-		return runKeep(*opts, stdout, stderr), true
-	}
 	if opts.Resume == "" && !opts.ResumeAny {
 		return 0, false
 	}
-	live, code := chooseResume(opts, stdout, stderr)
-	if code != 0 {
+	if code := chooseResume(opts, stdout, stderr); code != 0 {
 		return code, true
 	}
-	if opts.Close || !live {
-		return runKeep(*opts, stdout, stderr), true
+	if opts.Close {
+		return closeKept(*opts, stdout, stderr), true
 	}
 	return 0, false
 }

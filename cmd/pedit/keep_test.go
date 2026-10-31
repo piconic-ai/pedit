@@ -20,7 +20,7 @@ func TestKeepArguments(t *testing.T) {
 	if multiErr != nil || multi.File != "notes.md" || len(multi.More) != 1 || multi.More[0] != "todo.md" {
 		t.Fatalf("multiple keep args: %v", multiErr)
 	}
-	opts, err = parseArgs([]string{"--resume", "https://example.test/r/AAAAAAAAAAAAAAAAAAAAAA?keep=1#key"})
+	opts, err = parseArgs([]string{"--resume", "https://example.test/r/AAAAAAAAAAAAAAAAAAAAAA#key"})
 	if err != nil || opts.Resume == "" {
 		t.Fatalf("resume args: %v", err)
 	}
@@ -38,14 +38,12 @@ func TestKeepWindowsPermissions(t *testing.T) {
 	if _, err := session.Start(context.Background(), session.Options{File: "notes.md", Keep: time.Hour}); err == nil || !strings.Contains(err.Error(), "Windows is not supported") {
 		t.Fatalf("unsupported live keep: %v", err)
 	}
-	for _, resume := range []string{"", "https://example.test/r/room?keep=1#key"} {
-		project := t.TempDir()
-		err := session.RunKeptText(context.Background(), session.KeptTextOptions{Project: project, Resume: resume}, nil, nil)
-		if err == nil || !strings.Contains(err.Error(), "Windows is not supported") {
-			t.Fatalf("unsupported host mode: %v", err)
-		}
-		if _, err := os.Stat(filepath.Join(project, ".pedit")); !os.IsNotExist(err) {
-			t.Fatal("unsupported host mode created state")
-		}
+	project := t.TempDir()
+	err := session.CloseKept(context.Background(), session.KeptTextOptions{Project: project, Resume: "https://example.test/r/room#key"})
+	if err == nil || !strings.Contains(err.Error(), "Windows is not supported") {
+		t.Fatalf("unsupported close: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".pedit")); !os.IsNotExist(err) {
+		t.Fatal("unsupported close created state")
 	}
 }

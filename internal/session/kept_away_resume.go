@@ -175,22 +175,23 @@ func (s *Session) keepOpen(opts *Options, hostToken, fragment string, res *resum
 const resumeStep = 30 * time.Second
 
 // resumeAway takes in the room of opts.Resume: it merges the edits made to the
-// files while the host was away, connects as the host, applies the replayed log
-// as the polling mode does, writes the files, and checkpoints, which has the
+// files while the host was away, connects as the host, applies the replayed log, writes the files, and checkpoints, which has the
 // relay drop its log. It sets opts to share the record's files.
 func resumeAway(ctx context.Context, opts *Options) (*resumed, error) {
-	h, err := openAway(ctx, KeptTextOptions{Project: opts.Project, Resume: opts.Resume}, opts.OnSkipped, opts.OnImageError)
+	h, err := openAway(KeptTextOptions{Project: opts.Project, Resume: opts.Resume, OnSkipped: opts.OnSkipped, OnImageError: opts.OnImageError})
 	if err != nil {
 		return nil, err
 	}
 	defer h.closeFiles()
 	conn, err := h.dialAway(ctx, opts.Dial, opts.Header)
 	if err != nil {
+		h.dropIfGone(err)
 		return nil, err
 	}
 	r := &resumed{roomID: h.room, state: h.state, conn: conn}
 	if err := r.takeIn(ctx, h); err != nil {
 		_ = conn.Leave()
+		h.dropIfGone(err)
 		return nil, err
 	}
 	r.state = h.state
@@ -204,13 +205,13 @@ func resumeAway(ctx context.Context, opts *Options) (*resumed, error) {
 
 // openAway opens the record of a live room kept by the relay, with its files,
 // after the edits made to them while the host was away are merged in.
-func openAway(ctx context.Context, opts KeptTextOptions, onSkipped func(int), onImageError func(string, error)) (*keptTextHost, error) {
-	h := &keptTextHost{client: &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, onSkipped: onSkipped, onImageError: onImageError, socket: true}
-	if err := h.prepare(ctx, opts); err != nil {
+func openAway(opts KeptTextOptions) (*keptTextHost, error) {
+	h := &keptTextHost{client: &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, onSkipped: opts.OnSkipped, onImageError: opts.OnImageError}
+	if err := h.prepare(opts); err != nil {
 		return nil, err
 	}
 	if !h.state.Socket {
-		return nil, errors.New("this room is kept by polling; resume it with --keep-polling")
+		return nil, errors.New("this room was kept by an older version of pedit and can no longer be resumed")
 	}
 	if err := h.openFiles(); err != nil {
 		return nil, err
@@ -260,9 +261,6 @@ func (r *resumed) takeIn(ctx context.Context, h *keptTextHost) error {
 	if err != nil {
 		return err
 	}
-	if frame == nil {
-		return errors.New("nothing to checkpoint")
-	}
 	if err := r.conn.Write(ctx, protocol.EncodeCheckpoint(read.Tail, frame)); err != nil {
 		return err
 	}
@@ -308,6 +306,7 @@ func (r *resumed) awaitCheckpoint(ctx context.Context, h *keptTextHost) error {
 			if cutoff, _, ok := protocol.ParseCheckpoint(string(payload)); ok {
 				h.checkpointed(cutoff)
 				h.state.After = cutoff
+				h.state.Until = 0 // the host is here now: see saveRecord
 				return saveKeptState(h.path, h.state)
 			} else if string(payload) == protocol.CheckpointRefused {
 				return errors.New("the relay refused the checkpoint")
@@ -348,20 +347,6 @@ func (r *resumed) next(ctx context.Context) (byte, []byte, error) {
 	}
 }
 
-// closeLive ends a room kept by the relay, which only --close does: resuming
-// one is Start's.
-func closeLive(ctx context.Context, opts KeptTextOptions) error {
-	if !opts.Close {
-		return errors.New("this room is kept by the relay; resume it with pedit --resume")
-	}
-	h, err := openAway(ctx, opts, opts.OnSkipped, opts.OnImageError)
-	if err != nil {
-		return err
-	}
-	defer h.closeFiles()
-	return h.closeAway(ctx, opts.Dial)
-}
-
 // takeInLate takes in the entries that came while the host was already here,
 // which the relay passed on without keeping.
 func (h *keptTextHost) takeInLate(ctx context.Context, late [][]byte) error {
@@ -389,6 +374,7 @@ func (h *keptTextHost) closeAway(ctx context.Context, dial protocol.Dialer) erro
 		if roomClosed(err) {
 			return os.Remove(h.path)
 		}
+		h.dropIfGone(err)
 		if err != nil {
 			return err
 		}
@@ -397,7 +383,6 @@ func (h *keptTextHost) closeAway(ctx context.Context, dial protocol.Dialer) erro
 			return errors.New("could not close the room: guests keep editing it")
 		}
 		r := &resumed{conn: conn}
-		h.republish = true
 		err = r.takeIn(ctx, h)
 		if roomClosed(err) {
 			return os.Remove(h.path)
@@ -413,10 +398,18 @@ func (h *keptTextHost) closeAway(ctx context.Context, dial protocol.Dialer) erro
 			return err
 		}
 		time.Sleep(200 * time.Millisecond)
-		tail := http.Header{"X-Pedit-Tail": {strconv.FormatUint(h.after, 10)}}
-		if status, err := keptTextRequest(ctx, h.client, &h.state, h.room, "POST", "/close", nil, tail, &struct{}{}); err != nil && status != http.StatusConflict {
+		if status, err := closeRequest(ctx, h.client, &h.state, h.room, h.after); err != nil && status != http.StatusConflict {
 			return err
 		}
+	}
+}
+
+// dropIfGone removes the record when the relay turned the host away because
+// the room is over (ended or expired), unless a write is still pending.
+func (h *keptTextHost) dropIfGone(err error) {
+	var closed *protocol.CloseError
+	if errors.As(err, &closed) && (closed.Code == protocol.RoomClosed || closed.Code == protocol.RoomExpired) && h.nothingPending() {
+		_ = os.Remove(h.path)
 	}
 }
 

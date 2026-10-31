@@ -108,9 +108,9 @@ resumes it; its set of files is fixed, so a file it does not hold is an error: r
 first, or `pedit --keep 0` for a separate room. A relay that cannot keep rooms (a self-hosted
 one that is not updated) ends the room when you leave, and pedit says so. Resume information stays in a
 private 0600 record under `pedit/keep/` in your user configuration directory, outside the
-project. pedit removes that record once the room is over (when `--resume` finds the relay room
-expired, and at the next run in the same project for rooms past their deadline), never while a
-write is pending or the relay may still hold entries.
+project. pedit removes that record when `--close` ends the room, when a resume finds the room gone, and at the
+next run in the same project for rooms past their deadline (as for rooms kept by an older version of pedit,
+which can no longer be resumed), never while a write is pending.
 A kept room shares the fixed set of text files it started with (up to 64; no file can be added later), with their comments and pasted images:
 guests can paste images (PNG, JPEG, GIF or WebP, within the public relay's image limits) as in a live room, and the relay keeps them,
 encrypted, until the room's deadline. On `--resume` pedit saves each image the merged text refers to under `assets/`

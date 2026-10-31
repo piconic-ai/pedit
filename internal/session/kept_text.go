@@ -29,16 +29,11 @@ import (
 	"github.com/reearth/ygo/crdt"
 )
 
+// KeptTextOptions says which kept room CloseKept, or the resume of a session,
+// is about.
 type KeptTextOptions struct {
-	File, Project, Server, Resume string
-	More                          []string
-	Keep                          time.Duration
-	OnSkipped                     func(int)
-	OnPruned                      func(int) // records of finished rooms removed at start
-	OnEnded                       func()    // this room's record removed because the room is over
-	// Close takes in the room's edits, then ends the room on the relay and
-	// removes its record, instead of keeping it open (see closeRoom).
-	Close bool
+	File, Project, Resume string
+	OnSkipped             func(int)
 	// OnImageError reports an image a kept text refers to that could not be
 	// saved beside its file (once per image and file).
 	OnImageError func(path string, err error)
@@ -51,8 +46,9 @@ type keptTextState struct {
 	Files                                []keptTextFileState
 	Initialized                          bool
 	// Socket marks the record of a live room kept by the relay while the host
-	// is away (kept_away.go); without it the room is a polling one, kept over
-	// HTTP. After is the last entry of the relay's log this host took in.
+	// is away (kept_away.go); a record without it is of the older kind of kept
+	// room, which was taken in by polling over HTTP and can no longer be
+	// resumed. After is the last entry of the relay's log this host took in.
 	Socket bool   `json:",omitempty"`
 	After  uint64 `json:",omitempty"`
 }
@@ -79,118 +75,59 @@ type keptTextDocument struct {
 	// comments is the text file's comments doc.
 	comments *keptTextDocument
 }
-type keptTextMeta struct {
-	Seconds int64 `json:"keepSeconds"`
-	Until   int64 `json:"keepUntil"`
-}
+
+// keptTextEntry is an entry of the relay's log.
 type keptTextEntry struct {
-	ID   uint64 `json:"id"`
-	Body []byte `json:"body"`
-}
-type keptTextRead struct {
-	Snapshot  []byte          `json:"snapshot"`
-	Entries   []keptTextEntry `json:"entries"`
-	Tail      uint64          `json:"tail"`
-	Cutoff    uint64          `json:"cutoff"`
-	HostAway  bool            `json:"hostAway"`
-	KeepUntil int64           `json:"keepUntil"`
-	ETag      string          `json:"-"`
-	Unchanged bool            `json:"-"`
+	ID   uint64
+	Body []byte
 }
 
-var errKeptGone = errors.New("kept room expired")
-var errKeptMissing = errors.New("kept room no longer exists")
+// keptTextRead is what the relay replays to a returning host: a snapshot if
+// the host holds less than the cutoff, the entries after it, and the tail.
+type keptTextRead struct {
+	Snapshot []byte
+	Entries  []keptTextEntry
+	Tail     uint64
+	Cutoff   uint64
+}
 
 var keptTextRoomID = regexp.MustCompile(`^[A-Za-z0-9_-]{22}$`)
 
 type keptTextHost struct {
-	snapshotNames map[uint32]string
-	state         keptTextState
-	room, path    string
-	dir           string
-	client        *http.Client
-	keys          *protocol.RoomKeys
-	files         map[uint32]*keptTextDocument
-	project       *os.Root // set while a file has comments
-	meta          keptTextMeta
-	after         uint64
-	etag          string
-	skipped       int
-	// republish forces the next sync to checkpoint, so local edits merged on
-	// resume reach the relay even when no guest edit is waiting in the log.
-	republish bool
-	onSkipped func(int)
+	state      keptTextState
+	room, path string
+	dir        string
+	client     *http.Client
+	keys       *protocol.RoomKeys
+	files      map[uint32]*keptTextDocument
+	project    *os.Root // set while a file has comments
+	after      uint64
+	skipped    int
+	onSkipped  func(int)
 	// Images pasted while the host was away are saved before each write.
 	blobKeys     *protocol.BlobKeys
 	imageClient  *http.Client // nil for the default
 	onImageError func(path string, err error)
 	imageErrors  map[string]bool
-	imagesFailed bool      // some image could not be saved at the last try
-	imageRetryAt time.Time // when an unchanged sync tries those again
-	closed       bool      // the relay has closed the room
-	// socket: the entries come over the host's WebSocket, not by polling, and
-	// the host holds the room's state from its record when after is 0.
-	socket bool
+	imagesFailed bool // some image could not be saved at the last try
 }
 
-// RunKeptText keeps the relay open when the host leaves. Source changes made
-// outside this session are refused rather than overwritten.
-func RunKeptText(ctx context.Context, opts KeptTextOptions, ready func(string, int64, int64), leave func(int64)) (runErr error) {
+// CloseKept takes in the edits of a room kept by the relay, writes them to the
+// files, and ends the room, which removes its link and its record. Source
+// changes made outside this session are refused rather than overwritten.
+func CloseKept(ctx context.Context, opts KeptTextOptions) error {
 	if runtime.GOOS == "windows" {
 		return errors.New("--keep and --resume require Unix file permissions; Windows is not supported")
 	}
-	h := keptTextHost{client: &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, onSkipped: opts.OnSkipped, onImageError: opts.OnImageError}
-	if e := h.prepare(ctx, opts); e != nil {
-		return e
-	}
-	h.pruneExpired(ctx, opts.OnPruned)
-	if h.state.Socket {
-		return closeLive(ctx, opts)
-	}
-	if e := h.openFiles(); e != nil {
-		return e
+	h, err := openAway(opts)
+	if err != nil {
+		return err
 	}
 	defer h.closeFiles()
-	if e := h.restore(); e != nil {
-		return e
-	}
-	defer func() { h.dropEndedRecord(runErr, opts.OnEnded) }()
-	if e := h.connect(ctx); e != nil {
-		return e
-	}
-	defer h.leave(ctx, &runErr, leave)
-	h.state.Initialized = true
-	h.state.Until = h.meta.Until
-	if e := saveKeptState(h.path, h.state); e != nil {
-		return e
-	}
-	if opts.Close {
-		return h.closeRoom(ctx)
-	}
-	if e := h.sync(ctx); e != nil {
-		return e
-	}
-	if h.meta.Seconds <= 0 || h.meta.Seconds > h.state.Keep {
-		return errors.New("invalid relay keep duration")
-	}
-	if ready != nil {
-		ready(h.state.Origin+"/r/"+h.room+"?keep=1#"+h.state.Fragment, h.meta.Seconds, h.meta.Until)
-	}
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			if e := h.sync(ctx); e != nil && ctx.Err() == nil {
-				return e
-			}
-		}
-	}
+	return h.closeAway(ctx, opts.Dial)
 }
 
-func (h *keptTextHost) prepare(ctx context.Context, opts KeptTextOptions) error {
+func (h *keptTextHost) prepare(opts KeptTextOptions) error {
 	project, e := filepath.Abs(opts.Project)
 	if e != nil {
 		return errors.New("invalid kept project")
@@ -203,13 +140,7 @@ func (h *keptTextHost) prepare(ctx context.Context, opts KeptTextOptions) error 
 	if e != nil {
 		return e
 	}
-	if opts.Resume != "" {
-		e = h.resume(opts, directory)
-	} else {
-		e = h.create(ctx, opts)
-		h.state.Project = project
-	}
-	if e != nil {
+	if e := h.resume(opts, directory); e != nil {
 		return e
 	}
 	h.dir, h.path = directory, filepath.Join(directory, h.room+".json")
@@ -244,7 +175,7 @@ func (h *keptTextHost) resume(opts KeptTextOptions, directory string) error {
 		h.room = opts.Resume
 	} else {
 		u, e := url.Parse(opts.Resume)
-		if e != nil || u.User != nil || (u.RawQuery != "keep=1" && u.RawQuery != "") ||
+		if e != nil || u.User != nil || u.RawQuery != "" ||
 			(u.Scheme != "http" && u.Scheme != "https") ||
 			!strings.HasPrefix(u.Path, "/r/") {
 			return errors.New("invalid resume link")
@@ -258,33 +189,9 @@ func (h *keptTextHost) resume(opts KeptTextOptions, directory string) error {
 		return e
 	}
 	link := h.state.Origin + "/r/" + h.room
-	if (!byID && opts.Resume != link+"?keep=1#"+h.state.Fragment && !(h.state.Socket && opts.Resume == link+"#"+h.state.Fragment)) ||
-		(opts.Server != "" && strings.TrimRight(opts.Server, "/") != h.state.Origin) {
+	if !byID && opts.Resume != link+"#"+h.state.Fragment {
 		return errors.New("resume link differs from saved host state")
 	}
-	return nil
-}
-
-func (h *keptTextHost) create(ctx context.Context, opts KeptTextOptions) error {
-	if opts.Keep <= 0 || opts.Keep%time.Second != 0 {
-		return errors.New("invalid keep duration")
-	}
-	origin, e := url.Parse(strings.TrimRight(opts.Server, "/"))
-	if e != nil || origin.User != nil || origin.Host == "" || origin.Path != "" ||
-		origin.RawQuery != "" || origin.Fragment != "" ||
-		(origin.Scheme != "https" && origin.Scheme != "http") {
-		return errors.New("invalid kept server")
-	}
-	files, e := prepareKeptFiles(opts)
-	if e != nil {
-		return e
-	}
-	r, e := createRoom(ctx, h.client, origin.String(), nil)
-	if e != nil || !keptTextRoomID.MatchString(r.ID) {
-		return errors.New("could not create kept room")
-	}
-	h.room = r.ID
-	h.state = keptTextState{Files: files, Origin: origin.String(), Fragment: protocol.GenerateEditSecret(), HostToken: r.HostToken, Keep: int64(opts.Keep / time.Second)}
 	return nil
 }
 
@@ -306,7 +213,6 @@ func (h *keptTextHost) restore() error {
 		}
 	}
 	h.followComments()
-	h.republish = true
 	if e := h.mergeLocalEdits(); e != nil {
 		return e
 	}
@@ -346,60 +252,16 @@ func (h *keptTextHost) mergeLocalEdits() error {
 	return saveKeptState(h.path, h.state)
 }
 
-func (h *keptTextHost) connect(ctx context.Context) error {
-	if !h.state.Initialized {
-		frame, e := h.snapshot()
-		if e != nil {
-			return e
-		}
-		status, e := keptTextRequest(ctx, h.client, &h.state, h.room, "POST", "/init", frame, http.Header{"X-Pedit-Editor": {h.keys.EditAdmission}, "X-Pedit-Reader": {h.keys.ReadAdmission}, "X-Pedit-Keep-Seconds": {strconv.FormatInt(h.state.Keep, 10)}}, &h.meta)
-		if e != nil && status != http.StatusConflict {
-			return e
-		}
-	}
-	_, e := keptTextRequest(ctx, h.client, &h.state, h.room, "POST", "/connect", nil, nil, &h.meta)
-	return e
-}
-
-func (h *keptTextHost) sync(ctx context.Context) error {
-	var read keptTextRead
-	headers := http.Header{}
-	if h.etag != "" {
-		headers.Set("If-None-Match", h.etag)
-	}
-	action := "?after=" + strconv.FormatUint(h.after, 10)
-	if _, e := keptTextRequest(ctx, h.client, &h.state, h.room, "GET", action, nil, headers, &read); e != nil {
-		return e
-	}
-	if e := h.trackDeadline(read.KeepUntil); e != nil {
-		return e
-	}
-	frame, e := h.intake(ctx, read)
-	if e != nil || frame == nil {
-		return e
-	}
-	_, e = keptTextRequest(ctx, h.client, &h.state, h.room, "POST", "/checkpoint", frame, http.Header{"X-Pedit-Cutoff": {strconv.FormatUint(read.Tail, 10)}}, &h.meta)
-	if e == nil {
-		h.checkpointed(read.Tail)
-	}
-	return e
-}
-
 // intake takes in what the relay sent: it applies the entries, writes the
 // files with their comments and images, and returns the snapshot to checkpoint
-// at read.Tail, or nil if nothing changed and no checkpoint is due.
+// at read.Tail.
 func (h *keptTextHost) intake(ctx context.Context, read keptTextRead) ([]byte, error) {
 	before := h.skipped
 	if e := h.applyRead(read); e != nil {
 		return nil, e
 	}
-	h.etag = read.ETag
 	if h.skipped != before && h.onSkipped != nil {
 		h.onSkipped(h.skipped)
-	}
-	if (read.Unchanged || len(read.Entries) == 0) && h.unchanged() && !h.republish {
-		h.after = read.Tail
-		return nil, h.retryImages(ctx)
 	}
 	return h.persist(ctx)
 }
@@ -430,69 +292,11 @@ func (h *keptTextHost) persist(ctx context.Context) ([]byte, error) {
 }
 
 // checkpointed notes that the relay holds the state and drops its log up to tail.
-func (h *keptTextHost) checkpointed(tail uint64) {
-	h.after, h.republish = tail, false
-	h.snapshotNames = map[uint32]string{}
-	for _, entry := range h.entries() {
-		h.snapshotNames[entry.ID] = entry.Path
-	}
-}
-
-// leave tells the relay the host is away, unless the room was just closed.
-func (h *keptTextHost) leave(ctx context.Context, runErr *error, notify func(int64)) {
-	if h.closed {
-		return
-	}
-	away, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_, e := keptTextRequest(away, h.client, &h.state, h.room, "POST", "/away", nil, nil, &h.meta)
-	if e != nil && *runErr == nil {
-		*runErr = e
-	}
-	if e == nil && ctx.Err() != nil && notify != nil {
-		notify(h.meta.Until)
-	}
-}
-
-// closeRoom does what a resume does once (fetch the log, merge, write every
-// file with its comments and images, cut the log), then asks the relay to end
-// the room and removes the record. Any failure before the close leaves the room
-// open and the record in place; the record goes only after the relay confirmed.
-//
-// The close names the last log entry the host took in. A guest edit that
-// arrived since makes the relay answer 409 and keep the room, and the host
-// takes that edit in and tries again.
-func (h *keptTextHost) closeRoom(ctx context.Context) error {
-	for attempt := 0; ; attempt++ {
-		if e := h.sync(ctx); e != nil {
-			return e
-		}
-		if h.imagesFailed || !h.nothingPending() {
-			return errors.New("could not save everything to your files; the room is left open")
-		}
-		header := http.Header{"X-Pedit-Tail": {strconv.FormatUint(h.after, 10)}}
-		status, e := keptTextRequest(ctx, h.client, &h.state, h.room, "POST", "/close", nil, header, &struct{}{})
-		if status == http.StatusConflict && attempt < 3 {
-			continue
-		}
-		if e != nil {
-			return e
-		}
-		break
-	}
-	h.closed = true
-	return os.Remove(h.path)
-}
+func (h *keptTextHost) checkpointed(tail uint64) { h.after = tail }
 
 func (h *keptTextHost) applyRead(read keptTextRead) error {
 	if len(read.Entries) > 10000 || read.Cutoff > read.Tail || read.Tail < h.after {
 		return errors.New("invalid kept log bounds")
-	}
-	if read.Unchanged {
-		if read.Tail != h.after || read.Cutoff > h.after {
-			return errors.New("invalid unchanged kept cursor")
-		}
-		return nil
 	}
 	previous := h.after
 	if len(read.Snapshot) > 0 {
@@ -500,7 +304,7 @@ func (h *keptTextHost) applyRead(read keptTextRead) error {
 			return e
 		}
 		previous = max(previous, read.Cutoff)
-	} else if (h.after == 0 && !h.socket) || read.Cutoff > h.after {
+	} else if read.Cutoff > h.after {
 		return errors.New("missing kept snapshot")
 	}
 	return h.applyEntries(read, previous)
@@ -549,7 +353,6 @@ func (h *keptTextHost) applySnapshot(frame []byte) error {
 	if len(files) != len(expected) {
 		return errors.New("kept snapshot file inventory differs")
 	}
-	names := map[uint32]string{}
 	for i, file := range files {
 		local := expected[i]
 		if file.ID != local.ID || (len(files) > 1 && file.Path != local.Path) {
@@ -562,9 +365,7 @@ func (h *keptTextHost) applySnapshot(frame []byte) error {
 		if !completeKeptText(target.doc) {
 			return errors.New("incomplete kept snapshot")
 		}
-		names[file.ID] = file.Path
 	}
-	h.snapshotNames = names
 	return nil
 }
 
@@ -685,54 +486,24 @@ func completeKeptText(doc *crdt.Doc) bool {
 	return pending.Items == 0 && pending.DeleteRanges == 0
 }
 
-func keptTextRequest(ctx context.Context, client *http.Client, s *keptTextState, room, method, action string, body []byte, headers http.Header, result any) (int, error) {
-	req, e := http.NewRequestWithContext(ctx, method, s.Origin+"/api/rooms/"+room+"/keep"+action, bytes.NewReader(body))
+// closeRequest asks the relay to end the room, naming the last entry of its
+// log the host took in. It answers 409 when a guest edit has arrived since.
+func closeRequest(ctx context.Context, client *http.Client, s *keptTextState, room string, tail uint64) (int, error) {
+	req, e := http.NewRequestWithContext(ctx, "POST", s.Origin+"/api/rooms/"+room+"/keep/close", nil)
 	if e != nil {
 		return 0, errors.New("invalid kept request")
 	}
-	req.Header = headers.Clone()
-	if req.Header == nil {
-		req.Header = make(http.Header)
-	}
 	req.Header.Set("Authorization", "Bearer "+s.HostToken)
+	req.Header.Set("X-Pedit-Tail", strconv.FormatUint(tail, 10))
 	response, e := client.Do(req)
 	if e != nil {
 		return 0, errors.New("kept request failed")
 	}
 	defer response.Body.Close()
-	if read, ok := result.(*keptTextRead); ok {
-		read.ETag = response.Header.Get("ETag")
-		if response.StatusCode == http.StatusNotModified {
-			return response.StatusCode, readKeptUnchanged(response, req.Header.Get("If-None-Match"), read)
-		}
-	}
-	if response.StatusCode == http.StatusGone {
-		return response.StatusCode, errKeptGone
-	}
-	if response.StatusCode == http.StatusNotFound {
-		return response.StatusCode, errKeptMissing
-	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return response.StatusCode, fmt.Errorf("kept request refused (HTTP %d)", response.StatusCode)
 	}
-	raw, e := io.ReadAll(io.LimitReader(response.Body, 8*protocol.MaxFrameBytes+1))
-	if e != nil || len(raw) > 8*protocol.MaxFrameBytes || json.Unmarshal(raw, result) != nil {
-		return response.StatusCode, errors.New("invalid kept response")
-	}
 	return response.StatusCode, nil
-}
-
-func readKeptUnchanged(response *http.Response, etag string, read *keptTextRead) error {
-	cutoff, e1 := strconv.ParseUint(response.Header.Get("X-Pedit-Cutoff"), 10, 64)
-	tail, e2 := strconv.ParseUint(response.Header.Get("X-Pedit-Tail"), 10, 64)
-	until, e3 := strconv.ParseInt(response.Header.Get("X-Pedit-Keep-Until"), 10, 64)
-	away := response.Header.Get("X-Pedit-Host-Away")
-	if etag == "" || read.ETag != etag || e1 != nil || e2 != nil || e3 != nil ||
-		cutoff > tail || until <= 0 || (away != "true" && away != "false") {
-		return errors.New("invalid unchanged kept metadata")
-	}
-	read.Cutoff, read.Tail, read.KeepUntil, read.HostAway, read.Unchanged = cutoff, tail, until, away == "true", true
-	return nil
 }
 
 func keptTextDirectory(project string) (string, error) {
@@ -869,25 +640,30 @@ func (s keptTextState) hasPending() bool {
 
 func (h *keptTextHost) nothingPending() bool { return !h.state.hasPending() }
 
-// pruneExpired removes records of other rooms in this project whose deadline is
-// past, the host has nothing left to write, and the relay confirms the room is
-// gone. Anything unparsable, unconfirmed or uncertain is kept.
-func (h *keptTextHost) pruneExpired(ctx context.Context, notify func(int)) {
-	paths, _ := filepath.Glob(filepath.Join(h.dir, "*.json"))
+// expiredGrace is how long after its deadline a room's record is kept, so a
+// clock that runs a little fast does not lose one.
+const expiredGrace = time.Hour
+
+// PruneKept removes, without asking the relay, the records in project of rooms
+// past their deadline (by more than expiredGrace) and of the older kind of kept
+// room, which was taken in by polling and can no longer be resumed. A record
+// with a write to finish stays. It tells notify how many it removed.
+func PruneKept(project string, notify func(int)) error {
+	project, e := filepath.Abs(project)
+	if e != nil {
+		return errors.New("invalid kept project")
+	}
+	directory, e := keptTextDirectory(filepath.Clean(project))
+	if e != nil {
+		return e
+	}
+	paths, _ := filepath.Glob(filepath.Join(directory, "*.json"))
 	removed := 0
 	for _, path := range paths {
 		room := strings.TrimSuffix(filepath.Base(path), ".json")
 		var s keptTextState
-		if path == h.path || !keptTextRoomID.MatchString(room) || readKeptState(path, &s) != nil ||
-			!s.Initialized || s.Until <= 0 || s.Until >= time.Now().UnixMilli() {
-			continue
-		}
-		pending := s.hasPending()
-		var read keptTextRead
-		_, e := keptTextRequest(ctx, h.client, &s, room, "GET", "?after=0", nil, nil, &read)
-		// Re-read: another run may have journaled a write while the request was in flight.
-		var latest keptTextState
-		if pending || !errors.Is(e, errKeptGone) || readKeptState(path, &latest) != nil || latest.hasPending() {
+		if !keptTextRoomID.MatchString(room) || readKeptState(path, &s) != nil || s.hasPending() ||
+			s.Socket && (s.Until <= 0 || s.Until >= time.Now().Add(-expiredGrace).UnixMilli()) {
 			continue
 		}
 		if os.Remove(path) == nil {
@@ -897,28 +673,7 @@ func (h *keptTextHost) pruneExpired(ctx context.Context, notify func(int)) {
 	if removed > 0 && notify != nil {
 		notify(removed)
 	}
-}
-
-// dropEndedRecord removes this room's record when the relay says the room is
-// gone, so it holds no entries to take in. A journaled write still pending keeps it.
-func (h *keptTextHost) dropEndedRecord(err error, notify func()) {
-	gone := errors.Is(err, errKeptGone) || (errors.Is(err, errKeptMissing) && h.state.Initialized)
-	if gone && h.nothingPending() && os.Remove(h.path) == nil && notify != nil {
-		notify()
-	}
-}
-
-// trackDeadline keeps the saved record's deadline equal to the relay's.
-func (h *keptTextHost) trackDeadline(until int64) error {
-	if until <= 0 {
-		return nil
-	}
-	h.meta.Until = until
-	if h.state.Until == until || !h.state.Initialized {
-		return nil
-	}
-	h.state.Until = until
-	return saveKeptState(h.path, h.state)
+	return nil
 }
 
 // KeptTextRecord summarizes a resume record of a project, without its secrets.
@@ -927,11 +682,11 @@ type KeptTextRecord struct {
 	Paths []string // display paths of the shared files
 	Files []string // their absolute paths on disk
 	Until int64    // relay deadline in Unix ms; 0 if unknown
-	Live  bool     // a live room kept by the relay (--keep), not a polling one
 }
 
 // ListKeptText returns the resume records of project, soonest deadline first.
-// Records that cannot be parsed are left out.
+// Records that cannot be parsed, and those of the older polling kind of kept
+// room, are left out.
 func ListKeptText(project string) ([]KeptTextRecord, error) {
 	project, e := filepath.Abs(project)
 	if e != nil {
@@ -946,10 +701,10 @@ func ListKeptText(project string) ([]KeptTextRecord, error) {
 	for _, path := range paths {
 		room := strings.TrimSuffix(filepath.Base(path), ".json")
 		var s keptTextState
-		if !keptTextRoomID.MatchString(room) || readKeptState(path, &s) != nil || !s.Initialized {
+		if !keptTextRoomID.MatchString(room) || readKeptState(path, &s) != nil || !s.Initialized || !s.Socket {
 			continue
 		}
-		r := KeptTextRecord{Room: room, Until: s.Until, Live: s.Socket}
+		r := KeptTextRecord{Room: room, Until: s.Until}
 		for _, f := range s.Files {
 			r.Paths = append(r.Paths, f.Path)
 			r.Files = append(r.Files, f.File)

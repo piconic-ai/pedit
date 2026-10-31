@@ -29,6 +29,9 @@ let manifest = null
 let metaId
 let sync = 'kept'
 let skipped = 0
+// What the last image command found: its content hash and whether the relay
+// served it.
+let image
 const keys = await protocol.deriveRoomKeys(
   protocol.parseFragment(key),
   new URL(url).pathname.split('/')[3],
@@ -73,6 +76,7 @@ const send = () =>
       replayed: client.kept.after !== undefined,
       keptUntil: client.keptUntil,
       closedByHost: client.closedByHost,
+      image,
     })}\n`,
   )
 
@@ -100,6 +104,41 @@ for await (const line of createInterface({ input: process.stdin })) {
       thread.set('messages', messages)
       messages.set('m1', { author: 'Ada', time: '2026-10-21T00:00:00.000Z', body })
     })
+  }
+  if (command.image || command.fetchImage) {
+    const room = new URL(url).pathname.split('/')[3]
+    const origin = new URL(url).origin.replace(/^ws/, 'http')
+    const blobKeys = await protocol.deriveBlobKeys(keys.frameSecret, keys.editAdmission)
+    const headers = { [protocol.ADMISSION_HEADER]: blobKeys.admission }
+    const blobUrl = async (hash) =>
+      `${origin}/api/rooms/${room}/blobs/${await protocol.blobIdFor(blobKeys, hash)}`
+    if (command.image) {
+      // Pasted in the browser: uploaded first, then linked in the text.
+      const bytes = Uint8Array.from(atob(command.image), (c) => c.charCodeAt(0))
+      const hash = await protocol.contentHash(bytes)
+      const response = await fetch(await blobUrl(hash), {
+        method: 'PUT',
+        headers,
+        body: await protocol.encryptBlob(blobKeys, bytes),
+      })
+      if (!response.ok) throw new Error(`could not upload the image: ${response.status}`)
+      text.insert(text.length, `\n![](assets/${hash}.png)`)
+      image = { hash, ok: true }
+    } else {
+      const response = await fetch(await blobUrl(command.fetchImage), { headers })
+      let ok = false
+      if (response.ok) {
+        try {
+          await protocol.decryptBlob(
+            blobKeys,
+            new Uint8Array(await response.arrayBuffer()),
+            command.fetchImage,
+          )
+          ok = true
+        } catch {}
+      }
+      image = { hash: command.fetchImage, ok, status: response.status }
+    }
   }
   send()
 }

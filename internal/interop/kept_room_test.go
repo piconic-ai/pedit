@@ -1,6 +1,10 @@
 package interop
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -36,6 +40,11 @@ type roomState struct {
 	Replayed     bool
 	KeptUntil    int64
 	ClosedByHost bool
+	Image        *struct {
+		Hash   string
+		OK     bool
+		Status int
+	}
 }
 
 func (g *roomGuest) read() roomState {
@@ -278,5 +287,52 @@ func TestKeptRoomWhenTheHostDrops(t *testing.T) {
 	resumed := r.pedit("--resume")
 	resumed.link(t)
 	r.takenIn(link, guest)
+	resumed.stop(t)
+}
+
+// A guest pastes an image into a kept room while the host is away. When the
+// host comes back with pedit <file>, it finds the reference in the text, saves
+// the image beside the file and only then cuts the relay log; a guest who
+// joins later still sees the image.
+func TestKeptRoomImagesPastedWhileAwayAreSavedOnResume(t *testing.T) {
+	r := newKeptRoom(t)
+	host, link := r.host()
+	guest := r.guest(link)
+	guest.read()
+	host.stop(t)
+	guest.until("the room to be kept", func(s roomState) bool { return s.Status == "kept" && s.Replayed })
+
+	png := []byte("\x89PNG\r\n\x1a\n pasted while away")
+	sum := sha256.Sum256(png)
+	hash := hex.EncodeToString(sum[:16])
+	reference := "![](assets/" + hash + ".png)"
+	away := guest.send(fmt.Sprintf(`{"image":%q}`, base64.StdEncoding.EncodeToString(png)))
+	if away.Image == nil || away.Image.Hash != hash || !strings.Contains(away.Text, reference) {
+		t.Fatalf("paste while away: %+v", away)
+	}
+	prototest.WaitFor(t, 15*time.Second, func() bool { return r.logEntries(link) >= 1 }, "the relay to log the reference")
+	assets := filepath.Join(r.project, "assets", hash+".png")
+	if _, err := os.Stat(assets); err == nil {
+		t.Fatal("the image reached the disk while the host was away")
+	}
+
+	// pedit <file> takes up the kept room that holds the file.
+	resumed := r.pedit("notes.md")
+	resumed.link(t)
+	prototest.WaitFor(t, 15*time.Second, func() bool {
+		saved, _ := os.ReadFile(assets)
+		return strings.Contains(r.text(), reference) && bytes.Equal(saved, png)
+	}, "the reference and the image saved on resume")
+	if info, err := os.Stat(assets); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("image mode: %v %v", info, err)
+	}
+	prototest.WaitFor(t, 15*time.Second, func() bool { return r.logEntries(link) == 0 }, "the log to be cut after the save")
+
+	fresh := r.guest(link)
+	fresh.read()
+	seen := fresh.send(fmt.Sprintf(`{"fetchImage":%q}`, hash))
+	if !strings.Contains(seen.Text, reference) || seen.Image == nil || !seen.Image.OK {
+		t.Fatalf("a guest who joins later cannot see the image: %+v", seen)
+	}
 	resumed.stop(t)
 }

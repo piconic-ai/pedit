@@ -13,8 +13,9 @@ import (
 	"time"
 )
 
-// keptHere writes the resume record of a kept room of the project at root.
-func keptHere(t *testing.T, root, room string, live bool, until time.Time, files ...string) {
+// keptHere writes the resume record of a kept room of the project at root;
+// without socket it is the record of the older, polling kind of room.
+func keptHere(t *testing.T, root, room string, socket bool, until time.Time, files ...string) {
 	t.Helper()
 	config, err := os.UserConfigDir()
 	if err != nil {
@@ -29,7 +30,7 @@ func keptHere(t *testing.T, root, room string, live bool, until time.Time, files
 	for i, f := range files {
 		list = append(list, map[string]any{"ID": i, "File": f, "Path": filepath.Base(f)})
 	}
-	data, err := json.Marshal(map[string]any{"Project": root, "Files": list, "Initialized": true, "Socket": live, "Until": until.UnixMilli()})
+	data, err := json.Marshal(map[string]any{"Project": root, "Files": list, "Initialized": true, "Socket": socket, "Until": until.UnixMilli()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,17 +139,17 @@ func TestFileResumesTheRoomThatHoldsIt(t *testing.T) {
 	}
 }
 
-func TestFileDoesNotResumeAnExpiredOrPollingRoom(t *testing.T) {
+func TestFileDoesNotResumeAnExpiredOrOldRoom(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("kept rooms are not supported on Windows")
 	}
 	root := keptProject(t, "")
 	a := filepath.Join(root, "a.md")
-	keptHere(t, root, testRoom, true, time.Now().Add(-time.Hour), a)
+	keptHere(t, root, testRoom, true, time.Now().Add(-time.Minute), a)
 	keptHere(t, root, "CCCCCCCCCCCCCCCCCCCCCC", false, time.Now().Add(time.Hour), a)
 	var out, errw bytes.Buffer
 	opts, _ := parseArgs([]string{"a.md", "b.md"})
-	if code := resumeHeld(&opts, &out, &errw); code != 0 || opts.Resume != "" || out.Len() != 0 {
+	if code := resumeHeld(&opts, &out, &errw); code != 0 || opts.Resume != "" {
 		t.Fatalf("%+v %d %q", opts, code, out.String())
 	}
 	if err := applyConfigKeep(&opts); err != nil || opts.Keep != 24*time.Hour {
@@ -156,7 +157,7 @@ func TestFileDoesNotResumeAnExpiredOrPollingRoom(t *testing.T) {
 	}
 }
 
-func TestFileDoesNotResumeAgainstKeepZeroConfigOrPollingMode(t *testing.T) {
+func TestFileDoesNotResumeAgainstKeepZeroConfig(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("kept rooms are not supported on Windows")
 	}
@@ -174,10 +175,6 @@ func TestFileDoesNotResumeAgainstKeepZeroConfigOrPollingMode(t *testing.T) {
 	if resumeHeld(&opts, &out, &errw); opts.Resume != testRoom {
 		t.Fatalf("--keep resumes even when the config says keep: 0: %+v", opts)
 	}
-	opts, _ = parseArgs([]string{"--keep-polling", "1d", "a.md"})
-	if code := resumeHeld(&opts, &out, &errw); code != 0 || opts.Resume != "" {
-		t.Fatalf("--keep-polling: %+v %d", opts, code)
-	}
 }
 
 func TestKeepHintNamesTheFile(t *testing.T) {
@@ -191,4 +188,15 @@ func TestKeepHintNamesTheFile(t *testing.T) {
 	if !strings.HasSuffix(out.String(), "\n  pedit docs/a.md  (or: pedit --resume "+testRoom+")\n") {
 		t.Fatal(out.String())
 	}
+}
+
+// recordPath is where keptHere wrote the record of room.
+func recordPath(t *testing.T, root, room string) string {
+	t.Helper()
+	config, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256([]byte(root))
+	return filepath.Join(config, "pedit", "keep", fmt.Sprintf("%x", digest[:])[:16], room+".json")
 }
