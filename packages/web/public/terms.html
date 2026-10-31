@@ -40,7 +40,7 @@
       all rooms, open ones included. Rooms have the limits listed in the
       <a href="https://github.com/piconic-ai/pedit/blob/main/docs/public-relay.md#limits">public relay notes</a>,
       such as a 24-hour session length while the host is connected and, for a room kept open after its
-      host leaves (for a day by default, longer with <code>pedit --keep</code>), up to 7 days.
+      host leaves (for a day by default, longer with <code>pedit --keep</code>), at most 7 days after the host leaves.
     </p>
 
     <h2>Acceptable use</h2>
@@ -59,8 +59,8 @@
       files is kept by default: the service holds an encrypted snapshot of the files from the host
       while the host is connected, and the room stays open after the host leaves, for a day unless
       the host chose otherwise (<code>pedit --keep</code> for up to 7 days, <code>pedit --keep 0</code>
-      for a room that stores nothing and ends when the host leaves), and never beyond the room&rsquo;s
-      total limit (24 hours from the host&rsquo;s first connection, or the keep if that is longer).
+      for a room that stores nothing and ends when the host leaves), counted from the moment
+      the host leaves (a host that comes back gets a new 24 hours of connection).
       While it is kept, the service stores your text, comments and images encrypted until the
       room&rsquo;s deadline. A canvas, a file created from a template and a host on Windows get a room
       that ends when the host leaves.

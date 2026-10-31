@@ -256,7 +256,7 @@ describe('the host declares a keep', () => {
     expect((await state(room)).keep).toBe(0)
   })
 
-  it('lets the room last as long as the keep, or the relay`s limit if that is longer', async () => {
+  it('gives a connected host the session limit, whatever the keep', async () => {
     const lasts = async (keep: string) => {
       const room = await createRoom()
       await hostOf(room, keep)
@@ -264,7 +264,7 @@ describe('the host declares a keep', () => {
       return inRoom(room, (r) => (r['deadline']() - (opened as number)) / 1000)
     }
     expect(await lasts('60')).toBe(ROOM_SECONDS)
-    expect(await lasts(String(DAY))).toBe(DAY)
+    expect(await lasts(String(DAY))).toBe(ROOM_SECONDS)
   })
 })
 
@@ -721,5 +721,81 @@ describe('the end of a kept room', () => {
     expect(await blobs()).toEqual([])
     // Again: nothing left to close.
     expect((await close(room, 1)).status).toBe(200)
+  })
+})
+
+describe('the keep counts from the host leaving', () => {
+  const ago = (room: Room, seconds: number) =>
+    inRoom(room, (_, st) => {
+      st.storage.kv.put('openedAt', Date.now() - seconds * 1000)
+    })
+  const near = (actual: number | null | undefined, expected: number) =>
+    expect(Math.abs(actual! - expected)).toBeLessThan(5000)
+
+  it('keeps a room for the whole keep after a late departure, with the alarm there', async () => {
+    const room = await createRoom()
+    const h = await hostOf(room, '3600')
+    const guest = await join(room)
+    // Opened 6000 s ago of a 7200 s session: the old cap would end the keep at 7200 s.
+    await ago(room, 6000)
+    await leave(room, h)
+    await until(() => guest.signals.some((s) => s.startsWith('kept ')))
+    const s = await state(room)
+    near(s.until, Date.now() + 3600_000)
+    expect(guest.signals).toContain(`kept ${s.until}`)
+    expect(s.alarm).toBe(s.until)
+  })
+
+  it('gives a host that returns a new session limit from its return', async () => {
+    const room = await createRoom()
+    const h = await hostOf(room, '3600')
+    const guest = await join(room)
+    await ago(room, 6000)
+    await leave(room, h)
+    await until(() => guest.signals.some((s) => s.startsWith('kept ')))
+    // Past the old session limit, within the keep: admitted.
+    await ago(room, 7000)
+    const back = await hostOf(room, '3600', { after: 0 })
+    await until(() => guest.signals.includes('host back'))
+    expect(await closedWithin(back)).toBeUndefined()
+    const alarm = (await state(room)).alarm
+    near(alarm, Date.now() + 3600_000)
+    const since = await inRoom(room, (_, st) => st.storage.kv.get<number>('hostSince'))
+    near(since, Date.now())
+    // The session ends ROOM_SECONDS after the return, not before.
+    await inRoom(room, (_, st) => {
+      st.storage.kv.put('hostSince', Date.now() - (ROOM_SECONDS - 60) * 1000)
+    })
+    expect(await runDurableObjectAlarm(stubOf(room))).toBe(true)
+    expect(await closedWithin(back)).toBeUndefined()
+    await inRoom(room, (_, st) => {
+      st.storage.kv.put('hostSince', Date.now() - (ROOM_SECONDS + 1) * 1000)
+    })
+    await runDurableObjectAlarm(stubOf(room))
+    expect((await back.closed).code).toBe(ROOM_EXPIRED)
+  })
+
+  it('does not restart the session limit on a reconnect within the grace period', async () => {
+    const room = await createRoom()
+    const h = await hostOf(room, '3600')
+    await until(() => h.signals.length === 1)
+    await ago(room, 3000)
+    h.ws.close(1001, 'gone')
+    await h.closed
+    const again = await hostOf(room, '3600')
+    await until(() => again.signals.length === 1)
+    expect(await inRoom(room, (_, st) => st.storage.kv.get('hostSince'))).toBeUndefined()
+    await ago(room, ROOM_SECONDS + 1)
+    await runDurableObjectAlarm(stubOf(room))
+    expect((await again.closed).code).toBe(ROOM_EXPIRED)
+  })
+
+  it('ends a connected host at the session limit however long the keep', async () => {
+    const room = await createRoom()
+    const h = await hostOf(room, String(KEEP_MAX))
+    await until(() => h.signals.length === 1)
+    await ago(room, ROOM_SECONDS + 1)
+    await runDurableObjectAlarm(stubOf(room))
+    expect((await h.closed).code).toBe(ROOM_EXPIRED)
   })
 })
