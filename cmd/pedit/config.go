@@ -341,7 +341,8 @@ type commandArgs struct {
 	// Resume is a share link or room ID; ResumeAny is --resume without a value.
 	Resume    string
 	ResumeAny bool
-	// Close is --close: --resume's room, taken in and then ended on the relay.
+	// Close is --close, the alias of pedit close kept for one release:
+	// --resume's room, taken in and then ended on the relay.
 	Close bool
 	File  string
 	// More are further files to share in the same room.

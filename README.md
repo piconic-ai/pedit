@@ -95,7 +95,9 @@ to take the room up: pedit connects as the host, merges what you changed in your
 with the guests' edits, saves the files, tells the relay it can drop what it held, and carries on as
 a live room (Ctrl+C keeps it again). `pedit --resume` alone picks the one kept room, or lists them
 and asks which (or pass the room ID, `pedit --resume <room>`; the room's link works too).
-`pedit --close` takes in the edits and closes the room for good.
+`pedit rooms` lists the project's kept rooms (`--json` for programs), and `pedit close` takes in
+the edits and closes the room for good. pedit prints the room's ID as `Room: <id>` under the link, and
+when you leave a kept room, so you can name it without picking it out of the link.
 
 `--keep 7d` keeps the room for that long instead (up to the relay's cap, 7 days on the public
 relay; pedit reports the effective value). `--keep 0` opens a room that stores nothing and ends
@@ -104,11 +106,11 @@ when you leave. To change the default for a project, set `keep: 7d` in `.pedit/c
 the config over the default. Keep applies to `pedit <file>` and `pedit <file> <file>...` for existing
 text files; a scratch room (`pedit` with no file, `--template`, `--directory`), a canvas and
 joining a link (`pedit <link>`) are not kept. If a kept room already holds the file, `pedit <file>`
-resumes it; its set of files is fixed, so a file it does not hold is an error: run `pedit --close`
+resumes it; its set of files is fixed, so a file it does not hold is an error: run `pedit close`
 first, or `pedit --keep 0` for a separate room. A relay that cannot keep rooms (a self-hosted
 one that is not updated) ends the room when you leave, and pedit says so. Resume information stays in a
 private 0600 record under `pedit/keep/` in your user configuration directory, outside the
-project. pedit removes that record when `--close` ends the room, when a resume finds the room gone, and at the
+project. pedit removes that record when `pedit close` ends the room, when a resume finds the room gone, and at the
 next run in the same project for rooms past their deadline (as for rooms kept by an older version of pedit,
 which can no longer be resumed), never while a write is pending.
 A kept room shares the fixed set of text files it started with (up to 64; no file can be added later), with their comments and pasted images:
@@ -123,8 +125,9 @@ merges a save from another editor. A file that cannot be read or is not valid
 UTF-8 is preserved and stops automatic recovery. These two host
 commands currently require Unix file permissions and are unavailable on Windows.
 
-To end a kept room before its deadline, run `pedit --close` (it takes the same room ID or link as `--resume`,
-and picks or asks the same way). It first does what `--resume` does once: takes in the guests' edits, comments and
+To end a kept room before its deadline, run `pedit close` (it takes the same room ID or link as `--resume`,
+and picks or asks the same way; `pedit close --help` says more). `--close` still works for one more release, with a
+notice, and then goes. It first does what `--resume` does once: takes in the guests' edits, comments and
 images and saves them to your files. Only then does it ask the relay to delete everything it holds for the room
 (text, log and images) and make the link stop working for good, and remove the resume record. If any
 file cannot be saved, the room stays open and the record stays, so you can fix that and run it again. Guests who

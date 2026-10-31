@@ -47,6 +47,7 @@ func TestUIWithoutTerminal(t *testing.T) {
   Send this link to the people you want to invite:
     https://pedit.example.com/r/AAAA#key
     Copied to your clipboard.
+    Room: AAAA
 
   Press Ctrl+C when you are done. Everything is saved to notes.md.
 
@@ -139,6 +140,7 @@ func TestUIScratch(t *testing.T) {
 
   Send this link to the people you want to invite:
     https://pedit.example.com/r/AAAA#key
+    Room: AAAA
 
   Press Ctrl+C when you are done. Everything is saved to pedit-2026-09-26-143012.md.
 
@@ -327,6 +329,7 @@ func TestUINotices(t *testing.T) {
 
   Send this link to the people you want to invite:
     https://pedit.example.com/r/AAAA#key
+    Room: AAAA
 
   Press Ctrl+C when you are done. Everything is saved to notes.md.
 

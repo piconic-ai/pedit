@@ -136,7 +136,7 @@ The browser (`RoomClient` in `packages/protocol`, `packages/web`) speaks version
 - **Images.** The page uploads to the blob routes with the room's admission
   token and links the image under `assets/`; the host
   saves it on its return.
-- **Closed by the host.** `ROOM_CLOSED` with the reason `the host closed the room` (`pedit --close`) shows as "Closed by host", not as a room whose host left.
+- **Closed by the host.** `ROOM_CLOSED` with the reason `the host closed the room` (`pedit close`) shows as "Closed by host", not as a room whose host left.
 - **Host back.** The client drops what it holds, shows `connected`, and greets
   the room as on connecting: a fresh handshake, and a sync step 1 and its state
   for every document, so the host reconciles what it missed. The page asks
@@ -171,7 +171,7 @@ id it took in with a fresh bundle. On `checkpoint <cutoff> <tail>` it records
 `After`. It then goes on with the same connection as a live host, from the
 documents it has just merged, so that its guests, who hold the same documents,
 do not see the text twice. Entries that arrive between the replay and the
-checkpoint are taken in once it is live. `pedit --close` takes the same steps,
+checkpoint are taken in once it is live. `pedit close` takes the same steps,
 leaves, and asks `POST /keep/close` (the relay ends only a room whose host is
 away); it then connects once more, and a room that was ended turns it away.
 
@@ -239,7 +239,7 @@ blob stays on the relay until the deadline, so a later sync can fetch it.
 
 ### Closing and limits
 
-`pedit --close [room|link]` runs one resume (fetch, merge, durable writes of
+`pedit close [room|link]` (formerly `--close`) runs one resume (fetch, merge, durable writes of
 every file, comment and image, checkpoint), then asks `POST /keep/close` with
 the host token and the last entry it took in (`X-Pedit-Tail`; on 409 a guest
 appended since, and the host reads again and retries), then removes the record.
