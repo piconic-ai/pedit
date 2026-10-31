@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -155,5 +156,47 @@ func TestResumeOffersOnlyRoomsKeptByTheRelay(t *testing.T) {
 	opts = commandArgs{Resume: testRoom}
 	if code := chooseResume(&opts, &out, &errw); code != 0 || opts.File != "a.md" {
 		t.Fatalf("a kept room was not found: %+v %d", opts, code)
+	}
+}
+
+func TestResumeErrorDoesNotRepeatTheKeyOfALink(t *testing.T) {
+	keptProject(t, "")
+	var out, errw bytes.Buffer
+	opts := commandArgs{Resume: "https://x.test/r/" + testRoom + "?x=1#SECRETKEYSECRETKEY"}
+	if code := chooseResume(&opts, &out, &errw); code != 1 || strings.Contains(errw.String(), "SECRET") || !strings.Contains(errw.String(), testRoom) {
+		t.Fatalf("%d %q", code, errw.String())
+	}
+}
+
+// A project that has only records of the older, polling kind of room can
+// still clean them up with --close; a record with a write pending stays.
+func TestCloseRemovesRecordsOfOlderRoomsEvenWithoutAKeptRoom(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("kept rooms are not supported on Windows")
+	}
+	root := keptProject(t, "")
+	soon := time.Now().Add(time.Hour)
+	old, pending := "CCCCCCCCCCCCCCCCCCCCCC", "DDDDDDDDDDDDDDDDDDDDDD"
+	keptHere(t, root, old, false, soon, filepath.Join(root, "a.md"))
+	keptHere(t, root, pending, false, soon, filepath.Join(root, "b.md"))
+	pendingFile := recordPath(t, root, pending)
+	raw, err := os.ReadFile(pendingFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw = bytes.Replace(raw, []byte(`"Path":"b.md"`), []byte(`"Path":"b.md","Pending":"x"`), 1)
+	if err := os.WriteFile(pendingFile, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errw bytes.Buffer
+	opts, _ := parseArgs([]string{"--close", old})
+	if code, done := routeKept(&opts, &out, &errw); code != 1 || !done || !strings.Contains(out.String(), "Removed 1 resume record") || !strings.Contains(errw.String(), "no kept room "+old) {
+		t.Fatalf("%d %v %q %q", code, done, out.String(), errw.String())
+	}
+	if _, err := os.Stat(recordPath(t, root, old)); !os.IsNotExist(err) {
+		t.Fatal("the old record is still there")
+	}
+	if _, err := os.Stat(pendingFile); err != nil {
+		t.Fatal("removed a record with a write pending")
 	}
 }

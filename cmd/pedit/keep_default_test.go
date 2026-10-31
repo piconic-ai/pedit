@@ -189,3 +189,14 @@ func TestKeepHintNamesTheFile(t *testing.T) {
 		t.Fatal(out.String())
 	}
 }
+
+// recordPath is where keptHere wrote the record of room.
+func recordPath(t *testing.T, root, room string) string {
+	t.Helper()
+	config, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256([]byte(root))
+	return filepath.Join(config, "pedit", "keep", fmt.Sprintf("%x", digest[:])[:16], room+".json")
+}

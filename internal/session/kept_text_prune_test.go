@@ -54,7 +54,7 @@ func TestKeptTextCloseRemovesOnlyOldRecordsOfThisProject(t *testing.T) {
 	isolateKeptUserConfig(t)
 	soon, later := int64(1), int64(1)<<60
 	project, other := t.TempDir(), t.TempDir()
-	_, current, link := pruneRecord(t, project, "https://example.test", 1, later, nil)
+	_, current, _ := pruneRecord(t, project, "https://example.test", 1, later, nil)
 	_, old, _ := keptRecord(t, project, "https://example.test", 2, soon, nil, false)
 	pending := "x"
 	_, pendingPath, _ := keptRecord(t, project, "https://example.test", 3, soon, &pending, false)
@@ -64,12 +64,10 @@ func TestKeptTextCloseRemovesOnlyOldRecordsOfThisProject(t *testing.T) {
 	if err := os.WriteFile(junk, []byte("{"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	h := keptTextHost{}
-	if err := h.prepare(KeptTextOptions{Project: project, Resume: link}); err != nil {
+	pruned := 0
+	if err := PruneOldKept(project, func(n int) { pruned = n }); err != nil {
 		t.Fatal(err)
 	}
-	pruned := 0
-	h.pruneOld(func(n int) { pruned = n })
 	if pruned != 1 || exists(old) {
 		t.Fatalf("pruned=%d, old record exists=%v", pruned, exists(old))
 	}

@@ -208,8 +208,29 @@ func chooseResume(opts *commandArgs, stdout, stderr io.Writer) (code int) {
 			return 0
 		}
 	}
-	fmt.Fprintf(stderr, "pedit: no kept room %s in this project\n", opts.Resume)
+	// A link carries the room key, which an error message must not repeat.
+	name := opts.Resume
+	if strings.Contains(name, "/r/") {
+		name = keptRoomOf(name)
+	}
+	fmt.Fprintf(stderr, "pedit: no kept room %s in this project\n", name)
 	return 1
+}
+
+// pruneOldRooms removes the records of rooms kept by an older version of
+// pedit, which can no longer be resumed.
+func pruneOldRooms(stdout io.Writer) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	cfg, err := loadConfig(cwd)
+	if err != nil {
+		return
+	}
+	_ = session.PruneOldKept(cfg.root, func(n int) {
+		fmt.Fprintf(stdout, "Removed %d resume record(s) of rooms kept by an older version.\n", n)
+	})
 }
 
 // displayPaths shows a record's paths as displayPath does, so --resume names
@@ -240,9 +261,6 @@ func closeKept(opts commandArgs, stdout, stderr io.Writer) int {
 	err = session.CloseKept(ctx, session.KeptTextOptions{
 		File: opts.File, Project: cfg.root, Resume: opts.Resume,
 		OnSkipped: func(count int) { fmt.Fprintf(stdout, "Skipped %d invalid updates.\n", count) },
-		OnPruned: func(n int) {
-			fmt.Fprintf(stdout, "Removed %d resume record(s) of rooms kept by an older version.\n", n)
-		},
 		OnImageError: func(path string, err error) {
 			fmt.Fprintf(stdout, "Could not save an image of %s: %v\n", path, err)
 		},

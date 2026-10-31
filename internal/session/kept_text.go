@@ -33,7 +33,6 @@ import (
 type KeptTextOptions struct {
 	File, Project, Resume string
 	OnSkipped             func(int)
-	OnPruned              func(int) // records of rooms kept by an older version removed at start
 	// OnImageError reports an image a kept text refers to that could not be
 	// saved beside its file (once per image and file).
 	OnImageError func(path string, err error)
@@ -124,7 +123,6 @@ func CloseKept(ctx context.Context, opts KeptTextOptions) error {
 		return err
 	}
 	defer h.closeFiles()
-	h.pruneOld(opts.OnPruned)
 	return h.closeAway(ctx, opts.Dial)
 }
 
@@ -641,16 +639,24 @@ func (s keptTextState) hasPending() bool {
 
 func (h *keptTextHost) nothingPending() bool { return !h.state.hasPending() }
 
-// pruneOld removes the records in this project of the older kind of kept room,
-// which was taken in by polling and can no longer be resumed, unless it still
-// has a write to finish.
-func (h *keptTextHost) pruneOld(notify func(int)) {
-	paths, _ := filepath.Glob(filepath.Join(h.dir, "*.json"))
+// PruneOldKept removes the records in project of the older kind of kept room,
+// which was taken in by polling and can no longer be resumed, unless one still
+// has a write to finish. It tells notify how many it removed.
+func PruneOldKept(project string, notify func(int)) error {
+	project, e := filepath.Abs(project)
+	if e != nil {
+		return errors.New("invalid kept project")
+	}
+	directory, e := keptTextDirectory(filepath.Clean(project))
+	if e != nil {
+		return e
+	}
+	paths, _ := filepath.Glob(filepath.Join(directory, "*.json"))
 	removed := 0
 	for _, path := range paths {
 		room := strings.TrimSuffix(filepath.Base(path), ".json")
 		var s keptTextState
-		if path == h.path || !keptTextRoomID.MatchString(room) || readKeptState(path, &s) != nil || s.Socket || s.hasPending() {
+		if !keptTextRoomID.MatchString(room) || readKeptState(path, &s) != nil || s.Socket || s.hasPending() {
 			continue
 		}
 		if os.Remove(path) == nil {
@@ -660,6 +666,7 @@ func (h *keptTextHost) pruneOld(notify func(int)) {
 	if removed > 0 && notify != nil {
 		notify(removed)
 	}
+	return nil
 }
 
 // KeptTextRecord summarizes a resume record of a project, without its secrets.
