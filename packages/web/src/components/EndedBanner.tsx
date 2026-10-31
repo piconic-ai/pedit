@@ -92,7 +92,7 @@ export function EndedBanner(props: EndedBannerProps) {
       <button
         type="button"
         onClick={() => props.onReconnect()}
-        hidden={['expired', 'waiting', 'kept', 'log-full'].includes(status())}
+        hidden={['expired', 'waiting', 'kept', 'log-full', 'closed'].includes(status())}
       >
         {status() === 'client-outdated' ? 'Reload' : 'Reconnect'}
       </button>

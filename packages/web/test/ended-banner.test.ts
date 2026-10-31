@@ -23,13 +23,24 @@ function mount(props: Record<string, unknown> = {}) {
 }
 
 describe('EndedBanner', () => {
-  it('shows only once the room closes', () => {
-    const { status, banner, copy } = mount()
+  it('shows only once the room closes, with the text to copy and no Reconnect', () => {
+    const { status, banner, copy, reconnect } = mount()
     expect(banner.hidden).toBe(true)
     status.set('closed')
     expect(banner.hidden).toBe(false)
     expect(banner.textContent).toMatch(/session has ended/)
     expect(copy.hidden).toBe(false)
+    // A closed room never comes back: nothing to reconnect to.
+    expect(reconnect.hidden).toBe(true)
+  })
+
+  it('says the host closed the room, with no Reconnect', () => {
+    const hostClosed = new Store(false)
+    const { status, banner, reconnect } = mount({ hostClosed })
+    hostClosed.set(true)
+    status.set('closed')
+    expect(banner.textContent).toMatch(/The host closed the room/)
+    expect(reconnect.hidden).toBe(true)
   })
 
   it('says it waits for the host, with the text to copy and no Reconnect', () => {

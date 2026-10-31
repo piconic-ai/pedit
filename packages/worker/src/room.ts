@@ -367,8 +367,10 @@ export class Room extends DurableObject<Env> {
   ): Promise<Response> {
     const digest = await sha256(token)
     const readDigest = read === null ? null : await sha256(read)
+    // A peer that joins after the host closed the room, or that was joining
+    // again when it did, learns the reason the others got.
     if (this.ctx.storage.kv.get(CLOSED_KEY) === true)
-      return refuse(ROOM_CLOSED, 'room is closed', join.protocol)
+      return refuse(ROOM_CLOSED, HOST_CLOSED_REASON, join.protocol)
     if (this.ctx.storage.kv.get('keptTextClosed') === true)
       return refuse(ROOM_EXPIRED, 'room has expired', join.protocol)
     // A version 5 host cannot take in the entries kept for it, and returning
