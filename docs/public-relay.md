@@ -23,7 +23,8 @@ and ends when the host leaves; a canvas, a scratch room and a host on Windows
 get no keep): the host uploads an encrypted snapshot while it is connected,
 and after it leaves the room stays open for the keep, counted from the moment
 it leaves. The host's connection lasts at most 24 hours; a host that comes back
-to a kept room gets a new 24 hours. While it is kept, the relay stores ciphertext as described below.
+to a kept room gets a new 24 hours, but the whole room ends 7 days after it was
+opened, whatever the host does. While it is kept, the relay stores ciphertext as described below.
 
 - **Plaintext document text: none.** Frames are relayed and never stored; what
   a kept room stores is encrypted and signed on the editors' devices.
@@ -63,9 +64,8 @@ add them; anyone with the room's link can fetch them. The bucket needs a second
 lifecycle rule expiring `kept/` after 8 days (the public cap on keeping is
 seven) as a backstop for a deletion that failed; the operator adds it by hand,
 as the release deploy only manages the `rooms/` rule.
-Because a room the host keeps resuming has no total life, that backstop can
-delete an image older than 8 days from a room that is still valid; the image
-then answers 404.
+The backstop is a day longer than the 7-day life of a room, so it never
+deletes an image of a room that is still valid.
 The relay learns ciphertext sizes, request times, and opaque sender identifiers
 and counts. It receives no plaintext or URL-fragment key. A relay can still
 withhold or replay data; a signature does not prove freshness or availability.
@@ -265,7 +265,7 @@ To report a vulnerability instead, see [SECURITY.md](../SECURITY.md).
 | Messages from one connection | Bursts of 1,000 messages and 32 MiB, then 200 messages and 1 MiB a second |
 | Session length | 24 hours of host connection, from its first connection or its return to a kept room |
 | Kept room after departure | One day unless the host chose otherwise, counted from the moment the host leaves; up to 7 days; the CLI reports any clamp |
-| Kept room total life | Not bounded: each return of the host starts a new 24 hours and each departure a new keep |
+| Kept room total life | 7 days from the host's first connection (`ROOM_LIFE_SECONDS`); a keep never reaches past it |
 | Kept text snapshot | 1 MiB of ciphertext for all files together; at most 64 text files, fixed when the room opens |
 | Kept text log | 4 MiB of encrypted editing history before the host checkpoints; a 10,000-entry abuse guard also applies |
 | Kept room requests | 1,200 a minute from one network |

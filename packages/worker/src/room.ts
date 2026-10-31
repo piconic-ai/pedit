@@ -126,6 +126,8 @@ export interface Limits {
   quotaCount: number
   /** How long a host's session lasts, from its first connection or its return to a kept room. */
   roomSeconds: number
+  /** How long a room lives in all, from its host's first connection, whatever the host does. */
+  lifeSeconds: number
   /** How long a room waits for a host that dropped before it closes. */
   hostGraceSeconds: number
 }
@@ -140,6 +142,7 @@ export const DEFAULT_LIMITS: Limits = {
   // serves its operator's own team, who may keep a session open for days, and
   // the operator can set ROOM_MAX_SECONDS.
   roomSeconds: Number.POSITIVE_INFINITY,
+  lifeSeconds: 7 * 86400,
   // Long enough for the CLI's backoff (30 s at most) and a network switch.
   hostGraceSeconds: 120,
 }
@@ -151,7 +154,10 @@ export interface LimitVars {
   BLOB_MAX_BYTES?: string
   BLOB_QUOTA_BYTES?: string
   BLOB_QUOTA_COUNT?: string
+  /** A host's session: from its first connection or its return to a kept room. */
   ROOM_MAX_SECONDS?: string
+  /** The keep after the host leaves is KEEP_MAX_SECONDS (read apart); the whole room, from its opening, is ROOM_LIFE_SECONDS. */
+  ROOM_LIFE_SECONDS?: string
   HOST_GRACE_SECONDS?: string
 }
 
@@ -170,6 +176,7 @@ export function limits(env: LimitVars): Limits {
     quotaBytes: positive(env.BLOB_QUOTA_BYTES, DEFAULT_LIMITS.quotaBytes),
     quotaCount: positive(env.BLOB_QUOTA_COUNT, DEFAULT_LIMITS.quotaCount),
     roomSeconds: positive(env.ROOM_MAX_SECONDS, DEFAULT_LIMITS.roomSeconds),
+    lifeSeconds: positive(env.ROOM_LIFE_SECONDS, DEFAULT_LIMITS.lifeSeconds),
     hostGraceSeconds: positive(env.HOST_GRACE_SECONDS, DEFAULT_LIMITS.hostGraceSeconds),
   }
 }
@@ -249,7 +256,8 @@ interface Usage {
  *
  * A room also ends at most ROOM_MAX_SECONDS after its host first connected
  * (`openedAt`, kept after the room ends so that its ID cannot be reused), with
- * ROOM_EXPIRED for everyone. An hourly alarm cleans up a room whose host
+ * ROOM_EXPIRED for everyone. Whatever the state, it ends ROOM_LIFE_SECONDS
+ * after `openedAt` at the latest, however often its host comes back. An hourly alarm cleans up a room whose host
  * vanished without a close, as on a deploy.
  *
  * Attachments are the one thing a room keeps: encrypted blobs in R2, only while
@@ -571,26 +579,36 @@ export class Room extends DurableObject<Env> {
     return this.ctx.storage.kv.get<number>(OPENED_KEY)
   }
 
-  // The end of the host's session, or Infinity without a limit or before its
-  // host came. A kept room has no such deadline: only its keep counts.
+  // The end of the room's whole life, or Infinity before its host came.
+  private lifeEnd(): number {
+    const opened = this.openedAt()
+    if (opened === undefined) return Number.POSITIVE_INFINITY
+    return opened + limits(this.env).lifeSeconds * 1000
+  }
+
+  // The end of the host's session, or the end of the room's life if sooner;
+  // Infinity before its host came. A kept room has no session: only its keep counts.
   private deadline(): number {
     const since = this.ctx.storage.kv.get<number>(HOST_SINCE_KEY) ?? this.openedAt()
     if (since === undefined) return Number.POSITIVE_INFINITY
-    return since + limits(this.env).roomSeconds * 1000
+    return Math.min(since + limits(this.env).roomSeconds * 1000, this.lifeEnd())
   }
 
-  // What the close reason says the room lasts: the keep for a kept room, else
-  // the session limit (the keep when the relay sets none).
+  // What the close reason says the room lasts: its whole life if that is what
+  // ended it, else the keep for a kept room, else the session limit (the keep
+  // when the relay sets none).
   private lifeSeconds(): number {
-    const room = limits(this.env).roomSeconds
-    return Number.isFinite(room) && !this.keptAway() ? room : this.keepSeconds()
+    const { roomSeconds, lifeSeconds } = limits(this.env)
+    if (Date.now() >= this.lifeEnd()) return lifeSeconds
+    return Number.isFinite(roomSeconds) && !this.keptAway() ? roomSeconds : this.keepSeconds()
   }
 
   // Date.now() rather than the `now` seam: the tests stop that one at 0.
   private expired(): boolean {
     const keptUntil = this.ctx.storage.kv.get<number>(KEPT_AWAY_KEY)
     return (
-      Date.now() >= (keptUntil ?? this.deadline()) || this.ctx.storage.kv.get(EXPIRED_KEY) === true
+      Date.now() >= Math.min(keptUntil ?? this.deadline(), this.lifeEnd()) ||
+      this.ctx.storage.kv.get(EXPIRED_KEY) === true
     )
   }
 
@@ -598,7 +616,7 @@ export class Room extends DurableObject<Env> {
   // comes sooner. A room kept without its host is checked at the end of its keep only.
   private nextAlarm(): number {
     const keptUntil = this.ctx.storage.kv.get<number>(KEPT_AWAY_KEY)
-    if (keptUntil !== undefined) return keptUntil
+    if (keptUntil !== undefined) return Math.min(keptUntil, this.lifeEnd())
     return Math.min(
       this.deadline(),
       this.awayUntil() ?? Number.POSITIVE_INFINITY,
@@ -885,8 +903,9 @@ export class Room extends DurableObject<Env> {
    */
   private async enterKeptAway(except?: WebSocket): Promise<void> {
     const kv = this.ctx.storage.kv
-    // The keep counts from the host's leaving, not from the room's opening.
-    const until = Date.now() + this.keepSeconds() * 1000
+    // The keep counts from the host's leaving, but not beyond the room's life
+    // (canKeep refuses a room already past it).
+    const until = Math.min(Date.now() + this.keepSeconds() * 1000, this.lifeEnd())
     kv.put(KEPT_AWAY_KEY, until)
     kv.delete(AWAY_KEY)
     this.log('kept away', { untilSeconds: Math.round((until - Date.now()) / 1000) })
