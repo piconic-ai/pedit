@@ -722,6 +722,18 @@ describe('the end of a kept room', () => {
     // Again: nothing left to close.
     expect((await close(room, 1)).status).toBe(200)
   })
+
+  it('tells a peer that joins after the close that the host closed the room', async () => {
+    const { room, guest } = await kept()
+    expect((await close(room, 1)).status).toBe(200)
+    expect((await guest.closed).reason).toBe('the host closed the room')
+    // A browser that was joining again when the host closed, or a late guest.
+    const late = await join(room)
+    const ended = await late.closed
+    expect([ended.code, ended.reason]).toEqual([ROOM_CLOSED, 'the host closed the room'])
+    const host = await hostOf(room)
+    expect((await host.closed).reason).toBe('the host closed the room')
+  })
 })
 
 describe('the keep counts from the host leaving', () => {

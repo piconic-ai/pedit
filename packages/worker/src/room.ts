@@ -221,6 +221,8 @@ const CLOSED_KEY = 'closedByHost'
 // The tag of a socket that speaks protocol version 6 (a kind byte before each
 // message); one without it speaks version 5. Tagged `v5` or `v6` at accept.
 const V6_TAG = 'v6'
+// A socket accepted only to be closed with a reason (`refuse`).
+const REFUSED_TAG = 'refused'
 const KEEP_DEFAULT_MAX_SECONDS = 7 * 24 * 60 * 60
 
 /** What a connection says about itself when it joins. */
@@ -313,10 +315,10 @@ export class Room extends DurableObject<Env> {
     // retrying an admission it cannot pass.
     const version = checkProtocolVersion(protocols)
     if (version.result === 'client-outdated') {
-      return refuse(CLIENT_OUTDATED, 'pedit is outdated; update it', version.offered)
+      return this.refuse(CLIENT_OUTDATED, 'pedit is outdated; update it', version.offered)
     }
     if (version.result === 'server-outdated') {
-      return refuse(SERVER_OUTDATED, 'the server is older than this pedit', version.offered)
+      return this.refuse(SERVER_OUTDATED, 'the server is older than this pedit', version.offered)
     }
     const token = readAdmissionProtocol(protocols)
     if (!token || version.result !== 'current')
@@ -367,14 +369,16 @@ export class Room extends DurableObject<Env> {
   ): Promise<Response> {
     const digest = await sha256(token)
     const readDigest = read === null ? null : await sha256(read)
+    // A peer that joins after the host closed the room, or that was joining
+    // again when it did, learns the reason the others got.
     if (this.ctx.storage.kv.get(CLOSED_KEY) === true)
-      return refuse(ROOM_CLOSED, 'room is closed', join.protocol)
+      return this.refuse(ROOM_CLOSED, HOST_CLOSED_REASON, join.protocol)
     if (this.ctx.storage.kv.get('keptTextClosed') === true)
-      return refuse(ROOM_EXPIRED, 'room has expired', join.protocol)
+      return this.refuse(ROOM_EXPIRED, 'room has expired', join.protocol)
     // A version 5 host cannot take in the entries kept for it, and returning
     // would discard them: it is told to update, and the room stays kept.
     if (isHost && join.version === 5 && this.keptAway())
-      return refuse(CLIENT_OUTDATED, 'pedit is outdated; update it', join.protocol)
+      return this.refuse(CLIENT_OUTDATED, 'pedit is outdated; update it', join.protocol)
     // Deploys can drop every socket without a close callback. Only a guest
     // with this session's editor admission may start its missing host grace
     // period: the reader token goes to anyone a link was passed on to.
@@ -396,21 +400,21 @@ export class Room extends DurableObject<Env> {
     // since the time limit is final for every current client.
     if (this.expired()) {
       if (this.sessionOpen()) await this.expire()
-      return refuse(ROOM_EXPIRED, expiredReason(this.lifeSeconds()), join.protocol)
+      return this.refuse(ROOM_EXPIRED, expiredReason(this.lifeSeconds()), join.protocol)
     }
     if (!isHost && this.hosts().length === 0 && !this.hostAway() && !this.keptAway()) {
       // A grace period that ran out with its alarm late.
       if (this.awayUntil() !== undefined) await this.closeAfterGrace()
       if (!this.keptAway()) {
         this.log('turned a guest away', { code: ROOM_CLOSED })
-        return refuse(ROOM_CLOSED, 'room is closed', join.protocol)
+        return this.refuse(ROOM_CLOSED, 'room is closed', join.protocol)
       }
     }
     // Authenticate before taking a peer slot. Only the authenticated host may
     // register the verifiers; a guest cannot claim an unopened room's tokens.
     const role = isHost ? this.registerHost(digest, readDigest) : this.role(digest)
     if (!role) return new Response('invalid room admission', { status: 403 })
-    if (this.full(isHost, role)) return refuse(ROOM_FULL, 'room is full', join.protocol)
+    if (this.full(isHost, role)) return this.refuse(ROOM_FULL, 'room is full', join.protocol)
     return this.accept(isHost, role, join)
   }
 
@@ -569,7 +573,7 @@ export class Room extends DurableObject<Env> {
     const { guests, readers } = limits(this.env)
     const reading = this.ctx.getWebSockets(READER_TAG).length
     if (role === 'reader') return reading >= readers
-    const editing = this.ctx.getWebSockets().length - reading
+    const editing = this.peers().length - reading
     if (editing >= MAX_PEERS) return true
     if (isHost) return false
     return editing - this.hosts().length >= guests
@@ -636,9 +640,7 @@ export class Room extends DurableObject<Env> {
 
   // Whether there is anything of a session left to clean up.
   private sessionOpen(): boolean {
-    return (
-      this.ctx.storage.kv.get(ADMISSION_KEY) !== undefined || this.ctx.getWebSockets().length > 0
-    )
+    return this.ctx.storage.kv.get(ADMISSION_KEY) !== undefined || this.peers().length > 0
   }
 
   /**
@@ -682,6 +684,7 @@ export class Room extends DurableObject<Env> {
   }
 
   override async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    if (this.refused(ws)) return
     if (typeof message === 'string') {
       this.closePeer(ws, 1003, 'binary frames only')
       return
@@ -810,6 +813,7 @@ export class Room extends DurableObject<Env> {
     wasClean: boolean,
   ): Promise<void> {
     safeClose(ws, code, reason)
+    if (this.refused(ws)) return
     if (this.isHost(ws))
       this.log('host closed', { code, wasClean, otherHosts: this.hosts(ws).length })
     await this.closeIfHostLeft(ws, code)
@@ -817,6 +821,7 @@ export class Room extends DurableObject<Env> {
 
   override async webSocketError(ws: WebSocket): Promise<void> {
     safeClose(ws, 1011, 'error')
+    if (this.refused(ws)) return
     if (this.isHost(ws)) this.log('host errored', { otherHosts: this.hosts(ws).length })
     await this.closeIfHostLeft(ws, 1011)
   }
@@ -841,11 +846,34 @@ export class Room extends DurableObject<Env> {
         message: `room: ${event}`,
         room: this.ctx.id.toString(),
         hosts,
-        guests: this.ctx.getWebSockets().length - hosts,
+        guests: this.peers().length - hosts,
         openSeconds: opened === undefined ? null : Math.round((Date.now() - opened) / 1000),
         ...fields,
       }),
     )
+  }
+
+  /**
+   * Refuses an upgrade with a close code, as `refuse` does, but with the
+   * socket accepted by the hibernation API: the runtime logs an uncaught
+   * "Network connection lost" error whenever a socket accepted the old way is
+   * closed (workerd#5290), and a refusal is the one close this object makes
+   * on purpose. The tag keeps the handlers off it.
+   */
+  private refuse(code: number, reason: string, protocol?: string): Response {
+    return refuse(code, reason, protocol, (server) =>
+      this.ctx.acceptWebSocket(server, [REFUSED_TAG]),
+    )
+  }
+
+  private refused(ws: WebSocket): boolean {
+    return this.ctx.getTags(ws).includes(REFUSED_TAG)
+  }
+
+  // The peers in the room: a socket accepted only to be refused, which the
+  // runtime may still list while its close handshake is pending, takes no place.
+  private peers(): WebSocket[] {
+    return this.ctx.getWebSockets().filter((ws) => !this.refused(ws))
   }
 
   private isHost(ws: WebSocket): boolean {
@@ -1168,9 +1196,14 @@ function safeClose(ws: WebSocket, code: number, reason: string): void {
  * HTTP errors of a failed upgrade, but they do see close codes. `protocol` is
  * one the client offered, or the handshake would fail before the close.
  */
-export function refuse(code: number, reason: string, protocol = SOCKET_PROTOCOL): Response {
+export function refuse(
+  code: number,
+  reason: string,
+  protocol = SOCKET_PROTOCOL,
+  accept: (server: WebSocket) => void = (server) => server.accept(),
+): Response {
   const { 0: client, 1: server } = new WebSocketPair()
-  server.accept()
+  accept(server)
   server.close(code, reason)
   return new Response(null, {
     status: 101,
