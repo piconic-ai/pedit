@@ -109,12 +109,10 @@ format and compatibility requirements.
 
 `pnpm run deploy` applies the rules in `scripts/r2-lifecycle.json` to the bucket
 bound as `BLOBS`. They expire encrypted attachments under `rooms/` after one
-day as a backstop if deletion on host disconnect fails.
-
-Images of kept rooms (`--keep`) are stored under `kept/` and are deleted when
-the room expires. They are not covered by that rule, since a kept room can last
-for days; if you want a backstop for a failed deletion, add a rule for `kept/`
-that is longer than `KEEP_MAX_SECONDS` and the room limit.
+day, and those of kept rooms under `kept/` after eight days, as a backstop if
+deletion when the room ends fails. Eight days is a day more than the default
+`ROOM_LIFE_SECONDS`; if you raise that variable, raise the `kept/` rule's
+`maxAge` with it, or a room still open could lose its images.
 
 Use a dedicated bucket: deployment replaces its lifecycle configuration.
 Keep any additional rules in `scripts/r2-lifecycle.json`; dashboard-only

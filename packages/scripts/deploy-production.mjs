@@ -7,10 +7,14 @@ const root = fileURLToPath(new URL('../', import.meta.url))
 const workerPackage = new URL('../worker/package.json', import.meta.url)
 const configPath = fileURLToPath(new URL('../worker/wrangler.jsonc', import.meta.url))
 
-// Backstop for the Room's own cleanup (docs/public-relay.md): objects under
-// rooms/ are gone a day after they were written.
-export const EXPIRE_RULE = { name: 'expire-rooms', prefix: 'rooms/', days: 1 }
-const EXPECTED_ACTION = `Expire objects after ${EXPIRE_RULE.days} days`
+// Backstops for the Room's own cleanup (docs/public-relay.md): objects under
+// rooms/ are gone a day after they were written; those under kept/, which a
+// kept room holds for its whole life, a day after ROOM_LIFE_SECONDS (7 days).
+export const EXPIRE_RULES = [
+  { name: 'expire-rooms', prefix: 'rooms/', days: 1 },
+  { name: 'expire-kept', prefix: 'kept/', days: 8 },
+]
+const expectedAction = (rule) => `Expire objects after ${rule.days} days`
 
 /**
  * Reads the output of `wrangler r2 bucket lifecycle list`: blocks of
@@ -36,8 +40,8 @@ export function parseLifecycleList(output) {
 
 /**
  * Publishes the Worker, then makes sure the attachment bucket has the
- * "expire-rooms" rule. A failure to publish fails the deploy. A failure to
- * check or add the rule only warns: the Worker is already live, so failing
+ * "expire-rooms" and "expire-kept" rules. A failure to publish fails the
+ * deploy. A failure to check or add a rule only warns: the Worker is already live, so failing
  * would show a release that did deploy as failed (inviting a re-run or a
  * rollback), and a build token without R2 permission would turn every release
  * red. The rule is the third line of defence, after the cleanup when the host
@@ -57,32 +61,36 @@ export function deployProduction({ run, capture, readConfig, warn }) {
     configPath,
     ...(blob.jurisdiction ? ['--jurisdiction', blob.jurisdiction] : []),
   ]
+  let checking = 'the lifecycle rules'
   try {
     const rules = parseLifecycleList(capture([...wrangler, 'list', bucket, ...tail]))
-    const rule = rules.find((r) => r.name === EXPIRE_RULE.name)
-    if (!rule) {
-      run([
-        ...wrangler,
-        'add',
-        bucket,
-        EXPIRE_RULE.name,
-        EXPIRE_RULE.prefix,
-        '--expire-days',
-        String(EXPIRE_RULE.days),
-        ...tail,
-      ])
-    } else if (
-      rule.enabled !== 'Yes' ||
-      rule.prefix !== EXPIRE_RULE.prefix ||
-      rule.action !== EXPECTED_ACTION
-    ) {
-      warn(
-        `WARNING: the "${EXPIRE_RULE.name}" lifecycle rule on ${bucket} is not what was expected (enabled: ${rule.enabled}, prefix: ${rule.prefix}, action: ${rule.action}). It was left as it is; fix it by hand (docs/contributing/deployment.md#attachment-buckets).`,
-      )
+    for (const expected of EXPIRE_RULES) {
+      checking = `the "${expected.name}" lifecycle rule`
+      const rule = rules.find((r) => r.name === expected.name)
+      if (!rule) {
+        run([
+          ...wrangler,
+          'add',
+          bucket,
+          expected.name,
+          expected.prefix,
+          '--expire-days',
+          String(expected.days),
+          ...tail,
+        ])
+      } else if (
+        rule.enabled !== 'Yes' ||
+        rule.prefix !== expected.prefix ||
+        rule.action !== expectedAction(expected)
+      ) {
+        warn(
+          `WARNING: the "${expected.name}" lifecycle rule on ${bucket} is not what was expected (enabled: ${rule.enabled}, prefix: ${rule.prefix}, action: ${rule.action}). It was left as it is; fix it by hand (docs/contributing/deployment.md#attachment-buckets).`,
+        )
+      }
     }
   } catch (error) {
     warn(
-      `WARNING: the Worker is deployed, but the "${EXPIRE_RULE.name}" lifecycle rule on ${bucket} could not be checked or added: ${error.message}. Add it by hand (docs/contributing/deployment.md#attachment-buckets).`,
+      `WARNING: the Worker is deployed, but ${checking} on ${bucket} could not be checked or added: ${error.message}. Add it by hand (docs/contributing/deployment.md#attachment-buckets).`,
     )
   }
 }

@@ -60,12 +60,11 @@ Such a room keeps the encrypted images guests paste in R2 under `kept/`
 instead of `rooms/`, from the first upload, whether or not the host is
 connected: they are not deleted when the host leaves, only when the room
 expires or ends, within the same limits as any room (below). Only editors can
-add them; anyone with the room's link can fetch them. The bucket needs a second
-lifecycle rule expiring `kept/` after 8 days (the public cap on keeping is
-seven) as a backstop for a deletion that failed; the operator adds it by hand,
-as the release deploy only manages the `rooms/` rule.
-The backstop is a day longer than the 7-day life of a room, so it never
-deletes an image of a room that is still valid.
+add them; anyone with the room's link can fetch them. A second lifecycle rule
+expires `kept/` after 8 days as a backstop for a deletion that failed; the
+release deploy adds it to the bucket like the `rooms/` rule. The backstop is a
+day longer than the 7-day life of a room, so it never deletes an image of a
+room that is still valid.
 The relay learns ciphertext sizes, request times, and opaque sender identifiers
 and counts. It receives no plaintext or URL-fragment key. A relay can still
 withhold or replay data; a signature does not prove freshness or availability.

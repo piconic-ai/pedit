@@ -3,8 +3,28 @@
     {
       "id": "pedit-expire-rooms",
       "enabled": true,
-      "conditions": { "prefix": "rooms/" },
-      "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 86400 } }
+      "conditions": {
+        "prefix": "rooms/"
+      },
+      "deleteObjectsTransition": {
+        "condition": {
+          "type": "Age",
+          "maxAge": 86400
+        }
+      }
+    },
+    {
+      "id": "pedit-expire-kept",
+      "enabled": true,
+      "conditions": {
+        "prefix": "kept/"
+      },
+      "deleteObjectsTransition": {
+        "condition": {
+          "type": "Age",
+          "maxAge": 691200
+        }
+      }
     }
   ]
 }
