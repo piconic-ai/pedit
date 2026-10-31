@@ -21,9 +21,9 @@ never stored. A room opened from existing text files has a keep by default (a
 day; `--keep` up to the cap below; `--keep 0` for a room that stores nothing
 and ends when the host leaves; a canvas, a scratch room and a host on Windows
 get no keep): the host uploads an encrypted snapshot while it is connected,
-and after it leaves the room stays open for the keep, never beyond the room's
-total limit (24 hours from the host's first connection, or the keep if that is
-longer). While it is kept, the relay stores ciphertext as described below.
+and after it leaves the room stays open for the keep, counted from the moment
+it leaves. The host's connection lasts at most 24 hours; a host that comes back
+to a kept room gets a new 24 hours. While it is kept, the relay stores ciphertext as described below.
 
 - **Plaintext document text: none.** Frames are relayed and never stored; what
   a kept room stores is encrypted and signed on the editors' devices.
@@ -50,7 +50,7 @@ room's SQLite storage (4 MiB, 10,000 entries). The peers stay connected and
 the relay tells them the room is kept until a time, at most the relay's keep
 cap after the host left. Guests can read and edit while the host is away. The
 host truncates the log only after saving the edits locally. The relay deletes
-the snapshot and the log when that time or the total room limit passes, or at
+the snapshot and the log when that time passes, or at
 once when the host runs `pedit --close`, which also deletes the room's images;
 the host does that only after saving every edit to its files. A marker
 prevents reuse of the closed room. Without a snapshot the room ends when the
@@ -85,11 +85,11 @@ deletes orphaned images and per-room data within about an hour. Starting
 `pedit` again creates a new room and link.
 
 The two-minute grace period preserves guests, images, and per-room data after
-a host disconnect. It does not extend the public relay's 24-hour room limit,
+a host disconnect. It does not extend the public relay's 24-hour session limit,
 measured from the host's first connection. After the grace period expires,
 guests are disconnected and their link stops working until the host returns.
 Ctrl+C closes the guests' sessions immediately and their link stops working.
-The 24-hour limit closes the room even if the host returns. Self-hosted relays
+The 24-hour limit closes the room even if the host returns within the grace period. Self-hosted relays
 have no room time limit unless configured.
 
 ## Logs
@@ -260,9 +260,9 @@ To report a vulnerability instead, see [SECURITY.md](../SECURITY.md).
 | WebSocket connections | 60 a minute from one network |
 | One message | 1 MiB |
 | Messages from one connection | Bursts of 1,000 messages and 32 MiB, then 200 messages and 1 MiB a second |
-| Session length | 24 hours from the host's first connection |
-| Kept room after departure | One day unless the host chose otherwise; up to 7 days; the CLI reports any clamp |
-| Kept room total life | At least the effective keep duration; measured from publication |
+| Session length | 24 hours of host connection, from its first connection or its return to a kept room |
+| Kept room after departure | One day unless the host chose otherwise, counted from the moment the host leaves; up to 7 days; the CLI reports any clamp |
+| Kept room total life | Not bounded: each return of the host starts a new 24 hours and each departure a new keep |
 | Kept text snapshot | 1 MiB of ciphertext for all files together; at most 64 text files, fixed when the room opens |
 | Kept text log | 4 MiB of encrypted editing history before the host checkpoints; a 10,000-entry abuse guard also applies |
 | Kept room requests | 1,200 a minute from one network |
@@ -282,7 +282,7 @@ room's ID from its host token without remembering which tokens it issued, so a
 live client can make its own and skip that creation request; WebSocket clients
 are still held to the connection limit. A guest over the rate limits is disconnected and
 reconnects; a host over them ends the session. A live room ends 24 hours after its
-host first connected, even if the host is still connected or has reconnected
+host's connection began, even if the host is still connected or has reconnected
 since: everyone is disconnected and its link stops working. Running pedit
 again starts a new room with a new link. A pedit released before this limit
 existed is not told the room ended: it keeps trying to reconnect, with backoff,

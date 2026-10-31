@@ -65,7 +65,9 @@ Yjs sync when the host returns. A version 5 host cannot keep a room.
   it decides where images go (`kept/` from the first upload, never `rooms/`): a
   later connect, with another value or none, is answered with the stored keep,
   and a room first connected without one cannot gain one. Zero or none: the room ends when the host leaves, as always.
-  A room with a keep lasts until `openedAt + max(ROOM_MAX_SECONDS, keep)`.
+  While the host is connected the session lasts `ROOM_MAX_SECONDS` from
+  `hostSince` (`openedAt` until the host first returns from kept-away, then the
+  time of that return); the keep does not lengthen it.
 - **Snapshots.** The host sends a snapshot right after connecting, after every
   200 entries it took in or 5 minutes with changes, and just before leaving.
   The relay keeps the latest. A room without a snapshot cannot be kept: it ends
@@ -73,7 +75,7 @@ Yjs sync when the host returns. A version 5 host cannot keep a room.
 - **Kept state.** It begins when the host leaves on purpose (close code
   `HOST_LEFT`), or when a host that dropped does not return within the grace
   period, and the room has a keep and a snapshot. The relay stores
-  `keptAwayUntil = now + keep` (at most the room's deadline), tells every peer
+  `keptAwayUntil = now + keep` (counted from the departure, with no other cap), tells every peer
   `kept <until>`, and arms its alarm for that time. Nobody is closed.
 - **While kept.** Kind 1 entries are appended (4 MiB and 10,000 entries at most) and sent as kind 4. Kind 0 frames are relayed as always, for
   awareness and for read-only peers' requests. A reader that sends a kind 1 is
@@ -88,7 +90,7 @@ Yjs sync when the host returns. A version 5 host cannot keep a room.
   `host back`. The host sends a checkpoint, which truncates the log. Entries
   that arrive between its connecting and the checkpoint are relayed as kind 1
   and not stored.
-- **Deadline.** When `keptAwayUntil` passes, by alarm or at the next message,
+- **Deadline.** While kept, only `keptAwayUntil` counts; otherwise only the session limit. When `keptAwayUntil` passes, by alarm or at the next message,
   the room ends with `ROOM_EXPIRED`: everyone is closed, and the snapshot, the
   log and the images are deleted. The time the host first connected stays, so
   the ID is not opened again.
