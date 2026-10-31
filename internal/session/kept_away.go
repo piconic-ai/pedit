@@ -235,6 +235,10 @@ func (a *keepAway) saveRecord(leaving bool) error {
 		}
 	})
 	state.Keep, state.After, state.Initialized = granted, after, true
+	// While the host is here the deadline is unknown: if it dies without
+	// leaving, the relay starts a fresh keep period, so an old deadline would
+	// wrongly mark the record as dead.
+	state.Until = 0
 	if leaving {
 		state.Until = time.Now().Add(time.Duration(granted) * time.Second).UnixMilli()
 	}

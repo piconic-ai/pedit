@@ -218,3 +218,32 @@ func TestResumeOfAnExpiredRoomRemovesTheRecord(t *testing.T) {
 		}
 	}
 }
+
+// A resumed host that stays connected past the deadline it left with, then
+// dies, is kept by the relay for a fresh period: while the host is here the
+// record has no deadline, so it is never pruned as long past.
+func TestRecordHasNoDeadlineWhileTheHostIsConnected(t *testing.T) {
+	a := newAwayRoom(t, "notes\n")
+	_, guest := keepAndLeave(t, a)
+	record := a.record()
+	record.Until = 1
+	if err := saveKeptState(keptTestStatePath(t, a.project, a.id), record); err != nil {
+		t.Fatal(err)
+	}
+	a.script(1, protocol.EncodeLogged(1, guest.insert(0, "guest ")), protocol.EncodeLogEnd(1))
+	opts := a.options()
+	opts.Resume = a.id
+	s, err := Start(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Stop() })
+	prototest.WaitFor(t, wait, func() bool { return a.record().After == 1 }, "the record to follow the checkpoint")
+	if until := a.record().Until; until != 0 {
+		t.Fatalf("a connected host's record says it ends at %d", until)
+	}
+	pruned := 0
+	if err := PruneKept(a.project, func(n int) { pruned = n }); err != nil || pruned != 0 {
+		t.Fatalf("pruned %d: %v", pruned, err)
+	}
+}

@@ -306,6 +306,7 @@ func (r *resumed) awaitCheckpoint(ctx context.Context, h *keptTextHost) error {
 			if cutoff, _, ok := protocol.ParseCheckpoint(string(payload)); ok {
 				h.checkpointed(cutoff)
 				h.state.After = cutoff
+				h.state.Until = 0 // the host is here now: see saveRecord
 				return saveKeptState(h.path, h.state)
 			} else if string(payload) == protocol.CheckpointRefused {
 				return errors.New("the relay refused the checkpoint")
