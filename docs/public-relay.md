@@ -52,7 +52,7 @@ the relay tells them the room is kept until a time, at most the relay's keep
 cap after the host left. Guests can read and edit while the host is away. The
 host truncates the log only after saving the edits locally. The relay deletes
 the snapshot and the log when that time passes, or at
-once when the host runs `pedit --close`, which also deletes the room's images;
+once when the host runs `pedit close`, which also deletes the room's images;
 the host does that only after saving every edit to its files. A marker
 prevents reuse of the closed room. Without a snapshot the room ends when the
 host leaves, as a room without a keep does.

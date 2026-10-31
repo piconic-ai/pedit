@@ -108,7 +108,7 @@ func resumeHeld(opts *commandArgs, stdout, stderr io.Writer) (code int) {
 		}
 		for i, file := range files {
 			if !slices.Contains(r.Files, file) {
-				fmt.Fprintf(stderr, "pedit: %s is not in the kept room %s, which holds %s.\nRun pedit --close %s first, or pedit --keep 0 for a separate room.\n",
+				fmt.Fprintf(stderr, "pedit: %s is not in the kept room %s, which holds %s.\nRun pedit close %s first, or pedit --keep 0 for a separate room.\n",
 					names[i], r.Room, strings.Join(displayPaths(r.Files), ", "), r.Room)
 				return 1
 			}
@@ -213,7 +213,7 @@ func chooseResume(opts *commandArgs, stdout, stderr io.Writer) (code int) {
 	// A link carries the room key, which an error message must not repeat.
 	name := opts.Resume
 	if strings.Contains(name, "/r/") {
-		name = keptRoomOf(name)
+		name = roomOf(name)
 	}
 	fmt.Fprintf(stderr, "pedit: no kept room %s in this project\n", name)
 	return 1
@@ -267,7 +267,8 @@ func closeKept(opts commandArgs, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func keptRoomOf(link string) string {
+// roomOf is the room ID in a share link, without its key.
+func roomOf(link string) string {
 	room, _, _ := strings.Cut(link[strings.Index(link, "/r/")+3:], "#")
 	room, _, _ = strings.Cut(room, "?")
 	return room

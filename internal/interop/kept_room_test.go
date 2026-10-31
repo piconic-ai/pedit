@@ -253,15 +253,15 @@ func TestKeptRoomEndToEnd(t *testing.T) {
 
 	// The host closes the room: the guests are told, and the record is gone.
 	if records, err := session.ListKeptText(r.project); err != nil || len(records) != 1 {
-		t.Fatalf("records before --close: %v, %v", records, err)
+		t.Fatalf("records before pedit close: %v, %v", records, err)
 	}
-	closer := r.pedit("--close")
+	closer := r.pedit("close")
 	var closing []string
 	for line := range closer.lines {
 		closing = append(closing, line)
 	}
 	if err := closer.wait(); err != nil || !strings.Contains(strings.Join(closing, "\n"), "Closed the room") {
-		t.Fatalf("--close: %v\n%s", err, strings.Join(closing, "\n"))
+		t.Fatalf("pedit close: %v\n%s", err, strings.Join(closing, "\n"))
 	}
 	for _, g := range []*roomGuest{first, second} {
 		s := g.until("the room to end", func(s roomState) bool { return s.Status == "closed" })
@@ -270,7 +270,7 @@ func TestKeptRoomEndToEnd(t *testing.T) {
 		}
 	}
 	if records, err := session.ListKeptText(r.project); err != nil || len(records) != 0 {
-		t.Fatalf("records after --close: %v, %v", records, err)
+		t.Fatalf("records after pedit close: %v, %v", records, err)
 	}
 }
 

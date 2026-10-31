@@ -19,7 +19,7 @@ export interface EndedBannerProps {
   keptUntil?: Readable<string | null>
   /** How many kept edits did not hold, and were left out. */
   skipped?: Readable<number>
-  /** Whether the host closed the room on purpose (`pedit --close`). */
+  /** Whether the host closed the room on purpose (`pedit close`). */
   hostClosed?: Readable<boolean>
   clipboard?: Pick<Clipboard, 'writeText'>
   resetMs?: number

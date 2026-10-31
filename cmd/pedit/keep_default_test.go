@@ -129,7 +129,7 @@ func TestFileResumesTheRoomThatHoldsIt(t *testing.T) {
 	opts, _ = parseArgs([]string{"a.md", "c.canvas"})
 	errw.Reset()
 	if code := resumeHeld(&opts, &out, &errw); code != 1 || opts.Resume != "" ||
-		!strings.Contains(errw.String(), "c.canvas is not in the kept room "+testRoom) || !strings.Contains(errw.String(), "pedit --close "+testRoom) || !strings.Contains(errw.String(), "--keep 0") {
+		!strings.Contains(errw.String(), "c.canvas is not in the kept room "+testRoom) || !strings.Contains(errw.String(), "pedit close "+testRoom) || !strings.Contains(errw.String(), "--keep 0") {
 		t.Fatalf("extra file: %+v %d %q", opts, code, errw.String())
 	}
 

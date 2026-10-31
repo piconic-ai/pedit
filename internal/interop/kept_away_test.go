@@ -174,7 +174,8 @@ func TestGoHostKeepsAWebSocketRoomWhileAway(t *testing.T) {
 	}
 	// A guest that is in the room when the host leaves is told it is kept.
 	early := dialAwayGuest(t, relay, link, "")
-	if out := host.stop(t); !strings.Contains(out, "Room stays open until") || !strings.Contains(out, "pedit notes.md") {
+	shared, _ := url.Parse(link)
+	if out := host.stop(t); !strings.Contains(out, "Room stays open until") || !strings.Contains(out, "Room: "+strings.TrimPrefix(shared.Path, "/r/")) || !strings.Contains(out, "pedit notes.md") {
 		t.Fatalf("Ctrl+C did not say how long the room stays:\n%s", out)
 	}
 	var kept string
@@ -254,7 +255,8 @@ func TestGoHostKeepsAWebSocketRoomWhileAway(t *testing.T) {
 	early.waitFor(protocol.HostBack)
 	resumed.stop(t)
 
-	// --close takes in the log, leaves, and has the relay end the room.
+	// --close, the alias of pedit close, takes in the log, leaves, and has the
+	// relay end the room.
 	closer := keptCommand(t, project, binary, "--close")
 	var closing []string
 	for line := range closer.lines {

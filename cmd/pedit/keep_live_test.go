@@ -17,7 +17,7 @@ func TestKeepArgumentWithSeveralFiles(t *testing.T) {
 }
 
 func TestKeptRoomOfALiveLink(t *testing.T) {
-	if got := keptRoomOf("https://x.test/r/" + testRoom + "#key"); got != testRoom {
+	if got := roomOf("https://x.test/r/" + testRoom + "#key"); got != testRoom {
 		t.Fatalf("room = %q", got)
 	}
 }

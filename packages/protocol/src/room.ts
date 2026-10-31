@@ -267,7 +267,7 @@ export class RoomClient {
   status: RoomStatus = 'disconnected'
   /** The relay's time limit in seconds, when it said so on closing an expired room. */
   timeLimitSeconds: number | undefined
-  /** Whether the room is closed because the host ended it with `pedit --close`. */
+  /** Whether the room is closed because the host ended it with `pedit close`. */
   closedByHost = false
 
   private readonly opts: RoomClientOptions

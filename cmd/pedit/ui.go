@@ -152,7 +152,7 @@ func (u *ui) sharing(files []string, url string, copied, scratch bool) {
 	if copied {
 		lines = append(lines, "  "+u.dim("Copied to your clipboard."))
 	}
-	lines = append(lines, "", u.dim("Press Ctrl+C when you are done. "+saved))
+	lines = append(lines, "  "+roomLine(url), "", u.dim("Press Ctrl+C when you are done. "+saved))
 	if u.resumable {
 		lines = append(lines, u.dim("To share another file in this room, type its path and press Enter."))
 		lines = append(lines, u.dim("Press Ctrl+L for links that can only comment or read."))
@@ -169,9 +169,15 @@ func (u *ui) sharing(files []string, url string, copied, scratch bool) {
 	u.render()
 }
 
+// roomLine names the room of a share link, so a person can name it (to close
+// it, or to report it) without picking the ID out of the link.
+func roomLine(link string) string {
+	return "Room: " + roomOf(link)
+}
+
 // joined says where the room's file is mirrored, and what happens to the copy
 // on leaving: a temporary one is removed, one placed with -d stays.
-func (u *ui) joined(file string, temporary, copied bool) {
+func (u *ui) joined(file, link string, temporary, copied bool) {
 	lines := []string{
 		"",
 		u.bold("Joined. Your copy of the shared file:"),
@@ -180,7 +186,7 @@ func (u *ui) joined(file string, temporary, copied bool) {
 	if copied {
 		lines = append(lines, "  "+u.dim("Copied to your clipboard."))
 	}
-	lines = append(lines, "", "Edit it with any editor; changes sync both ways while you are in the room.")
+	lines = append(lines, "  "+roomLine(link), "", "Edit it with any editor; changes sync both ways while you are in the room.")
 	if temporary {
 		lines = append(lines, u.dim("Press Ctrl+C to leave. The copies are temporary and removed then."))
 	} else {
@@ -477,7 +483,7 @@ func (u *ui) keeping(seconds int64, asked time.Duration) {
 
 // keptHint says until when the kept room stays and how to take it up again.
 func (u *ui) keptHint(until time.Time, room string, others bool, file string) {
-	u.print(fmt.Sprintf("Room stays open until %s.", until.Format(time.RFC3339)))
+	u.print("Room: "+room, fmt.Sprintf("Room stays open until %s.", until.Format(time.RFC3339)))
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	printKeepHint(u.out, room, others, file)

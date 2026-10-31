@@ -46,6 +46,7 @@ const defaultServer = "https://edit.piconic.ai"
 
 const usage = `Usage: pedit [file ...] [-t template] [-d directory]
        pedit <share link>
+       pedit <command> [args]
 
 Share an existing UTF-8 text file. Send the printed link to collaborators;
 open it yourself to edit together in the browser. No install needed for guests.
@@ -74,6 +75,12 @@ Examples:
   pedit https://edit.piconic.ai/r/<room>#<key>
                        Join a room and edit its copy in your own editor
 
+Commands:
+  pedit close [room|link]  Take in a kept room's edits, then close it for good
+  pedit rooms [--json]     List this project's kept rooms
+Run pedit <command> --help for its details. To share a file named like a
+command, write ./close or pedit -- close.
+
 Markdown supports previews and pasted images, saved beside your file in assets/.
 Anyone with the full link can read and edit while the session is open.
 Press Ctrl+L while sharing for links that can only comment or read.
@@ -86,7 +93,6 @@ Options:
                         go on editing; the default is 1d, and 0 ends the room when you leave.
                         pedit <file> takes up the kept room that holds the file
   --resume [room|link]  Take up a kept room again: your files get what was written meanwhile
-  --close [room|link]   Take in a kept room's edits, then close it for good
   -h, --help             Show this help
   -v, --version          Show the version
 
@@ -102,15 +108,8 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 1 {
-		switch args[0] {
-		case "-h", "--help":
-			fmt.Fprintln(stdout, usage)
-			return 0
-		case "-v", "--version":
-			fmt.Fprintln(stdout, getVersion())
-			return 0
-		}
+	if code, ok := runWithoutShare(args, stdout, stderr); ok {
+		return code
 	}
 
 	opts, err := parseArgs(args)
@@ -274,19 +273,35 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return code
 }
 
-// routeKept runs --close. A room kept by the relay while its host is away is taken up
-// by --resume as a live session, with its files set from the record.
+// runWithoutShare runs what neither shares nor joins: help, the version, or a
+// subcommand.
+func runWithoutShare(args []string, stdout, stderr io.Writer) (code int, ok bool) {
+	if len(args) == 1 {
+		switch args[0] {
+		case "-h", "--help":
+			fmt.Fprintln(stdout, usage)
+			return 0, true
+		case "-v", "--version":
+			fmt.Fprintln(stdout, getVersion())
+			return 0, true
+		}
+	}
+	return runSubcommand(args, stdout, stderr)
+}
+
+// routeKept runs --close, the alias of pedit close kept for one release. A room
+// kept by the relay while its host is away is taken up by --resume as a live
+// session, with its files set from the record.
 func routeKept(opts *commandArgs, stdout, stderr io.Writer) (code int, done bool) {
+	if opts.Close {
+		closeOptionNotice(stderr, *opts)
+		return closeRoom(*opts, stdout, stderr), true
+	}
 	if opts.Resume == "" && !opts.ResumeAny {
 		return 0, false
 	}
-	if code := chooseResume(opts, stdout, stderr); code != 0 {
-		return code, true
-	}
-	if opts.Close {
-		return closeKept(*opts, stdout, stderr), true
-	}
-	return 0, false
+	code = chooseResume(opts, stdout, stderr)
+	return code, code != 0
 }
 
 // splitMore tells which of the files after the first start with the room and
@@ -304,7 +319,7 @@ func leave(out *ui, stderr io.Writer, s *session.Session, arg string, scratch, s
 	kept := func() bool { return stopped && !s.KeptUntil().IsZero() }
 	code := finish(out, stderr, arg, scratch, s.Stop, kept)
 	if kept() {
-		room := keptRoomOf(s.URL)
+		room := roomOf(s.URL)
 		out.keptHint(s.KeptUntil(), room, otherKeptRooms(project, room), displayPath(arg))
 	}
 	return code
@@ -495,7 +510,7 @@ func runJoin(opts commandArgs, out *ui, stderr io.Writer) int {
 		return 1
 	}
 	file := displayPath(s.File())
-	out.joined(file, s.Temporary(), clipboard.Copy(s.File()))
+	out.joined(file, opts.Room, s.Temporary(), clipboard.Copy(s.File()))
 
 	<-ctx.Done()
 	// A second signal gives up on saving.
