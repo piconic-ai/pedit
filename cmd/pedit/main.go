@@ -108,18 +108,8 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
-	if code, ok := runSubcommand(args, stdout, stderr); ok {
+	if code, ok := runWithoutShare(args, stdout, stderr); ok {
 		return code
-	}
-	if len(args) == 1 {
-		switch args[0] {
-		case "-h", "--help":
-			fmt.Fprintln(stdout, usage)
-			return 0
-		case "-v", "--version":
-			fmt.Fprintln(stdout, getVersion())
-			return 0
-		}
 	}
 
 	opts, err := parseArgs(args)
@@ -281,6 +271,22 @@ func run(args []string, stdout, stderr io.Writer) int {
 	code = max(code, hostEnded(out, arg, st, s.Client.TimeLimit(), selfUpgradeCommand))
 	notifyUpdate(out, latest)
 	return code
+}
+
+// runWithoutShare runs what neither shares nor joins: help, the version, or a
+// subcommand.
+func runWithoutShare(args []string, stdout, stderr io.Writer) (code int, ok bool) {
+	if len(args) == 1 {
+		switch args[0] {
+		case "-h", "--help":
+			fmt.Fprintln(stdout, usage)
+			return 0, true
+		case "-v", "--version":
+			fmt.Fprintln(stdout, getVersion())
+			return 0, true
+		}
+	}
+	return runSubcommand(args, stdout, stderr)
 }
 
 // routeKept runs --close, the alias of pedit close kept for one release. A room
