@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/piconic-ai/pedit/internal/filewriter"
@@ -639,10 +640,15 @@ func (s keptTextState) hasPending() bool {
 
 func (h *keptTextHost) nothingPending() bool { return !h.state.hasPending() }
 
-// PruneOldKept removes the records in project of the older kind of kept room,
-// which was taken in by polling and can no longer be resumed, unless one still
-// has a write to finish. It tells notify how many it removed.
-func PruneOldKept(project string, notify func(int)) error {
+// expiredGrace is how long after its deadline a room's record is kept, so a
+// clock that runs a little fast does not lose one.
+const expiredGrace = time.Hour
+
+// PruneKept removes, without asking the relay, the records in project of rooms
+// past their deadline (by more than expiredGrace) and of the older kind of kept
+// room, which was taken in by polling and can no longer be resumed. A record
+// with a write to finish stays. It tells notify how many it removed.
+func PruneKept(project string, notify func(int)) error {
 	project, e := filepath.Abs(project)
 	if e != nil {
 		return errors.New("invalid kept project")
@@ -656,7 +662,8 @@ func PruneOldKept(project string, notify func(int)) error {
 	for _, path := range paths {
 		room := strings.TrimSuffix(filepath.Base(path), ".json")
 		var s keptTextState
-		if !keptTextRoomID.MatchString(room) || readKeptState(path, &s) != nil || s.Socket || s.hasPending() {
+		if !keptTextRoomID.MatchString(room) || readKeptState(path, &s) != nil || s.hasPending() ||
+			s.Socket && (s.Until <= 0 || s.Until >= time.Now().Add(-expiredGrace).UnixMilli()) {
 			continue
 		}
 		if os.Remove(path) == nil {

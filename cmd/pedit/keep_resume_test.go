@@ -200,3 +200,37 @@ func TestCloseRemovesRecordsOfOlderRoomsEvenWithoutAKeptRoom(t *testing.T) {
 		t.Fatal("removed a record with a write pending")
 	}
 }
+
+func TestListingRemovesRecordsPastTheirDeadline(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("kept rooms are not supported on Windows")
+	}
+	root := keptProject(t, "")
+	dead, pending, live := "CCCCCCCCCCCCCCCCCCCCCC", "DDDDDDDDDDDDDDDDDDDDDD", testRoom
+	gone := time.Now().Add(-3 * time.Hour)
+	keptHere(t, root, dead, true, gone, filepath.Join(root, "a.md"))
+	keptHere(t, root, pending, true, gone, filepath.Join(root, "b.md"))
+	keptHere(t, root, live, true, time.Now().Add(time.Hour), filepath.Join(root, "c.md"))
+	path := recordPath(t, root, pending)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw = bytes.Replace(raw, []byte(`"Path":"b.md"`), []byte(`"Path":"b.md","Pending":"x"`), 1)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errw bytes.Buffer
+	opts := commandArgs{Resume: dead}
+	if code := chooseResume(&opts, &out, &errw); code != 1 || !strings.Contains(out.String(), "Removed 1 resume record(s) of finished rooms.") {
+		t.Fatalf("%d %q %q", code, out.String(), errw.String())
+	}
+	if _, err := os.Stat(recordPath(t, root, dead)); !os.IsNotExist(err) {
+		t.Fatal("the record of the dead room is still there")
+	}
+	for _, room := range []string{pending, live} {
+		if _, err := os.Stat(recordPath(t, root, room)); err != nil {
+			t.Fatalf("removed %s", room)
+		}
+	}
+}

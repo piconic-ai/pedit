@@ -89,6 +89,7 @@ func resumeHeld(opts *commandArgs, stdout, stderr io.Writer) (code int) {
 	if err != nil || cfg.Keep == "0" && opts.Keep == 0 {
 		return 0
 	}
+	pruneKept(cfg.root, stdout)
 	records, err := session.ListKeptText(cfg.root)
 	if err != nil {
 		return 0
@@ -188,6 +189,7 @@ func chooseResume(opts *commandArgs, stdout, stderr io.Writer) (code int) {
 	}
 	var records []session.KeptTextRecord
 	if err == nil {
+		pruneKept(cfg.root, stdout)
 		records, err = session.ListKeptText(cfg.root)
 	}
 	if err != nil {
@@ -217,19 +219,11 @@ func chooseResume(opts *commandArgs, stdout, stderr io.Writer) (code int) {
 	return 1
 }
 
-// pruneOldRooms removes the records of rooms kept by an older version of
-// pedit, which can no longer be resumed.
-func pruneOldRooms(stdout io.Writer) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return
-	}
-	cfg, err := loadConfig(cwd)
-	if err != nil {
-		return
-	}
-	_ = session.PruneOldKept(cfg.root, func(n int) {
-		fmt.Fprintf(stdout, "Removed %d resume record(s) of rooms kept by an older version.\n", n)
+// pruneKept removes the records of rooms that are over (past their deadline,
+// or kept by an older version of pedit), so none is listed or resumed.
+func pruneKept(project string, stdout io.Writer) {
+	_ = session.PruneKept(project, func(n int) {
+		fmt.Fprintf(stdout, "Removed %d resume record(s) of finished rooms.\n", n)
 	})
 }
 

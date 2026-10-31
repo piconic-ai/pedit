@@ -185,11 +185,13 @@ func resumeAway(ctx context.Context, opts *Options) (*resumed, error) {
 	defer h.closeFiles()
 	conn, err := h.dialAway(ctx, opts.Dial, opts.Header)
 	if err != nil {
+		h.dropIfGone(err)
 		return nil, err
 	}
 	r := &resumed{roomID: h.room, state: h.state, conn: conn}
 	if err := r.takeIn(ctx, h); err != nil {
 		_ = conn.Leave()
+		h.dropIfGone(err)
 		return nil, err
 	}
 	r.state = h.state
@@ -371,6 +373,7 @@ func (h *keptTextHost) closeAway(ctx context.Context, dial protocol.Dialer) erro
 		if roomClosed(err) {
 			return os.Remove(h.path)
 		}
+		h.dropIfGone(err)
 		if err != nil {
 			return err
 		}
@@ -397,6 +400,15 @@ func (h *keptTextHost) closeAway(ctx context.Context, dial protocol.Dialer) erro
 		if status, err := closeRequest(ctx, h.client, &h.state, h.room, h.after); err != nil && status != http.StatusConflict {
 			return err
 		}
+	}
+}
+
+// dropIfGone removes the record when the relay turned the host away because
+// the room is over (ended or expired), unless a write is still pending.
+func (h *keptTextHost) dropIfGone(err error) {
+	var closed *protocol.CloseError
+	if errors.As(err, &closed) && (closed.Code == protocol.RoomClosed || closed.Code == protocol.RoomExpired) && h.nothingPending() {
+		_ = os.Remove(h.path)
 	}
 }
 

@@ -274,15 +274,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return code
 }
 
-// routeKept runs --close, which first removes the records of rooms kept by an
-// older version. A room kept by the relay while its host is away is taken up
+// routeKept runs --close. A room kept by the relay while its host is away is taken up
 // by --resume as a live session, with its files set from the record.
 func routeKept(opts *commandArgs, stdout, stderr io.Writer) (code int, done bool) {
 	if opts.Resume == "" && !opts.ResumeAny {
 		return 0, false
-	}
-	if opts.Close {
-		pruneOldRooms(stdout)
 	}
 	if code := chooseResume(opts, stdout, stderr); code != 0 {
 		return code, true

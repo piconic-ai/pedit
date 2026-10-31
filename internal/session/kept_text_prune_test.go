@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/piconic-ai/pedit/internal/protocol"
 	"github.com/reearth/ygo/crdt"
@@ -54,24 +55,26 @@ func TestKeptTextCloseRemovesOnlyOldRecordsOfThisProject(t *testing.T) {
 	isolateKeptUserConfig(t)
 	soon, later := int64(1), int64(1)<<60
 	project, other := t.TempDir(), t.TempDir()
+	pending := "x"
 	_, current, _ := pruneRecord(t, project, "https://example.test", 1, later, nil)
 	_, old, _ := keptRecord(t, project, "https://example.test", 2, soon, nil, false)
-	pending := "x"
 	_, pendingPath, _ := keptRecord(t, project, "https://example.test", 3, soon, &pending, false)
-	_, expired, _ := pruneRecord(t, project, "https://example.test", 4, soon, nil)
+	_, expired, _ := pruneRecord(t, project, "https://example.test", 4, time.Now().Add(-2*time.Hour).UnixMilli(), nil)
+	_, recent, _ := pruneRecord(t, project, "https://example.test", 6, time.Now().Add(-time.Minute).UnixMilli(), nil)
+	_, expiredPending, _ := pruneRecord(t, project, "https://example.test", 7, time.Now().Add(-2*time.Hour).UnixMilli(), &pending)
 	_, otherOld, _ := keptRecord(t, other, "https://example.test", 5, soon, nil, false)
 	junk := filepath.Join(filepath.Dir(current), "AAAAAAAAAAAAAAAAAAAAAA.json")
 	if err := os.WriteFile(junk, []byte("{"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	pruned := 0
-	if err := PruneOldKept(project, func(n int) { pruned = n }); err != nil {
+	if err := PruneKept(project, func(n int) { pruned = n }); err != nil {
 		t.Fatal(err)
 	}
-	if pruned != 1 || exists(old) {
-		t.Fatalf("pruned=%d, old record exists=%v", pruned, exists(old))
+	if pruned != 2 || exists(old) || exists(expired) {
+		t.Fatalf("pruned=%d, old record exists=%v, expired %v", pruned, exists(old), exists(expired))
 	}
-	for name, p := range map[string]string{"current": current, "write pending": pendingPath, "relay's, though past its deadline": expired, "other project": otherOld, "unparsable": junk} {
+	for name, p := range map[string]string{"current": current, "write pending": pendingPath, "just past its deadline": recent, "expired with a write pending": expiredPending, "other project": otherOld, "unparsable": junk} {
 		if !exists(p) {
 			t.Errorf("removed %s record", name)
 		}

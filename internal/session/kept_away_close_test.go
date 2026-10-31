@@ -190,3 +190,31 @@ func TestCloseTakesInAnEditThatArrivedBeforeTheClose(t *testing.T) {
 		t.Fatal("record kept after a successful close")
 	}
 }
+
+// A relay that turns the returning host away because the room expired has
+// nothing left to resume: the record goes, unless a write is pending.
+func TestResumeOfAnExpiredRoomRemovesTheRecord(t *testing.T) {
+	for _, pending := range []bool{false, true} {
+		a := newAwayRoom(t, "notes\n")
+		keepAndLeave(t, a)
+		a.relay.OnDial = func(c *prototest.ScriptConn) { c.CloseWith(protocol.RoomExpired) }
+		path := keptTestStatePath(t, a.project, a.id)
+		if pending {
+			record := a.record()
+			text := "x"
+			record.Files[0].Pending = &text
+			if err := saveKeptState(path, record); err != nil {
+				t.Fatal(err)
+			}
+		}
+		opts := a.options()
+		opts.Resume = a.id
+		if s, err := Start(context.Background(), opts); err == nil {
+			_ = s.Stop()
+			t.Fatal("resumed an expired room")
+		}
+		if _, err := os.Stat(path); (err == nil) != pending {
+			t.Fatalf("pending %v: record present %v", pending, err == nil)
+		}
+	}
+}

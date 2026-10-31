@@ -145,11 +145,11 @@ func TestFileDoesNotResumeAnExpiredOrOldRoom(t *testing.T) {
 	}
 	root := keptProject(t, "")
 	a := filepath.Join(root, "a.md")
-	keptHere(t, root, testRoom, true, time.Now().Add(-time.Hour), a)
+	keptHere(t, root, testRoom, true, time.Now().Add(-time.Minute), a)
 	keptHere(t, root, "CCCCCCCCCCCCCCCCCCCCCC", false, time.Now().Add(time.Hour), a)
 	var out, errw bytes.Buffer
 	opts, _ := parseArgs([]string{"a.md", "b.md"})
-	if code := resumeHeld(&opts, &out, &errw); code != 0 || opts.Resume != "" || out.Len() != 0 {
+	if code := resumeHeld(&opts, &out, &errw); code != 0 || opts.Resume != "" {
 		t.Fatalf("%+v %d %q", opts, code, out.String())
 	}
 	if err := applyConfigKeep(&opts); err != nil || opts.Keep != 24*time.Hour {
