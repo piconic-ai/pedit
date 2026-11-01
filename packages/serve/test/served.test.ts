@@ -54,6 +54,21 @@ live('ServedFiles', () => {
     bridge.close()
   })
 
+  it('reports the generation, and refuses a child that gives none', async () => {
+    const { dir, files } = setup()
+    const served = await files.acquire(write(dir, 'a.md'))
+    expect(served.generation).toMatch(/^[0-9a-f]{32}$/)
+    const old = write(
+      dir,
+      'old-pedit',
+      '#!/bin/sh\necho \'{"event":"listening","socket":"/x"}\'\nread _\n',
+    )
+    chmodSync(old, 0o755)
+    const other = new ServedFiles({ bin: old, app: 'test-app' })
+    cleanups.push(() => other.close())
+    await expect(other.acquire(write(dir, 'b.md'))).rejects.toThrow(/generation/)
+  })
+
   it('shares one child between a hard link, a symlink and a case variant', async () => {
     const { dir, files, events } = setup()
     const a = write(dir, 'a.md')

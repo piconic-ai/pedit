@@ -7,9 +7,27 @@ import { yCollab } from 'y-codemirror.next'
 const status = document.getElementById('status')
 const name = `guest-${Math.random().toString(36).slice(2, 6)}`
 
+// `gone`: pedit lost the document's history (its saved state was discarded), so this page's
+// copy cannot be merged into the new one. What the page typed is still in `conn.doc`; the app
+// decides between copying it out and reloading. This sample offers both.
+function offerCopy(conn, error) {
+  status.textContent = `${error.message}. `
+  const copy = document.createElement('button')
+  copy.textContent = 'Copy your text'
+  copy.onclick = async () => {
+    await navigator.clipboard.writeText(conn.text.toString())
+    copy.textContent = 'Copied'
+  }
+  const reload = document.createElement('button')
+  reload.textContent = 'Reload'
+  reload.onclick = () => location.reload()
+  status.append(copy, ' ', reload)
+}
+
 try {
   const conn = await connect('/edit', 'demo', { name, color: '#3b82f6' })
   const show = (s, error) => {
+    if (error?.code === 'gone') return offerCopy(conn, error)
     status.textContent = error
       ? `${s}: ${error.code}`
       : s === 'connected'

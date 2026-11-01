@@ -202,6 +202,14 @@ the file's last written text, so the later write and log truncation follow the
 usual order. A file that cannot be read, is not UTF-8 or exceeds the frame
 limit is not merged and is refused as an external change, preserving it.
 
+### pedit serve
+
+`pedit serve` keeps a record of the same kind for the one document it serves:
+a state file in the user's state directory with the Yjs document, the text
+last written and a generation id, trusted only against the file (a save made
+meanwhile is merged as an external edit, as above). It has no relay, journal or
+log. See [serve.md](serve.md).
+
 ### Comments
 
 Each text file inside the project also gets a paired comments doc (root map

@@ -153,6 +153,7 @@ Origin checks, loopback-only peers by default, limits on files and clients, and
 an idle shutdown that stops the child when the last page leaves. It has no
 authentication of its own: the app's `resolve` hook decides who gets which file.
 `examples/serve-app` is a complete sample.
+How the recovery state and the generation work: [design/serve.md](design/serve.md).
 
 ## Programs pedit runs
 

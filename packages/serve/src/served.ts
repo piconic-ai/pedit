@@ -25,6 +25,8 @@ export interface ServedFilesOptions {
 
 export interface ServedFile {
   readonly path: string
+  /** Names the document: the same after a restart that restored it, new when it started afresh. */
+  readonly generation: string
   /** One connection to the child's socket; at most 8 per file (LimitError). */
   dial(role: Role): Promise<Bridge>
 }
@@ -35,6 +37,7 @@ interface Entry {
   child: ChildProcess
   ready: Promise<string>
   socket: string | undefined
+  generation: string
   clients: number
   idle: NodeJS.Timeout | undefined
   stopping: 'idle' | 'shutdown' | undefined
@@ -147,6 +150,7 @@ export class ServedFiles {
       child,
       ready,
       socket: undefined,
+      generation: '',
       clients: 0,
       idle: undefined,
       stopping: undefined,
@@ -154,6 +158,9 @@ export class ServedFiles {
       dead: false,
       handle: {
         path,
+        get generation() {
+          return entry.generation
+        },
         dial: (role) => this.#dial(entry, role),
       },
     }
@@ -178,7 +185,12 @@ export class ServedFiles {
         return
       }
       if (ev.event === 'listening' && typeof ev.socket === 'string' && !entry.socket) {
+        if (typeof ev.generation !== 'string' || ev.generation === '') {
+          errorMessage = 'pedit did not report a generation; it is too old'
+          return child.kill('SIGTERM')
+        }
         entry.socket = ev.socket
+        entry.generation = ev.generation
         this.#emit({ type: 'started', path })
         this.#armIdle(entry)
         onReady(ev.socket)

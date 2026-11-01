@@ -1,7 +1,8 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import type { Server } from 'node:http'
 import { createServer } from 'node:net'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { serve } from '@hono/node-server'
 import { createNodeWebSocket } from '@hono/node-ws'
@@ -18,6 +19,7 @@ const realWS = globalThis.WebSocket
 const g = globalThis as Record<string, unknown>
 let sockets: WS[] = []
 let sessions = 0
+let generations: string[] = []
 
 afterEach(async () => {
   for (const c of cleanups.splice(0).reverse()) await c()
@@ -29,6 +31,7 @@ afterEach(async () => {
 beforeEach(() => {
   sockets = []
   sessions = 0
+  generations = []
 })
 
 async function freePort(): Promise<number> {
@@ -43,6 +46,11 @@ async function freePort(): Promise<number> {
 /** Node's fetch and WebSocket send no Origin; a browser does. Add it, and count what the client does. */
 async function start(role: 'edit' | 'read' = 'edit', text = 'hello\n') {
   const { dir, cleanup } = tmpRoot()
+  // pedit keeps its recovery state under the user's config directory: give it one of our own.
+  const home = realpathSync(mkdtempSync(join(tmpdir(), 'pedit-serve-home-')))
+  const saved = { HOME: process.env.HOME, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME }
+  process.env.HOME = home
+  process.env.XDG_CONFIG_HOME = join(home, '.config')
   const root = join(dir, 'root')
   mkdirSync(root)
   const file = write(root, 'a.md', text)
@@ -71,11 +79,23 @@ async function start(role: 'edit' | 'read' = 'edit', text = 'hello\n') {
         ;(server as Server).closeAllConnections()
       }),
     cleanup,
+    () => {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k]
+        else process.env[k] = v
+      }
+      rmSync(home, { recursive: true, force: true })
+    },
   )
   g.location = { origin }
   globalThis.fetch = (url, init = {}) => {
-    if (String(url).endsWith('/session')) sessions++
-    return realFetch(url, { ...init, headers: { origin } })
+    const res = realFetch(url, { ...init, headers: { origin } })
+    if (!String(url).endsWith('/session')) return res
+    sessions++
+    return res.then(async (r) => {
+      if (r.ok) generations.push(((await r.clone().json()) as { generation: string }).generation)
+      return r
+    })
   }
   globalThis.WebSocket = class extends WS {
     constructor(url: string, protocols?: string | string[]) {
@@ -83,7 +103,28 @@ async function start(role: 'edit' | 'read' = 'edit', text = 'hello\n') {
       sockets.push(this)
     }
   } as unknown as typeof globalThis.WebSocket
-  return { file, routes, root, setRole: (r: 'edit' | 'read') => (current = r) }
+  /** Forget every recovery state, as if they had aged out. */
+  const discardState = () => {
+    const walk = (d: string) => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const p = join(d, e.name)
+        if (e.isDirectory() && e.name === 'state' && d.endsWith(join('pedit', 'serve')))
+          rmSync(p, { recursive: true })
+        else if (e.isDirectory()) walk(p)
+      }
+    }
+    walk(home)
+  }
+  return { file, routes, root, discardState, setRole: (r: 'edit' | 'read') => (current = r) }
+}
+
+function execFileSyncOk(cmd: string, args: string[]): boolean {
+  try {
+    execFileSync(cmd, args, { stdio: 'pipe' })
+    return true
+  } catch {
+    return false
+  }
 }
 
 const until = async (cond: () => boolean, ms = 8000) => {
@@ -120,24 +161,30 @@ live('connect', () => {
     expect(c.status.get()).toBe('connected')
   })
 
-  // pedit serve itself never sends 4001/4003 on a stop (the routes turn a child's exit into
-  // 1011), so these close the socket from the client side with the code a relay would send.
-  it.each([
-    [4001, 'gone'],
-    [4003, 'forbidden'],
-  ])('stops with a PeditError on close code %i and never reconnects', async (code, want) => {
+  it('stops with `forbidden` on close code 4003 and never reconnects', async () => {
     await start()
     const c = await connect('/edit', 'a')
     const seen: [Status, string | undefined][] = []
     c.status.subscribe((s, e) => seen.push([s, e?.code]))
     const before = sessions
-    sockets[0]?.close(code)
+    sockets[0]?.close(4003)
     await until(() => c.status.get() === 'closed')
-    expect(seen.at(-1)).toEqual(['closed', want])
+    expect(seen.at(-1)).toEqual(['closed', 'forbidden'])
     await sleep(1500)
     expect(sessions).toBe(before)
     expect(sockets).toHaveLength(1)
     c.destroy()
+  })
+
+  it('on close code 4001 re-issues a session and reconnects when the generation is the same', async () => {
+    await start()
+    const c = await connect('/edit', 'a')
+    cleanups.push(() => c.destroy())
+    sockets[0]?.close(4001)
+    await until(() => sessions === 2 && c.status.get() === 'connected')
+    expect(generations).toHaveLength(2)
+    expect(generations[1]).toBe(generations[0])
+    expect(c.text.toString()).toBe('hello\n')
   })
 
   it('stops with `forbidden` when the session re-issue is refused', async () => {
@@ -151,16 +198,40 @@ live('connect', () => {
     c.destroy()
   })
 
-  it('reconnects to a restarted pedit without duplicating its old copy', async () => {
+  it('reconnects to a restarted pedit that kept its state, without duplicating the text', async () => {
     const { file, root } = await start()
     const c = await connect('/edit', 'a')
+    cleanups.push(() => c.destroy())
     const before = sessions
     execFileSync('pkill', ['-TERM', '-f', root])
     await until(() => sessions > before && c.status.get() === 'connected', 15000)
+    expect(generations.at(-1)).toBe(generations[0])
     expect(c.text.toString()).toBe('hello\n')
     await sleep(300)
+    expect(c.text.toString()).toBe('hello\n')
     expect(readFileSync(file, 'utf8')).toBe('hello\n')
-    c.destroy()
+  })
+
+  it('stops with `gone` when the restarted pedit lost its state, and keeps the page text', async () => {
+    const { root, discardState } = await start()
+    const c = await connect('/edit', 'a')
+    cleanups.push(() => c.destroy())
+    c.text.insert(5, ' typed')
+    const before = sessions
+    // The child saves on SIGTERM, so remove the state once it has exited.
+    execFileSync('pkill', ['-TERM', '-f', root])
+    await sleep(300)
+    await until(() => execFileSyncOk('pgrep', ['-f', root]) === false)
+    discardState()
+    const err = await new Promise<PeditError | undefined>((resolve) =>
+      c.status.subscribe((s, e) => s === 'closed' && resolve(e)),
+    )
+    expect(err).toMatchObject({ code: 'gone' })
+    expect(generations).toHaveLength(sessions)
+    expect(sessions).toBeGreaterThan(before)
+    expect(generations.at(-1)).not.toBe(generations[0])
+    expect(sockets).toHaveLength(1)
+    expect(c.text.toString()).toBe('hello typed\n')
   })
 
   it('rejects connect when the first socket drops and the retry session is refused', async () => {
