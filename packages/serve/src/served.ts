@@ -207,7 +207,7 @@ export class ServedFiles {
       entry.dead = true
       clearTimeout(entry.idle)
       if (this.#byPath.get(path) === entry) this.#byPath.delete(path)
-      if (this.#byIno.get(ino) === entry) this.#byIno.delete(ino)
+      if (this.#byIno.get(entry.ino) === entry) this.#byIno.delete(entry.ino)
       if (!entry.socket) {
         if (missing) onFail(new NoPeditError('the pedit binary cannot be run'))
         else if (code === 3 && held) onFail(new HeldError(held))

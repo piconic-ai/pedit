@@ -82,6 +82,19 @@ live('ServedFiles', () => {
     expect(await files.acquire(a)).toBe(served)
   })
 
+  it('forgets a re-indexed inode when the child stops', async () => {
+    const { dir, files } = setup('reindex', 300)
+    const a = write(dir, 'a.md')
+    const served = await files.acquire(a)
+    writeFileSync(join(dir, '.tmp'), 'replaced\n')
+    renameSync(join(dir, '.tmp'), a)
+    expect(await files.acquire(a)).toBe(served) // re-indexed under the new inode
+    await sleep(2000) // idle stop
+    linkSync(a, join(dir, 'c.md'))
+    const again = await files.acquire(join(dir, 'c.md'))
+    expect(again.path).toBe(join(dir, 'c.md'))
+  })
+
   it('refuses a file another app holds, naming the holder', async () => {
     const one = setup('app-one')
     const path = write(one.dir, 'a.md')
