@@ -460,6 +460,14 @@ func (s *Server) accept(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	s.clients[c] = struct{}{}
+	// c owns the awareness IDs ygo accepted from it, not the ones it echoed.
+	off := s.aw.OnUpdate(func(ev awareness.UpdateEvent) {
+		if ev.Origin == c {
+			for _, id := range append(ev.Added, ev.Updated...) {
+				c.ids[id] = true
+			}
+		}
+	})
 	if !c.reader { // a reader has nothing to send back
 		s.send(c, frame(msgSync, ysync.EncodeSyncStep1(s.doc)))
 	}
@@ -484,6 +492,10 @@ func (s *Server) accept(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			break
 		}
+		if !c.frames.allow() { // text frames count too
+			ending = errTooManyFrames
+			break
+		}
 		if typ != websocket.MessageBinary {
 			continue
 		}
@@ -492,6 +504,7 @@ func (s *Server) accept(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
+	off()
 	s.mu.Lock()
 	delete(s.clients, c)
 	s.leave(c)
@@ -546,15 +559,12 @@ func (s *Server) handle(c *client, data []byte) (err error) {
 	defer func() {
 		// ygo can panic on a malformed update; a client must not end the process.
 		if r := recover(); r != nil {
-			err = fmt.Errorf("malformed frame: %v", r)
+			err = malformed(fmt.Errorf("%v", r))
 		}
 	}()
-	if !c.frames.allow() {
-		return errTooManyFrames
-	}
 	kind, sub, rest, err := parseFrame(data)
 	if err != nil {
-		return errMalformed
+		return malformed(err)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -579,7 +589,7 @@ func (s *Server) handleSync(c *client, sub uint64, msg []byte) error {
 	}
 	reply, err := ysync.ApplySyncMessage(s.doc, msg, c)
 	if err != nil {
-		return err
+		return malformed(err)
 	}
 	if len(reply) > 0 {
 		s.send(c, frame(msgSync, reply))
@@ -594,7 +604,7 @@ func (s *Server) handleAwareness(c *client, payload []byte) error {
 	if err == nil {
 		var ids []uint64
 		if ids, err = awarenessIDs(update); err == nil {
-			err = s.reserveAwareness(c, ids)
+			err = s.checkAwareness(c, ids)
 		}
 	}
 	var ce *closeError
@@ -602,10 +612,10 @@ func (s *Server) handleAwareness(c *client, payload []byte) error {
 	case errors.As(err, &ce):
 		return ce
 	case err != nil:
-		return errMalformed
+		return malformed(err)
 	}
 	if err := s.aw.ApplyUpdate(update, c); err != nil {
-		return err
+		return malformed(err)
 	}
 	s.broadcast(frame(msgAwareness, payload), c)
 	return nil

@@ -130,7 +130,7 @@ func TestReaderReceivesDocumentAndAwarenessAndMaySendAwareness(t *testing.T) {
 
 func TestMalformedFrameClosesWith1003(t *testing.T) {
 	s, _, _ := open(t, "x\n")
-	for _, b := range [][]byte{{0x80}, {}, {0x00, 0x80}} {
+	for _, b := range [][]byte{{0x80}, {}, {0x00, 0x80}, {0x00, 0x00}, {0x00, 0x02, 0x01, 0xff}, {0x01, 0x01, 0xff}} {
 		c := dial(t, s.SocketPath())
 		c.raw(b)
 		c.wantClosed(websocket.StatusUnsupportedData, "malformed frame")
@@ -187,6 +187,39 @@ func TestAwarenessCaps(t *testing.T) {
 	})
 }
 
+func TestEchoedAwarenessIsNotTheEchoersOwn(t *testing.T) {
+	s, _, _ := open(t, "x\n")
+	a, b := dial(t, s.SocketPath()), dial(t, s.SocketPath())
+	var all []uint64
+	for i := range 16 {
+		all = append(all, uint64(100+i))
+	}
+	a.raw(awarenessIDsFrame(all[:8]...))
+	b.raw(awarenessIDsFrame(all[8:]...))
+	eventually(t, "sixteen ids", func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return len(s.aw.GetStates()) >= 16
+	})
+	// b echoes what it was told, as y-websocket does: all of it in one frame.
+	b.raw(awarenessIDsFrame(all...))
+	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-b.done:
+		t.Fatal("the echoing connection was closed")
+	default:
+	}
+	_ = b.conn.Close(websocket.StatusNormalClosure, "")
+	<-b.done
+	time.Sleep(100 * time.Millisecond)
+	s.mu.Lock()
+	_, present := s.aw.GetStates()[all[0]]
+	s.mu.Unlock()
+	if !present {
+		t.Fatal("an echo made b own a's awareness client")
+	}
+}
+
 func TestRateLimits(t *testing.T) {
 	s, _, _ := openWith(t, "x\n", func(o *Options) { o.FrameRate = 50 })
 	t.Run("sync step 1", func(t *testing.T) {
@@ -200,6 +233,13 @@ func TestRateLimits(t *testing.T) {
 		c := dial(t, s.SocketPath())
 		for range 500 {
 			c.raw([]byte{0x07})
+		}
+		c.wantClosed(websocket.StatusPolicyViolation, "too many frames")
+	})
+	t.Run("text frames", func(t *testing.T) {
+		c := dial(t, s.SocketPath())
+		for range 500 {
+			_ = c.conn.Write(context.Background(), websocket.MessageText, []byte("hi"))
 		}
 		c.wantClosed(websocket.StatusPolicyViolation, "too many frames")
 	})

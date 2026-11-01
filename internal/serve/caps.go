@@ -30,16 +30,26 @@ const (
 type closeError struct {
 	code   websocket.StatusCode
 	reason string
+	cause  error // what went wrong, for OnError; not sent
 }
 
-func (e *closeError) Error() string { return e.reason }
+func (e *closeError) Error() string {
+	if e.cause != nil {
+		return e.reason + ": " + e.cause.Error()
+	}
+	return e.reason
+}
+
+// malformed is a frame the client got wrong: a close with 1003.
+func malformed(cause error) error {
+	return &closeError{websocket.StatusUnsupportedData, "malformed frame", cause}
+}
 
 var (
-	errReadOnly      = &closeError{4003, "read-only connection"}
-	errMalformed     = &closeError{websocket.StatusUnsupportedData, "malformed frame"}
-	errTooManyFrames = &closeError{websocket.StatusPolicyViolation, "too many frames"}
-	errTooManyStep1  = &closeError{websocket.StatusPolicyViolation, "too many sync requests"}
-	errTooManyAware  = &closeError{websocket.StatusPolicyViolation, "too many awareness clients"}
+	errReadOnly      = &closeError{4003, "read-only connection", nil}
+	errTooManyFrames = &closeError{websocket.StatusPolicyViolation, "too many frames", nil}
+	errTooManyStep1  = &closeError{websocket.StatusPolicyViolation, "too many sync requests", nil}
+	errTooManyAware  = &closeError{websocket.StatusPolicyViolation, "too many awareness clients", nil}
 )
 
 // bucket is a token bucket of rate tokens per second, rate at most at once.
@@ -87,10 +97,7 @@ func awarenessIDs(update []byte) ([]uint64, error) {
 	if err != nil {
 		return nil, err
 	}
-	if n > maxConnAwareness {
-		return nil, errTooManyAware
-	}
-	ids := make([]uint64, 0, n)
+	var ids []uint64
 	for range n {
 		id, err := dec.ReadVarUint()
 		if err != nil {
@@ -107,21 +114,24 @@ func awarenessIDs(update []byte) ([]uint64, error) {
 	return ids, nil
 }
 
-// reserveAwareness records ids as announced by c, or refuses if c or the room
-// would hold too many. ygo's SetMaxClients is not used: it silently skips new
-// IDs and counts removal tombstones, so a room with churn would stop showing
-// new people. The caller holds s.mu.
-func (s *Server) reserveAwareness(c *client, ids []uint64) error {
-	var added []uint64
+// checkAwareness refuses an update that would make c or the room hold too
+// many awareness client IDs. Only IDs the room does not know yet count: a
+// provider echoes what it received, and an echo is neither new nor c's. The
+// IDs c owns are recorded as ygo accepts them (see accept). ygo's
+// SetMaxClients is not used: it silently skips new IDs and counts removal
+// tombstones, so a room with churn would stop showing new people. The caller
+// holds s.mu.
+func (s *Server) checkAwareness(c *client, ids []uint64) error {
+	var fresh []uint64
 	for _, id := range ids {
-		if !c.ids[id] && !contains(added, id) {
-			added = append(added, id)
+		if _, known := s.aw.Meta(id); !known && !c.ids[id] && !contains(fresh, id) {
+			fresh = append(fresh, id)
 		}
 	}
-	if len(added) == 0 {
+	if len(fresh) == 0 {
 		return nil
 	}
-	if len(c.ids)+len(added) > maxConnAwareness {
+	if len(c.ids)+len(fresh) > maxConnAwareness {
 		return errTooManyAware
 	}
 	room := map[uint64]bool{}
@@ -130,14 +140,8 @@ func (s *Server) reserveAwareness(c *client, ids []uint64) error {
 			room[id] = true
 		}
 	}
-	for _, id := range added {
-		room[id] = true
-	}
-	if len(room) > maxRoomAwareness {
+	if len(room)+len(fresh) > maxRoomAwareness {
 		return errTooManyAware
-	}
-	for _, id := range added {
-		c.ids[id] = true
 	}
 	return nil
 }
