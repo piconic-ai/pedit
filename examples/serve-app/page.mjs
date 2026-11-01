@@ -1,29 +1,35 @@
 import { markdown } from '@codemirror/lang-markdown'
+import { EditorState } from '@codemirror/state'
+import { connect } from '@pedit/serve/client'
 import { basicSetup, EditorView } from 'codemirror'
 import { yCollab } from 'y-codemirror.next'
-import { WebsocketProvider } from 'y-websocket'
-import * as Y from 'yjs'
-
-// The document is the one pedit serve holds: the file's text is the Y.Text
-// "content", as in a live room.
-const doc = new Y.Doc()
-const provider = new WebsocketProvider(
-  `ws://${location.host}${location.pathname.replace(/\/$/, '')}`,
-  'file',
-  doc,
-)
-const text = doc.getText('content')
-
-const name = `guest-${Math.random().toString(36).slice(2, 6)}`
-provider.awareness.setLocalStateField('user', { name, color: '#3b82f6', colorLight: '#3b82f633' })
 
 const status = document.getElementById('status')
-provider.on('status', ({ status: s }) => {
-  status.textContent = s === 'connected' ? `connected as ${name}` : s
-})
+const name = `guest-${Math.random().toString(36).slice(2, 6)}`
 
-new EditorView({
-  doc: text.toString(),
-  extensions: [basicSetup, markdown(), EditorView.lineWrapping, yCollab(text, provider.awareness)],
-  parent: document.getElementById('editor'),
-})
+try {
+  const conn = await connect('/edit', 'demo', { name, color: '#3b82f6' })
+  const show = (s, error) => {
+    status.textContent = error
+      ? `${s}: ${error.code}`
+      : s === 'connected'
+        ? `connected as ${name}`
+        : s
+  }
+  conn.status.subscribe(show)
+  show(conn.status.get())
+  new EditorView({
+    doc: conn.text.toString(),
+    extensions: [
+      basicSetup,
+      markdown(),
+      EditorView.lineWrapping,
+      yCollab(conn.text, conn.awareness),
+      // A reader never sends updates; this also stops the editor from accepting input.
+      EditorState.readOnly.of(conn.role === 'read'),
+    ],
+    parent: document.getElementById('editor'),
+  })
+} catch (e) {
+  status.textContent = `cannot open the file: ${e.code ?? e.message}`
+}
