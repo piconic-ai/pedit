@@ -13,7 +13,7 @@ import (
 
 // keepAway is the host's side of a room the relay keeps while the host is away
 // (docs/design/rooms-away.md): it sends the relay snapshots of the files and
-// writes the record --resume reads. resumeAway takes in the log.
+// writes the record pedit resume reads. resumeAway takes in the log.
 
 // A snapshot is due after snapshotEntries changes, or snapshotEvery with
 // changes. Tests change them before Start.

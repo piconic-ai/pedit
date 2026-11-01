@@ -83,7 +83,7 @@ func TestCloseTakesInTheLogLeavesAndAsksTheRelayToEndTheRoom(t *testing.T) {
 	}
 }
 
-// closeAsks makes the relay answer --close's request with the status that
+// closeAsks makes the relay answer pedit close's request with the status that
 // answer gives for the n-th ask, and, once it answered 200, turn the host away
 // as it does a room that was ended. tails holds what each ask named.
 func (a *awayRoom) closeAsks(answer func(n int) int) (tails *[]string) {

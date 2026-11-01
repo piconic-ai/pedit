@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/piconic-ai/pedit/internal/session"
@@ -183,21 +182,4 @@ func printRoomsJSON(stdout, stderr io.Writer, records []session.KeptTextRecord) 
 	}
 	fmt.Fprintln(stdout, string(data))
 	return 0
-}
-
-// optionNotice says where --close and --resume went: each is kept for one
-// release as an alias of its subcommand. A link carries the room key, which
-// the notice must not repeat.
-func optionNotice(stderr io.Writer, opts commandArgs) {
-	verb := "resume"
-	if opts.Close {
-		verb = "close"
-	} else if opts.Resume == "" && !opts.ResumeAny {
-		return
-	}
-	room := ""
-	if opts.Resume != "" && !strings.Contains(opts.Resume, "/r/") {
-		room = " " + opts.Resume
-	}
-	fmt.Fprintf(stderr, "pedit: --%s is now pedit %s%s; the option goes in a later release.\n", verb, verb, room)
 }

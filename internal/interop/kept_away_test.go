@@ -234,7 +234,7 @@ func TestGoHostKeepsAWebSocketRoomWhileAway(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resumed := keptCommand(t, project, binary, "--resume") // the alias of pedit resume
+	resumed := keptCommand(t, project, binary, "resume")
 	resumed.link(t)
 	prototest.WaitFor(t, 10*time.Second, func() bool {
 		got := read()
@@ -255,15 +255,14 @@ func TestGoHostKeepsAWebSocketRoomWhileAway(t *testing.T) {
 	early.waitFor(protocol.HostBack)
 	resumed.stop(t)
 
-	// --close, the alias of pedit close, takes in the log, leaves, and has the
-	// relay end the room.
-	closer := keptCommand(t, project, binary, "--close")
+	// pedit close takes in the log, leaves, and has the relay end the room.
+	closer := keptCommand(t, project, binary, "close")
 	var closing []string
 	for line := range closer.lines {
 		closing = append(closing, line)
 	}
 	if err := closer.wait(); err != nil || !strings.Contains(strings.Join(closing, "\n"), "Closed the room") {
-		t.Fatalf("--close: %v\n%s", err, strings.Join(closing, "\n"))
+		t.Fatalf("pedit close: %v\n%s", err, strings.Join(closing, "\n"))
 	}
 	late := dialAwayGuest(t, relay, link, "")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

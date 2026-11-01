@@ -218,7 +218,7 @@ func TestKeepAsksTheRelayAndSnapshotsRightAfterConnecting(t *testing.T) {
 	if got := bundleText(t, s.Client.Keys(), a.sent(protocol.KindSnapshot)[0]); got != "notes\n" {
 		t.Fatalf("snapshot holds %q", got)
 	}
-	// The record, which --resume reads.
+	// The record, which pedit resume reads.
 	prototest.WaitFor(t, wait, func() bool { _, err := os.Stat(keptTestStatePath(t, a.project, a.id)); return err == nil }, "the record")
 	rec := a.record()
 	if !rec.Socket || !rec.Initialized || rec.Keep != 60 || rec.Origin != a.server.URL || rec.HostToken != a.token ||

@@ -56,7 +56,7 @@ func TestReconnectingHostTakesInTheLogAndCheckpoints(t *testing.T) {
 	}
 }
 
-// An entry that reaches the host after its replay, while --close checkpoints,
+// An entry that reaches the host after its replay, while pedit close checkpoints,
 // is not in the relay's log: it must be saved before the room is ended.
 func TestCloseSavesAnEntryThatCameWhileCheckpointing(t *testing.T) {
 	a := newAwayRoom(t, "notes\n")

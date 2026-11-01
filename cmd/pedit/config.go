@@ -338,12 +338,11 @@ type commandArgs struct {
 	Keep time.Duration
 	// KeepOff is --keep 0: no kept room this run, whatever the configuration says.
 	KeepOff bool
-	// Resume is a share link or room ID; ResumeAny is pedit resume (or its alias
-	// --resume) without one.
+	// Resume is the share link or room ID given to pedit resume or pedit close,
+	// or the kept room pedit <file> takes up; ResumeAny is either without one.
 	Resume    string
 	ResumeAny bool
-	// Close is --close, the alias of pedit close kept for one release:
-	// --resume's room, taken in and then ended on the relay.
+	// Close is pedit close: the room, taken in and then ended on the relay.
 	Close bool
 	File  string
 	// More are further files to share in the same room.
@@ -367,11 +366,15 @@ func parseArgs(args []string) (commandArgs, error) {
 		option, value, hasValue := strings.Cut(arg, "=")
 		var err error
 		switch option {
-		case "--keep", "--resume", "--close":
-			value, i, err = keptOptionValue(args, i, option, value, hasValue)
-			if err == nil {
-				err = opts.setKeptOption(option, value)
+		case "--keep":
+			if !hasValue {
+				i++
+				value = optionValue(args, i)
 			}
+			err = opts.setKeep(value)
+		case "--resume", "--close":
+			verb := strings.TrimPrefix(option, "--")
+			err = fmt.Errorf("%s is now pedit %s; run pedit %s --help", option, verb, verb)
 		case "-t", "--template", "-d", "--directory":
 			if !hasValue {
 				i++
@@ -396,59 +399,20 @@ func parseArgs(args []string) (commandArgs, error) {
 	return opts, nil
 }
 
-// keptOptionValue finds the value of --keep, --resume or --close. A bare --resume has
-// none (the empty value) and takes no argument; a room ID may begin with "-".
-func keptOptionValue(args []string, i int, option, value string, hasValue bool) (string, int, error) {
-	if hasValue {
-		return value, i, nil
-	}
-	next := optionValue(args, i+1)
-	keeps := option == "--keep"
-	if !keeps && i+1 < len(args) && roomIDArg.MatchString(args[i+1]) {
-		next = args[i+1]
-	}
-	if next == "" && !keeps {
-		return "", i, nil
-	}
-	return next, i + 1, nil
-}
-
-func (o *commandArgs) setKeptOption(option, value string) error {
-	if option == "--close" {
-		o.Close = true
-	}
-	keeps := option == "--keep"
-	if value == "" && !keeps && !o.ResumeAny {
-		return o.setResumeAny()
-	}
+func (o *commandArgs) setKeep(value string) error {
 	if value == "" {
-		return errors.New(option + " requires a value")
+		return errors.New("--keep requires a value")
 	}
-	if keeps {
-		if o.Keep != 0 || o.KeepOff {
-			return errors.New("specify keep once")
-		}
-		if value == "0" {
-			o.KeepOff = true
-			return nil
-		}
-		keep, err := parseKeepDuration(value)
-		o.Keep = keep
-		return err
+	if o.Keep != 0 || o.KeepOff {
+		return errors.New("specify keep once")
 	}
-	if o.Resume != "" || o.ResumeAny {
-		return errors.New("specify resume once")
+	if value == "0" {
+		o.KeepOff = true
+		return nil
 	}
-	o.Resume = value
-	return nil
-}
-
-func (o *commandArgs) setResumeAny() error {
-	if o.Resume != "" || o.ResumeAny {
-		return errors.New("specify resume once")
-	}
-	o.ResumeAny = true
-	return nil
+	keep, err := parseKeepDuration(value)
+	o.Keep = keep
+	return err
 }
 
 var roomIDArg = regexp.MustCompile(`^[A-Za-z0-9_-]{22}$`)
@@ -525,13 +489,8 @@ func (o *commandArgs) addArg(arg string, hasValue bool) error {
 
 // check rejects combinations that are each fine alone.
 func (o *commandArgs) check() error {
-	resuming := o.Resume != "" || o.ResumeAny
-	if (o.Keep > 0 || o.KeepOff) && (o.File == "" || o.Room != "" || o.Template != "" || o.Directory != "" || resuming) {
+	if (o.Keep > 0 || o.KeepOff) && (o.File == "" || o.Room != "" || o.Template != "" || o.Directory != "") {
 		return errors.New("--keep shares existing text files")
-	}
-	if resuming && (o.Resume != "" && !isShareLink(o.Resume) && !roomIDArg.MatchString(o.Resume) ||
-		o.File != "" || o.Room != "" || o.Template != "" || o.Directory != "") {
-		return errors.New("--resume and --close take only a room ID or a share link, or nothing")
 	}
 
 	if o.File != "" && o.Directory != "" {
