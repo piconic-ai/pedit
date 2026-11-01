@@ -183,3 +183,28 @@ func TestKeptResumeOfACRLFFileKeepsItsEndings(t *testing.T) {
 		t.Fatalf("the doc holds %q", text)
 	}
 }
+
+// A room kept before line endings were handled holds the CRLF file as it is.
+func TestKeptResumeOfALegacyCRLFDocKeepsALocalConversionToLF(t *testing.T) {
+	const legacy = "one\r\ntwo\r\nthree\r\n"
+	h, _ := keptLocalRoomOf(t, legacy, "one\ntwo\nthree\n", false)
+	doc := crdt.New()
+	defer doc.Destroy()
+	text := doc.GetText("content")
+	doc.Transact(func(tx *crdt.Transaction) { text.Insert(tx, 0, legacy, nil) })
+	h.state.Files[0].State = crdt.EncodeStateAsUpdateV1(doc, nil)
+	if err := h.openFiles(); err != nil {
+		t.Fatal(err)
+	}
+	defer h.closeFiles()
+	if err := h.restore(); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.mergeLocalEdits(); err != nil {
+		t.Fatal(err)
+	}
+	file := h.state.Files[0]
+	if file.Text != "one\ntwo\nthree\n" || !h.files[0].matches(file.Text) {
+		t.Fatalf("inconsistent checkpoint: text %q, doc %q", file.Text, h.files[0].doc.GetText("content").ToString())
+	}
+}
