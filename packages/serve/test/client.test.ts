@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { mkdirSync, readFileSync } from 'node:fs'
 import type { Server } from 'node:http'
 import { createServer } from 'node:net'
@@ -47,6 +48,7 @@ async function start(role: 'edit' | 'read' = 'edit', text = 'hello\n') {
   const file = write(root, 'a.md', text)
   const port = await freePort()
   const origin = `http://127.0.0.1:${port}`
+  let current = role
   const parent = new Hono()
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app: parent })
   const routes = peditRoutes({
@@ -54,9 +56,9 @@ async function start(role: 'edit' | 'read' = 'edit', text = 'hello\n') {
     root,
     origins: [origin],
     app: 'test-app',
-    resolve: async (id) => (id === 'a' ? { path: file, role } : null),
+    resolve: async (id) => (id === 'a' ? { path: file, role: current } : null),
     bin: BIN,
-    idleMs: 300,
+    idleMs: 5000,
   })
   parent.route('/edit', routes)
   const server = serve({ fetch: parent.fetch, port, hostname: '127.0.0.1' })
@@ -81,7 +83,7 @@ async function start(role: 'edit' | 'read' = 'edit', text = 'hello\n') {
       sockets.push(this)
     }
   } as unknown as typeof globalThis.WebSocket
-  return { file, routes }
+  return { file, routes, root, setRole: (r: 'edit' | 'read') => (current = r) }
 }
 
 const until = async (cond: () => boolean, ms = 8000) => {
@@ -149,6 +151,50 @@ live('connect', () => {
     c.destroy()
   })
 
+  it('stops instead of merging its old copy into a restarted pedit', async () => {
+    const { file, root } = await start()
+    const c = await connect('/edit', 'a')
+    const seen: [Status, string | undefined][] = []
+    c.status.subscribe((s, e) => seen.push([s, e?.code]))
+    execFileSync('pkill', ['-TERM', '-f', root])
+    await until(() => c.status.get() === 'closed', 15000)
+    expect(seen.at(-1)).toEqual(['closed', 'gone'])
+    expect(c.text.toString()).toBe('hello\n')
+    await sleep(300)
+    expect(readFileSync(file, 'utf8')).toBe('hello\n')
+    c.destroy()
+  })
+
+  it('rejects connect when the first socket drops and the retry session is refused', async () => {
+    await start()
+    const Base = globalThis.WebSocket
+    globalThis.WebSocket = class extends (Base as unknown as typeof WS) {
+      constructor(url: string, protocols?: string | string[]) {
+        super(url, protocols)
+        if (sockets.length === 1) this.on('open', () => this.terminate())
+      }
+    } as unknown as typeof globalThis.WebSocket
+    const f = globalThis.fetch
+    globalThis.fetch = (url, init) => {
+      if (sessions >= 1) return Promise.resolve(new Response('{}', { status: 403 }))
+      return f(url, init)
+    }
+    await expect(connect('/edit', 'a')).rejects.toMatchObject({ code: 'forbidden' })
+  })
+
+  it.each([
+    ['edit', 'read'],
+    ['read', 'edit'],
+  ] as const)('stops when the role changes from %s to %s', async (from, to) => {
+    const { setRole } = await start(from)
+    const c = await connect('/edit', 'a')
+    setRole(to)
+    sockets[0]?.terminate()
+    await until(() => c.status.get() === 'closed')
+    expect(sockets).toHaveLength(1)
+    c.destroy()
+  })
+
   it('reconnects with a fresh token after a transient drop', async () => {
     await start()
     const c = await connect('/edit', 'a')
@@ -161,6 +207,7 @@ live('connect', () => {
     expect(seen).toEqual(['reconnecting', 'connected'])
     expect(sessions).toBe(2)
     expect(sockets).toHaveLength(2)
+    expect(c.text.toString()).toBe('hello\n')
   })
 
   it('maps session failures to PeditError codes', async () => {

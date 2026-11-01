@@ -35,7 +35,9 @@ per connection. There is still no login (see below).
   saves in as edits, but a program that rewrites the file in place can race it).
   Open the file in an editor only if it saves whole-file and without a dialog.
 - When the last page leaves, the child stops after 60 s (`idleMs`) and saves; the
-  next session starts it again.
+  next session starts it again. A page that was disconnected for longer than that
+  (or whose pedit was restarted) ends as `closed: gone` instead of merging its old
+  copy into the new document: reload it.
 - Hot reload (`node --watch`, Vite) re-runs the server module: keep the
   `peditRoutes` result on `globalThis` and close the old one, or the new process
   is refused as `held` by the old child.

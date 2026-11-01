@@ -8,6 +8,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "lib0": "^0.2.119",
     "ws": "^8.18.3",
     "y-protocols": "^1.0.7",
     "y-websocket": "^3.0.0",

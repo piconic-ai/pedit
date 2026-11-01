@@ -1,3 +1,4 @@
+import * as decoding from 'lib0/decoding'
 import { Awareness } from 'y-protocols/awareness'
 import { WebsocketProvider } from 'y-websocket'
 import * as Y from 'yjs'
@@ -113,13 +114,18 @@ export async function connect(
   const stop = (error: PeditError) => {
     clearTimeout(timer)
     halt()
+    settle?.reject(error)
     setStatus('closed', error)
   }
   async function retry() {
     if (destroyed || isClosed()) return
     try {
-      provider.params = { token: (await session(sessionUrl)).token }
+      const next = await session(sessionUrl)
       if (destroyed || isClosed()) return
+      // Live role changes are not supported: the update handler and the editor were set up for one role.
+      if (next.role !== role)
+        return stop(new PeditError('forbidden', 'role changed; connect again'))
+      provider.params = { token: next.token }
       provider.connect()
     } catch (e) {
       const err = e instanceof PeditError ? e : new PeditError('unavailable')
@@ -139,8 +145,31 @@ export async function connect(
   })
   synced.catch(() => {})
 
+  // A restarted pedit seeds a new document from the file. Merging this tab's old copy into it
+  // would duplicate the text, so if the server's state vector lacks something it gave us, stop.
+  const syncHandler = provider.messageHandlers[0] as NonNullable<
+    (typeof provider.messageHandlers)[0]
+  >
+  provider.messageHandlers[0] = (...args: Parameters<typeof syncHandler>) => {
+    const dec = args[1]
+    const peek = decoding.createDecoder(dec.arr)
+    peek.pos = dec.pos
+    if (hasSynced && decoding.readVarUint(peek) === 0) {
+      const server = Y.decodeStateVector(decoding.readVarUint8Array(peek))
+      const local = Y.decodeStateVector(Y.encodeStateVector(doc))
+      for (const [client, clock] of local) {
+        if (client !== doc.clientID && (server.get(client) ?? 0) < clock) {
+          return stop(new PeditError('gone', 'the document was restarted; reload'))
+        }
+      }
+    }
+    syncHandler(...args)
+  }
+  let hasSynced = false
+
   provider.on('sync', (isSynced: boolean) => {
     if (!isSynced) return
+    hasSynced = true
     attempts = 0
     setStatus('connected')
     settle?.resolve()
@@ -150,7 +179,6 @@ export async function connect(
     halt()
     if (event?.code === 4001 || event?.code === 4003) {
       const err = new PeditError(event.code === 4001 ? 'gone' : 'forbidden')
-      settle?.reject(err)
       return stop(err)
     }
     setStatus(status === 'connecting' ? 'connecting' : 'reconnecting')
