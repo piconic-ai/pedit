@@ -414,6 +414,7 @@ export class Room extends DurableObject<Env> {
     // register the verifiers; a guest cannot claim an unopened room's tokens.
     const role = isHost ? this.registerHost(digest, readDigest) : this.role(digest)
     if (!role) return new Response('invalid room admission', { status: 403 })
+    this.closeOutdatedPeers()
     if (this.full(isHost, role)) return this.refuse(ROOM_FULL, 'room is full', join.protocol)
     return this.accept(isHost, role, join)
   }
@@ -450,7 +451,6 @@ export class Room extends DurableObject<Env> {
     const first = isHost && this.openedAt() === undefined
     if (first) kv.put(OPENED_KEY, Date.now())
     const { 0: client, 1: server } = new WebSocketPair()
-    this.closeOutdatedPeers()
     const tags = [V6_TAG, SOCKET_PROTOCOL]
     if (isHost) tags.push(HOST_TAG)
     else if (role === 'reader') tags.push(READER_TAG)
@@ -579,12 +579,13 @@ export class Room extends DurableObject<Env> {
    */
   private full(isHost: boolean, role: Role): boolean {
     const { guests, readers } = limits(this.env)
-    const reading = this.ctx.getWebSockets(READER_TAG).length
+    const peers = this.peers().filter((peer) => this.ctx.getTags(peer).includes(SOCKET_PROTOCOL))
+    const reading = peers.filter((peer) => this.ctx.getTags(peer).includes(READER_TAG)).length
     if (role === 'reader') return reading >= readers
-    const editing = this.peers().length - reading
+    const editing = peers.length - reading
     if (editing >= MAX_PEERS) return true
     if (isHost) return false
-    return editing - this.hosts().length >= guests
+    return editing - peers.filter((peer) => this.isHost(peer)).length >= guests
   }
 
   private openedAt(): number | undefined {

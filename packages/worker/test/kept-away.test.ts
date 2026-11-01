@@ -615,6 +615,50 @@ describe('a kept room and the clients and deploys that meet it', () => {
     expect((await state(room)).log.tail).toBe(1)
   })
 
+  it.each([
+    { host: false, oldPeers: 31 },
+    { host: true, oldPeers: 32 },
+  ])(
+    'retires $oldPeers old sockets before admitting host=$host without losing kept data',
+    async ({ host, oldPeers }) => {
+      const room = await createRoom()
+      const h = await hostOf(room)
+      const writer = await join(room)
+      await leave(room, h)
+      writer.ws.send(withKind(Kind.Entry, bytes(10)))
+      await until(() => writer.binary.length === 1)
+      await inRoom(room, (_, st) => {
+        for (let i = 0; i < oldPeers; i++) {
+          const pair = new WebSocketPair()
+          st.acceptWebSocket(pair[1], ['v6'])
+          pair[0].accept()
+        }
+      })
+      const fresh = await join(room, { host })
+      const expected = host ? [Kind.Logged, Kind.LogEnd] : [Kind.Replay, Kind.Logged, Kind.LogEnd]
+      await until(() => fresh.binary.length === expected.length)
+      expect(kinds(fresh)).toEqual(expected)
+      expect(await closedWithin(fresh)).toBeUndefined()
+      expect((await state(room)).log.tail).toBe(1)
+    },
+  )
+
+  it('does not count outdated sockets while their close handshakes are pending', async () => {
+    const room = await createRoom()
+    await hostOf(room)
+    await inRoom(room, (r, st) => {
+      for (let i = 0; i < 32; i++) {
+        const pair = new WebSocketPair()
+        st.acceptWebSocket(pair[1], ['v6'])
+        pair[0].accept()
+      }
+      r['closeOutdatedPeers']()
+      expect(st.getWebSockets('v6').length).toBe(33)
+      expect(r['full'](false, 'editor')).toBe(false)
+      expect(r['full'](true, 'editor')).toBe(false)
+    })
+  })
+
   it('fixes the keep at the first connection, with every image under kept/', async () => {
     const room = await createRoom()
     const url = `https://pedit.test/api/rooms/${room.id}/blobs/${'A'.repeat(22)}`
