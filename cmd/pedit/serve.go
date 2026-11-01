@@ -37,7 +37,12 @@ Options:
                leaves it (an absolute path, "..", or a link in a directory)
 
 With --json, stdout has these events, each on a line of its own:
-  {"event":"listening","socket":"<path>"}   serving; the first event
+  {"event":"listening","socket":"<path>","generation":"<hex>"}
+                                            serving; the first event. generation
+                                            names the document: a restart that
+                                            resumed the saved state keeps it,
+                                            and a document started afresh has
+                                            a new one
   {"event":"saved","bytes":N}               pedit wrote the file
   {"event":"external_save"}                 a save by another editor was taken in
   {"event":"held","pid":N,"app":"<name>"}   another process serves the file
@@ -157,7 +162,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	}()
 
 	if opts.json {
-		emit("listening", map[string]any{"socket": s.SocketPath()})
+		emit("listening", map[string]any{"socket": s.SocketPath(), "generation": s.Generation()})
 	} else {
 		fmt.Fprintln(stdout, s.SocketPath())
 	}

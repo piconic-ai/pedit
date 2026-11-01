@@ -132,11 +132,14 @@ retried and reported the same way.
 | --- | --- | --- |
 | Reads, Writes | The file, as when sharing it | The same guards as above, but no room, relay or network. |
 | Writes | A lock, `.<name>.pedit-lock` beside the file, with pid and app name | Created `0600`, removed on exit; a lock whose process is gone is taken over. Opened through a handle on the file's directory and never followed as a symlink; if that name is a link, a directory, a FIFO or a file of another user, pedit refuses to serve ("is not a lock file pedit made") and neither writes to nor removes it. The pid and app name in it are labels, shown capped and without control characters; pedit never signals the pid. |
+| Writes | The recovery state, `<UserConfigDir>/pedit/serve/state/<sha256 of the file's path>.json` | Created `0600` when serving starts, on each write of the file and on exit: the Yjs document, the text pedit last wrote, a generation id and the time. A restart resumes it when the file still holds what pedit wrote (a save made meanwhile is merged as an edit, never written back over it), and the generation stays the same; an unreadable state, one from a newer pedit or older than 7 days is discarded and the generation is new. Removed when the file is gone. Only the process holding the lock reads or writes it. |
 | Listens | A Unix socket in a new directory under `os.UserConfigDir()/pedit/serve/` (the temp directory if that path is too long for a socket) | Directory `0700`, removed on exit. Never TCP. Clients speak the y-websocket protocol unencrypted: whoever can open the socket can edit the file. There is no authentication beyond the directory's mode: any process of the same user can connect. `@pedit/serve` is the supported way to expose it to a browser. |
 | Takes a root | `--root <dir>`: the file is a path relative to `<dir>` | pedit itself refuses an absolute path, `..` or a link in a directory component that leaves `<dir>`; the lock and the watch use the file's directory. |
 
 With `--json`, stdout carries one JSON event per line and nothing else:
-`listening` (with the socket), `saved` (with `bytes`) after each write of the
+`listening` (with the socket, and a `generation`: 16 random bytes in hex, new
+on each start, so an app can tell a restarted document from the one it knew),
+`saved` (with `bytes`) after each write of the
 file, `external_save` when a save by another editor was taken in, `held` (with
 `pid` and `app`) when another process serves the file, and `error` (with a
 one-line `message`) for any other failure. Exit codes, with or without
