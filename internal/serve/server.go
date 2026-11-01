@@ -94,26 +94,31 @@ type Server struct {
 	invalid string
 }
 
+// openFile binds file, a path relative to root if there is one. It returns the
+// path that names the file.
+func openFile(file string, root *os.Root) (*filewriter.BoundFile, string, error) {
+	if root == nil {
+		file, err := filepath.Abs(file)
+		if err != nil {
+			return nil, "", err
+		}
+		bound, err := filewriter.OpenBound(file)
+		return bound, file, err
+	}
+	if filepath.IsAbs(file) {
+		return nil, "", fmt.Errorf("%s is outside %s: with a root, the file must be a relative path", file, root.Name())
+	}
+	bound, err := filewriter.OpenBoundIn(root, file)
+	if err != nil && strings.Contains(err.Error(), "escapes from parent") {
+		err = fmt.Errorf("%s is outside %s", file, root.Name())
+	}
+	return bound, filepath.Join(root.Name(), file), err
+}
+
 // Open locks and reads file, and listens on a Unix socket of its own. It
 // returns a *HeldError when another process serves the file.
 func Open(file string, opts Options) (*Server, error) {
-	var bound *filewriter.BoundFile
-	var err error
-	if opts.Root != nil {
-		if filepath.IsAbs(file) {
-			return nil, fmt.Errorf("%s is outside %s: with a root, the file must be a relative path", file, opts.Root.Name())
-		}
-		bound, err = filewriter.OpenBoundIn(opts.Root, file)
-		if err != nil && strings.Contains(err.Error(), "escapes from parent") {
-			err = fmt.Errorf("%s is outside %s", file, opts.Root.Name())
-		}
-		file = filepath.Join(opts.Root.Name(), file)
-	} else {
-		if file, err = filepath.Abs(file); err != nil {
-			return nil, err
-		}
-		bound, err = filewriter.OpenBound(file)
-	}
+	bound, file, err := openFile(file, opts.Root)
 	if err != nil {
 		return nil, err
 	}

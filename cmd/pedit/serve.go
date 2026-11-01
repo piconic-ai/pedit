@@ -89,31 +89,45 @@ func parseServeArgs(args []string) (serveArgs, error) {
 // serveStdin is what ends pedit serve when it closes.
 var serveStdin io.Reader = os.Stdin
 
+// events writes the --json events, one line each, from any goroutine.
+type events struct {
+	json bool
+	w    io.Writer
+	mu   sync.Mutex
+}
+
+func (e *events) emit(event string, fields map[string]any) {
+	if !e.json {
+		return
+	}
+	fields["event"] = event
+	line, _ := json.Marshal(fields)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	fmt.Fprintln(e.w, string(line))
+}
+
+// failure reports err as an event and returns the exit code for it.
+func (e *events) failure(err error) int {
+	var held *serve.HeldError
+	if errors.As(err, &held) {
+		e.emit("held", map[string]any{"pid": held.Holder.PID, "app": held.Holder.App})
+		return 3
+	}
+	e.emit("error", map[string]any{"message": strings.Join(strings.Fields(err.Error()), " ")})
+	return 1
+}
+
 func runServe(args []string, stdout, stderr io.Writer) int {
 	opts, err := parseServeArgs(args)
 	if err != nil {
 		return usageError(stderr, serveUsage, err)
 	}
-	var out sync.Mutex
-	emit := func(event string, fields map[string]any) {
-		if !opts.json {
-			return
-		}
-		fields["event"] = event
-		line, _ := json.Marshal(fields)
-		out.Lock()
-		defer out.Unlock()
-		fmt.Fprintln(stdout, string(line))
-	}
+	ev := &events{json: opts.json, w: stdout}
+	emit := ev.emit
 	fail := func(err error) int {
 		fmt.Fprintln(stderr, "pedit:", err)
-		var held *serve.HeldError
-		if errors.As(err, &held) {
-			emit("held", map[string]any{"pid": held.Holder.PID, "app": held.Holder.App})
-			return 3
-		}
-		emit("error", map[string]any{"message": strings.Join(strings.Fields(err.Error()), " ")})
-		return 1
+		return ev.failure(err)
 	}
 	so := serve.Options{
 		App:            opts.app,
