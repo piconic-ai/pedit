@@ -62,6 +62,41 @@ func NewTracker(content *crdt.Doc) *Tracker {
 	return t
 }
 
+// Positions holds learned anchors at a particular content state.
+type Positions struct {
+	pos  map[string]tracked
+	gone map[string]bool
+}
+
+// Snapshot captures positions alongside a snapshot of the content document.
+func (t *Tracker) Snapshot() *Positions {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	p := &Positions{pos: make(map[string]tracked, len(t.pos)), gone: make(map[string]bool, len(t.gone))}
+	for key, value := range t.pos {
+		p.pos[key] = *value
+	}
+	for key, value := range t.gone {
+		p.gone[key] = value
+	}
+	return p
+}
+
+// NewTrackerFrom resumes positions on the same content state they came from.
+func NewTrackerFrom(content *crdt.Doc, positions *Positions) *Tracker {
+	t := NewTracker(content)
+	if positions != nil {
+		for key, value := range positions.pos {
+			p := value
+			t.pos[key] = &p
+		}
+		for key, value := range positions.gone {
+			t.gone[key] = value
+		}
+	}
+	return t
+}
+
 // Close stops following the text.
 func (t *Tracker) Close() { t.stop() }
 

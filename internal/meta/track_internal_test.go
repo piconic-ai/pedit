@@ -215,3 +215,46 @@ func TestFindIgnoresMatchesOffTheCharacters(t *testing.T) {
 		t.Fatalf("took %v", d)
 	}
 }
+
+func TestTrackerPositionsSurviveRepeatedRebuilds(t *testing.T) {
+	content := crdt.New(crdt.WithGC(false))
+	defer content.Destroy()
+	text := content.GetText(ContentText)
+	content.Transact(func(tx *crdt.Transaction) { text.Insert(tx, 0, "world", nil) })
+	tracker := NewTracker(content)
+	defer tracker.Close()
+	start := encodePosition(crdt.CreateRelativePositionFromIndex(text, 0, 0))
+	end := encodePosition(crdt.CreateRelativePositionFromIndex(text, 5, -1))
+	tracker.learn(start)
+	tracker.learn(end)
+	content.Transact(func(tx *crdt.Transaction) { text.Delete(tx, 0, 1) })
+	base := crdt.EncodeStateAsUpdateV1(content, nil)
+	positions := tracker.Snapshot()
+	content.Transact(func(tx *crdt.Transaction) { text.Insert(tx, 0, "discarded", nil) })
+	for range 2 {
+		rebuilt := crdt.New(crdt.WithGC(false))
+		if err := crdt.ApplyUpdateV1(rebuilt, base, nil); err != nil {
+			t.Fatal(err)
+		}
+		restored := NewTrackerFrom(rebuilt, positions)
+		restored.learn(start)
+		from, ok := restored.lookup(start)
+		to, endOK := restored.lookup(end)
+		if !ok || !endOK || from != 0 || to != 4 {
+			t.Fatalf("restored range = %d..%d (%v, %v)", from, to, ok, endOK)
+		}
+		text := rebuilt.GetText(ContentText)
+		rebuilt.Transact(func(tx *crdt.Transaction) { text.Insert(tx, 0, "x", nil) })
+		to, _ = restored.lookup(end)
+		if to != 5 {
+			t.Fatalf("end after insertion = %d", to)
+		}
+		rebuilt.Transact(func(tx *crdt.Transaction) { text.Delete(tx, 0, 2) })
+		to, _ = restored.lookup(end)
+		if to != 3 {
+			t.Fatalf("end after deletion = %d", to)
+		}
+		restored.Close()
+		rebuilt.Destroy()
+	}
+}
