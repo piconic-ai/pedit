@@ -35,9 +35,15 @@ per connection. There is still no login (see below).
   saves in as edits, but a program that rewrites the file in place can race it).
   Open the file in an editor only if it saves whole-file and without a dialog.
 - When the last page leaves, the child stops after 60 s (`idleMs`) and saves; the
-  next session starts it again. A page that was disconnected for longer than that
-  (or whose pedit was restarted) ends as `closed: gone` instead of merging its old
-  copy into the new document: reload it.
+  next session starts it again. pedit keeps the document's state across restarts
+  (in the user's config directory, checked against the file), so a page that was
+  disconnected for longer, or whose pedit restarted, reconnects and merges as usual.
+- `closed: gone` is rare: pedit started a new document because its saved state
+  was discarded (older than 7 days, unreadable, or from a newer pedit). The page's
+  copy cannot be merged into it, so the client stops without connecting. What the
+  page typed since the last sync stays in `conn.doc` until the page is closed, and
+  the app decides: `page.mjs` offers "Copy your text" (`conn.text.toString()`) and
+  "Reload". See `docs/design/serve.md` in the pedit repository.
 - Hot reload (`node --watch`, Vite) re-runs the server module: keep the
   `peditRoutes` result on `globalThis` and close the old one, or the new process
   is refused as `held` by the old child.
