@@ -14,11 +14,15 @@ import (
 // rest commented: the saved anchor follows the edit instead of keeping a stale one.
 func TestKeptCommentsFollowAGuestDeletingAnAnchorBoundary(t *testing.T) {
 	for name, withGap := range map[string]bool{"plain": false, "with an update whose dependency is missing": true} {
-		t.Run(name, func(t *testing.T) { keptCommentsFollowDeletion(t, withGap) })
+		t.Run(name, func(t *testing.T) { keptCommentsFollowDeletion(t, withGap, false) })
 	}
 }
 
-func keptCommentsFollowDeletion(t *testing.T, withGap bool) {
+func TestKeptCommentsFollowALocalDeletionBeforePruning(t *testing.T) {
+	keptCommentsFollowDeletion(t, true, true)
+}
+
+func keptCommentsFollowDeletion(t *testing.T, withGap, local bool) {
 	keys, _, _, _ := keptFixFrames(t)
 	dir := t.TempDir()
 	notes := filepath.Join(dir, "notes.md")
@@ -46,7 +50,13 @@ func keptCommentsFollowDeletion(t *testing.T, withGap bool) {
 	}
 	vector := guest.StateVector()
 	text := guest.GetText("content")
-	guest.Transact(func(tx *crdt.Transaction) { text.Delete(tx, 6, 1) })
+	if local {
+		if err := os.WriteFile(notes, []byte("hello orld"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		guest.Transact(func(tx *crdt.Transaction) { text.Delete(tx, 6, 1) })
+	}
 	frame, err := protocol.SealKeptFileUpdate(keys, 0, crdt.EncodeStateAsUpdateV1(guest, vector))
 	if err != nil {
 		t.Fatal(err)
@@ -80,6 +90,19 @@ func keptCommentsFollowDeletion(t *testing.T, withGap bool) {
 	takeInRead(t, host, keptTextRead{Snapshot: snapshot, Entries: entries, Tail: uint64(len(entries))})
 	if withGap && host.skipped != 1 {
 		t.Fatalf("the update with a missing dependency was not pruned: skipped %d", host.skipped)
+	}
+	if local {
+		replayed := make([]keptTextEntry, len(entries))
+		for i, entry := range entries {
+			replayed[i] = keptTextEntry{ID: entry.ID + uint64(len(entries)), Body: entry.Body}
+		}
+		takeInRead(t, host, keptTextRead{Entries: replayed, Tail: 2 * uint64(len(entries))})
+		if host.skipped != 2 {
+			t.Fatalf("second rebuild skipped %d updates", host.skipped)
+		}
+		if written, err := os.ReadFile(notes); err != nil || string(written) != "hello orld" {
+			t.Fatalf("local edit lost after rebuilding: %q (%v)", written, err)
+		}
 	}
 	written, _ := os.ReadFile(metaName)
 	parsed, err := meta.Parse(written)

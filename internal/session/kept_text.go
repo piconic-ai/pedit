@@ -311,9 +311,13 @@ func (h *keptTextHost) applyRead(read keptTextRead) error {
 }
 func (h *keptTextHost) applyEntries(read keptTextRead, previous uint64) error {
 	base := map[uint32][]byte{}
+	positions := map[uint32]*meta.Positions{}
 	accepted := map[uint32][][]byte{}
 	for id, file := range h.files {
 		base[id] = crdt.EncodeStateAsUpdateV1(file.doc, nil)
+		if file.tracker != nil {
+			positions[id] = file.tracker.Snapshot()
+		}
 	}
 	for _, entry := range read.Entries {
 		if entry.ID <= previous || entry.ID > read.Tail {
@@ -336,7 +340,7 @@ func (h *keptTextHost) applyEntries(read keptTextRead, previous uint64) error {
 		return errors.New("incomplete kept log")
 	}
 	for id, file := range h.files {
-		skipped, e := file.pruneIncomplete(base[id], accepted[id])
+		skipped, e := file.pruneIncomplete(base[id], accepted[id], positions[id])
 		h.skipped += skipped
 		if e != nil {
 			return e
@@ -400,7 +404,7 @@ func (h *keptTextDocument) applyUpdate(update []byte) error {
 	return nil
 }
 
-func (h *keptTextDocument) pruneIncomplete(base []byte, accepted [][]byte) (int, error) {
+func (h *keptTextDocument) pruneIncomplete(base []byte, accepted [][]byte, positions *meta.Positions) (int, error) {
 	skipped := 0
 	for !completeKeptText(h.doc) {
 		projection, e := crdt.EncodeStateFromSnapshot(h.doc, crdt.CaptureSnapshot(h.doc))
@@ -418,7 +422,7 @@ func (h *keptTextDocument) pruneIncomplete(base []byte, accepted [][]byte) (int,
 		}
 		skipped += len(accepted) - len(complete)
 		accepted = complete
-		if e := h.rebuild(base, accepted); e != nil {
+		if e := h.rebuild(base, accepted, positions); e != nil {
 			return skipped, e
 		}
 	}
@@ -427,7 +431,7 @@ func (h *keptTextDocument) pruneIncomplete(base []byte, accepted [][]byte) (int,
 
 // rebuild makes the doc again from base and the accepted updates. A doc whose
 // anchors are followed gets a tracker of its own, from the base on.
-func (h *keptTextDocument) rebuild(base []byte, accepted [][]byte) error {
+func (h *keptTextDocument) rebuild(base []byte, accepted [][]byte, positions *meta.Positions) error {
 	h.doc.Destroy()
 	h.doc = crdt.New(crdt.WithGC(false))
 	followed := h.tracker != nil
@@ -439,7 +443,7 @@ func (h *keptTextDocument) rebuild(base []byte, accepted [][]byte) error {
 		return e
 	}
 	if followed {
-		h.tracker = meta.NewTracker(h.doc)
+		h.tracker = meta.NewTrackerFrom(h.doc, positions)
 		h.tracker.Learn(h.comments.doc)
 	}
 	for _, frame := range accepted {
