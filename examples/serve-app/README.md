@@ -12,7 +12,9 @@ npm install
 node app.mjs notes.md        # notes.md must exist; PEDIT=/path/to/pedit if not on the PATH
 ```
 
-It prints `http://127.0.0.1:<port>/`. Open it. Ctrl+C in the terminal saves the
+It prints `http://127.0.0.1:<port>/<token>/`. Open it. The token is a secret
+generated for each run; the bridge refuses any connection without it, so other
+users on the machine cannot reach your file. Do not share the URL. Ctrl+C in the terminal saves the
 file and removes the socket and the lock.
 
 ## What to try

@@ -132,7 +132,7 @@ retried and reported the same way.
 | --- | --- | --- |
 | Reads, Writes | The file, as when sharing it | The same guards as above, but no room, relay or network. |
 | Writes | A lock, `.<name>.pedit-lock` beside the file, with pid and app name | Created `0600`, removed on exit; a lock whose process is gone is taken over. |
-| Listens | A Unix socket in a new directory under `os.UserConfigDir()/pedit/serve/` (the temp directory if that path is too long for a socket) | Directory `0700`, removed on exit. Never TCP. Clients speak the y-websocket protocol unencrypted: whoever can open the socket can edit the file. |
+| Listens | A Unix socket in a new directory under `os.UserConfigDir()/pedit/serve/` (the temp directory if that path is too long for a socket) | Directory `0700`, removed on exit. Never TCP. Clients speak the y-websocket protocol unencrypted: whoever can open the socket can edit the file. There is no authentication beyond the directory's mode: any process of the same user can connect. The sample app's `127.0.0.1` bridge requires a per-run secret in its URL. |
 
 ## Programs pedit runs
 
