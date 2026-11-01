@@ -452,6 +452,35 @@ func TestWrittenAndExternalSaveHooksFireInOrder(t *testing.T) {
 	want("external_save")
 }
 
+func TestRootReplacedByLinkAfterOpeningIsRefused(t *testing.T) {
+	base0 := t.TempDir()
+	rootDir, outside := filepath.Join(base0, "root"), filepath.Join(base0, "outside")
+	for _, d := range []string{rootDir, outside} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(t, filepath.Join(rootDir, "doc.md"), "x\n")
+	root, err := os.OpenRoot(rootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	if err := os.Rename(rootDir, filepath.Join(base0, "moved")); err != nil {
+		t.Skip("cannot rename an open directory:", err)
+	}
+	if err := os.Symlink(outside, rootDir); err != nil {
+		t.Skip("no symlinks:", err)
+	}
+	if s, err := Open("doc.md", Options{Root: root, SocketBase: base(t)}); err == nil {
+		_ = s.Close()
+		t.Fatal("opened")
+	}
+	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+		t.Fatalf("left in the outside directory: %v", entries)
+	}
+}
+
 func TestRootRefusesPathsOutside(t *testing.T) {
 	base0 := t.TempDir()
 	rootDir, outside := filepath.Join(base0, "root"), filepath.Join(base0, "outside")

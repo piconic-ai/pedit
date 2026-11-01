@@ -140,7 +140,19 @@ func Open(file string, opts Options) (*Server, error) {
 		_ = bound.Close()
 		return nil, fmt.Errorf("%s is not UTF-8 text", file)
 	}
+	// The lock and the watch name the directory by path, which the bound
+	// handle does not: refuse if the path no longer leads to the directory
+	// the file was opened in, before and after the lock is taken.
+	if err := sameDir(bound, dir); err != nil {
+		_ = bound.Close()
+		return nil, err
+	}
 	release, err := acquire(file, opts.App)
+	if err == nil {
+		if err = sameDir(bound, dir); err != nil {
+			release()
+		}
+	}
 	if err != nil {
 		_ = bound.Close()
 		return nil, err
@@ -177,7 +189,24 @@ func Open(file string, opts Options) (*Server, error) {
 		s.cleanup()
 		return nil, err
 	}
+	if err := sameDir(bound, dir); err != nil {
+		s.cleanup()
+		return nil, err
+	}
 	return s, nil
+}
+
+// sameDir checks that dir is the directory bound holds open.
+func sameDir(bound *filewriter.BoundFile, dir string) error {
+	held, err := bound.Dir().Stat(".")
+	if err != nil {
+		return err
+	}
+	now, err := os.Stat(dir)
+	if err != nil || !os.SameFile(held, now) {
+		return fmt.Errorf("%s was replaced while pedit opened the file", dir)
+	}
+	return nil
 }
 
 // SocketPath is where clients connect.
