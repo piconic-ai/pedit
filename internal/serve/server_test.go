@@ -201,10 +201,12 @@ func TestFrontmatterCRLFAndBOMSurvive(t *testing.T) {
 	start := "\ufeff---\r\ntitle: Draft\r\ntags: [a, b]\r\n---\r\n\r\nFirst line\r\nSecond line\r\n"
 	s, file, _ := open(t, start)
 	c := dial(t, s.SocketPath())
-	eventually(t, "the file's text", func() bool { return c.get() == start })
+	// The client sees LF: a CodeMirror client would miscount each CR.
+	lf := func(s string) string { return strings.ReplaceAll(s, "\r\n", "\n") }
+	eventually(t, "the file's text", func() bool { return c.get() == lf(start) })
 
 	// A client edit in the body.
-	at := len([]rune("\ufeff---\r\ntitle: Draft\r\ntags: [a, b]\r\n---\r\n\r\nFirst"))
+	at := len([]rune(lf("\ufeff---\r\ntitle: Draft\r\ntags: [a, b]\r\n---\r\n\r\nFirst")))
 	c.insert(at, "!")
 	afterClient := "\ufeff---\r\ntitle: Draft\r\ntags: [a, b]\r\n---\r\n\r\nFirst! line\r\nSecond line\r\n"
 	eventually(t, "the client's edit, byte for byte", fileIs(t, file, afterClient))
@@ -212,12 +214,26 @@ func TestFrontmatterCRLFAndBOMSurvive(t *testing.T) {
 	// An external save in the frontmatter.
 	external := "\ufeff---\r\ntitle: Final\r\ntags: [a, b]\r\n---\r\n\r\nFirst! line\r\nSecond line\r\n"
 	saveElsewhere(t, file, external)
-	eventually(t, "the external save in the client", func() bool { return c.get() == external })
+	eventually(t, "the external save in the client", func() bool { return c.get() == lf(external) })
 	// Nothing was rewritten on the way.
 	time.Sleep(100 * time.Millisecond)
 	if got, _ := os.ReadFile(file); string(got) != external {
 		t.Fatalf("file = %q, want %q", got, external)
 	}
+}
+
+func TestMixedLineEndingsAreHeldAsTheyAre(t *testing.T) {
+	for s, want := range map[string]bool{"a\r\nb\r\n": true, "a\nb\n": false, "a\r\nb\n": false, "a\rb\r\n": false, "": false} {
+		if isCRLF(s) != want {
+			t.Errorf("isCRLF(%q) = %v", s, !want)
+		}
+	}
+	mixed := "a\r\nb\nc\r\n"
+	s, file, _ := open(t, mixed)
+	c := dial(t, s.SocketPath())
+	eventually(t, "the text as it is", func() bool { return c.get() == mixed })
+	c.insert(0, "x")
+	eventually(t, "the edit, endings kept", fileIs(t, file, "x"+mixed))
 }
 
 func TestSecondServeIsRefusedAndStaleLockTakenOver(t *testing.T) {

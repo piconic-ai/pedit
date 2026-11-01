@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -67,6 +68,9 @@ type Server struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
+	// crlf: the file ends its lines with CRLF throughout, which the doc holds
+	// as LF. Guarded by mu.
+	crlf bool
 	// mu guards the doc, the awareness and the clients: a client's frames
 	// are applied one at a time, and an update reaches the others in order.
 	mu      sync.Mutex
@@ -117,9 +121,10 @@ func Open(file string, opts Options) (*Server, error) {
 	}
 	s := &Server{file: file, opts: opts, release: release, bound: bound, clients: map[*client]struct{}{}}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
+	s.crlf = isCRLF(initial)
 	s.doc = crdt.New()
 	s.text = s.doc.GetText("content")
-	s.doc.Transact(func(txn *crdt.Transaction) { s.text.Insert(txn, 0, initial, nil) })
+	s.doc.Transact(func(txn *crdt.Transaction) { s.text.Insert(txn, 0, s.normalize(initial), nil) })
 	s.aw = awareness.New(uint64(s.doc.ClientID()))
 	s.writer = filewriter.New(file, initial, filewriter.Options{
 		Bound:            bound,
@@ -220,13 +225,13 @@ func (s *Server) cleanup() {
 func (s *Server) render() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.text.ToString()
+	return s.fileText()
 }
 
 // onUpdate runs inside every transaction on the doc, with s.mu held.
 func (s *Server) onUpdate(update []byte, origin any) {
 	s.broadcast(frame(msgSync, ysync.EncodeUpdate(update)), origin)
-	s.writer.Schedule(s.text.ToString())
+	s.writer.Schedule(s.fileText())
 }
 
 func frame(kind uint64, payload []byte) []byte {
@@ -273,7 +278,9 @@ func (s *Server) syncFromDisk() {
 		s.invalid = ""
 		changed = true
 		s.mu.Lock()
-		merge.ExternalEdit(s.doc, s.text, last, onDisk, &fileOrigin{})
+		base := toDoc(last, isCRLF(last))
+		s.crlf = isCRLF(onDisk)
+		merge.ExternalEdit(s.doc, s.text, base, s.normalize(onDisk), &fileOrigin{})
 		s.mu.Unlock()
 		return onDisk
 	})
@@ -475,4 +482,33 @@ func (s *Server) handle(c *client, data []byte) (err error) {
 	}
 	// Other types (query awareness, auth) are not used by pedit.
 	return nil
+}
+
+// The doc holds a file whose lines all end in CRLF with LF endings, and the
+// file is written back with CRLF: a CodeMirror client counts "\r\n" as one
+// character, so with CRs in the text its edits would land off by one per line
+// (#372). A file with mixed endings is held as it is.
+func isCRLF(s string) bool {
+	crlf := strings.Count(s, "\r\n")
+	return crlf > 0 && crlf == strings.Count(s, "\n") && crlf == strings.Count(s, "\r")
+}
+
+func toDoc(s string, crlf bool) string {
+	if crlf {
+		return strings.ReplaceAll(s, "\r\n", "\n")
+	}
+	return s
+}
+
+// normalize is the doc's form of file content that ends its lines as s does.
+func (s *Server) normalize(content string) string { return toDoc(content, isCRLF(content)) }
+
+// fileText is the doc as the file holds it. The caller holds s.mu, or runs
+// before the server does.
+func (s *Server) fileText() string {
+	text := s.text.ToString()
+	if s.crlf {
+		return strings.ReplaceAll(text, "\n", "\r\n")
+	}
+	return text
 }
