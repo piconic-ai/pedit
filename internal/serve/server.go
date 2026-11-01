@@ -20,6 +20,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/fsnotify/fsnotify"
 	"github.com/piconic-ai/pedit/internal/filewriter"
+	"github.com/piconic-ai/pedit/internal/lineend"
 	"github.com/piconic-ai/pedit/internal/merge"
 	"github.com/reearth/ygo/awareness"
 	"github.com/reearth/ygo/crdt"
@@ -177,7 +178,7 @@ func Open(file string, opts Options) (*Server, error) {
 	}
 	s := &Server{file: file, opts: opts, release: release, bound: bound, clients: map[*client]struct{}{}}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
-	s.crlf = isCRLF(initial)
+	s.crlf = lineend.IsCRLF(initial)
 	s.statePath = opts.statePath(file)
 	s.seed(initial)
 	s.aw = awareness.New(uint64(s.doc.ClientID()))
@@ -378,8 +379,8 @@ func (s *Server) syncFromDisk() {
 		s.invalid = ""
 		changed, external = true, true
 		s.mu.Lock()
-		base := toDoc(last, isCRLF(last))
-		s.crlf = isCRLF(onDisk)
+		base := lineend.Doc(last)
+		s.crlf = lineend.IsCRLF(onDisk)
 		merge.ExternalEdit(s.doc, s.text, base, s.normalize(onDisk), &fileOrigin{})
 		s.mu.Unlock()
 		return onDisk
@@ -643,31 +644,15 @@ func (s *Server) handleAwareness(c *client, payload []byte) error {
 	return nil
 }
 
-// The doc holds a file whose lines all end in CRLF with LF endings, and the
-// file is written back with CRLF: a CodeMirror client counts "\r\n" as one
-// character, so with CRs in the text its edits would land off by one per line
-// (#372). A file with mixed endings is held as it is.
-func isCRLF(s string) bool {
-	crlf := strings.Count(s, "\r\n")
-	return crlf > 0 && crlf == strings.Count(s, "\n") && crlf == strings.Count(s, "\r")
-}
-
-func toDoc(s string, crlf bool) string {
-	if crlf {
-		return strings.ReplaceAll(s, "\r\n", "\n")
-	}
-	return s
-}
-
 // normalize is the doc's form of file content that ends its lines as s does.
-func (s *Server) normalize(content string) string { return toDoc(content, isCRLF(content)) }
+func (s *Server) normalize(content string) string { return lineend.Doc(content) }
 
 // fileText is the doc as the file holds it. The caller holds s.mu, or runs
 // before the server does.
 func (s *Server) fileText() string {
 	text := s.text.ToString()
 	if s.crlf {
-		return strings.ReplaceAll(text, "\n", "\r\n")
+		return lineend.FromDoc(text, true)
 	}
 	return text
 }

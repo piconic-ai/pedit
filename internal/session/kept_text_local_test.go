@@ -14,6 +14,13 @@ import (
 // source file on disk set to local, and what the relay replays to it.
 func keptLocalRoom(t *testing.T, local string, guestEdit bool) (*keptTextHost, keptTextRead) {
 	t.Helper()
+	return keptLocalRoomOf(t, "one\ntwo\nthree\n", local, guestEdit)
+}
+
+// keptLocalRoomOf is keptLocalRoom for a source file that was last written as
+// written; the doc holds it with LF.
+func keptLocalRoomOf(t *testing.T, written, local string, guestEdit bool) (*keptTextHost, keptTextRead) {
+	t.Helper()
 	keys, _, _, _ := keptFixFrames(t)
 	const base = "one\ntwo\nthree\n"
 	doc := crdt.New()
@@ -41,7 +48,7 @@ func keptLocalRoom(t *testing.T, local string, guestEdit bool) (*keptTextHost, k
 	if !guestEdit {
 		read = keptTextRead{Snapshot: snapshot}
 	}
-	state := keptTextState{Project: dir, Origin: "https://example.test", Files: []keptTextFileState{{ID: 0, Path: "notes.md", File: path, State: checkpoint, Text: base}}}
+	state := keptTextState{Project: dir, Origin: "https://example.test", Files: []keptTextFileState{{ID: 0, Path: "notes.md", File: path, State: checkpoint, Text: written}}}
 	return &keptTextHost{state: state, keys: keys, path: filepath.Join(dir, "state.json"), room: "abcdefghijklmnopqrstuv"}, read
 }
 
@@ -155,5 +162,49 @@ func TestKeptResumeRefusesLocalEditWhileWritePending(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(h.state.Files[0].File); string(got) != "one\ntwo\nthree (host)\n" {
 		t.Fatalf("file overwritten: %q", got)
+	}
+}
+
+func TestKeptResumeOfACRLFFileKeepsItsEndings(t *testing.T) {
+	h, read := keptLocalRoomOf(t, "one\r\ntwo\r\nthree\r\n", "one\r\ntwo\r\nthree (host)\r\n", true)
+	if err := h.openFiles(); err != nil {
+		t.Fatal(err)
+	}
+	defer h.closeFiles()
+	if err := h.restore(); err != nil {
+		t.Fatal(err)
+	}
+	takeInRead(t, h, read)
+	got, _ := os.ReadFile(h.state.Files[0].File)
+	if string(got) != "one (guest)\r\ntwo\r\nthree (host)\r\n" {
+		t.Fatalf("edits not merged with CRLF: %q", got)
+	}
+	if text := h.files[0].doc.GetText("content").ToString(); text != "one (guest)\ntwo\nthree (host)\n" {
+		t.Fatalf("the doc holds %q", text)
+	}
+}
+
+// A room kept before line endings were handled holds the CRLF file as it is.
+func TestKeptResumeOfALegacyCRLFDocKeepsALocalConversionToLF(t *testing.T) {
+	const legacy = "one\r\ntwo\r\nthree\r\n"
+	h, _ := keptLocalRoomOf(t, legacy, "one\ntwo\nthree\n", false)
+	doc := crdt.New()
+	defer doc.Destroy()
+	text := doc.GetText("content")
+	doc.Transact(func(tx *crdt.Transaction) { text.Insert(tx, 0, legacy, nil) })
+	h.state.Files[0].State = crdt.EncodeStateAsUpdateV1(doc, nil)
+	if err := h.openFiles(); err != nil {
+		t.Fatal(err)
+	}
+	defer h.closeFiles()
+	if err := h.restore(); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.mergeLocalEdits(); err != nil {
+		t.Fatal(err)
+	}
+	file := h.state.Files[0]
+	if file.Text != "one\ntwo\nthree\n" || !h.files[0].matches(file.Text) {
+		t.Fatalf("inconsistent checkpoint: text %q, doc %q", file.Text, h.files[0].doc.GetText("content").ToString())
 	}
 }

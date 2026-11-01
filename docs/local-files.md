@@ -90,6 +90,14 @@ By using it you accept that:
 | Writes | The update check cache, `pedit/update.json` in your [user cache directory](https://pkg.go.dev/os#UserCacheDir) | Only for release builds writing to a terminal, at most once a day. |
 | Watches | Each shared file's directory | Reacts to changes to the shared files' names only. |
 
+Line endings: a file whose lines all end in CRLF is held as LF in the room
+(the browser editor counts "\r\n" as one character, so CRs in the text would
+misplace its edits) and every save of it, by pedit or from a kept room, writes
+CRLF again, also after you save the file with other endings. A file with mixed
+endings is left as it is, and browser editing of it is unsupported. A guest
+on the command line gets copies with LF. The byte order mark and front matter
+are left untouched.
+
 While sharing, the only name pedit removes is its own temporary file: the new
 content when a save fails, your old file once pedit has checked it holds what
 pedit expected, or an older save of yours that a newer one replaced while pedit

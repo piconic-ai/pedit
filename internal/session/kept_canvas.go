@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/piconic-ai/pedit/internal/canvas"
+	"github.com/piconic-ai/pedit/internal/lineend"
 	"github.com/reearth/ygo/crdt"
 )
 
@@ -17,7 +18,9 @@ func keptRoot(path string) string {
 
 func (h *keptTextDocument) render(previous string) string {
 	if h.root != formatCanvas {
-		return h.doc.GetText("content").ToString()
+		// previous is the file as last written, which has the endings the
+		// file keeps.
+		return lineend.FromDoc(h.doc.GetText("content").ToString(), lineend.IsCRLF(previous))
 	}
 	prior, _ := canvas.Parse([]byte(previous))
 	return string(canvas.Render(canvas.Read(h.doc), prior))

@@ -220,6 +220,48 @@ func TestGoHostWithJavaScriptGuest(t *testing.T) {
 	}
 }
 
+// A CRLF file is held as LF in the room, where a CodeMirror client counts
+// "\r\n" as one character, and is written back with CRLF (#382).
+func TestCRLFFileWithJavaScriptGuest(t *testing.T) {
+	dir := protocolDir(t)
+	server := newServer(t)
+	file := filepath.Join(t.TempDir(), "notes.md")
+	if err := os.WriteFile(file, []byte("a\r\nb\r\nc\r\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := session.Start(context.Background(), session.Options{
+		File:       file,
+		Server:     server.URL,
+		WriteDelay: 20 * time.Millisecond,
+		Watch:      true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Stop() })
+	prototest.WaitFor(t, 5*time.Second, func() bool { return s.Client.Status() == protocol.StatusConnected }, "host connected")
+
+	share, _ := url.Parse(s.URL)
+	guest := startGuest(t, "testdata/crlf-guest.mjs", dir, wsURL(server), share.Fragment)
+
+	read := func() string {
+		b, _ := os.ReadFile(file)
+		return string(b)
+	}
+	const want = "a\r\nb\r\nc edited\r\n"
+	prototest.WaitFor(t, 10*time.Second, func() bool { return read() == want }, "the guest's edit on disk")
+	if got := s.Text.ToString(); got != "a\nb\nc edited\n" {
+		t.Fatalf("the room holds %q", got)
+	}
+	if err := s.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	guest.wait()
+	if read() != want {
+		t.Fatalf("file = %q", read())
+	}
+}
+
 func TestAttachmentsWithJavaScriptGuest(t *testing.T) {
 	dir := protocolDir(t)
 	server := newServer(t)

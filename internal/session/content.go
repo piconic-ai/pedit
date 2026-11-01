@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/piconic-ai/pedit/internal/canvas"
+	"github.com/piconic-ai/pedit/internal/lineend"
 	"github.com/piconic-ai/pedit/internal/merge"
 	"github.com/reearth/ygo/crdt"
 )
@@ -33,18 +34,26 @@ func isCanvas(file string) bool { return strings.EqualFold(filepath.Ext(file), "
 type textContent struct {
 	doc  *crdt.Doc
 	text *crdt.YText
+	// crlf: the file ends its lines with CRLF throughout. The doc holds it with
+	// LF, which is what a CodeMirror client counts positions in, and render
+	// gives the file's form back (#382). Read and set under the client's lock.
+	crlf bool
 }
 
 func newTextContent(doc *crdt.Doc, initial string) *textContent {
 	text := doc.GetText("content")
-	doc.Transact(func(txn *crdt.Transaction) { text.Insert(txn, 0, initial, nil) })
-	return &textContent{doc: doc, text: text}
+	crlf := lineend.IsCRLF(initial)
+	doc.Transact(func(txn *crdt.Transaction) { text.Insert(txn, 0, lineend.ToDoc(initial, crlf), nil) })
+	return &textContent{doc: doc, text: text, crlf: crlf}
 }
 
-func (c *textContent) render() string { return c.text.ToString() }
+func (c *textContent) render() string { return lineend.FromDoc(c.text.ToString(), c.crlf) }
 
+// merge takes in a save with the endings the file has now, which may differ
+// from the last ones.
 func (c *textContent) merge(base, next string) error {
-	merge.ExternalEdit(c.doc, c.text, base, next, fileOrigin)
+	c.crlf = lineend.IsCRLF(next)
+	merge.ExternalEdit(c.doc, c.text, lineend.Doc(base), lineend.Doc(next), fileOrigin)
 	return nil
 }
 

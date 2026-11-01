@@ -173,7 +173,10 @@ one. Paths are shown relative to the directory `pedit` runs in.
 A guest who joins from the command line gets a copy of each text file in the
 same temporary directory, including files the host adds later, named after
 the host's path: `docs/spec.md` is copied to `01-docs-spec.md`. Canvases are
-for the browser.
+for the browser. The copies end their lines with LF, whatever the host's file
+uses: a file whose lines all end in CRLF is shared with LF (the browser editor
+counts positions in LF) and saved by the host with CRLF again. A file with mixed endings is shared as it is, and editing it in
+the browser may misplace edits.
 
 ### Comments
 

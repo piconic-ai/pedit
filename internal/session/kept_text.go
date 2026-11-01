@@ -24,6 +24,7 @@ import (
 
 	"github.com/piconic-ai/pedit/internal/canvas"
 	"github.com/piconic-ai/pedit/internal/filewriter"
+	"github.com/piconic-ai/pedit/internal/lineend"
 	"github.com/piconic-ai/pedit/internal/merge"
 	"github.com/piconic-ai/pedit/internal/meta"
 	"github.com/piconic-ai/pedit/internal/protocol"
@@ -242,7 +243,14 @@ func (h *keptTextHost) mergeLocalEdits() error {
 			continue
 		}
 		doc := h.files[file.ID].doc
-		merge.ExternalEdit(doc, doc.GetText("content"), file.Text, onDisk, nil)
+		text := doc.GetText("content")
+		base, next := lineend.Doc(file.Text), lineend.Doc(onDisk)
+		if strings.Contains(text.ToString(), "\r") {
+			// A doc kept before line endings were handled still holds the file as
+			// it is: merge in that form, so a save with other endings is kept.
+			base, next = file.Text, onDisk
+		}
+		merge.ExternalEdit(doc, text, base, next, nil)
 		file.State, file.Text, file.Pending = crdt.EncodeStateAsUpdateV1(doc, nil), onDisk, nil
 		changed = true
 	}
