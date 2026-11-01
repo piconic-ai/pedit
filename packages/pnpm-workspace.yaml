@@ -1,4 +1,5 @@
 packages:
   - protocol
+  - serve
   - web
   - worker
