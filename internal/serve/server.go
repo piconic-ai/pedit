@@ -279,8 +279,9 @@ func (s *Server) cleanup() {
 	if s.dir != "" {
 		_ = os.RemoveAll(s.dir)
 	}
-	_ = s.bound.Close()
+	// The lock is released through the directory handle: close that last.
 	s.release()
+	_ = s.bound.Close()
 }
 
 // text as the doc has it now.
