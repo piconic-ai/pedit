@@ -50,8 +50,13 @@ const server = createServer((req, res) => {
   }
 })
 
+// Any page in the user's browser can open a WebSocket to 127.0.0.1, so only
+// this app's own page may use the bridge: a browser always sends the Origin
+// of the page that opens the connection.
+const ownOrigin = () => `http://127.0.0.1:${server.address().port}`
+
 // One upstream connection per page connection, frames passed through as they are.
-const wss = new WebSocketServer({ server })
+const wss = new WebSocketServer({ server, verifyClient: ({ origin }) => origin === ownOrigin() })
 wss.on('connection', (page) => {
   // Dial the socket ourselves rather than use a ws+unix:// URL, which cannot
   // carry a path with a space (macOS: "Application Support").
