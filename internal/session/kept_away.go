@@ -88,7 +88,7 @@ func (s *Session) startAway(hostToken, fragment string, res *resumed) error {
 		if file.File != f.file {
 			return errors.New("the files differ from the resume record")
 		}
-		h.files[file.ID] = &keptTextDocument{doc: f.doc}
+		h.files[file.ID] = &keptTextDocument{doc: f.doc, root: keptRoot(file.Path)}
 		a.follow(f.doc)
 		if file.Meta != nil && f.meta != nil {
 			h.files[file.Meta.ID] = &keptTextDocument{doc: f.meta.doc, root: protocol.KeptCommentsRoot}
@@ -110,9 +110,7 @@ func (a *keepAway) newRecord(project, fragment, hostToken string) (keptTextState
 		if err != nil {
 			return state, err
 		}
-		if _, ok := f.content.(*textContent); !ok {
-			return state, errors.New("--keep shares text files, not " + filepath.Base(f.file))
-		}
+
 		file := keptTextFileState{ID: uint32(i), Path: path, File: f.file}
 		if f.meta != nil {
 			file.Meta = &keptMetaState{ID: keptMetaIDBase + uint32(i), Name: filepath.ToSlash(f.meta.name)}
@@ -222,9 +220,8 @@ func (a *keepAway) saveRecord(leaving bool) error {
 		for i := range state.Files {
 			file := &state.Files[i]
 			live := a.h.files[file.ID].doc
-			text := live.GetText("content").ToString()
-			if disk, ok := a.files[i].bound.Read(); ok && disk == text {
-				file.State, file.Text, file.Pending = crdt.EncodeStateAsUpdateV1(live, nil), text, nil
+			if disk, ok := a.files[i].bound.Read(); ok && a.h.files[file.ID].matches(disk) {
+				file.State, file.Text, file.Pending = crdt.EncodeStateAsUpdateV1(live, nil), disk, nil
 			}
 			if m := file.Meta; m != nil && a.h.files[m.ID] != nil {
 				meta := *m

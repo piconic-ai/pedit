@@ -31,6 +31,10 @@ type roomGuest struct {
 }
 
 type roomState struct {
+	Nodes []struct {
+		ID string  `json:"id"`
+		X  float64 `json:"x"`
+	}
 	Status       string
 	Statuses     []string
 	Text         string
@@ -168,7 +172,7 @@ func (r *keptRoom) guest(link string) *roomGuest {
 	if err != nil {
 		r.t.Fatal(err)
 	}
-	return &roomGuest{t: r.t, p: keptCommand(r.t, r.project, "node", script, r.dir, socket, u.Fragment)}
+	return &roomGuest{t: r.t, p: keptCommand(r.t, r.project, "node", script, r.dir, socket, u.Fragment, filepath.Ext(r.file))}
 }
 
 func (r *keptRoom) text() string {
@@ -335,4 +339,58 @@ func TestKeptRoomImagesPastedWhileAwayAreSavedOnResume(t *testing.T) {
 		t.Fatalf("a guest who joins later cannot see the image: %+v", seen)
 	}
 	resumed.stop(t)
+}
+
+func TestKeptCanvasRoomEndToEnd(t *testing.T) {
+	r := newKeptRoom(t)
+	r.file = filepath.Join(r.project, "board.canvas")
+	if err := os.WriteFile(r.file, []byte(`{"nodes":[{"id":"base","type":"text","text":"hello","x":0,"y":0,"width":100,"height":100}],"edges":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	host := r.pedit("--keep", "1h", "board.canvas")
+	link := host.link(t)
+	first := r.guest(link)
+	if s := first.read(); len(s.Nodes) != 1 {
+		t.Fatalf("initial board: %+v", s)
+	}
+	host.stop(t)
+	first.until("canvas kept", func(s roomState) bool { return s.Status == "kept" && s.Replayed })
+	first.send(`{"addNode":{"id":"a","type":"text","text":"first","x":1,"y":0,"width":100,"height":100}}`)
+	first.until("first node kept", func(s roomState) bool { return s.Sync == "kept" && len(s.Nodes) == 2 })
+	second := r.guest(link)
+	second.until("second guest sees first node", func(s roomState) bool { return s.Status == "kept" && len(s.Nodes) == 2 })
+	second.send(`{"addNode":{"id":"b","type":"text","text":"second","x":2,"y":0,"width":100,"height":100}}`)
+	second.send(`{"moveNode":{"id":"a","x":42}}`)
+	prototest.WaitFor(t, 15*time.Second, func() bool { return r.logEntries(link) >= 3 }, "canvas edits logged")
+	resumed := r.pedit("board.canvas")
+	resumed.link(t)
+	has := func(id string, x float64) bool {
+		var c struct {
+			Nodes []struct {
+				ID string  `json:"id"`
+				X  float64 `json:"x"`
+			}
+		}
+		if json.Unmarshal([]byte(r.text()), &c) != nil || len(c.Nodes) != 3 {
+			return false
+		}
+		for _, n := range c.Nodes {
+			if n.ID == id && n.X == x {
+				return true
+			}
+		}
+		return false
+	}
+	prototest.WaitFor(t, 15*time.Second, func() bool { return has("a", 42) && has("b", 2) }, "both guests saved")
+	first.until("canvas host returns", func(s roomState) bool { return s.Status == "connected" })
+	first.send(`{"moveNode":{"id":"b","x":99}}`)
+	prototest.WaitFor(t, 15*time.Second, func() bool { return has("b", 99) }, "live edit after resume")
+	resumed.stop(t)
+	closer := r.pedit("close")
+	for range closer.lines {
+	}
+	if err := closer.wait(); err != nil {
+		t.Fatal(err)
+	}
+	first.until("canvas closed", func(s roomState) bool { return s.ClosedByHost })
 }

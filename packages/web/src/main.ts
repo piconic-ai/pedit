@@ -84,7 +84,7 @@ import './components/Header.tsx'
 import './components/Layout.tsx'
 import './components/Notice.tsx'
 import type { LayoutParts } from './components/Layout.tsx'
-import { AwayView, isLocked } from './keptaway.ts'
+import { AwayView, isLocked, setCanvasStatus } from './keptaway.ts'
 import { lockedUndo } from './lockedundo.ts'
 import './style.css'
 
@@ -304,8 +304,6 @@ async function joinRoom(
   // Only edit links write what the relay keeps while the host is away.
   const commentsLocked = () =>
     editLocked() || !writesComments || (roomStatus.get() === 'kept' && !writesFile)
-  // A canvas needs its host: it is not kept (#234).
-  const boardsPaused = () => ['waiting', 'kept', 'log-full'].includes(roomStatus.get())
   // Nor does anyone whose link is below edit, ever.
   const fileLocked = () => editLocked() || !writesFile
   const noImages = () =>
@@ -427,7 +425,7 @@ async function joinRoom(
         onError: (message) => notices.show(message),
       },
     })
-    if (!writesFile) board.readOnly = true
+    setCanvasStatus(board, json, roomStatus.get(), writesFile)
     attachments.version.subscribe(() => board.refreshMarkdown())
     board.selected.subscribe(() => {
       if (board === shown.board) aim()
@@ -539,10 +537,10 @@ async function joinRoom(
     roomStatus.set(s)
     away.show(s, client?.closedByHost)
     locked.set(commentsLocked())
+    for (const f of opened.values()) setCanvasStatus(f.board, f.json, s, writesFile)
     if (isFinalStatus(s)) {
       editor.dispatch({ effects: editable.reconfigure(readOnly) })
       for (const f of opened.values()) {
-        f.board.readOnly = true
         f.table.readOnly = true
       }
     } else if (writesFile) {
@@ -550,7 +548,6 @@ async function joinRoom(
       if (away !== wasLocked)
         editor.dispatch({ effects: editable.reconfigure(away ? readOnly : []) })
       for (const f of opened.values()) {
-        f.board.paused = boardsPaused()
         f.table.readOnly = away
       }
     }
@@ -613,10 +610,8 @@ async function joinRoom(
       comments: null,
     }
     if (isFinalStatus(roomStatus.get())) {
-      f.board.readOnly = true
       f.table.readOnly = true
     } else {
-      f.board.paused = boardsPaused()
       f.table.readOnly = editLocked()
     }
     opened.set(entry.id, f)

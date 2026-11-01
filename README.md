@@ -78,7 +78,8 @@ header says the host is away and until when, text files and their comments stay
 editable and images can be pasted, and the relay keeps each edit, which shows as
 sending until the relay has it. The host takes the edits in on its return, and
 everyone is live again. Closing the page with edits still sending asks first.
-A canvas is not kept while the host is away.
+Canvas board edits are kept too; its JSON pane is read-only while the host is away.
+Do not edit the local `.canvas` file while away: resume refuses external changes instead of merging them.
 
 Text, canvas changes, and comments save during the session, including while
 edits continue. Saves normally start about a second after the first pending
@@ -104,7 +105,7 @@ relay; pedit reports the effective value). `--keep 0` opens a room that stores n
 when you leave. To change the default for a project, set `keep: 7d` in `.pedit/config.yaml`
 (same syntax as `--keep`; `keep: 0` turns keep off). The command line wins over the config, and
 the config over the default. Keep applies to `pedit <file>` and `pedit <file> <file>...` for existing
-text files; a scratch room (`pedit` with no file, `--template`, `--directory`), a canvas and
+text and canvas files; a scratch room (`pedit` with no file, `--template`, `--directory`) and
 joining a link (`pedit <link>`) are not kept. If a kept room already holds the file, `pedit <file>`
 resumes it; its set of files is fixed, so a file it does not hold is an error: run `pedit close`
 first, or `pedit --keep 0` for a separate room. A relay that cannot keep rooms (a self-hosted

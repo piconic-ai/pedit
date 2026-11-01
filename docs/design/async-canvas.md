@@ -1,8 +1,14 @@
-# Canvas while the host is away
+# Canvas JSON editing while the host is away
+
+Kept rooms support board edits using the existing Yjs model. The JSON pane
+is read-only until the host returns. This document covers the deferred
+[JSON editing work](https://github.com/piconic-ai/pedit/issues/374).
+Board movement changes coordinates in place; it does not reorder the array.
+Concurrent deletion wins over board edits, matching existing live behavior.
 
 The current canvas document keeps nodes and edges in Y.Arrays. Reordering a
 node deletes its Y.Map and inserts a new one. If a second peer edits the old
-map concurrently, the rendered canvas can lose that edit. If two peers move
+map concurrently, the rendered canvas can lose that edit. If two JSON edits reorder
 the same node concurrently, the array can contain duplicate IDs. The tests
 `TestConcurrentReorderCanHideTextEdit` and
 `TestConcurrentReordersCreateDuplicateRecords` characterize these failures.
@@ -40,9 +46,9 @@ Do not write both representations independently: they would diverge under
 concurrent edits.
 
 An unknown canvas format cannot simply be sent to older browsers, which may
-treat it as text. A global protocol version bump would also reject older
-clients from rooms that do not use the new model. Design and test room-level
-version negotiation and a rolling deployment before enabling the new model.
+treat it as text. The kept-board implementation uses protocol version 7 and rejects older
+clients. A future model migration must define its own version boundary;
+compatibility with older clients is not required.
 An existing file remains ordinary JSON Canvas on disk.
 
 ## Verification

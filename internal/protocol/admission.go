@@ -20,26 +20,23 @@ const ReadAdmissionHeader = "X-Pedit-Read-Admission"
 // Bump it only for changes older peers cannot skip; adding a message type or
 // kind does not need a bump. Version 6 starts every binary message with a kind
 // byte (kinds.go). Keep it in sync with packages/protocol.
-const ProtocolVersion = 6
+const ProtocolVersion = 7
 
-// MinProtocolVersion is the oldest version a Client still speaks: relays that
-// serve version 5 only (a self-hosted one) have no kind byte.
-const MinProtocolVersion = 5
+// MinProtocolVersion excludes peers that cannot replay kept canvas documents.
+const MinProtocolVersion = 7
 
 // SocketProtocol is "pedit-v" followed by ProtocolVersion.
-const SocketProtocol = "pedit-v6"
+const SocketProtocol = "pedit-v7"
 
 // SocketProtocols is what a Client offers: its newest version first, then the
 // older ones it still speaks.
-const SocketProtocols = SocketProtocol + ", pedit-v5"
+const SocketProtocols = SocketProtocol
 
 // socketVersion is the version a negotiated subprotocol names, or 0.
 func socketVersion(subprotocol string) int {
 	switch subprotocol {
-	case "pedit-v6":
-		return 6
-	case "pedit-v5":
-		return 5
+	case "pedit-v7":
+		return 7
 	}
 	return 0
 }

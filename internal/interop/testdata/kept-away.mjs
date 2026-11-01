@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { pathToFileURL } from 'node:url'
 
-const [protocolDir, url, key] = process.argv.slice(2)
+const [protocolDir, url, key, format] = process.argv.slice(2)
 const require = createRequire(join(protocolDir, 'package.json'))
 function esm(pkg, subpath) {
   const dir = dirname(require.resolve(`${pkg}/package.json`))
@@ -63,13 +63,14 @@ const client = new protocol.RoomClient({
 })
 client.connect()
 
-const text = doc.getText('content')
+const text = format === '.canvas' ? null : doc.getText('content')
 const send = () =>
   process.stdout.write(
     `${JSON.stringify({
       status: client.status,
       statuses,
-      text: text.toString(),
+      text: text?.toString() ?? '',
+      nodes: format === '.canvas' ? doc.getArray('nodes').toJSON() : undefined,
       threads: [...metaDoc.getMap('comments').keys()],
       sync,
       skipped,
@@ -80,13 +81,32 @@ const send = () =>
     })}\n`,
   )
 
-for (let i = 0; i < 300 && (manifest === null || text.length === 0); i++) {
+for (
+  let i = 0;
+  i < 300 && (manifest === null || (text ? text.length === 0 : doc.getArray('nodes').length === 0));
+  i++
+) {
   await new Promise((r) => setTimeout(r, 50))
 }
 if (manifest === null) throw new Error('no manifest')
 send()
 for await (const line of createInterface({ input: process.stdin })) {
   const command = JSON.parse(line)
+  if (command.addNode) {
+    const node = new Y.Map()
+    for (const [field, value] of Object.entries(command.addNode)) {
+      node.set(field, field === 'text' ? new Y.Text(value) : value)
+    }
+    doc.getArray('nodes').push([node])
+  }
+  if (command.moveNode) {
+    const node = doc
+      .getArray('nodes')
+      .toArray()
+      .find((n) => n.get('id') === command.moveNode.id)
+    if (!node) throw new Error('missing canvas node')
+    node.set('x', command.moveNode.x)
+  }
   if (command.append) text.insert(text.length, command.append)
   if (command.thread) {
     const { from, to, quote, body } = command.thread

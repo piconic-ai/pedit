@@ -32,7 +32,7 @@ type keptMetaState struct {
 // here on, before any edit can delete the character one points at.
 func (h *keptTextHost) followComments() {
 	for _, file := range h.state.Files {
-		if file.Meta == nil {
+		if file.Meta == nil || isCanvas(file.Path) {
 			continue
 		}
 		text, comments := h.files[file.ID], h.files[file.Meta.ID]
@@ -84,11 +84,13 @@ func (h *keptTextHost) metaPending(file *keptTextFileState) (*string, error) {
 	}
 	doc, content := h.files[m.ID].doc, h.files[file.ID]
 	tracker := content.tracker
-	if tracker == nil {
+	if tracker == nil && content.root != formatCanvas {
 		tracker = meta.NewTracker(content.doc)
 		defer tracker.Close()
 	}
-	tracker.Learn(doc)
+	if tracker != nil {
+		tracker.Learn(doc)
+	}
 	read := meta.Read(doc, prev, tracker)
 	if m.Text == "" && len(read.Comments) == 0 {
 		return nil, nil

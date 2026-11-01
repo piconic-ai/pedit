@@ -6,6 +6,7 @@ import {
   decodeSnapshot,
   decodeUpdate,
   incomplete,
+  kindOf,
   openKeptFrame,
   sealKeptUpdate,
   trial,
@@ -117,7 +118,7 @@ export class KeptAway {
   adopt(id: number, doc: Y.Doc, comments: boolean): void {
     const held = this.relay.get(id)
     if (!held) return
-    declare(doc, comments)
+    declare(doc, comments ? 'comments' : kindOf(held))
     Y.applyUpdate(doc, Y.encodeStateAsUpdate(held), this.origin)
   }
 
@@ -185,7 +186,18 @@ export class KeptAway {
     if (!held) {
       const listed = this.files?.find((file) => file.id === id)
       const target = [...this.hooks.docs()].find(([i]) => i === id)?.[1]
-      held = declare(new Y.Doc(), listed ? listed.format === 'meta' : (target?.comments ?? false))
+      const kind = listed
+        ? listed.format === 'meta'
+          ? 'comments'
+          : listed.format === 'canvas'
+            ? 'canvas'
+            : 'content'
+        : target?.comments
+          ? 'comments'
+          : target
+            ? kindOf(target.doc)
+            : 'content'
+      held = declare(new Y.Doc(), kind)
       this.relay.set(id, held)
     }
     return held
@@ -195,14 +207,22 @@ export class KeptAway {
   private async snapshot(bundle: Uint8Array): Promise<void> {
     const opened = decodeSnapshot(await openKeptFrame(this.keys, bundle))
     const files =
-      opened.kind === 'bundle' ? opened.files : [{ id: 0, path: '', update: opened.update }]
+      opened.kind === 'bundle'
+        ? opened.files
+        : [{ id: 0, path: opened.filename ?? '', update: opened.update }]
     // A file whose path is the metadata path of another is that file's comments.
     const paths = new Set(files.map((file) => file.path))
     const listed = files.map(({ id, path }) => {
       const target = metaTarget(path)
-      return { id, path, format: target !== undefined && paths.has(target) ? 'meta' : 'text' }
+      const format =
+        target !== undefined && paths.has(target)
+          ? 'meta'
+          : path.toLowerCase().endsWith('.canvas')
+            ? 'canvas'
+            : 'text'
+      return { id, path, format }
     })
-    if (opened.kind === 'bundle') this.files = listed
+    this.files = listed
     for (const doc of this.relay.values()) doc.destroy()
     this.relay.clear()
     for (const file of files) {
@@ -216,6 +236,6 @@ export class KeptAway {
       const held = this.relay.get(id)
       if (held) Y.applyUpdate(doc, Y.encodeStateAsUpdate(held), this.origin)
     }
-    if (opened.kind === 'bundle') this.hooks.manifest(listed)
+    if (opened.kind === 'bundle' || opened.filename) this.hooks.manifest(listed)
   }
 }

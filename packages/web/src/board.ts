@@ -340,10 +340,9 @@ export class BoardView {
     this.#lock()
   }
 
-  /** While the host is away: nothing changes the board until it is back. */
+  /** Pauses board edits while the room cannot keep them. */
   set paused(on: boolean) {
     this.#paused = on
-    if (this.json && !this.#closed) this.json.readOnly = on
     this.#lock()
   }
 

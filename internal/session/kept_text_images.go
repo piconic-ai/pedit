@@ -37,7 +37,7 @@ func (h *keptTextHost) saveImages(ctx context.Context) error {
 		// Through the directory the text is written in, which stays the one
 		// opened at the start even if its path is later swapped for a link.
 		images := attach.New(attach.Options{File: file.File, Root: h.files[file.ID].bound.Dir(), Server: h.state.Origin, Room: h.room, Keys: h.blobKeys, HTTPClient: h.imageClient})
-		_, errs := images.Restore(ctx, h.files[file.ID].doc.GetText("content").ToString())
+		_, errs := images.Restore(ctx, h.files[file.ID].render(""))
 		images.Close()
 		if ctx.Err() != nil {
 			return ctx.Err()

@@ -19,7 +19,7 @@ import (
 	"github.com/reearth/ygo/crdt"
 )
 
-// awayGuest is a guest built from internal/protocol, speaking version 6 on a
+// awayGuest is a guest built from internal/protocol, speaking version 7 on a
 // socket of its own to the real Worker.
 type awayGuest struct {
 	t    *testing.T
@@ -55,8 +55,8 @@ func dialAwayGuest(t *testing.T, relay, link, after string) *awayGuest {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if protocol.ConnVersion(conn) != 6 {
-		t.Fatal("the relay did not speak version 6")
+	if protocol.ConnVersion(conn) != protocol.ProtocolVersion {
+		t.Fatal("the relay did not speak version 7")
 	}
 	t.Cleanup(func() { _ = conn.Close() })
 	return &awayGuest{t: t, conn: conn, keys: keys}

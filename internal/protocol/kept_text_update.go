@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"errors"
+	"slices"
 
 	"github.com/reearth/ygo/encoding"
 )
@@ -15,10 +16,9 @@ func ValidateKeptTextUpdate(update []byte) error {
 	return ValidateKeptDocUpdate(update, "content")
 }
 
-// ValidateKeptDocUpdate is ValidateKeptTextUpdate for a doc whose only root is root:
-// "content" for a text file, KeptCommentsRoot for its paired metadata doc.
-func ValidateKeptDocUpdate(update []byte, root string) error {
-	r := keptUpdateReader{Decoder: encoding.NewDecoder(update), root: root}
+// ValidateKeptDocUpdate accepts only the named roots of a document.
+func ValidateKeptDocUpdate(update []byte, roots ...string) error {
+	r := keptUpdateReader{Decoder: encoding.NewDecoder(update), roots: roots}
 	clients := r.count()
 	for range clients {
 		structs := r.count()
@@ -45,8 +45,8 @@ func ValidateKeptDocUpdate(update []byte, root string) error {
 
 type keptUpdateReader struct {
 	*encoding.Decoder
-	root string
-	err  error
+	roots []string
+	err   error
 }
 
 func (r *keptUpdateReader) uint() uint64 {
@@ -109,7 +109,7 @@ func (r *keptUpdateReader) item() {
 	if info&192 == 0 {
 		switch r.byte() {
 		case 1:
-			if r.string() != r.root {
+			if !slices.Contains(r.roots, r.string()) {
 				r.err = errors.New("unexpected kept document root")
 			}
 		case 0:

@@ -12,9 +12,9 @@ export const READ_ADMISSION_HEADER = 'X-Pedit-Read-Admission'
  * adding a message type or kind does not need a bump. Version 6 starts every
  * binary message with a kind byte (kinds.ts).
  */
-export const PROTOCOL_VERSION = 6
-/** The oldest version a relay still serves: version 5 has no kind byte. */
-export const MIN_PROTOCOL_VERSION = 5
+export const PROTOCOL_VERSION = 7
+/** Older peers cannot replay kept canvas documents. */
+export const MIN_PROTOCOL_VERSION = 7
 export const SOCKET_PROTOCOL = `pedit-v${PROTOCOL_VERSION}`
 /** The subprotocol name of a version. */
 export const socketProtocol = (version: number) => `pedit-v${version}`

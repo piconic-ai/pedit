@@ -104,14 +104,14 @@ func newServer(t *testing.T) *httptest.Server {
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
-		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{"pedit-v6", "pedit-v5"}})
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{"pedit-v7", "pedit-v5"}})
 		if err != nil {
 			return
 		}
 		c.SetReadLimit(-1)
 		mu.Lock()
 		version := 5
-		if c.Subprotocol() == "pedit-v6" {
+		if c.Subprotocol() == "pedit-v7" {
 			version = 6
 		}
 		conns[c] = version

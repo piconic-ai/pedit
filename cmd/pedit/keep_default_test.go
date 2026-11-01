@@ -71,7 +71,7 @@ func TestDefaultKeepIsOneDay(t *testing.T) {
 		{[]string{"a.md", "b.md"}, day, false},
 		{[]string{"--keep", "7d", "a.md"}, 7 * 24 * time.Hour, false},
 		{[]string{"--keep", "0", "a.md"}, 0, true},
-		{[]string{"c.canvas"}, 0, false},
+		{[]string{"c.canvas"}, day, false},
 		{[]string{"new.md"}, 0, false},
 		{[]string{"-t", "canvas", "a.md"}, 0, false},
 		{nil, 0, false},

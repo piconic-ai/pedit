@@ -112,7 +112,7 @@ The browser (`RoomClient` in `packages/protocol`, `packages/web`) speaks version
   grace, and a relay of version 5, still mean `host away`: the status is
   `waiting` and the editor is read-only. `log full` is the status `log-full`:
   read-only again, as no further edit would be kept.
-- **Edits.** While the room is kept, an edit of a text file or its comments is
+- **Edits.** While the room is kept, an edit of a text file, canvas board, or its comments is
   not a live update but a kind 1 entry: one document per entry, named by its
   file ID, signed and encrypted in the kept text format (`sealKeptUpdate`). It is pending, and the header says `sending`, until
   the same entry comes back as kind 4 with an ID, which acknowledges it. A
@@ -120,8 +120,8 @@ The browser (`RoomClient` in `packages/protocol`, `packages/web`) speaks version
   compares each document with its copy of what the relay holds, and sends what
   the relay lacks as new entries, whether the edit was pending or was made
   while the browser was not connected to a kept room. Only edit links send entries; a read link
-  never does, and a comment link cannot comment while the host is away. A canvas
-  is not kept.
+  never does, and a comment link cannot comment while the host is away. Canvas board edits use the same entries; the JSON pane stays read-only
+  until the host returns. Concurrent deletion wins over edits, as in live rooms.
 - **Joining.** Kind 5 is opened as a kept bundle: the files it lists become the
   room's manifest, and a file the page opens later is built from it and from
   the entries since. Kind 4 entries are verified (the editors' signature, the
@@ -180,14 +180,19 @@ longer has; a later change removes it.
 
 ### Merging, the record and the journal
 
-`pedit --keep 7d notes.md todo.md` publishes a fixed set of encrypted Yjs text
+`pedit --keep 7d notes.md todo.md` publishes a fixed set of encrypted Yjs text and canvas
 documents, one per file. A signed encrypted bundle carries their stable IDs,
 relative display paths and states; signed entries name their target file. The
 record keeps the original Yjs identifiers, so entries made against the old
 documents merge. All source writes and the recovery journal are durable before
 the shared log cutoff advances, and a restart finishes any partly completed
-journal writes. Repeated Yjs text updates are idempotent, and the entries never
-carry canvas operations.
+journal writes. Repeated Yjs updates are idempotent. Entries never carry non-idempotent
+CanvasMessage requests. Canvas documents retain their original Yjs identities on resume.
+Their format is inferred from the snapshot path; paired metadata is identified first.
+Canvas roots are nodes, edges, and extra.
+
+Local canvas changes made while away are refused without overwriting the file.
+Only text files use the external-edit merge described below.
 
 Local edits made while away are diffed against the text the host last wrote
 (the journal's expected text) and applied to the restored document as host
@@ -257,7 +262,7 @@ intake, truncation and close against a local relay.
 
 ### The command line guest
 
-A guest speaks version 6 and handles a kept room as a host that dropped: `kept
+A guest speaks version 7 and handles a kept room as a host that dropped: `kept
 <until>` is shown once as the host being away and the room being kept until then, the copy stays read-only, and on
 `host back` the guest continues. Editing from the command line while the host is
 away is not supported yet.
@@ -267,23 +272,22 @@ away is not supported yet.
 Sizes, times and the count of entries. The log stores
 no sender; the entry carries its own, signed and encrypted.
 
-## Not in this design
+## Canvas scope and replay
 
-Canvas while the host is away (it needs replay counters the host persists), and
-changing the default keep.
+Protocol version 7 keeps canvas board edits with the existing shared model.
+The JSON pane still needs host validation and is read-only while away.
+[JSON editing without the host](https://github.com/piconic-ai/pedit/issues/374)
+is separate work described in [async-canvas.md](async-canvas.md).
+
+Live frames retain ReplayGuard and the nonce handshake. Kept entries contain
+idempotent Yjs updates, and the host journals the document and log position
+before advancing its checkpoint. Lost acknowledgements and repeated replay
+do not repeat a canvas command, so no new durable per-sender counter is needed.
+This does not authenticate individual senders within a shared access tier or
+prove freshness of every snapshot served by a malicious relay.
 
 ## Open questions
 
-- The canvas JSON pane sends edits to the host for validation and waits for its
-  answer. Moving that algorithm to each browser is not enough: reordering
-  deletes and reinserts a Y.Map, so concurrent moves can duplicate IDs or
-  strand edits. A shared Go and browser model needs a stable record per node
-  and edge with a separate order key and deletion marker, public-ID collisions
-  and edges to deleted nodes handled explicitly, and a new protocol version.
-- An acknowledged append whose response was lost must be distinguishable from a
-  new operation on retry. A durable per-sender sequence separate from the live
-  frame counter is one candidate; it needs a proof for concurrent tabs, sender
-  impersonation and checkpoint replacement.
 - Signing keys are shared within an access tier, so one participant can
   impersonate another. Define per-sender authentication or state the boundary.
 - A host-signed checkpoint with an epoch and counter floors would let a
