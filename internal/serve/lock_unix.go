@@ -9,6 +9,11 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// openLock opens, creating it if needed, the lock file.
+func openLock(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+}
+
 // lockFile takes an exclusive advisory lock on f without waiting; ok is false
 // when another open file description holds it.
 func lockFile(f *os.File) (ok bool, err error) {

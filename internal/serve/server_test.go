@@ -392,3 +392,28 @@ func TestLatency(t *testing.T) {
 	t.Logf("client to client: median %v, max %v; client to file (write delay 20ms): median %v",
 		median(toClient), slices.Max(toClient), median(toFile))
 }
+
+func TestSymlinkedDirectoryGetsTheSameLock(t *testing.T) {
+	s, file, _ := open(t, "x\n")
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(filepath.Dir(file), link); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	_, err := Open(filepath.Join(link, "doc.md"), Options{App: "other", SocketBase: base(t)})
+	var held *HeldError
+	if !errors.As(err, &held) {
+		t.Fatalf("Open through a linked directory = %v, want *HeldError", err)
+	}
+	if s.file != lockedFile(t, file) {
+		t.Fatalf("file = %s", s.file)
+	}
+}
+
+func lockedFile(t *testing.T, file string) string {
+	t.Helper()
+	p, err := filepath.EvalSymlinks(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}

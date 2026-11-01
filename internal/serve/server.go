@@ -105,6 +105,14 @@ func Open(file string, opts Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	// One lock per file however it is reached: resolve the directory's links
+	// after OpenBound has refused a file that is itself a link.
+	dir, err := filepath.EvalSymlinks(filepath.Dir(file))
+	if err != nil {
+		_ = bound.Close()
+		return nil, err
+	}
+	file = filepath.Join(dir, filepath.Base(file))
 	initial, ok := bound.Read()
 	if !ok {
 		_ = bound.Close()

@@ -46,7 +46,7 @@ func lockPath(file string) string {
 func acquire(file, app string) (release func(), err error) {
 	path := lockPath(file)
 	for range 5 {
-		f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+		f, err := openLock(path)
 		if err != nil {
 			return nil, err
 		}
