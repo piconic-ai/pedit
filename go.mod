@@ -6,7 +6,7 @@ go 1.26.0
 // setup-go). `go 1.25.0` above stays the minimum version, and it also keeps
 // the GODEBUG defaults of 1.25, so moving this line only brings in a newer
 // compiler and standard library: bump it with each Go patch release.
-toolchain go1.27.2
+toolchain go1.27.3
 
 // The TypeScript packages live alongside; keep ./... out of node_modules.
 ignore (
