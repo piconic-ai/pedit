@@ -8,12 +8,14 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/piconic-ai/pedit/internal/serve"
 )
 
-const serveUsage = `Usage: pedit serve <file> [--json] [--app <name>]
+const serveUsage = `Usage: pedit serve [--root <dir>] <file> [--json] [--app <name>]
 
 EXPERIMENTAL: the interface may change or go away.
 
@@ -29,12 +31,24 @@ socket and the lock. A second pedit serve on the same file is refused, naming
 the process that serves it.
 
 Options:
-  --json       Print {"event":"listening","socket":"<path>"} instead of the path
-  --app <name> Name the app, so a refusal can say who holds the file`
+  --json       Print one JSON event per line instead of messages (see below)
+  --app <name> Name the app, so a refusal can say who holds the file
+  --root <dir> Take <file> as a path relative to <dir>, and refuse one that
+               leaves it (an absolute path, "..", or a link in a directory)
+
+With --json, stdout has these events, each on a line of its own:
+  {"event":"listening","socket":"<path>"}   serving; the first event
+  {"event":"saved","bytes":N}               pedit wrote the file
+  {"event":"external_save"}                 a save by another editor was taken in
+  {"event":"held","pid":N,"app":"<name>"}   another process serves the file
+  {"event":"error","message":"<one line>"}  any other failure
+
+Exit codes: 0 normal, 1 error, 2 usage, 3 refused because another process
+serves the file.`
 
 type serveArgs struct {
-	file, app string
-	json      bool
+	file, app, root string
+	json            bool
 }
 
 func parseServeArgs(args []string) (serveArgs, error) {
@@ -50,6 +64,12 @@ func parseServeArgs(args []string) (serveArgs, error) {
 				return opts, errors.New("--app needs a name")
 			}
 			opts.app = args[i]
+		case arg == "--root":
+			i++
+			if i == len(args) || args[i] == "" {
+				return opts, errors.New("--root needs a directory")
+			}
+			opts.root = args[i]
 		case arg == "--":
 			files = append(files, args[i+1:]...)
 			i = len(args)
@@ -74,13 +94,44 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return usageError(stderr, serveUsage, err)
 	}
-	s, err := serve.Open(opts.file, serve.Options{
-		App:     opts.app,
-		OnError: func(err error) { fmt.Fprintln(stderr, "pedit:", err) },
-	})
-	if err != nil {
+	var out sync.Mutex
+	emit := func(event string, fields map[string]any) {
+		if !opts.json {
+			return
+		}
+		fields["event"] = event
+		line, _ := json.Marshal(fields)
+		out.Lock()
+		defer out.Unlock()
+		fmt.Fprintln(stdout, string(line))
+	}
+	fail := func(err error) int {
 		fmt.Fprintln(stderr, "pedit:", err)
+		var held *serve.HeldError
+		if errors.As(err, &held) {
+			emit("held", map[string]any{"pid": held.Holder.PID, "app": held.Holder.App})
+			return 3
+		}
+		emit("error", map[string]any{"message": strings.Join(strings.Fields(err.Error()), " ")})
 		return 1
+	}
+	so := serve.Options{
+		App:            opts.app,
+		OnError:        func(err error) { fmt.Fprintln(stderr, "pedit:", err) },
+		OnWritten:      func(n int) { emit("saved", map[string]any{"bytes": n}) },
+		OnExternalSave: func() { emit("external_save", map[string]any{}) },
+	}
+	if opts.root != "" {
+		root, err := os.OpenRoot(opts.root)
+		if err != nil {
+			return fail(err)
+		}
+		defer root.Close()
+		so.Root = root
+	}
+	s, err := serve.Open(opts.file, so)
+	if err != nil {
+		return fail(err)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -92,15 +143,13 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	}()
 
 	if opts.json {
-		line, _ := json.Marshal(map[string]string{"event": "listening", "socket": s.SocketPath()})
-		fmt.Fprintln(stdout, string(line))
+		emit("listening", map[string]any{"socket": s.SocketPath()})
 	} else {
 		fmt.Fprintln(stdout, s.SocketPath())
 	}
 	<-ctx.Done()
 	if err := s.Close(); err != nil {
-		fmt.Fprintln(stderr, "pedit:", err)
-		return 1
+		return fail(err)
 	}
 	return 0
 }
