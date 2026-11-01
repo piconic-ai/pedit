@@ -5,6 +5,7 @@ package serve
 import (
 	"errors"
 	"os"
+	"path/filepath"
 
 	"golang.org/x/sys/windows"
 )
@@ -22,7 +23,8 @@ func lockFile(f *os.File) (ok bool, err error) {
 
 // openLock opens, creating it if needed, the lock file with FILE_SHARE_DELETE,
 // which Go's own open leaves out, so the holder can remove it while locked.
-func openLock(path string) (*os.File, error) {
+func openLock(root *os.Root, name string) (*os.File, error) {
+	path := filepath.Join(root.Name(), name)
 	p, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return nil, err
@@ -36,10 +38,21 @@ func openLock(path string) (*os.File, error) {
 	return os.NewFile(uintptr(h), path), nil
 }
 
+func openLockRead(root *os.Root, name string) (*os.File, error) {
+	return root.Open(name)
+}
+
+// isNotLock reports an open refused for what is at the path; the Lstat before
+// the open has caught those on Windows.
+func isNotLock(error) bool { return false }
+
+// ours reports a regular file; the directory's ACL decides who else has it.
+func ours(info os.FileInfo) bool { return info.Mode().IsRegular() }
+
 // unlockFile removes the file while still holding its lock, as on Unix: the
 // name stays (delete pending) until the close, so nobody can lock the file
 // or create a new one in between.
-func unlockFile(f *os.File, path string) {
-	_ = os.Remove(path)
+func unlockFile(f *os.File, root *os.Root, name string) {
+	_ = root.Remove(name)
 	_ = f.Close()
 }
