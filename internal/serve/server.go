@@ -84,6 +84,10 @@ type Server struct {
 	// crlf: the file ends its lines with CRLF throughout, which the doc holds
 	// as LF. Guarded by mu.
 	crlf bool
+	// generation names the document; statePath is where its recovery state is
+	// kept ("" for nowhere).
+	generation string
+	statePath  string
 	// mu guards the doc, the awareness and the clients: a client's frames
 	// are applied one at a time, and an update reaches the others in order.
 	mu      sync.Mutex
@@ -154,6 +158,9 @@ func Open(file string, opts Options) (*Server, error) {
 	file = filepath.Join(dir, filepath.Base(file))
 	initial, ok := bound.Read()
 	if !ok {
+		if _, gone := bound.Dir().Stat(filepath.Base(file)); os.IsNotExist(gone) {
+			forgetState(opts, file)
+		}
 		_ = bound.Close()
 		return nil, fmt.Errorf("cannot read %s: it must be an existing text file", file)
 	}
@@ -171,15 +178,17 @@ func Open(file string, opts Options) (*Server, error) {
 	s := &Server{file: file, opts: opts, release: release, bound: bound, clients: map[*client]struct{}{}}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.crlf = isCRLF(initial)
-	s.doc = crdt.New()
-	s.text = s.doc.GetText("content")
-	s.doc.Transact(func(txn *crdt.Transaction) { s.text.Insert(txn, 0, s.normalize(initial), nil) })
+	s.statePath = opts.statePath(file)
+	s.seed(initial)
 	s.aw = awareness.New(uint64(s.doc.ClientID()))
 	s.writer = filewriter.New(file, initial, filewriter.Options{
 		Bound:   bound,
 		Delay:   opts.WriteDelay,
 		OnError: opts.OnError,
 		OnWritten: func() {
+			if written, ok := bound.Read(); ok {
+				s.saveState(written)
+			}
 			if opts.OnWritten == nil {
 				return
 			}
@@ -196,6 +205,7 @@ func Open(file string, opts Options) (*Server, error) {
 		s.cleanup()
 		return nil, err
 	}
+	s.saveState(s.writer.LastWritten())
 	// fsnotify watches a path, not a handle: refuse if the path does not lead
 	// to the directory the file was opened in, checked after the watch is set
 	// so that a swap before it cannot go unseen.
@@ -281,6 +291,11 @@ func (s *Server) Close() error {
 	s.syncFromDisk()
 	s.syncing.Unlock()
 	err := s.writer.Flush()
+	if _, gone := s.bound.Dir().Stat(filepath.Base(s.file)); os.IsNotExist(gone) {
+		_ = os.Remove(s.statePath)
+	} else {
+		s.saveState(s.writer.LastWritten())
+	}
 	s.cleanup()
 	return err
 }

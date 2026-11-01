@@ -236,3 +236,38 @@ func TestServeRootRefusesPathsOutside(t *testing.T) {
 		t.Fatalf("code %d, stderr %s", code, stderr.String())
 	}
 }
+
+func TestMain(m *testing.M) {
+	// serve keeps its state under the user's config directory: not the real one.
+	dir, err := os.MkdirTemp("", "pedit-cmd-test")
+	if err != nil {
+		panic(err)
+	}
+	_ = os.Setenv("HOME", dir)
+	_ = os.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "xdg"))
+	code := m.Run()
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
+}
+
+func TestServeGenerationSurvivesARestart(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "a.md")
+	if err := os.WriteFile(file, []byte("hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var seen []string
+	for range 2 {
+		stdout, stderr, stop := startServe(t, file, "--json")
+		var e struct{ Generation string }
+		if err := json.Unmarshal([]byte(waitFor(t, stdout, 1)[0]), &e); err != nil {
+			t.Fatal(err)
+		}
+		if code := stop(); code != 0 {
+			t.Fatalf("code %d, stderr %s", code, stderr.String())
+		}
+		seen = append(seen, e.Generation)
+	}
+	if seen[0] == "" || seen[0] != seen[1] {
+		t.Fatalf("generations %q, want the same twice", seen)
+	}
+}
