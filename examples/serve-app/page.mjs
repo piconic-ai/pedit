@@ -7,7 +7,11 @@ import * as Y from 'yjs'
 // The document is the one pedit serve holds: the file's text is the Y.Text
 // "content", as in a live room.
 const doc = new Y.Doc()
-const provider = new WebsocketProvider(`ws://${location.host}`, 'file', doc)
+const provider = new WebsocketProvider(
+  `ws://${location.host}${location.pathname.replace(/\/$/, '')}`,
+  'file',
+  doc,
+)
 const text = doc.getText('content')
 
 const name = `guest-${Math.random().toString(36).slice(2, 6)}`
