@@ -79,6 +79,7 @@ Commands:
   pedit resume [room|link]  Take up a kept room again: your files get what was written meanwhile
   pedit close [room|link]   Take in a kept room's edits, then close it for good
   pedit rooms [--json]      List this project's kept rooms
+  pedit serve <file>        EXPERIMENTAL: hold a file's document for a local app, on a Unix socket
 Run pedit <command> --help for its details. To share a file named like a
 command, write ./close or pedit -- close.
 
