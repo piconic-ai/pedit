@@ -151,14 +151,12 @@ live('connect', () => {
     c.destroy()
   })
 
-  it('stops instead of merging its old copy into a restarted pedit', async () => {
+  it('reconnects to a restarted pedit without duplicating its old copy', async () => {
     const { file, root } = await start()
     const c = await connect('/edit', 'a')
-    const seen: [Status, string | undefined][] = []
-    c.status.subscribe((s, e) => seen.push([s, e?.code]))
+    const before = sessions
     execFileSync('pkill', ['-TERM', '-f', root])
-    await until(() => c.status.get() === 'closed', 15000)
-    expect(seen.at(-1)).toEqual(['closed', 'gone'])
+    await until(() => sessions > before && c.status.get() === 'connected', 15000)
     expect(c.text.toString()).toBe('hello\n')
     await sleep(300)
     expect(readFileSync(file, 'utf8')).toBe('hello\n')

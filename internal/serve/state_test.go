@@ -202,3 +202,42 @@ func TestTwoInstancesNeverShareAState(t *testing.T) {
 		t.Fatal("the refused start touched the state")
 	}
 }
+
+// A crash can come between saving the state and writing the file, or between
+// writing the file and saving the state that says so: either way the edit
+// must not come back as a new one.
+func TestCrashAroundAFileWriteDoesNotRepeatTheEdit(t *testing.T) {
+	for name, onDisk := range map[string]string{"file written": "hello world\n", "file not written": "hello\n"} {
+		t.Run(name, func(t *testing.T) {
+			r := newRestarter(t, "hello\n")
+			s1 := r.open()
+			c1 := dial(t, s1.SocketPath())
+			eventually(t, "the text", func() bool { return c1.get() == "hello\n" })
+			c1.insert(5, " world")
+			eventually(t, "the file", fileIs(t, r.file, "hello world\n"))
+			path, gen := s1.statePath, s1.Generation()
+			if err := s1.Close(); err != nil {
+				t.Fatal(err)
+			}
+			rec := readState(path)
+			pending := "hello world\n"
+			rec.Written, rec.Pending = "hello\n", &pending
+			if err := writeState(path, *rec); err != nil {
+				t.Fatal(err)
+			}
+			write(t, r.file, onDisk)
+
+			s2 := r.open()
+			t.Cleanup(func() { _ = s2.Close() })
+			if s2.Generation() != gen {
+				t.Fatal("the generation changed")
+			}
+			c2 := reconnectWith(t, s2, c1)
+			eventually(t, "the file", fileIs(t, r.file, "hello world\n"))
+			time.Sleep(200 * time.Millisecond)
+			if got := s2.render(); got != "hello world\n" || c2.get() != got {
+				t.Fatalf("doc %q, client %q", got, c2.get())
+			}
+		})
+	}
+}

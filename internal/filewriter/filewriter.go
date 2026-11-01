@@ -55,6 +55,7 @@ type Writer struct {
 	retryDelay       time.Duration
 	onError          func(error)
 	onWritten        func()
+	beforeWrite      func(last, content string)
 	onExternalChange func()
 
 	mu      sync.Mutex // guards timer and pending
@@ -78,7 +79,11 @@ type Options struct {
 	OnError func(error)
 	// OnWritten is called after each write that lands, also one that
 	// returns an error but left the content in the file.
-	OnWritten        func()
+	OnWritten func()
+	// BeforeWrite is called before each write, with the content last written
+	// and the content about to be. It runs with the file locked: it must not
+	// call back into the Writer.
+	BeforeWrite      func(last, content string)
 	OnExternalChange func()
 }
 
@@ -90,6 +95,7 @@ func New(path, initial string, opts Options) *Writer {
 		retryDelay:       opts.RetryDelay,
 		onError:          opts.OnError,
 		onWritten:        opts.OnWritten,
+		beforeWrite:      opts.BeforeWrite,
 		onExternalChange: opts.OnExternalChange,
 		lastWritten:      initial,
 	}
@@ -170,6 +176,9 @@ func (w *Writer) flush(retry bool) error {
 	if ok && onDisk != w.lastWritten {
 		w.onExternalChange()
 		return ErrExternalChange
+	}
+	if w.beforeWrite != nil {
+		w.beforeWrite(w.lastWritten, *pending)
 	}
 	var err error
 	if w.bound != nil {

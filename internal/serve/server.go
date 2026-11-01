@@ -187,7 +187,7 @@ func Open(file string, opts Options) (*Server, error) {
 		OnError: opts.OnError,
 		OnWritten: func() {
 			if written, ok := bound.Read(); ok {
-				s.saveState(written)
+				s.saveState(written, nil)
 			}
 			if opts.OnWritten == nil {
 				return
@@ -199,13 +199,19 @@ func Open(file string, opts Options) (*Server, error) {
 			opts.OnWritten(n)
 		},
 		OnExternalChange: s.scheduleRead,
+		// The doc is saved before the file it is about to be written to, so a
+		// crash between the two leaves a state that knows both texts.
+		BeforeWrite: func(last, content string) { s.saveState(last, &content) },
 	})
+	if s.fileText() != initial {
+		s.writer.Schedule(s.fileText())
+	}
 	s.doc.OnUpdate(s.onUpdate)
 	if err := s.listen(); err != nil {
 		s.cleanup()
 		return nil, err
 	}
-	s.saveState(s.writer.LastWritten())
+	s.saveState(s.writer.LastWritten(), nil)
 	// fsnotify watches a path, not a handle: refuse if the path does not lead
 	// to the directory the file was opened in, checked after the watch is set
 	// so that a swap before it cannot go unseen.
@@ -294,7 +300,7 @@ func (s *Server) Close() error {
 	if _, gone := s.bound.Dir().Stat(filepath.Base(s.file)); os.IsNotExist(gone) {
 		_ = os.Remove(s.statePath)
 	} else {
-		s.saveState(s.writer.LastWritten())
+		s.saveState(s.writer.LastWritten(), nil)
 	}
 	s.cleanup()
 	return err

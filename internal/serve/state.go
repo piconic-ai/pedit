@@ -36,6 +36,9 @@ type stateRecord struct {
 	Saved      time.Time
 	// Written is the text pedit last wrote to the file, as the file has it.
 	Written string
+	// Pending, when set, is the text about to be written: the doc holds it, and
+	// a crash may have left it in the file or not.
+	Pending *string
 	// Doc is the Yjs update of the whole document.
 	Doc []byte
 }
@@ -147,11 +150,16 @@ func (s *Server) restore(rec *stateRecord, initial string) (ok bool) {
 	if pending := s.doc.PendingStats(); pending.Items != 0 || pending.DeleteRanges != 0 {
 		return false
 	}
-	base := s.normalize(rec.Written)
-	if s.text.ToString() != base {
+	base, want := s.normalize(rec.Written), s.normalize(rec.Written)
+	if rec.Pending != nil {
+		want = s.normalize(*rec.Pending)
+	}
+	if s.text.ToString() != want {
 		return false
 	}
-	if initial != rec.Written {
+	// The file holds what pedit wrote, or what it was about to write (then the
+	// doc is ahead of the file and is written again): anything else is an edit.
+	if initial != rec.Written && (rec.Pending == nil || initial != *rec.Pending) {
 		merge.ExternalEdit(s.doc, s.text, base, s.normalize(initial), &fileOrigin{})
 	}
 	return true
@@ -159,11 +167,11 @@ func (s *Server) restore(rec *stateRecord, initial string) (ok bool) {
 
 // saveState records the document with the text last written. A failure is
 // reported and does not stop serving: the state only makes a restart smoother.
-func (s *Server) saveState(written string) {
+func (s *Server) saveState(written string, pending *string) {
 	s.mu.Lock()
 	doc := crdt.EncodeStateAsUpdateV1(s.doc, nil)
 	s.mu.Unlock()
-	rec := stateRecord{Version: stateVersion, Generation: s.generation, Saved: time.Now(), Written: written, Doc: doc}
+	rec := stateRecord{Version: stateVersion, Generation: s.generation, Saved: time.Now(), Written: written, Pending: pending, Doc: doc}
 	if err := writeState(s.statePath, rec); err != nil {
 		s.opts.OnError(fmt.Errorf("cannot save the recovery state: %w", err))
 	}
