@@ -243,6 +243,39 @@ func TestRemovedIDsCannotBeBroughtBackPastTheCaps(t *testing.T) {
 	c.wantClosed(websocket.StatusPolicyViolation, "too many awareness clients")
 }
 
+func TestManyRemovalsDoNotHideLaterPresence(t *testing.T) {
+	s, _, _ := open(t, "x\n")
+	spam := dial(t, s.SocketPath())
+	for batch := range 6 {
+		u := encoding.NewEncoder()
+		u.WriteVarUint(50)
+		for i := range 50 {
+			u.WriteVarUint(uint64(10000 + batch*50 + i))
+			u.WriteVarUint(1)
+			u.WriteVarString("null")
+		}
+		enc := encoding.NewEncoder()
+		enc.WriteVarBytes(u.Bytes())
+		spam.raw(frame(msgAwareness, enc.Bytes()))
+	}
+	time.Sleep(100 * time.Millisecond)
+	a, b := dial(t, s.SocketPath()), dial(t, s.SocketPath())
+	a.setState(map[string]any{"name": "a"})
+	eventually(t, "a's presence for b", func() bool {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		_, ok := b.aw.GetStates()[a.aw.ClientID()]
+		return ok
+	})
+	late := dial(t, s.SocketPath())
+	eventually(t, "a's presence for a late client", func() bool {
+		late.mu.Lock()
+		defer late.mu.Unlock()
+		_, ok := late.aw.GetStates()[a.aw.ClientID()]
+		return ok
+	})
+}
+
 func TestRateLimits(t *testing.T) {
 	s, _, _ := openWith(t, "x\n", func(o *Options) { o.FrameRate = 50 })
 	t.Run("sync step 1", func(t *testing.T) {
