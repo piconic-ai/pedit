@@ -7,8 +7,8 @@ import {
   LimitError,
   NoPeditError,
   resolvePedit,
-  type ServeEvent,
   ServedFiles,
+  type ServeEvent,
 } from '../src/index.ts'
 import {
   BIN,
