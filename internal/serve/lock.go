@@ -75,14 +75,11 @@ func errNotLock(path string) error {
 }
 
 // acquire takes the file's lock, or returns a *HeldError naming its holder.
-// The lock file is reached through a handle on the file's directory and never
-// through a symlink; what is not a regular file of ours is left alone.
-func acquire(file, app string) (release func(), err error) {
+// The lock file is reached through root, the handle on the file's directory
+// (the caller keeps it open), and never through a symlink; what is not a
+// regular file of ours is left alone.
+func acquire(root *os.Root, file, app string) (release func(), err error) {
 	path := lockPath(file)
-	root, err := os.OpenRoot(filepath.Dir(file))
-	if err != nil {
-		return nil, err
-	}
 	name := filepath.Base(path)
 	for range 5 {
 		f, err := openOurs(root, name, path)
@@ -90,19 +87,16 @@ func acquire(file, app string) (release func(), err error) {
 			continue // removed by the previous holder as we created it
 		}
 		if err != nil {
-			_ = root.Close()
 			return nil, err
 		}
 		ok, err := lockFile(f)
 		if err != nil {
 			_ = f.Close()
-			_ = root.Close()
 			return nil, err
 		}
 		if !ok {
 			_ = f.Close()
 			h := readHolder(root, name)
-			_ = root.Close()
 			return nil, &HeldError{File: file, Holder: h}
 		}
 		// The previous holder removes the file while it still holds the
@@ -119,15 +113,12 @@ func acquire(file, app string) (release func(), err error) {
 		}
 		if err != nil {
 			_ = f.Close()
-			_ = root.Close()
 			return nil, err
 		}
 		return func() {
 			unlockFile(f, root, name)
-			_ = root.Close()
 		}, nil
 	}
-	_ = root.Close()
 	return nil, fmt.Errorf("cannot take the lock %s", path)
 }
 

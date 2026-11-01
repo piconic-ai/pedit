@@ -145,19 +145,9 @@ func Open(file string, opts Options) (*Server, error) {
 		_ = bound.Close()
 		return nil, fmt.Errorf("%s is not UTF-8 text", file)
 	}
-	// The lock and the watch name the directory by path, which the bound
-	// handle does not: refuse if the path no longer leads to the directory
-	// the file was opened in, before and after the lock is taken.
-	if err := sameDir(bound, dir); err != nil {
-		_ = bound.Close()
-		return nil, err
-	}
-	release, err := acquire(file, opts.App)
-	if err == nil {
-		if err = sameDir(bound, dir); err != nil {
-			release()
-		}
-	}
+	// The lock is taken through the handle on the directory; only the watch
+	// below needs its path.
+	release, err := acquire(bound.Dir(), file, opts.App)
 	if err != nil {
 		_ = bound.Close()
 		return nil, err
@@ -190,6 +180,9 @@ func Open(file string, opts Options) (*Server, error) {
 		s.cleanup()
 		return nil, err
 	}
+	// fsnotify watches a path, not a handle: refuse if the path does not lead
+	// to the directory the file was opened in, checked after the watch is set
+	// so that a swap before it cannot go unseen.
 	if err := s.watch(); err != nil {
 		s.cleanup()
 		return nil, err

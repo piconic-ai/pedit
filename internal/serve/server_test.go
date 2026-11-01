@@ -277,13 +277,18 @@ func TestOnlyOneOfManyConcurrentStartsHoldsTheLock(t *testing.T) {
 	// A stale lock file is there at first, as a crash leaves it.
 	stale, _ := json.Marshal(holder{PID: 999999})
 	write(t, lockPath(file), string(stale))
+	root, err := os.OpenRoot(filepath.Dir(file))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
 	for round := range 20 {
 		var wg sync.WaitGroup
 		var mu sync.Mutex
 		var releases []func()
 		for range 32 {
 			wg.Go(func() {
-				release, err := acquire(file, "c")
+				release, err := acquire(root, file, "c")
 				var held *HeldError
 				switch {
 				case err == nil:
