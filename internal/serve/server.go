@@ -175,6 +175,9 @@ func Open(file string, opts Options) (*Server, error) {
 	s.text = s.doc.GetText("content")
 	s.doc.Transact(func(txn *crdt.Transaction) { s.text.Insert(txn, 0, s.normalize(initial), nil) })
 	s.aw = awareness.New(uint64(s.doc.ClientID()))
+	// The caps in checkAwareness count presence; this bounds the removal
+	// tombstones a client can leave by announcing IDs as removed.
+	s.aw.SetMaxClients(4 * maxRoomAwareness)
 	s.writer = filewriter.New(file, initial, filewriter.Options{
 		Bound:   bound,
 		Delay:   opts.WriteDelay,

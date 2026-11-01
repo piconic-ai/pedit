@@ -90,7 +90,8 @@ func parseFrame(data []byte) (kind, sub uint64, rest []byte, err error) {
 	return kind, sub, rest, err
 }
 
-// awarenessIDs lists the client IDs of an awareness update.
+// awarenessIDs lists the client IDs of an awareness update that carry a
+// state; an entry with the state "null" is a removal and adds no one.
 func awarenessIDs(update []byte) ([]uint64, error) {
 	dec := encoding.NewDecoder(update)
 	n, err := dec.ReadVarUint()
@@ -106,25 +107,27 @@ func awarenessIDs(update []byte) ([]uint64, error) {
 		if _, err = dec.ReadVarUint(); err != nil { // clock
 			return nil, err
 		}
-		if _, err = dec.ReadVarString(); err != nil { // state
+		state, err := dec.ReadVarString()
+		if err != nil {
 			return nil, err
 		}
-		ids = append(ids, id)
+		if state != "null" {
+			ids = append(ids, id)
+		}
 	}
 	return ids, nil
 }
 
 // checkAwareness refuses an update that would make c or the room hold too
-// many awareness client IDs. Only IDs the room does not know yet count: a
-// provider echoes what it received, and an echo is neither new nor c's. The
-// IDs c owns are recorded as ygo accepts them (see accept). ygo's
-// SetMaxClients is not used: it silently skips new IDs and counts removal
-// tombstones, so a room with churn would stop showing new people. The caller
-// holds s.mu.
+// many awareness client IDs. Only IDs that are not present in the room count:
+// a provider echoes what it received, and an echo is neither new nor c's. An
+// ID that was removed and is brought back counts as new. The IDs c owns are
+// recorded as ygo accepts them (see accept). The caller holds s.mu.
 func (s *Server) checkAwareness(c *client, ids []uint64) error {
 	var fresh []uint64
+	present := s.aw.GetStates()
 	for _, id := range ids {
-		if _, known := s.aw.Meta(id); !known && !c.ids[id] && !contains(fresh, id) {
+		if _, here := present[id]; !here && !c.ids[id] && !contains(fresh, id) {
 			fresh = append(fresh, id)
 		}
 	}

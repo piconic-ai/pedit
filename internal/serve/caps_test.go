@@ -220,6 +220,29 @@ func TestEchoedAwarenessIsNotTheEchoersOwn(t *testing.T) {
 	}
 }
 
+func TestRemovedIDsCannotBeBroughtBackPastTheCaps(t *testing.T) {
+	s, _, _ := open(t, "x\n")
+	c := dial(t, s.SocketPath())
+	// Twelve removals, then bringing them back at a higher clock.
+	entries := func(clock uint64, state string, ids ...uint64) []byte {
+		u := encoding.NewEncoder()
+		u.WriteVarUint(uint64(len(ids)))
+		for _, id := range ids {
+			u.WriteVarUint(id)
+			u.WriteVarUint(clock)
+			u.WriteVarString(state)
+		}
+		enc := encoding.NewEncoder()
+		enc.WriteVarBytes(u.Bytes())
+		return frame(msgAwareness, enc.Bytes())
+	}
+	c.raw(entries(1, "null", 1, 2, 3, 4, 5, 6, 7, 8))
+	c.raw(entries(1, "null", 9, 10, 11, 12))
+	c.raw(entries(2, `{"n":1}`, 1, 2, 3, 4, 5, 6, 7, 8))
+	c.raw(entries(2, `{"n":1}`, 9, 10, 11, 12))
+	c.wantClosed(websocket.StatusPolicyViolation, "too many awareness clients")
+}
+
 func TestRateLimits(t *testing.T) {
 	s, _, _ := openWith(t, "x\n", func(o *Options) { o.FrameRate = 50 })
 	t.Run("sync step 1", func(t *testing.T) {
