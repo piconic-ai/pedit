@@ -5,7 +5,7 @@ package serve
 import (
 	"errors"
 	"os"
-	"strings"
+	"path/filepath"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -14,18 +14,38 @@ import (
 // openLock opens, creating it if needed, the lock file name in root, never
 // through a symlink and without blocking on a FIFO.
 func openLock(root *os.Root, name string) (*os.File, error) {
-	return root.OpenFile(name, os.O_RDWR|os.O_CREATE|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0o600)
+	return openNoFollow(root, name, os.O_RDWR|os.O_CREATE, 0o600)
 }
 
 func openLockRead(root *os.Root, name string) (*os.File, error) {
-	return root.OpenFile(name, os.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+	return openNoFollow(root, name, os.O_RDONLY, 0)
+}
+
+// openNoFollow is openat(2) on the directory root holds, with O_NOFOLLOW:
+// os.Root's own OpenFile follows a link that stays inside the root, and would
+// create the target of a dangling one.
+func openNoFollow(root *os.Root, name string, flag int, perm uint32) (*os.File, error) {
+	dir, err := root.Open(".")
+	if err != nil {
+		return nil, err
+	}
+	defer dir.Close()
+	for {
+		fd, err := unix.Openat(int(dir.Fd()), name, flag|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, perm)
+		if err == unix.EINTR {
+			continue
+		}
+		if err != nil {
+			return nil, &os.PathError{Op: "openat", Path: name, Err: err}
+		}
+		return os.NewFile(uintptr(fd), filepath.Join(root.Name(), name)), nil
+	}
 }
 
 // isNotLock reports an open that failed because of what is at the path: a
 // symlink, a directory or a device.
 func isNotLock(err error) bool {
-	return err != nil && (errors.Is(err, unix.ELOOP) || errors.Is(err, unix.EISDIR) || errors.Is(err, unix.ENXIO) ||
-		strings.Contains(err.Error(), "path escapes from parent")) // os.Root on a link planted after the Lstat
+	return err != nil && (errors.Is(err, unix.ELOOP) || errors.Is(err, unix.EISDIR) || errors.Is(err, unix.ENXIO))
 }
 
 // ours reports a regular file owned by the current user.

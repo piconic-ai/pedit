@@ -118,3 +118,35 @@ func TestHolderNameFromLockFileIsCappedAndClean(t *testing.T) {
 		t.Fatalf("message %q lacks the pid", msg)
 	}
 }
+
+// os.Root's own OpenFile follows a link inside the root; the helpers must not,
+// whatever happens between acquire's Lstat and the open.
+func TestOpenHelpersRefuseRelativeInRootLinks(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	if err := os.Symlink("victim", filepath.Join(dir, "lock")); err != nil {
+		t.Fatal(err)
+	}
+	f, err := openLock(root, "lock")
+	if err == nil {
+		f.Close()
+	}
+	if !isNotLock(err) {
+		t.Fatalf("openLock through a dangling link = %v, want a refusal", err)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "victim")); !os.IsNotExist(err) {
+		t.Fatalf("the link's target was created: %v", err)
+	}
+	write(t, filepath.Join(dir, "victim"), `{"pid":1}`)
+	if f, err := openLockRead(root, "lock"); err == nil {
+		f.Close()
+		t.Fatal("openLockRead followed a link")
+	}
+	if b := readLock(root, "lock"); b != nil {
+		t.Fatalf("readLock followed a link: %q", b)
+	}
+}
