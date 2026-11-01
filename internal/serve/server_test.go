@@ -45,16 +45,26 @@ func write(t *testing.T, path, content string) {
 // open serves a file holding content, and reports each write of it.
 func open(t *testing.T, content string) (*Server, string, chan struct{}) {
 	t.Helper()
+	return openWith(t, content, nil)
+}
+
+// openWith is open with a change to the options.
+func openWith(t *testing.T, content string, tune func(*Options)) (*Server, string, chan struct{}) {
+	t.Helper()
 	file := filepath.Join(t.TempDir(), "doc.md")
 	write(t, file, content)
 	written := make(chan struct{}, 100)
-	s, err := Open(file, Options{
+	opts := Options{
 		App:        "test",
 		WriteDelay: 20 * time.Millisecond,
 		SocketBase: base(t),
 		OnError:    func(err error) { t.Log("serve error:", err) },
 		OnWritten:  func(int) { written <- struct{}{} },
-	})
+	}
+	if tune != nil {
+		tune(&opts)
+	}
+	s, err := Open(file, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,25 +80,35 @@ type tclient struct {
 	doc  *crdt.Doc
 	text *crdt.YText
 	aw   *awareness.Awareness
+	// done closes when the connection ends; err says how.
+	done chan struct{}
+	err  error
 }
 
 type remote struct{ _ byte }
 
-func dial(t *testing.T, sock string) *tclient {
+func dial(t *testing.T, sock string) *tclient { return dialAs(t, sock, "") }
+
+// dialAs connects with the X-Pedit-Role header role, if any.
+func dialAs(t *testing.T, sock, role string) *tclient {
 	t.Helper()
 	hc := &http.Client{Transport: &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, "unix", sock)
 		},
 	}}
+	header := http.Header{}
+	if role != "" {
+		header.Set("X-Pedit-Role", role)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := websocket.Dial(ctx, "ws://pedit/room", &websocket.DialOptions{HTTPClient: hc})
+	conn, _, err := websocket.Dial(ctx, "ws://pedit/room", &websocket.DialOptions{HTTPClient: hc, HTTPHeader: header})
 	if err != nil {
 		t.Fatal(err)
 	}
 	conn.SetReadLimit(1 << 24)
-	c := &tclient{t: t, conn: conn, doc: crdt.New()}
+	c := &tclient{t: t, conn: conn, doc: crdt.New(), done: make(chan struct{})}
 	c.text = c.doc.GetText("content")
 	c.aw = awareness.New(uint64(c.doc.ClientID()))
 	local := &remote{}
@@ -100,9 +120,11 @@ func dial(t *testing.T, sock string) *tclient {
 	})
 	c.send(msgSync, ysync.EncodeSyncStep1(c.doc))
 	go func() {
+		defer close(c.done)
 		for {
 			_, data, err := conn.Read(context.Background())
 			if err != nil {
+				c.err = err
 				return
 			}
 			c.mu.Lock()
