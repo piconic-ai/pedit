@@ -33,7 +33,9 @@ file and removes the socket and the lock.
 ## What to look at
 
 - `app.mjs`: starts `pedit serve --json --app sample`, reads the socket path
-  from the `listening` event, serves the page, and bridges the sockets. pedit
-  ends when this process does, because its stdin is a pipe.
+  from the `listening` event, serves the page, and bridges the sockets. A
+  `held` or `error` event (pedit's exit code 3 or 1, which the app passes on)
+  is printed as a line before the app ends; `saved` and `external_save` also
+  exist (see `pedit serve --help`) but the sample does not use them. pedit ends when this process does, because its stdin is a pipe.
 - `page.mjs`: CodeMirror 6, y-codemirror.next and y-websocket's
   `WebsocketProvider`, unchanged, on `doc.getText('content')`.

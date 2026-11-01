@@ -49,8 +49,14 @@ type Options struct {
 	SocketBase string
 	// OnError receives problems that do not stop serving.
 	OnError func(error)
-	// OnWritten is called after each write of the file (for tests).
-	OnWritten func()
+	// OnWritten is called after each write of the file, with its size in bytes.
+	OnWritten func(bytes int)
+	// OnExternalSave is called when a save made by another editor was taken in.
+	OnExternalSave func()
+	// Root, when set, holds the file: Open's file is then a path relative to
+	// it, and a path that leaves it (an absolute one, "..", or a link in a
+	// directory component) is refused.
+	Root *os.Root
 }
 
 type Server struct {
@@ -88,10 +94,31 @@ type Server struct {
 	invalid string
 }
 
+// openFile binds file, a path relative to root if there is one. It returns the
+// path that names the file.
+func openFile(file string, root *os.Root) (*filewriter.BoundFile, string, error) {
+	if root == nil {
+		file, err := filepath.Abs(file)
+		if err != nil {
+			return nil, "", err
+		}
+		bound, err := filewriter.OpenBound(file)
+		return bound, file, err
+	}
+	if filepath.IsAbs(file) {
+		return nil, "", fmt.Errorf("%s is outside %s: with a root, the file must be a relative path", file, root.Name())
+	}
+	bound, err := filewriter.OpenBoundIn(root, file)
+	if err != nil && strings.Contains(err.Error(), "escapes from parent") {
+		err = fmt.Errorf("%s is outside %s", file, root.Name())
+	}
+	return bound, filepath.Join(root.Name(), file), err
+}
+
 // Open locks and reads file, and listens on a Unix socket of its own. It
 // returns a *HeldError when another process serves the file.
 func Open(file string, opts Options) (*Server, error) {
-	file, err := filepath.Abs(file)
+	bound, file, err := openFile(file, opts.Root)
 	if err != nil {
 		return nil, err
 	}
@@ -101,13 +128,9 @@ func Open(file string, opts Options) (*Server, error) {
 	if opts.OnError == nil {
 		opts.OnError = func(error) {}
 	}
-	bound, err := filewriter.OpenBound(file)
-	if err != nil {
-		return nil, err
-	}
 	// One lock per file however it is reached: resolve the directory's links
 	// after OpenBound has refused a file that is itself a link.
-	dir, err := filepath.EvalSymlinks(filepath.Dir(file))
+	dir, err := filepath.EvalSymlinks(bound.Dir().Name())
 	if err != nil {
 		_ = bound.Close()
 		return nil, err
@@ -122,7 +145,19 @@ func Open(file string, opts Options) (*Server, error) {
 		_ = bound.Close()
 		return nil, fmt.Errorf("%s is not UTF-8 text", file)
 	}
+	// The lock and the watch name the directory by path, which the bound
+	// handle does not: refuse if the path no longer leads to the directory
+	// the file was opened in, before and after the lock is taken.
+	if err := sameDir(bound, dir); err != nil {
+		_ = bound.Close()
+		return nil, err
+	}
 	release, err := acquire(file, opts.App)
+	if err == nil {
+		if err = sameDir(bound, dir); err != nil {
+			release()
+		}
+	}
 	if err != nil {
 		_ = bound.Close()
 		return nil, err
@@ -135,10 +170,19 @@ func Open(file string, opts Options) (*Server, error) {
 	s.doc.Transact(func(txn *crdt.Transaction) { s.text.Insert(txn, 0, s.normalize(initial), nil) })
 	s.aw = awareness.New(uint64(s.doc.ClientID()))
 	s.writer = filewriter.New(file, initial, filewriter.Options{
-		Bound:            bound,
-		Delay:            opts.WriteDelay,
-		OnError:          opts.OnError,
-		OnWritten:        opts.OnWritten,
+		Bound:   bound,
+		Delay:   opts.WriteDelay,
+		OnError: opts.OnError,
+		OnWritten: func() {
+			if opts.OnWritten == nil {
+				return
+			}
+			n := 0
+			if info, err := bound.Dir().Stat(filepath.Base(file)); err == nil {
+				n = int(info.Size())
+			}
+			opts.OnWritten(n)
+		},
 		OnExternalChange: s.scheduleRead,
 	})
 	s.doc.OnUpdate(s.onUpdate)
@@ -150,7 +194,24 @@ func Open(file string, opts Options) (*Server, error) {
 		s.cleanup()
 		return nil, err
 	}
+	if err := sameDir(bound, dir); err != nil {
+		s.cleanup()
+		return nil, err
+	}
 	return s, nil
+}
+
+// sameDir checks that dir is the directory bound holds open.
+func sameDir(bound *filewriter.BoundFile, dir string) error {
+	held, err := bound.Dir().Stat(".")
+	if err != nil {
+		return err
+	}
+	now, err := os.Stat(dir)
+	if err != nil || !os.SameFile(held, now) {
+		return fmt.Errorf("%s was replaced while pedit opened the file", dir)
+	}
+	return nil
 }
 
 // SocketPath is where clients connect.
@@ -268,7 +329,7 @@ func (s *Server) scheduleRead() {
 // syncFromDisk takes in a save made outside pedit as the diff from what pedit
 // last wrote, as the live room does. The caller holds s.syncing.
 func (s *Server) syncFromDisk() {
-	changed := false
+	changed, external := false, false
 	s.writer.Rebase(func(last string) string {
 		onDisk, ok := s.bound.Read()
 		if !ok || onDisk == last {
@@ -284,7 +345,7 @@ func (s *Server) syncFromDisk() {
 			return last
 		}
 		s.invalid = ""
-		changed = true
+		changed, external = true, true
 		s.mu.Lock()
 		base := toDoc(last, isCRLF(last))
 		s.crlf = isCRLF(onDisk)
@@ -292,6 +353,9 @@ func (s *Server) syncFromDisk() {
 		s.mu.Unlock()
 		return onDisk
 	})
+	if external && s.opts.OnExternalSave != nil {
+		s.opts.OnExternalSave()
+	}
 	if changed {
 		// Edits made meanwhile are not on disk yet; Rebase dropped them.
 		s.writer.Schedule(s.render())

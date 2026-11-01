@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -52,7 +53,7 @@ func open(t *testing.T, content string) (*Server, string, chan struct{}) {
 		WriteDelay: 20 * time.Millisecond,
 		SocketBase: base(t),
 		OnError:    func(err error) { t.Log("serve error:", err) },
-		OnWritten:  func() { written <- struct{}{} },
+		OnWritten:  func(int) { written <- struct{}{} },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -416,4 +417,103 @@ func lockedFile(t *testing.T, file string) string {
 		t.Fatal(err)
 	}
 	return p
+}
+
+func TestWrittenAndExternalSaveHooksFireInOrder(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "doc.md")
+	write(t, file, "alpha\n")
+	events := make(chan string, 100)
+	s, err := Open(file, Options{
+		WriteDelay:     20 * time.Millisecond,
+		SocketBase:     base(t),
+		OnWritten:      func(n int) { events <- fmt.Sprintf("saved %d", n) },
+		OnExternalSave: func() { events <- "external_save" },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	want := func(e string) {
+		t.Helper()
+		select {
+		case got := <-events:
+			if got != e {
+				t.Fatalf("got %q, want %q", got, e)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("no %q", e)
+		}
+	}
+	c := dial(t, s.SocketPath())
+	eventually(t, "the file's text", func() bool { return c.get() == "alpha\n" })
+	c.insert(5, "!")
+	want("saved 7")
+	saveElsewhere(t, file, "alpha!\nbeta\n")
+	want("external_save")
+}
+
+func TestRootReplacedByLinkAfterOpeningIsRefused(t *testing.T) {
+	base0 := t.TempDir()
+	rootDir, outside := filepath.Join(base0, "root"), filepath.Join(base0, "outside")
+	for _, d := range []string{rootDir, outside} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(t, filepath.Join(rootDir, "doc.md"), "x\n")
+	root, err := os.OpenRoot(rootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	if err := os.Rename(rootDir, filepath.Join(base0, "moved")); err != nil {
+		t.Skip("cannot rename an open directory:", err)
+	}
+	if err := os.Symlink(outside, rootDir); err != nil {
+		t.Skip("no symlinks:", err)
+	}
+	if s, err := Open("doc.md", Options{Root: root, SocketBase: base(t)}); err == nil {
+		_ = s.Close()
+		t.Fatal("opened")
+	}
+	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+		t.Fatalf("left in the outside directory: %v", entries)
+	}
+}
+
+func TestRootRefusesPathsOutside(t *testing.T) {
+	base0 := t.TempDir()
+	rootDir, outside := filepath.Join(base0, "root"), filepath.Join(base0, "outside")
+	for _, d := range []string{rootDir, outside, filepath.Join(rootDir, "sub")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(t, filepath.Join(base0, "x"), "x\n")
+	write(t, filepath.Join(outside, "y.md"), "y\n")
+	write(t, filepath.Join(rootDir, "sub", "ok.md"), "ok\n")
+	if err := os.Symlink(outside, filepath.Join(rootDir, "link")); err != nil {
+		t.Skip("no symlinks:", err)
+	}
+	root, err := os.OpenRoot(rootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	for _, name := range []string{"../x", filepath.Join(base0, "x"), "link/y.md"} {
+		if s, err := Open(name, Options{Root: root, SocketBase: base(t)}); err == nil {
+			_ = s.Close()
+			t.Errorf("%s: opened", name)
+		} else if !strings.Contains(err.Error(), "is outside") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	s, err := Open(filepath.Join("sub", "ok.md"), Options{Root: root, SocketBase: base(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := os.Stat(filepath.Join(rootDir, "sub", ".ok.md.pedit-lock")); err != nil {
+		t.Error(err)
+	}
 }

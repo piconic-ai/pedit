@@ -54,3 +54,22 @@ test('the bridge accepts its own page and refuses other origins', { skip }, asyn
     app.kill('SIGTERM')
   }
 })
+
+test('a second app on the same file prints the refusal and exits with code 3', {
+  skip,
+}, async () => {
+  const file = join(await mkdtemp(join(tmpdir(), 'serve-app-')), 'a.md')
+  await writeFile(file, 'text\n')
+  const first = spawn('node', ['app.mjs', file], { stdio: ['ignore', 'pipe', 'inherit'] })
+  try {
+    await new Promise((resolve) => createInterface({ input: first.stdout }).once('line', resolve))
+    const second = spawn('node', ['app.mjs', file], { stdio: ['ignore', 'ignore', 'pipe'] })
+    let err = ''
+    second.stderr.on('data', (d) => (err += d))
+    const code = await new Promise((resolve) => second.on('exit', resolve))
+    assert.equal(code, 3)
+    assert.match(err, /already served by pid \d+/)
+  } finally {
+    first.kill('SIGTERM')
+  }
+})
