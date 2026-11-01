@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,7 +39,12 @@ Options:
                leaves it (an absolute path, "..", or a link in a directory)
 
 With --json, stdout has these events, each on a line of its own:
-  {"event":"listening","socket":"<path>"}   serving; the first event
+  {"event":"listening","socket":"<path>","generation":"<hex>"}
+                                            serving; the first event. generation
+                                            is new on each start: an app that
+                                            kept a copy of the text across a
+                                            restart can tell the document is
+                                            another one
   {"event":"saved","bytes":N}               pedit wrote the file
   {"event":"external_save"}                 a save by another editor was taken in
   {"event":"held","pid":N,"app":"<name>"}   another process serves the file
@@ -157,7 +164,12 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	}()
 
 	if opts.json {
-		emit("listening", map[string]any{"socket": s.SocketPath()})
+		gen := make([]byte, 16)
+		if _, err := rand.Read(gen); err != nil {
+			_ = s.Close()
+			return fail(err)
+		}
+		emit("listening", map[string]any{"socket": s.SocketPath(), "generation": hex.EncodeToString(gen)})
 	} else {
 		fmt.Fprintln(stdout, s.SocketPath())
 	}

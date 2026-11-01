@@ -136,7 +136,9 @@ retried and reported the same way.
 | Takes a root | `--root <dir>`: the file is a path relative to `<dir>` | pedit itself refuses an absolute path, `..` or a link in a directory component that leaves `<dir>`; the lock and the watch use the file's directory. |
 
 With `--json`, stdout carries one JSON event per line and nothing else:
-`listening` (with the socket), `saved` (with `bytes`) after each write of the
+`listening` (with the socket, and a `generation`: 16 random bytes in hex, new
+on each start, so an app can tell a restarted document from the one it knew),
+`saved` (with `bytes`) after each write of the
 file, `external_save` when a save by another editor was taken in, `held` (with
 `pid` and `app`) when another process serves the file, and `error` (with a
 one-line `message`) for any other failure. Exit codes, with or without

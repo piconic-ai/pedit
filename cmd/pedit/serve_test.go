@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -69,7 +70,7 @@ func TestServeRunsUntilStdinCloses(t *testing.T) {
 	done := make(chan int)
 	go func() { done <- run([]string{"serve", file, "--json", "--app", "t"}, &stdout, &stderr) }()
 
-	var event struct{ Event, Socket string }
+	var event struct{ Event, Socket, Generation string }
 	deadline := time.Now().Add(5 * time.Second)
 	for json.Unmarshal([]byte(stdout.String()), &event) != nil {
 		if time.Now().After(deadline) {
@@ -82,6 +83,9 @@ func TestServeRunsUntilStdinCloses(t *testing.T) {
 	}
 	if _, err := os.Stat(event.Socket); err != nil {
 		t.Fatal(err)
+	}
+	if matched, _ := regexp.MatchString(`^[0-9a-f]{32}$`, event.Generation); !matched {
+		t.Fatalf("generation %q, want 32 hex digits", event.Generation)
 	}
 
 	// A second one is refused, naming the first.
