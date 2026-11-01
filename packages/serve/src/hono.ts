@@ -101,6 +101,7 @@ interface Grant {
   id: string
   role: Role
   path: string
+  generation: string
   expires: number
 }
 
@@ -217,8 +218,9 @@ export function peditRoutes<E extends Env = Env>(
       return json(c, 500, 'internal')
     }
     if (!found) return json(c, 404, 'not-found')
+    let generation: string
     try {
-      await open(id, found)
+      generation = (await open(id, found)).generation
     } catch (e) {
       return failure(c, e, found.role, id)
     }
@@ -228,8 +230,14 @@ export function peditRoutes<E extends Env = Env>(
       if (tokens.size >= MAX_TOKENS) return json(c, 429, 'rate')
     }
     const token = randomBytes(32).toString('hex')
-    tokens.set(token, { id, role: found.role, path: found.path, expires: now + TOKEN_TTL_MS })
-    return c.json({ token, role: found.role }, 200, { 'Cache-Control': 'no-store' })
+    tokens.set(token, {
+      id,
+      role: found.role,
+      path: found.path,
+      generation,
+      expires: now + TOKEN_TTL_MS,
+    })
+    return c.json({ token, role: found.role, generation }, 200, { 'Cache-Control': 'no-store' })
   })
 
   app.get('/:id/doc', async (c, next) => {
@@ -255,7 +263,10 @@ export function peditRoutes<E extends Env = Env>(
     }
     let bridge: Awaited<ReturnType<Awaited<ReturnType<typeof open>>['dial']>>
     try {
-      bridge = await (await open(id, found)).dial(found.role)
+      const served = await open(id, found)
+      // The child may have restarted since the session: the page's copy is of another document.
+      if (served.generation !== grant.generation) return json(c, 403, 'forbidden')
+      bridge = await served.dial(found.role)
     } catch (e) {
       return failure(c, e, found.role, id)
     }
@@ -269,7 +280,8 @@ export function peditRoutes<E extends Env = Env>(
     const closeSock = (ws: WSContext, reason: string, code: number | undefined) => {
       const ok = code !== undefined && (code === 1000 || (code >= 3000 && code < 5000))
       if (ok) ws.close(code, Buffer.from(reason).subarray(0, 120).toString())
-      else ws.close(1011, 'upstream closed')
+      // The child is gone: the page re-issues a session and compares generations.
+      else ws.close(4001, 'document restarted')
     }
     bridge.onclose = (reason, code) => {
       ended = { reason, code }

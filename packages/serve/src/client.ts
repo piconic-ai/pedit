@@ -1,4 +1,3 @@
-import * as decoding from 'lib0/decoding'
 import { Awareness } from 'y-protocols/awareness'
 import { WebsocketProvider } from 'y-websocket'
 import * as Y from 'yjs'
@@ -38,7 +37,7 @@ const REASONS: Record<number, PeditErrorCode> = {
 }
 const MAX_DELAY_MS = 30_000
 
-async function session(url: string): Promise<{ token: string; role: Role }> {
+async function session(url: string): Promise<{ token: string; role: Role; generation: string }> {
   let res: Response
   try {
     res = await fetch(url, { method: 'POST', credentials: 'same-origin' })
@@ -46,11 +45,15 @@ async function session(url: string): Promise<{ token: string; role: Role }> {
     throw new PeditError('unavailable', String((e as Error)?.message))
   }
   if (!res.ok) throw new PeditError(REASONS[res.status] ?? 'unavailable', `session: ${res.status}`)
-  const body = (await res.json()) as { token?: string; role?: Role }
-  if (typeof body.token !== 'string' || (body.role !== 'edit' && body.role !== 'read')) {
+  const body = (await res.json()) as { token?: string; role?: Role; generation?: string }
+  if (
+    typeof body.token !== 'string' ||
+    (body.role !== 'edit' && body.role !== 'read') ||
+    typeof body.generation !== 'string'
+  ) {
     throw new PeditError('unavailable', 'bad session response')
   }
-  return { token: body.token, role: body.role }
+  return { token: body.token, role: body.role, generation: body.generation }
 }
 
 /**
@@ -66,6 +69,7 @@ export async function connect(
   const sessionUrl = `${location.origin}${root}/session`
   const first = await session(sessionUrl)
   const role = first.role
+  const generation = first.generation
 
   const doc = new Y.Doc()
   const text = doc.getText('content')
@@ -125,6 +129,9 @@ export async function connect(
       // Live role changes are not supported: the update handler and the editor were set up for one role.
       if (next.role !== role)
         return stop(new PeditError('forbidden', 'role changed; connect again'))
+      // The document started afresh: merging this page's copy would duplicate its text.
+      if (next.generation !== generation)
+        return stop(new PeditError('gone', 'the document was restarted; reload'))
       provider.params = { token: next.token }
       provider.connect()
     } catch (e) {
@@ -145,31 +152,8 @@ export async function connect(
   })
   synced.catch(() => {})
 
-  // A restarted pedit seeds a new document from the file. Merging this tab's old copy into it
-  // would duplicate the text, so if the server's state vector lacks something it gave us, stop.
-  const syncHandler = provider.messageHandlers[0] as NonNullable<
-    (typeof provider.messageHandlers)[0]
-  >
-  provider.messageHandlers[0] = (...args: Parameters<typeof syncHandler>) => {
-    const dec = args[1]
-    const peek = decoding.createDecoder(dec.arr)
-    peek.pos = dec.pos
-    if (hasSynced && decoding.readVarUint(peek) === 0) {
-      const server = Y.decodeStateVector(decoding.readVarUint8Array(peek))
-      const local = Y.decodeStateVector(Y.encodeStateVector(doc))
-      for (const [client, clock] of local) {
-        if (client !== doc.clientID && (server.get(client) ?? 0) < clock) {
-          return stop(new PeditError('gone', 'the document was restarted; reload'))
-        }
-      }
-    }
-    syncHandler(...args)
-  }
-  let hasSynced = false
-
   provider.on('sync', (isSynced: boolean) => {
     if (!isSynced) return
-    hasSynced = true
     attempts = 0
     setStatus('connected')
     settle?.resolve()
@@ -177,10 +161,9 @@ export async function connect(
   provider.on('connection-close', (event: CloseEvent | null) => {
     if (destroyed || isClosed() || halting) return
     halt()
-    if (event?.code === 4001 || event?.code === 4003) {
-      const err = new PeditError(event.code === 4001 ? 'gone' : 'forbidden')
-      return stop(err)
-    }
+    // 4003: refused for good. 4001 (the child exited) reconnects: retry() re-issues a session
+    // and stops only if the generation changed.
+    if (event?.code === 4003) return stop(new PeditError('forbidden'))
     setStatus(status === 'connecting' ? 'connecting' : 'reconnecting')
     schedule()
   })

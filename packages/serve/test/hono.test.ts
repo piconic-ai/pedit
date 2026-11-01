@@ -1,4 +1,4 @@
-import { mkdirSync, symlinkSync } from 'node:fs'
+import { chmodSync, mkdirSync, symlinkSync } from 'node:fs'
 import { request as httpRequest, type Server } from 'node:http'
 import { createServer } from 'node:net'
 import { join } from 'node:path'
@@ -134,6 +134,37 @@ live('peditRoutes with a real pedit', () => {
     expect(isSyncStep1(await firstMessage(ws as WebSocket))).toBe(true)
     ;(ws as WebSocket).close()
     expect(f.events).toContainEqual(expect.objectContaining({ type: 'started', id: 'a' }))
+  })
+
+  it('a session carries the document generation, the same for the same child', async () => {
+    const f = await start()
+    const one = (await (await f.session('a')).json()) as { generation: string }
+    const two = (await (await f.session('a')).json()) as { generation: string }
+    expect(one.generation).toMatch(/^[0-9a-f]{32}$/)
+    expect(two.generation).toBe(one.generation)
+  })
+
+  it('refuses the doc with 403 when the child restarted with another generation', async () => {
+    const { dir } = tmpRoot()
+    // A fake pedit: a new generation per start, exits when its stdin closes (after idleMs).
+    const counter = join(dir, 'count')
+    const fake = write(
+      dir,
+      'pedit',
+      `#!/bin/sh
+[ "$1" = --version ] && { echo 1.2.3; exit 0; }
+n=$(cat '${counter}' 2>/dev/null || echo 0); n=$((n+1)); echo $n > '${counter}'
+echo '{"event":"listening","socket":"/nonexistent","generation":"g'$n'"}'
+read _
+`,
+    )
+    chmodSync(fake, 0o755)
+    const f = await start({ bin: fake, idleMs: 100 })
+    const res = await f.session('a')
+    const body = (await res.json()) as { token: string; generation: string }
+    expect(body.generation).toBe('g1')
+    await vi.waitFor(() => expect(f.events.some((e) => e.type === 'stopped')).toBe(true))
+    expect(await f.dial('a', body.token)).toBe(403)
   })
 
   it('a reader gets step 2 for its step 1 and is closed with 4003 on an update', async () => {
