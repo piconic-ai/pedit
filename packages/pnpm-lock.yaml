@@ -37,9 +37,6 @@ importers:
 
   serve:
     dependencies:
-      lib0:
-        specifier: ^0.2.119
-        version: 0.2.119
       ws:
         specifier: ^8.18.3
         version: 8.21.0
