@@ -27,18 +27,12 @@ export async function dialSocket(
     maxPayload: 4 * MAX_FRAME,
     handshakeTimeout: 5000,
   })
-  await new Promise<void>((resolve, reject) => {
-    ws.once('open', resolve)
-    ws.once('error', reject)
-    ws.once('unexpected-response', () => reject(new Error('pedit refused the connection')))
-  })
-  ws.removeAllListeners('error')
-  ws.on('error', () => ws.terminate())
-
   let handler: Bridge['onframe'] = null
   const held: Uint8Array[] = []
   let heldBytes = 0
-  let gone = false
+  let closeHandler: Bridge['onclose'] = null
+  let ended: { reason: string; code: number } | undefined
+  let opened = false
   let closing = false
   const bridge: Bridge = {
     send(frame) {
@@ -55,7 +49,13 @@ export async function dialSocket(
       heldBytes = 0
       if (fn) for (const f of held.splice(0)) fn(f)
     },
-    onclose: null,
+    get onclose() {
+      return closeHandler
+    },
+    set onclose(fn) {
+      closeHandler = fn
+      if (fn && ended) fn(ended.reason, ended.code)
+    },
     close() {
       if (closing) return
       closing = true
@@ -72,10 +72,21 @@ export async function dialSocket(
     if (heldBytes > MAX_FRAME) ws.close(1013, 'no reader')
   })
   ws.on('close', (code, reason) => {
-    if (gone) return
-    gone = true
+    if (!opened || ended) return
+    ended = { reason: reason.toString(), code }
     onGone()
-    bridge.onclose?.(reason.toString(), code)
+    closeHandler?.(ended.reason, ended.code)
   })
+  // Listen before waiting for the open: pedit's first frame can arrive in the same tick.
+  await new Promise<void>((resolve, reject) => {
+    ws.once('open', resolve)
+    ws.once('error', reject)
+    ws.once('unexpected-response', () => reject(new Error('pedit refused the connection')))
+  })
+  opened = true
+  ws.removeAllListeners('error')
+  ws.on('error', () => ws.terminate())
+  // A close in the same tick as the open came before `opened` was set.
+  if (ws.readyState === WebSocket.CLOSED) ws.emit('close', 1006, Buffer.alloc(0))
   return bridge
 }
