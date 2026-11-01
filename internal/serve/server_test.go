@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -261,21 +260,50 @@ func TestSecondServeIsRefusedAndStaleLockTakenOver(t *testing.T) {
 		t.Fatalf("socket directory left behind: %v", err)
 	}
 
-	// A crash leaves the lock with a dead pid (liveness is checked on Unix only).
-	if runtime.GOOS == "windows" {
-		return
-	}
-	cmd := exec.Command(os.Args[0], "-test.run=NONE")
-	if err := cmd.Run(); err != nil {
-		t.Fatal(err)
-	}
-	stale, _ := json.Marshal(holder{PID: cmd.Process.Pid, App: "crashed"})
+	// A crash leaves the lock file with a name in it and no lock on it.
+	stale, _ := json.Marshal(holder{PID: 999999, App: "crashed"})
 	write(t, lockPath(file), string(stale))
 	s2, err := Open(file, Options{SocketBase: base(t)})
 	if err != nil {
 		t.Fatalf("stale lock not taken over: %v", err)
 	}
 	_ = s2.Close()
+}
+
+func TestOnlyOneOfManyConcurrentStartsHoldsTheLock(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "doc.md")
+	write(t, file, "x\n")
+	// A stale lock file is there at first, as a crash leaves it.
+	stale, _ := json.Marshal(holder{PID: 999999})
+	write(t, lockPath(file), string(stale))
+	for round := range 20 {
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		var releases []func()
+		for range 32 {
+			wg.Go(func() {
+				release, err := acquire(file, "c")
+				var held *HeldError
+				switch {
+				case err == nil:
+					mu.Lock()
+					releases = append(releases, release)
+					mu.Unlock()
+				case !errors.As(err, &held):
+					t.Error(err)
+				}
+			})
+		}
+		// Winners stay held until every contender is through.
+		wg.Wait()
+		if len(releases) != 1 {
+			t.Fatalf("round %d: %d holders of the lock, want 1", round, len(releases))
+		}
+		releases[0]()
+		if _, err := os.Stat(lockPath(file)); !os.IsNotExist(err) {
+			t.Fatalf("lock left behind: %v", err)
+		}
+	}
 }
 
 func TestSocketDirectoryIsPrivate(t *testing.T) {

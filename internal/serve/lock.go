@@ -2,10 +2,10 @@ package serve
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // holder is what the lock file says about the process serving a file.
@@ -15,7 +15,10 @@ type holder struct {
 }
 
 func (h holder) String() string {
-	if h.App != "" {
+	switch {
+	case h.PID == 0:
+		return "another pedit serve"
+	case h.App != "":
 		return fmt.Sprintf("pid %d, app %q", h.PID, h.App)
 	}
 	return fmt.Sprintf("pid %d", h.PID)
@@ -31,9 +34,10 @@ func (e *HeldError) Error() string {
 	return fmt.Sprintf("%s is already served by %s", e.File, e.Holder)
 }
 
-// lockPath is the lock file beside the file: a lock file rather than flock,
-// so it also names the holder, and a crash leaves it behind with a dead pid,
-// which the next pedit serve takes over.
+// lockPath is the lock file beside the file. The OS advisory lock on it is
+// what excludes a second server (it is released when the process ends, crash
+// included, so a lock file left behind is stale by itself); the content only
+// names the holder for the refusal message.
 func lockPath(file string) string {
 	return filepath.Join(filepath.Dir(file), "."+filepath.Base(file)+".pedit-lock")
 }
@@ -41,31 +45,50 @@ func lockPath(file string) string {
 // acquire takes the file's lock, or returns a *HeldError naming its holder.
 func acquire(file, app string) (release func(), err error) {
 	path := lockPath(file)
-	data, _ := json.Marshal(holder{PID: os.Getpid(), App: app})
-	for range 3 {
-		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-		if err == nil {
-			_, werr := f.Write(data)
-			if cerr := f.Close(); werr == nil {
-				werr = cerr
-			}
-			if werr != nil {
-				_ = os.Remove(path)
-				return nil, werr
-			}
-			return func() { _ = os.Remove(path) }, nil
-		}
-		if !errors.Is(err, os.ErrExist) {
+	for range 5 {
+		f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+		if err != nil {
 			return nil, err
 		}
-		var h holder
-		if b, err := os.ReadFile(path); err == nil && json.Unmarshal(b, &h) == nil && pidAlive(h.PID) {
-			return nil, &HeldError{File: file, Holder: h}
+		ok, err := lockFile(f)
+		if err != nil {
+			_ = f.Close()
+			return nil, err
 		}
-		// Dead holder, or a lock that was never filled in: take it over.
-		// Two takers racing here may both remove and one then fails to
-		// create; the loop lets that one see the winner.
-		_ = os.Remove(path)
+		if !ok {
+			_ = f.Close()
+			return nil, &HeldError{File: file, Holder: readHolder(path)}
+		}
+		// The previous holder removes the file while it still holds the
+		// lock: if what we locked is no longer at the path, lock again.
+		info, serr := f.Stat()
+		at, perr := os.Stat(path)
+		if serr != nil || perr != nil || !os.SameFile(info, at) {
+			_ = f.Close()
+			continue
+		}
+		data, _ := json.Marshal(holder{PID: os.Getpid(), App: app})
+		if err := f.Truncate(0); err == nil {
+			_, err = f.WriteAt(data, 0)
+		}
+		if err != nil {
+			_ = f.Close()
+			return nil, err
+		}
+		return func() { unlockFile(f, path) }, nil
 	}
 	return nil, fmt.Errorf("cannot take the lock %s", path)
+}
+
+// readHolder reads who holds the lock. The holder writes its name right
+// after locking, so an empty file is read again for a moment.
+func readHolder(path string) holder {
+	var h holder
+	for range 20 {
+		if b, err := os.ReadFile(path); err == nil && json.Unmarshal(b, &h) == nil && h.PID > 0 {
+			return h
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return holder{}
 }
