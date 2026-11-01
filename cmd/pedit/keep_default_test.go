@@ -74,7 +74,6 @@ func TestDefaultKeepIsOneDay(t *testing.T) {
 		{[]string{"c.canvas"}, 0, false},
 		{[]string{"new.md"}, 0, false},
 		{[]string{"-t", "canvas", "a.md"}, 0, false},
-		{[]string{"--resume"}, 0, false},
 		{nil, 0, false},
 	} {
 		opts, err := parseArgs(c.args)

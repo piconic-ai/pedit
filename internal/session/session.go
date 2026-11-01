@@ -65,7 +65,7 @@ type Options struct {
 
 	// Keep asks the relay to keep the room open for this long after the host
 	// leaves on purpose (docs/design/rooms-away.md), and has Start write the
-	// record that --resume takes the room up again by. More are the files to
+	// record that pedit resume takes the room up again by. More are the files to
 	// share with the first, so the record lists them all.
 	Keep time.Duration
 	More []string

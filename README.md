@@ -126,8 +126,7 @@ UTF-8 is preserved and stops automatic recovery. These two host
 commands currently require Unix file permissions and are unavailable on Windows.
 
 To end a kept room before its deadline, run `pedit close` (it takes the same room ID or link as `pedit resume`,
-and picks or asks the same way; `pedit close --help` says more). `--close` and `--resume` still work for one more release, with a
-notice, and then go. It first does what `pedit resume` does once: takes in the guests' edits, comments and
+and picks or asks the same way; `pedit close --help` says more). It first does what `pedit resume` does once: takes in the guests' edits, comments and
 images and saves them to your files. Only then does it ask the relay to delete everything it holds for the room
 (text, log and images) and make the link stop working for good, and remove the resume record. If any
 file cannot be saved, the room stays open and the record stays, so you can fix that and run it again. Guests who

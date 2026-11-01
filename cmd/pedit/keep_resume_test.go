@@ -14,22 +14,14 @@ import (
 
 const testRoom = "AAAAAAAAAAAAAAAAAAAAAA"
 
-func TestResumeArguments(t *testing.T) {
-	for args, want := range map[string]commandArgs{
-		"--resume":                        {ResumeAny: true},
-		"--resume " + testRoom:            {Resume: testRoom},
-		"--resume=" + testRoom:            {Resume: testRoom},
-		"--resume -AAAAAAAAAAAAAAAAAAAAA": {Resume: "-AAAAAAAAAAAAAAAAAAAAA"},
-		"--resume https://x.test/r/a#k":   {Resume: "https://x.test/r/a#k"},
-	} {
-		got, err := parseArgs(strings.Fields(args))
-		if err != nil || got.Resume != want.Resume || got.ResumeAny != want.ResumeAny {
-			t.Fatalf("%q: %+v %v", args, got, err)
-		}
-	}
-	for _, args := range [][]string{{"--resume", "short"}, {"--resume", "--resume"}, {"--resume", "a.md"}, {"--resume", testRoom, "--resume"}, {"--resume=", "x"}, {"--keep", "1d", "a.md", "--resume"}} {
-		if _, err := parseArgs(args); err == nil {
-			t.Fatalf("accepted %v", args)
+// --resume and --close were options; they are subcommands now, and the
+// options say so rather than read as a template shorthand.
+func TestRemovedKeptOptions(t *testing.T) {
+	for _, args := range [][]string{{"--resume"}, {"--resume", testRoom}, {"--resume=" + testRoom}, {"--close"}, {"--close", "https://x.test/r/a#k"}} {
+		verb := strings.TrimPrefix(strings.SplitN(args[0], "=", 2)[0], "--")
+		_, err := parseArgs(args)
+		if err == nil || !strings.Contains(err.Error(), "is now pedit "+verb) {
+			t.Fatalf("%v: %v", args, err)
 		}
 	}
 }
@@ -58,7 +50,6 @@ func TestConfigKeepAndPrecedence(t *testing.T) {
 		{[]string{"a.md"}, 12 * time.Hour},
 		{[]string{"--keep", "1d", "a.md"}, 24 * time.Hour},
 		{[]string{"--keep", "0", "a.md"}, 0},
-		{[]string{"--resume"}, 0},
 		{[]string{"-t", "canvas", "a.md"}, 0},
 		{nil, 0},
 	} {
@@ -115,25 +106,6 @@ func TestKeepHint(t *testing.T) {
 	}
 }
 
-func TestCloseArguments(t *testing.T) {
-	for args, want := range map[string]commandArgs{
-		"--close":                      {Close: true, ResumeAny: true},
-		"--close " + testRoom:          {Close: true, Resume: testRoom},
-		"--close=" + testRoom:          {Close: true, Resume: testRoom},
-		"--close https://x.test/r/a#k": {Close: true, Resume: "https://x.test/r/a#k"},
-	} {
-		got, err := parseArgs(strings.Fields(args))
-		if err != nil || got.Close != want.Close || got.Resume != want.Resume || got.ResumeAny != want.ResumeAny {
-			t.Fatalf("%q: %+v %v", args, got, err)
-		}
-	}
-	for _, args := range [][]string{{"--close", "short"}, {"--close", "a.md"}, {"--close", "--resume"}, {"--resume", "--close"}, {"--close", testRoom, "--close"}, {"--keep", "1d", "a.md", "--close"}} {
-		if _, err := parseArgs(args); err == nil {
-			t.Fatalf("accepted %v", args)
-		}
-	}
-}
-
 func TestResumeOffersOnlyRoomsKeptByTheRelay(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("kept rooms are not supported on Windows")
@@ -169,7 +141,7 @@ func TestResumeErrorDoesNotRepeatTheKeyOfALink(t *testing.T) {
 }
 
 // A project that has only records of the older, polling kind of room can
-// still clean them up with --close; a record with a write pending stays.
+// still clean them up with pedit close; a record with a write pending stays.
 func TestCloseRemovesRecordsOfOlderRoomsEvenWithoutAKeptRoom(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("kept rooms are not supported on Windows")
@@ -189,9 +161,8 @@ func TestCloseRemovesRecordsOfOlderRoomsEvenWithoutAKeptRoom(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, errw bytes.Buffer
-	opts, _ := parseArgs([]string{"--close", old})
-	if code, done := routeKept(&opts, &out, &errw); code != 1 || !done || !strings.Contains(out.String(), "Removed 1 resume record") || !strings.Contains(errw.String(), "no kept room "+old) {
-		t.Fatalf("%d %v %q %q", code, done, out.String(), errw.String())
+	if code := run([]string{"close", old}, &out, &errw); code != 1 || !strings.Contains(out.String(), "Removed 1 resume record") || !strings.Contains(errw.String(), "no kept room "+old) {
+		t.Fatalf("%d %q %q", code, out.String(), errw.String())
 	}
 	if _, err := os.Stat(recordPath(t, root, old)); !os.IsNotExist(err) {
 		t.Fatal("the old record is still there")

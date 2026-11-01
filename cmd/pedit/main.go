@@ -118,7 +118,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, usage)
 		return 2
 	}
-	optionNotice(stderr, opts)
 	return runShare(opts, stdout, stderr)
 }
 
@@ -295,13 +294,9 @@ func runWithoutShare(args []string, stdout, stderr io.Writer) (code int, ok bool
 	return runSubcommand(args, stdout, stderr)
 }
 
-// routeKept runs --close, the alias of pedit close kept for one release. A room
-// kept by the relay while its host is away is taken up by pedit resume as a
-// live session, with its files set from the record.
+// routeKept settles which kept room pedit resume takes up. The room is taken
+// up as a live session, with its files set from the record.
 func routeKept(opts *commandArgs, stdout, stderr io.Writer) (code int, done bool) {
-	if opts.Close {
-		return closeRoom(*opts, stdout, stderr), true
-	}
 	if opts.Resume == "" && !opts.ResumeAny {
 		return 0, false
 	}

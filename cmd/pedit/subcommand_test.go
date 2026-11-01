@@ -66,10 +66,9 @@ func TestSubcommandsWithoutKeptRooms(t *testing.T) {
 		{[]string{"resume"}, 1, "", "no kept room in this project"},
 		{[]string{"resume", testRoom}, 1, "", "no kept room " + testRoom},
 		{[]string{"resume", "a.md"}, 2, "", "Usage: pedit resume"},
-		{[]string{"--resume", testRoom}, 1, "", "--resume is now pedit resume " + testRoom + ";"},
-		{[]string{"--resume", "https://x.test/r/" + testRoom + "#secret"}, 1, "", "--resume is now pedit resume;"},
-		// The alias says where the verb went, then does the same.
-		{[]string{"--close", testRoom}, 1, "", "--close is now pedit close " + testRoom + ";"},
+		// The options they replaced point to them.
+		{[]string{"--resume", testRoom}, 2, "", "--resume is now pedit resume; run pedit resume --help"},
+		{[]string{"--close", testRoom}, 2, "", "--close is now pedit close; run pedit close --help"},
 		// A command's name after another word, or after --, is a file.
 		{[]string{"a.md", "rooms"}, 1, "", "rooms does not exist."},
 		{[]string{"--", "rooms"}, 1, "", "rooms does not exist."},

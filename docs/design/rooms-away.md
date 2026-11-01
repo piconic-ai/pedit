@@ -162,7 +162,7 @@ and skipped. A host that dropped for so long that the room went into the kept
 state is sent the log on reconnecting: it takes the entries in like entries of
 kind 1 and checkpoints at the tail.
 
-`pedit resume [room]` (formerly `--resume`) reads the record. It first merges the edits made to the
+`pedit resume [room]` reads the record. It first merges the edits made to the
 files while it was away into the record's documents, as a live room merges a
 save from another editor. It then connects as the host with `X-Pedit-After`,
 takes the replay (kind 5 if sent, kind 4, kind 6) in with the intake below (invalid entries skipped and counted, images under `assets/`,
@@ -239,7 +239,7 @@ blob stays on the relay until the deadline, so a later sync can fetch it.
 
 ### Closing and limits
 
-`pedit close [room|link]` (formerly `--close`) runs one resume (fetch, merge, durable writes of
+`pedit close [room|link]` runs one resume (fetch, merge, durable writes of
 every file, comment and image, checkpoint), then asks `POST /keep/close` with
 the host token and the last entry it took in (`X-Pedit-Tail`; on 409 a guest
 appended since, and the host reads again and retries), then removes the record.
