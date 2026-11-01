@@ -437,16 +437,20 @@ export class Room extends DurableObject<Env> {
   }
 
   // Takes a peer admitted to a place. Nothing awaits before the accept.
+  private closeOutdatedPeers(): void {
+    for (const peer of this.peers()) {
+      if (!this.ctx.getTags(peer).includes(SOCKET_PROTOCOL))
+        safeClose(peer, CLIENT_OUTDATED, 'pedit is outdated; update it')
+    }
+  }
+
   private async accept(isHost: boolean, role: Role, join: Join): Promise<Response> {
     const kv = this.ctx.storage.kv
     // The clock starts at the host's first connection and never again.
     const first = isHost && this.openedAt() === undefined
     if (first) kv.put(OPENED_KEY, Date.now())
     const { 0: client, 1: server } = new WebSocketPair()
-    for (const peer of this.peers()) {
-      if (!this.ctx.getTags(peer).includes(SOCKET_PROTOCOL))
-        safeClose(peer, CLIENT_OUTDATED, 'pedit is outdated; update it')
-    }
+    this.closeOutdatedPeers()
     const tags = [V6_TAG, SOCKET_PROTOCOL]
     if (isHost) tags.push(HOST_TAG)
     else if (role === 'reader') tags.push(READER_TAG)
