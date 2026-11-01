@@ -55,7 +55,9 @@ test('the bridge accepts its own page and refuses other origins', { skip }, asyn
   }
 })
 
-test('a second app on the same file prints the refusal and exits with code 3', { skip }, async () => {
+test('a second app on the same file prints the refusal and exits with code 3', {
+  skip,
+}, async () => {
   const file = join(await mkdtemp(join(tmpdir(), 'serve-app-')), 'a.md')
   await writeFile(file, 'text\n')
   const first = spawn('node', ['app.mjs', file], { stdio: ['ignore', 'pipe', 'inherit'] })

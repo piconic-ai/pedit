@@ -34,7 +34,9 @@ const socket = await new Promise((resolve) => {
     const event = JSON.parse(line)
     if (event.event === 'listening') resolve(event.socket)
     else if (event.event === 'held') {
-      console.error(`${file} is already served by pid ${event.pid}${event.app ? `, app ${event.app}` : ''}`)
+      console.error(
+        `${file} is already served by pid ${event.pid}${event.app ? `, app ${event.app}` : ''}`,
+      )
     } else if (event.event === 'error') {
       console.error(`pedit: ${event.message}`)
     }
