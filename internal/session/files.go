@@ -62,7 +62,7 @@ func newContent(doc *crdt.Doc, file, initial string, state []byte) (content, err
 	// new one with the same text, which would double it when they sync.
 	text := doc.GetText("content")
 	if err := crdt.ApplyUpdateV1(doc, state, nil); err != nil || text.ToString() != initial {
-		return nil, fmt.Errorf("%s changed after pedit took in the kept room; run pedit --resume again", file)
+		return nil, fmt.Errorf("%s changed after pedit took in the kept room; run pedit resume again", file)
 	}
 	return &textContent{doc: doc, text: text}, nil
 }

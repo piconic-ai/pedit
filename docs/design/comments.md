@@ -245,7 +245,7 @@ Tests: `packages/web/test/comments.test.ts` and
 A kept room (`--keep`, #234) carries comments the same way: each text file in
 the project has a `meta` doc paired by `metaPath`, inside the encrypted snapshot
 and addressed by its own file ID in signed log entries. The host loads
-`.pedit/meta/<path>.json` on `--keep` and writes it on `--resume`, with the same
+`.pedit/meta/<path>.json` on `--keep` and writes it on `pedit resume`, with the same
 rules as above. See `docs/design/rooms-away.md`.
 
 ## Not yet

@@ -338,7 +338,8 @@ type commandArgs struct {
 	Keep time.Duration
 	// KeepOff is --keep 0: no kept room this run, whatever the configuration says.
 	KeepOff bool
-	// Resume is a share link or room ID; ResumeAny is --resume without a value.
+	// Resume is a share link or room ID; ResumeAny is pedit resume (or its alias
+	// --resume) without one.
 	Resume    string
 	ResumeAny bool
 	// Close is --close, the alias of pedit close kept for one release:

@@ -246,7 +246,7 @@ func TestKeptRoomEndToEnd(t *testing.T) {
 		t.Fatalf("the file changed while the host was away: %q", got)
 	}
 
-	resumed := r.pedit("--resume")
+	resumed := r.pedit("resume")
 	resumed.link(t)
 	r.takenIn(link, first, second)
 	resumed.stop(t)
@@ -284,7 +284,7 @@ func TestKeptRoomWhenTheHostDrops(t *testing.T) {
 	}
 	// The relay waits its grace (2s in the test relay), then keeps the room.
 	guest.editAway(r, link)
-	resumed := r.pedit("--resume")
+	resumed := r.pedit("resume")
 	resumed.link(t)
 	r.takenIn(link, guest)
 	resumed.stop(t)

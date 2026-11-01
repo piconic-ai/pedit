@@ -76,8 +76,9 @@ Examples:
                        Join a room and edit its copy in your own editor
 
 Commands:
-  pedit close [room|link]  Take in a kept room's edits, then close it for good
-  pedit rooms [--json]     List this project's kept rooms
+  pedit resume [room|link]  Take up a kept room again: your files get what was written meanwhile
+  pedit close [room|link]   Take in a kept room's edits, then close it for good
+  pedit rooms [--json]      List this project's kept rooms
 Run pedit <command> --help for its details. To share a file named like a
 command, write ./close or pedit -- close.
 
@@ -92,7 +93,6 @@ Options:
   --keep <duration>     Keep the room open after you leave (for example 7d), so guests can
                         go on editing; the default is 1d, and 0 ends the room when you leave.
                         pedit <file> takes up the kept room that holds the file
-  --resume [room|link]  Take up a kept room again: your files get what was written meanwhile
   -h, --help             Show this help
   -v, --version          Show the version
 
@@ -118,6 +118,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, usage)
 		return 2
 	}
+	optionNotice(stderr, opts)
+	return runShare(opts, stdout, stderr)
+}
+
+// runShare shares files, takes up a kept room, or joins a link, as opts say.
+func runShare(opts commandArgs, stdout, stderr io.Writer) int {
 	if code := resumeHeld(&opts, stdout, stderr); code != 0 {
 		return code
 	}
@@ -290,11 +296,10 @@ func runWithoutShare(args []string, stdout, stderr io.Writer) (code int, ok bool
 }
 
 // routeKept runs --close, the alias of pedit close kept for one release. A room
-// kept by the relay while its host is away is taken up by --resume as a live
-// session, with its files set from the record.
+// kept by the relay while its host is away is taken up by pedit resume as a
+// live session, with its files set from the record.
 func routeKept(opts *commandArgs, stdout, stderr io.Writer) (code int, done bool) {
 	if opts.Close {
-		closeOptionNotice(stderr, *opts)
 		return closeRoom(*opts, stdout, stderr), true
 	}
 	if opts.Resume == "" && !opts.ResumeAny {
