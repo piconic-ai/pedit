@@ -1,5 +1,13 @@
 import { execFileSync } from 'node:child_process'
-import { chmodSync, existsSync, linkSync, readdirSync, symlinkSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  linkSync,
+  readdirSync,
+  renameSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
@@ -58,6 +66,20 @@ live('ServedFiles', () => {
     // Only a case-insensitive file system has this variant.
     if (existsSync(upper)) expect(await files.acquire(upper)).toBe(first)
     expect(events.filter((e) => e.type === 'started')).toHaveLength(1)
+  })
+
+  it('does not treat a hard link that an atomic save split as the same file', async () => {
+    const { dir, files } = setup()
+    const a = write(dir, 'a.md')
+    const b = join(dir, 'b.md')
+    linkSync(a, b)
+    const served = await files.acquire(a)
+    writeFileSync(join(dir, '.tmp'), 'replaced\n')
+    renameSync(join(dir, '.tmp'), a)
+    const other = await files.acquire(b)
+    expect(other).not.toBe(served)
+    expect(other.path).toBe(b)
+    expect(await files.acquire(a)).toBe(served)
   })
 
   it('refuses a file another app holds, naming the holder', async () => {

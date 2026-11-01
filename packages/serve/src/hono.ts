@@ -4,7 +4,7 @@ import { realpath, stat } from 'node:fs/promises'
 import { isAbsolute, relative, sep } from 'node:path'
 import { type Context, type Env, Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
-import type { UpgradeWebSocket } from 'hono/ws'
+import type { UpgradeWebSocket, WSContext } from 'hono/ws'
 import { HeldError } from './errors.ts'
 import { resolvePedit } from './resolve.ts'
 import { ServedFiles } from './served.ts'
@@ -262,19 +262,29 @@ export function peditRoutes<E extends Env = Env>(
     // If the upgrade never completes, do not keep the slot.
     const abandoned = setTimeout(() => bridge.close(), 10_000)
     abandoned.unref()
+    // The child can close while the browser's upgrade is pending: keep that and close the
+    // browser as soon as it opens.
+    let sock: WSContext | undefined
+    let ended: { reason: string; code: number | undefined } | undefined
+    const closeSock = (ws: WSContext, reason: string, code: number | undefined) => {
+      const ok = code !== undefined && (code === 1000 || (code >= 3000 && code < 5000))
+      if (ok) ws.close(code, Buffer.from(reason).subarray(0, 120).toString())
+      else ws.close(1011, 'upstream closed')
+    }
+    bridge.onclose = (reason, code) => {
+      ended = { reason, code }
+      clearTimeout(abandoned)
+      if (sock) closeSock(sock, reason, code)
+    }
     const upgrade = options.upgradeWebSocket(() => ({
       onOpen(_evt, ws) {
         clearTimeout(abandoned)
+        if (ended) return closeSock(ws, ended.reason, ended.code)
+        sock = ws
         bridge.onframe = (frame) => {
           const raw = ws.raw as { bufferedAmount?: number } | undefined
           if ((raw?.bufferedAmount ?? 0) > MAX_PAGE_BUFFER) return ws.close(1013, 'too slow')
           ws.send(frame as Uint8Array<ArrayBuffer>)
-        }
-        bridge.onclose = (reason, code) => {
-          const ok = code !== undefined && (code === 1000 || (code >= 3000 && code < 5000))
-          const reasonBytes = Buffer.from(reason).subarray(0, 120).toString()
-          if (ok) ws.close(code, reasonBytes)
-          else ws.close(1011, 'upstream closed')
         }
       },
       onMessage(evt, ws) {

@@ -43,6 +43,12 @@ interface Entry {
   handle: ServedFile
 }
 
+async function inodeOf(real: string): Promise<string> {
+  const st = await stat(real)
+  if (!st.isFile()) throw new Error('not a regular file')
+  return `${st.dev}:${st.ino}`
+}
+
 export class ServedFiles {
   #options: ServedFilesOptions
   #byPath = new Map<string, Entry>()
@@ -62,13 +68,20 @@ export class ServedFiles {
    */
   async acquire(path: string): Promise<ServedFile> {
     if (!isAbsolute(path)) throw new TypeError('path must be absolute')
-    const real = await realpath(path)
-    const st = await stat(real)
-    if (!st.isFile()) throw new Error('not a regular file')
-    const ino = `${st.dev}:${st.ino}`
     for (;;) {
       if (this.#closed) throw new Error('ServedFiles is closed')
-      let entry = this.#byIno.get(ino) ?? this.#byPath.get(real)
+      const real = await realpath(path)
+      const ino = await inodeOf(real)
+      // An inode alias counts only while the other path still has that inode: an atomic save
+      // gives the served path a new one and splits a hard link into two files.
+      const alias = this.#byIno.get(ino)
+      const aliasHolds =
+        alias !== undefined &&
+        alias.path !== real &&
+        (await inodeOf(alias.path).catch(() => '')) === ino
+      if (this.#closed) throw new Error('ServedFiles is closed')
+      let entry = this.#byPath.get(real) ?? (aliasHolds ? alias : undefined)
+      if (entry && entry.ino !== ino && entry.path === real) this.#reindex(entry, ino)
       if (entry?.stopping) {
         await entry.exited
         continue
@@ -80,6 +93,12 @@ export class ServedFiles {
       await entry.ready
       return entry.handle
     }
+  }
+
+  #reindex(entry: Entry, ino: string) {
+    if (this.#byIno.get(entry.ino) === entry) this.#byIno.delete(entry.ino)
+    entry.ino = ino
+    this.#byIno.set(ino, entry)
   }
 
   /** End every child: close stdin, wait, SIGTERM after 5 s. Never SIGKILL inside the write delay. */
