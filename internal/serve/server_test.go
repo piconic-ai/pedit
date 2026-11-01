@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -260,7 +261,10 @@ func TestSecondServeIsRefusedAndStaleLockTakenOver(t *testing.T) {
 		t.Fatalf("socket directory left behind: %v", err)
 	}
 
-	// A crash leaves the lock with a dead pid.
+	// A crash leaves the lock with a dead pid (liveness is checked on Unix only).
+	if runtime.GOOS == "windows" {
+		return
+	}
 	cmd := exec.Command(os.Args[0], "-test.run=NONE")
 	if err := cmd.Run(); err != nil {
 		t.Fatal(err)
@@ -275,6 +279,9 @@ func TestSecondServeIsRefusedAndStaleLockTakenOver(t *testing.T) {
 }
 
 func TestSocketDirectoryIsPrivate(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no Unix permission bits")
+	}
 	s, _, _ := open(t, "x\n")
 	info, err := os.Stat(s.dir)
 	if err != nil {
