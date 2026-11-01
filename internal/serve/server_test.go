@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/piconic-ai/pedit/internal/lineend"
 	"github.com/reearth/ygo/awareness"
 	"github.com/reearth/ygo/crdt"
 	"github.com/reearth/ygo/encoding"
@@ -247,8 +248,8 @@ func TestFrontmatterCRLFAndBOMSurvive(t *testing.T) {
 
 func TestMixedLineEndingsAreHeldAsTheyAre(t *testing.T) {
 	for s, want := range map[string]bool{"a\r\nb\r\n": true, "a\nb\n": false, "a\r\nb\n": false, "a\rb\r\n": false, "": false} {
-		if isCRLF(s) != want {
-			t.Errorf("isCRLF(%q) = %v", s, !want)
+		if lineend.IsCRLF(s) != want {
+			t.Errorf("IsCRLF(%q) = %v", s, !want)
 		}
 	}
 	mixed := "a\r\nb\nc\r\n"

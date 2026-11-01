@@ -24,6 +24,7 @@ import (
 
 	"github.com/piconic-ai/pedit/internal/canvas"
 	"github.com/piconic-ai/pedit/internal/filewriter"
+	"github.com/piconic-ai/pedit/internal/lineend"
 	"github.com/piconic-ai/pedit/internal/merge"
 	"github.com/piconic-ai/pedit/internal/meta"
 	"github.com/piconic-ai/pedit/internal/protocol"
@@ -242,7 +243,7 @@ func (h *keptTextHost) mergeLocalEdits() error {
 			continue
 		}
 		doc := h.files[file.ID].doc
-		merge.ExternalEdit(doc, doc.GetText("content"), file.Text, onDisk, nil)
+		merge.ExternalEdit(doc, doc.GetText("content"), lineend.Doc(file.Text), lineend.Doc(onDisk), nil)
 		file.State, file.Text, file.Pending = crdt.EncodeStateAsUpdateV1(doc, nil), onDisk, nil
 		changed = true
 	}

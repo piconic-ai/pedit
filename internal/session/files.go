@@ -9,6 +9,7 @@ import (
 
 	"github.com/piconic-ai/pedit/internal/attach"
 	"github.com/piconic-ai/pedit/internal/filewriter"
+	"github.com/piconic-ai/pedit/internal/lineend"
 	"github.com/piconic-ai/pedit/internal/protocol"
 	"github.com/reearth/ygo/crdt"
 )
@@ -64,10 +65,14 @@ func newContent(doc *crdt.Doc, file, initial string, state []byte) (content, err
 	// A kept room taken in again: the doc is the one its guests hold, not a
 	// new one with the same text, which would double it when they sync.
 	text := doc.GetText("content")
-	if err := crdt.ApplyUpdateV1(doc, state, nil); err != nil || text.ToString() != initial {
+	// The doc holds LF for a CRLF file. A room kept before line endings were
+	// handled holds the file as it is; it is taken in as well, and written
+	// back with CRLF all the same.
+	crlf := lineend.IsCRLF(initial)
+	if err := crdt.ApplyUpdateV1(doc, state, nil); err != nil || lineend.FromDoc(text.ToString(), crlf) != initial {
 		return nil, fmt.Errorf("%s changed after pedit took in the kept room; run pedit resume again", file)
 	}
-	return &textContent{doc: doc, text: text}, nil
+	return &textContent{doc: doc, text: text, crlf: crlf}, nil
 }
 
 // tooLarge reports a file whose state does not fit the frame it is sent in.
