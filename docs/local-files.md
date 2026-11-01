@@ -133,6 +133,15 @@ retried and reported the same way.
 | Reads, Writes | The file, as when sharing it | The same guards as above, but no room, relay or network. |
 | Writes | A lock, `.<name>.pedit-lock` beside the file, with pid and app name | Created `0600`, removed on exit; a lock whose process is gone is taken over. |
 | Listens | A Unix socket in a new directory under `os.UserConfigDir()/pedit/serve/` (the temp directory if that path is too long for a socket) | Directory `0700`, removed on exit. Never TCP. Clients speak the y-websocket protocol unencrypted: whoever can open the socket can edit the file. There is no authentication beyond the directory's mode: any process of the same user can connect. The sample app's `127.0.0.1` bridge requires a per-run secret in its URL. |
+| Takes a root | `--root <dir>`: the file is a path relative to `<dir>` | pedit itself refuses an absolute path, `..` or a link in a directory component that leaves `<dir>`; the lock and the watch use the file's directory. |
+
+With `--json`, stdout carries one JSON event per line and nothing else:
+`listening` (with the socket), `saved` (with `bytes`) after each write of the
+file, `external_save` when a save by another editor was taken in, `held` (with
+`pid` and `app`) when another process serves the file, and `error` (with a
+one-line `message`) for any other failure. Exit codes, with or without
+`--json`: 0 normal, 1 error, 2 usage, 3 refused because another process serves
+the file.
 
 ## Programs pedit runs
 

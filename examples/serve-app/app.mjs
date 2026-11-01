@@ -22,15 +22,22 @@ if (!file) {
 const pedit = spawn(process.env.PEDIT || 'pedit', ['serve', file, '--json', '--app', 'sample'], {
   stdio: ['pipe', 'pipe', 'inherit'],
 })
+// Exit codes: 0 normal, 1 error, 2 usage, 3 another process serves the file.
 pedit.on('exit', (code) => process.exit(code ?? 1))
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => pedit.stdin.end())
 
-// The first line pedit prints says where it listens.
+// pedit prints one JSON event per line. The first says where it listens; a
+// refusal or a failure arrives as an event too, before pedit exits.
 const lines = createInterface({ input: pedit.stdout })
 const socket = await new Promise((resolve) => {
   lines.on('line', (line) => {
     const event = JSON.parse(line)
     if (event.event === 'listening') resolve(event.socket)
+    else if (event.event === 'held') {
+      console.error(`${file} is already served by pid ${event.pid}${event.app ? `, app ${event.app}` : ''}`)
+    } else if (event.event === 'error') {
+      console.error(`pedit: ${event.message}`)
+    }
   })
 })
 
