@@ -14,6 +14,9 @@ const (
 	// announce; maxRoomAwareness is how many distinct ones the room holds.
 	maxConnAwareness = 8
 	maxRoomAwareness = 64
+	// maxIntroduced is how many distinct IDs, present or removed, one
+	// connection may introduce over its lifetime.
+	maxIntroduced = 1024
 
 	defaultPingInterval = 30 * time.Second
 	defaultFrameRate    = 1000 // frames per second, as the relay's burst limit
@@ -90,15 +93,21 @@ func parseFrame(data []byte) (kind, sub uint64, rest []byte, err error) {
 	return kind, sub, rest, err
 }
 
-// awarenessIDs lists the client IDs of an awareness update that carry a
-// state; an entry with the state "null" is a removal and adds no one.
-func awarenessIDs(update []byte) ([]uint64, error) {
+// awEntry is one client of an awareness update; live is false for a removal
+// (the state "null").
+type awEntry struct {
+	id   uint64
+	live bool
+}
+
+// awarenessEntries lists the clients of an awareness update.
+func awarenessEntries(update []byte) ([]awEntry, error) {
 	dec := encoding.NewDecoder(update)
 	n, err := dec.ReadVarUint()
 	if err != nil {
 		return nil, err
 	}
-	var ids []uint64
+	var entries []awEntry
 	for range n {
 		id, err := dec.ReadVarUint()
 		if err != nil {
@@ -111,51 +120,53 @@ func awarenessIDs(update []byte) ([]uint64, error) {
 		if err != nil {
 			return nil, err
 		}
-		if state != "null" {
-			ids = append(ids, id)
-		}
+		entries = append(entries, awEntry{id, state != "null"})
 	}
-	return ids, nil
+	return entries, nil
 }
 
 // checkAwareness refuses an update that would make c or the room hold too
-// many awareness client IDs. Only IDs that are not present in the room count:
-// a provider echoes what it received, and an echo is neither new nor c's. An
-// ID that was removed and is brought back counts as new. The IDs c owns are
-// recorded as ygo accepts them (see accept). The caller holds s.mu.
-func (s *Server) checkAwareness(c *client, ids []uint64) error {
-	var fresh []uint64
+// many awareness client IDs, and records what c introduces. Two limits:
+//   - Presence: only IDs that are not present in the room count (a provider
+//     echoes what it received, and an echo is neither new nor c's); an ID that
+//     was removed and comes back counts as new. At most maxConnAwareness are
+//     c's and maxRoomAwareness the room's. The IDs c owns are recorded as ygo
+//     accepts them (see accept).
+//   - Lifetime: c may introduce at most maxIntroduced distinct IDs the room
+//     has not seen, present or removed alike, which bounds the awareness map
+//     (removal tombstones included) that one connection can grow.
+//
+// The caller holds s.mu.
+func (s *Server) checkAwareness(c *client, entries []awEntry) error {
 	present := s.aw.GetStates()
-	for _, id := range ids {
-		if _, here := present[id]; !here && !c.ids[id] && !contains(fresh, id) {
-			fresh = append(fresh, id)
+	fresh := map[uint64]bool{}
+	unseen := map[uint64]bool{}
+	for _, e := range entries {
+		if _, known := s.aw.Meta(e.id); !known && !c.seen[e.id] {
+			unseen[e.id] = true
+		}
+		if _, here := present[e.id]; e.live && !here && !c.ids[e.id] {
+			fresh[e.id] = true
 		}
 	}
-	if len(fresh) == 0 {
-		return nil
-	}
-	if len(c.ids)+len(fresh) > maxConnAwareness {
+	if len(c.seen)+len(unseen) > maxIntroduced || len(c.ids)+len(fresh) > maxConnAwareness {
 		return errTooManyAware
 	}
-	room := map[uint64]bool{}
-	for o := range s.clients {
-		for id := range o.ids {
-			room[id] = true
+	if len(fresh) > 0 {
+		room := map[uint64]bool{}
+		for o := range s.clients {
+			for id := range o.ids {
+				room[id] = true
+			}
+		}
+		if len(room)+len(fresh) > maxRoomAwareness {
+			return errTooManyAware
 		}
 	}
-	if len(room)+len(fresh) > maxRoomAwareness {
-		return errTooManyAware
+	for id := range unseen {
+		c.seen[id] = true
 	}
 	return nil
-}
-
-func contains(ids []uint64, id uint64) bool {
-	for _, x := range ids {
-		if x == id {
-			return true
-		}
-	}
-	return false
 }
 
 // heartbeat pings conn every interval and closes it with 1001 after two pings

@@ -411,6 +411,7 @@ type client struct {
 	conn   *websocket.Conn
 	out    chan []byte
 	ids    map[uint64]bool // awareness client IDs it announced
+	seen   map[uint64]bool // every ID it introduced to the room, removed ones too
 	closed bool            // out is closed; guarded by Server.mu
 	reader bool            // may send sync step 1 and awareness only
 	// frames and step1 limit what it sends; the read loop alone uses them.
@@ -448,7 +449,7 @@ func (s *Server) accept(w http.ResponseWriter, r *http.Request) {
 	}
 	conn.SetReadLimit(maxFrame)
 	c := &client{
-		conn: conn, out: make(chan []byte, 1024), ids: map[uint64]bool{},
+		conn: conn, out: make(chan []byte, 1024), ids: map[uint64]bool{}, seen: map[uint64]bool{},
 		reader: r.Header.Get(roleHeader) == roleRead,
 		frames: newBucket(s.opts.FrameRate), step1: newBucket(s.opts.Step1Rate),
 	}
@@ -602,9 +603,9 @@ func (s *Server) handleSync(c *client, sub uint64, msg []byte) error {
 func (s *Server) handleAwareness(c *client, payload []byte) error {
 	update, err := encoding.NewDecoder(payload).ReadVarBytes()
 	if err == nil {
-		var ids []uint64
-		if ids, err = awarenessIDs(update); err == nil {
-			err = s.checkAwareness(c, ids)
+		var entries []awEntry
+		if entries, err = awarenessEntries(update); err == nil {
+			err = s.checkAwareness(c, entries)
 		}
 	}
 	var ce *closeError
