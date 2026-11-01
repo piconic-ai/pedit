@@ -63,7 +63,7 @@ func (h *keptTextHost) openFiles() error {
 			h.closeFiles()
 			return errors.New("cannot open kept file")
 		}
-		h.files[file.ID] = &keptTextDocument{doc: crdt.New(crdt.WithGC(false)), bound: bound}
+		h.files[file.ID] = &keptTextDocument{doc: crdt.New(crdt.WithGC(false)), bound: bound, root: keptRoot(file.Path)}
 		paths[protocol.PathKey(file.Path)] = true
 		infos = append(infos, info)
 	}

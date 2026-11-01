@@ -162,6 +162,8 @@ describe('a room kept while its host is away', () => {
   it('builds the docs from the snapshot and the log, and asks for the rest on a reconnect', async () => {
     const keys = await editKeys()
     const m = await member(keys)
+    m.doc.getArray('nodes')
+    m.doc.getArray('edges')
     const notes = textUpdate((t) => t.insert(0, 'notes'))
     const comments = new Y.Doc()
     let meta: Uint8Array = new Uint8Array()
@@ -314,4 +316,51 @@ describe('a room kept while its host is away', () => {
     expect(new URL(m.relay.urls.at(-1)!).searchParams.get('after')).toBe('12')
     expect(decodeUint64(encodeLogEnd(12).subarray(1))).toBe(12)
   })
+})
+
+it('replays a canvas bundle, keeps edits and acknowledges them without duplication', async () => {
+  const keys = await editKeys()
+  const m = await member(keys)
+  const board = new Y.Doc()
+  board.getArray('nodes').push([new Y.Map([['id', 'one']])])
+  board.getArray('edges')
+  board.getMap('extra').set('title', 'Board')
+  await m.say(`kept ${UNTIL}`)
+  await m.say(
+    withKind(
+      Kind.Replay,
+      await sealBundle(keys, [
+        { id: 0, path: 'BOARD.CANVAS', update: Y.encodeStateAsUpdate(board) },
+      ]),
+    ),
+  )
+  expect(m.manifests.at(-1)).toEqual([{ id: 0, path: 'BOARD.CANVAS', format: 'canvas' }])
+  expect(m.doc.getArray('nodes').length).toBe(1)
+  m.doc.getArray('nodes').push([new Y.Map([['id', 'two']])])
+  await settle()
+  const sent = entries(m.relay)
+  expect(sent).toHaveLength(1)
+  await m.say(encodeLogged(1, sent[0]!))
+  expect(m.syncs.at(-1)).toBe('kept')
+  expect(m.doc.getArray('nodes').length).toBe(2)
+  expect(m.skipped).toEqual([])
+  m.socket().close(1006)
+  m.doc.getArray('nodes').push([new Y.Map([['id', 'offline']])])
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  await m.say(`kept ${UNTIL}`)
+  await m.say(
+    withKind(
+      Kind.Replay,
+      await sealBundle(keys, [
+        { id: 0, path: 'BOARD.CANVAS', update: Y.encodeStateAsUpdate(board) },
+      ]),
+    ),
+  )
+  await m.say(encodeLogEnd(0))
+  const resent = entries(m.relay).at(-1)!
+  await m.say(encodeLogged(2, resent))
+  expect(m.doc.getArray('nodes').length).toBe(3)
+  expect(m.syncs.at(-1)).toBe('kept')
+  expect(m.skipped).toEqual([])
+  board.destroy()
 })

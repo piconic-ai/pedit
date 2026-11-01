@@ -1,5 +1,7 @@
 import { isFinalStatus, type RoomStatus } from '@pedit/protocol'
+import type { BoardView } from './board.ts'
 import type { HeaderStatus } from './components/RoomStatusIndicator.tsx'
+import type { JsonPane } from './jsonpane.ts'
 import { Store } from './store.ts'
 
 /**
@@ -15,6 +17,20 @@ export const isLocked = (status: RoomStatus): boolean =>
 /** Whether the host is away in this status, kept or not. */
 export const isHostAway = (status: RoomStatus): boolean =>
   status === 'waiting' || status === 'kept' || status === 'log-full'
+
+/** Applies the room's write permissions to the board and its host-validated JSON pane. */
+export function setCanvasStatus(
+  board: BoardView,
+  json: JsonPane,
+  status: RoomStatus,
+  canWrite: boolean,
+): void {
+  if (!canWrite || isFinalStatus(status)) board.readOnly = true
+  else {
+    board.paused = isLocked(status)
+    json.readOnly = isHostAway(status)
+  }
+}
 
 /**
  * What the page says of a room whose host may be away: the header's status,

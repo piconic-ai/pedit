@@ -53,6 +53,9 @@ func openShared(file string) (*filewriter.BoundFile, string, error) {
 // newContent loads a file into doc, as text or as a canvas.
 func newContent(doc *crdt.Doc, file, initial string, state []byte) (content, error) {
 	if isCanvas(file) {
+		if state != nil {
+			return resumeCanvasContent(doc, file, initial, state)
+		}
 		return newCanvasContent(doc, file, initial)
 	}
 	if state == nil {

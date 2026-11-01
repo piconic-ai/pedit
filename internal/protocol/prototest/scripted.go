@@ -11,7 +11,7 @@ import (
 
 // Scripted is a Dialer whose connections the test drives: it reads what the
 // client writes and sends what the relay would. Its connections speak
-// Subprotocol, "pedit-v6" unless set otherwise.
+// Subprotocol, "pedit-v7" unless set otherwise.
 type Scripted struct {
 	Subprotocol string
 	// OnDial is called with each new connection before Dial returns it, to
@@ -46,7 +46,7 @@ func (s *Scripted) Dial(_ context.Context, _ string, header http.Header) (protoc
 	}
 	version := s.Subprotocol
 	if version == "" {
-		version = "pedit-v6"
+		version = "pedit-v7"
 	}
 	c := &ScriptConn{Header: header.Clone(), Sent: make(chan []byte, 1024), version: version, wake: make(chan struct{}, 1)}
 	if s.OnDial != nil {

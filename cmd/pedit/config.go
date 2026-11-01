@@ -490,7 +490,7 @@ func (o *commandArgs) addArg(arg string, hasValue bool) error {
 // check rejects combinations that are each fine alone.
 func (o *commandArgs) check() error {
 	if (o.Keep > 0 || o.KeepOff) && (o.File == "" || o.Room != "" || o.Template != "" || o.Directory != "") {
-		return errors.New("--keep shares existing text files")
+		return errors.New("--keep shares existing files")
 	}
 
 	if o.File != "" && o.Directory != "" {

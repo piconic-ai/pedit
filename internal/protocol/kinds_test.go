@@ -85,7 +85,7 @@ func firstSent(t *testing.T, c *prototest.ScriptConn) []byte {
 	return nil
 }
 
-func TestVersion6FramesStartWithTheLiveKind(t *testing.T) {
+func TestVersion7FramesStartWithTheLiveKind(t *testing.T) {
 	s := &prototest.Scripted{}
 	key := protocol.GenerateKey()
 	client, _ := scriptedPeer(t, s, key, protocol.ClientOptions{})
@@ -97,7 +97,7 @@ func TestVersion6FramesStartWithTheLiveKind(t *testing.T) {
 	if _, err := cipher.Decrypt(sent[1:]); err != nil {
 		t.Fatalf("the payload after the kind is not a frame: %v", err)
 	}
-	if client.Version() != 6 {
+	if client.Version() != 7 {
 		t.Fatalf("version = %d", client.Version())
 	}
 }
@@ -122,10 +122,10 @@ func TestVersion5HasNoKindByte(t *testing.T) {
 	}
 }
 
-// Two version 6 peers behind a relay that passes kind 0 messages on edit each
+// Two version 7 peers behind a relay that passes kind 0 messages on edit each
 // other's text; a kind the client does not handle reaches OnKind and
 // changes nothing.
-func TestVersion6PeersSyncAndUnknownKindsAreIgnored(t *testing.T) {
+func TestVersion7PeersSyncAndUnknownKindsAreIgnored(t *testing.T) {
 	sa, sb := &prototest.Scripted{}, &prototest.Scripted{}
 	key := protocol.GenerateKey()
 	var mu sync.Mutex

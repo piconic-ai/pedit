@@ -9,6 +9,7 @@ import type { ImageResolver } from '../src/attachments.ts'
 import { BoardView } from '../src/board.ts'
 import { EDGES, NODES, read, TEXT } from '../src/canvas.ts'
 import { JsonPane } from '../src/jsonpane.ts'
+import { setCanvasStatus } from '../src/keptaway.ts'
 import { MAX_REMEMBERED_SNIPPETS, type Renderer } from '../src/pane.ts'
 import * as preview from '../src/preview.ts'
 
@@ -504,6 +505,35 @@ describe('BoardView', () => {
     view.edit('a')
     expect(view.editing.get()).toBe('a')
     view.finishEditing()
+  })
+
+  it('edits a kept board without unlocking its JSON pane', async () => {
+    const doc = docOf([node('a')])
+    const sent: unknown[] = []
+    const json = new JsonPane(doc, { send: (message) => sent.push(message) })
+    const view = setup(doc, loadMarkdown, { json })
+    await tick()
+    setCanvasStatus(view, json, 'kept', true)
+    expect(json.view.state.readOnly).toBe(true)
+    view.edit('a')
+    expect(view.editing.get()).toBe('a')
+    expect(storeOf(view).nodesDraggable()).toBe(true)
+    setCanvasStatus(view, json, 'log-full', true)
+    expect(view.editing.get()).toBeNull()
+    expect(storeOf(view).nodesDraggable()).toBe(false)
+    expect(json.view.state.readOnly).toBe(true)
+    expect(sent).toEqual([])
+    setCanvasStatus(view, json, 'waiting', true)
+    expect(storeOf(view).nodesDraggable()).toBe(false)
+    expect(json.view.state.readOnly).toBe(true)
+    setCanvasStatus(view, json, 'connected', true)
+    expect(storeOf(view).nodesDraggable()).toBe(true)
+    expect(json.view.state.readOnly).toBe(false)
+    setCanvasStatus(view, json, 'closed', true)
+    expect(storeOf(view).nodesDraggable()).toBe(false)
+    expect(json.view.state.readOnly).toBe(true)
+    json.close()
+    json.view.destroy()
   })
 
   it('changes nothing once the room has closed', async () => {

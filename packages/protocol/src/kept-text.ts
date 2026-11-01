@@ -128,7 +128,7 @@ export function decodeSnapshot(message: Uint8Array): OpenedSnapshot {
   return { kind: 'legacy', filename: null, update: legacy }
 }
 export function mergeSnapshot(base: Y.Doc, update: Uint8Array): void {
-  const empty = declare(new Y.Doc(), kindOf(base) === 'comments')
+  const empty = declare(new Y.Doc(), kindOf(base))
   let snapshot: Y.Doc | undefined
   try {
     snapshot = trial(empty, update)
@@ -197,17 +197,22 @@ function join(a: Uint8Array, b: Uint8Array): Uint8Array {
 export function incomplete(doc: Y.Doc): boolean {
   return doc.store.pendingStructs !== null || doc.store.pendingDs !== null
 }
-/** A kept file's doc has one root: its text, or the comments paired with it. */
-export function kindOf(doc: Y.Doc): 'content' | 'comments' {
-  return doc.share.has('comments') ? 'comments' : 'content'
+export type KeptKind = 'content' | 'comments' | 'canvas'
+export function kindOf(doc: Y.Doc): KeptKind {
+  if (doc.share.has('comments')) return 'comments'
+  return doc.share.has('nodes') || doc.share.has('edges') ? 'canvas' : 'content'
 }
-export function declare(doc: Y.Doc, comments: boolean): Y.Doc {
-  if (comments) doc.getMap('comments')
-  else doc.getText('content')
+export function declare(doc: Y.Doc, kind: KeptKind): Y.Doc {
+  if (kind === 'comments') doc.getMap('comments')
+  else if (kind === 'canvas') {
+    doc.getArray('nodes')
+    doc.getArray('edges')
+    doc.getMap('extra')
+  } else doc.getText('content')
   return doc
 }
 function copyDoc(doc: Y.Doc): Y.Doc {
-  const copy = declare(new Y.Doc(), kindOf(doc) === 'comments')
+  const copy = declare(new Y.Doc(), kindOf(doc))
   Y.applyUpdate(copy, Y.encodeStateAsUpdate(doc))
   return copy
 }
@@ -219,7 +224,12 @@ export function trial(base: Y.Doc, update: Uint8Array): Y.Doc {
   try {
     const decoder = decoding.createDecoder(update)
     Y.readUpdate(decoder, copy)
-    if (decoder.pos !== update.length || copy.share.size > 1) throw new Error('invalid kept text')
+    const roots = kindOf(base) === 'canvas' ? ['nodes', 'edges', 'extra'] : [kindOf(base)]
+    if (
+      decoder.pos !== update.length ||
+      [...copy.share.keys()].some((root) => !roots.includes(root))
+    )
+      throw new Error('invalid kept document')
     return copy
   } catch (error) {
     copy.destroy()

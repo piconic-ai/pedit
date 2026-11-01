@@ -201,9 +201,22 @@ it('rejects an update with a second root, and merges a snapshot', () => {
 
 it('tells a text doc from a comments doc and seals an update that opens again', async () => {
   const k = await keys()
-  expect(kindOf(declare(new Y.Doc(), true))).toBe('comments')
-  expect(kindOf(declare(new Y.Doc(), false))).toBe('content')
+  expect(kindOf(declare(new Y.Doc(), 'comments'))).toBe('comments')
+  expect(kindOf(declare(new Y.Doc(), 'content'))).toBe('content')
   const update = Y.encodeStateAsUpdate(docWith('sealed'))
   const sealed = await sealKeptUpdate(k, 3, update)
   expect(decodeUpdate(await openKeptFrame(k, sealed))).toEqual({ id: 3, update })
+})
+
+it('keeps canvas roots and rejects a text update in a canvas document', () => {
+  const canvas = new Y.Doc()
+  canvas.getArray('nodes').push([new Y.Map([['id', 'one']])])
+  canvas.getArray('edges')
+  canvas.getMap('extra').set('title', 'Board')
+  const next = trial(canvas, Y.encodeStateAsUpdate(canvas))
+  expect(next.getArray('nodes').length).toBe(1)
+  expect(next.getMap('extra').get('title')).toBe('Board')
+  expect(() => trial(canvas, Y.encodeStateAsUpdate(docWith('wrong')))).toThrow()
+  next.destroy()
+  canvas.destroy()
 })

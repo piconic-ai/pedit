@@ -237,3 +237,21 @@ describe('JsonPane', () => {
     expect(pane.status.get()).toEqual({ kind: 'closed' })
   })
 })
+
+it('holds a JSON draft while read-only and sends it when the host returns', () => {
+  const doc = docOf([node('one')])
+  const sent: CanvasMessage[] = []
+  const pane = new JsonPane(doc, { send: (message) => sent.push(message), delay: 60_000 })
+  const next = JSON.stringify({ nodes: [node('one', { x: 90 })], edges: [] })
+  pane.view.dispatch({ changes: { from: 0, to: pane.view.state.doc.length, insert: next } })
+  pane.readOnly = true
+  pane.check()
+  pane.reconnected()
+  expect(sent).toEqual([])
+  expect(pane.view.state.doc.toString()).toBe(next)
+  pane.readOnly = false
+  expect(sent).toHaveLength(1)
+  pane.close()
+  pane.view.destroy()
+  doc.destroy()
+})

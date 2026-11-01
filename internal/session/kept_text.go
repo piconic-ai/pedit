@@ -22,6 +22,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/piconic-ai/pedit/internal/canvas"
 	"github.com/piconic-ai/pedit/internal/filewriter"
 	"github.com/piconic-ai/pedit/internal/merge"
 	"github.com/piconic-ai/pedit/internal/meta"
@@ -64,8 +65,7 @@ type keptTextFileState struct {
 type keptTextDocument struct {
 	doc   *crdt.Doc
 	bound *filewriter.BoundFile
-	// root is the doc's one root type: "content" (or unset) for a text file,
-	// protocol.KeptCommentsRoot for the comments doc paired with one.
+	// root selects text ("content" or unset), comments, or the three canvas roots.
 	root string
 	// tracker follows the anchors of the comments paired with a text file
 	// through every change to its text, so a position whose character a guest
@@ -202,7 +202,7 @@ func (h *keptTextHost) restore() error {
 			expected = *file.Pending
 		}
 		doc := h.files[file.ID].doc
-		if e := applyKeptText(doc, file.State); e != nil || !completeKeptText(doc) || doc.GetText("content").ToString() != expected {
+		if e := h.files[file.ID].apply(doc, file.State); e != nil || !completeKeptText(doc) || !h.files[file.ID].matches(expected) {
 			return errors.New("invalid saved kept document")
 		}
 		if m := file.Meta; m != nil {
@@ -234,7 +234,7 @@ func (h *keptTextHost) mergeLocalEdits() error {
 		file := &h.state.Files[i]
 		// With a write pending, an edit may have been made before or after it
 		// landed: the base is ambiguous, so finishWrites refuses the file.
-		if file.Pending != nil {
+		if file.Pending != nil || isCanvas(file.Path) {
 			continue
 		}
 		onDisk, ok := h.files[file.ID].bound.Read()
@@ -276,7 +276,7 @@ func (h *keptTextHost) persist(ctx context.Context) ([]byte, error) {
 	for i := range h.state.Files {
 		file := &h.state.Files[i]
 		doc := h.files[file.ID].doc
-		next := doc.GetText("content").ToString()
+		next := h.files[file.ID].render(file.Text)
 		if !utf8.ValidString(next) {
 			return nil, errors.New("invalid kept UTF-8 text")
 		}
@@ -468,17 +468,20 @@ func applyKeptText(doc *crdt.Doc, update []byte) error {
 }
 
 func (h *keptTextDocument) apply(doc *crdt.Doc, update []byte) error {
+	if h.root == formatCanvas {
+		return applyKeptDoc(doc, update, canvas.NodesKey, canvas.EdgesKey, canvas.ExtraKey)
+	}
 	return applyKeptDoc(doc, update, cmp.Or(h.root, "content"))
 }
 
-func applyKeptDoc(doc *crdt.Doc, update []byte, root string) (err error) {
+func applyKeptDoc(doc *crdt.Doc, update []byte, roots ...string) (err error) {
 	defer func() {
 		if recover() != nil {
 			err = errors.New("invalid kept document update")
 		}
 	}()
 	if len(update) == 0 || len(update) > protocol.MaxFrameBytes ||
-		protocol.ValidateKeptDocUpdate(update, root) != nil || crdt.ApplyUpdateV1(doc, update, nil) != nil {
+		protocol.ValidateKeptDocUpdate(update, roots...) != nil || crdt.ApplyUpdateV1(doc, update, nil) != nil {
 		return errors.New("invalid kept document update")
 	}
 

@@ -12,6 +12,7 @@ import {
 } from '@pedit/protocol/admission'
 import { expiredReason } from '@pedit/protocol/close'
 import { MAX_FRAME_BYTES } from '@pedit/protocol/frame'
+import { Kind, withKind } from '@pedit/protocol/kinds'
 import { describe, expect, it, vi } from 'vitest'
 import app, { clientKey, maintenance, overLimit, roomIdFor } from '../src/index.ts'
 import {
@@ -47,9 +48,7 @@ interface Room {
   read: string
 }
 
-// These tests speak protocol version 5, which has no kind byte: the relay
-// still serves it. kept-away.test.ts speaks version 6.
-const legacyProtocols = (token: string) => admissionProtocols(token, 5)
+const currentProtocols = (token: string) => admissionProtocols(token)
 
 const admissions = new Map<string, string>()
 
@@ -89,7 +88,7 @@ function upgrade(id: string, headers: Record<string, string> = {}): Promise<Resp
   return exports.default.fetch(`https://pedit.test/api/rooms/${id}/ws`, {
     headers: {
       Upgrade: 'websocket',
-      'Sec-WebSocket-Protocol': legacyProtocols(admissions.get(id)!).join(', '),
+      'Sec-WebSocket-Protocol': currentProtocols(admissions.get(id)!).join(', '),
       'CF-Connecting-IP': nextAddress(),
       ...headers,
     },
@@ -105,7 +104,7 @@ async function connect(id: string, headers: Record<string, string> = {}): Promis
   const signals: string[] = []
   const closed = new Promise<CloseEvent>((resolve) => ws.addEventListener('close', resolve))
   ws.addEventListener('message', (ev) => {
-    if (ev.data instanceof ArrayBuffer) received.push(ev.data)
+    if (ev.data instanceof ArrayBuffer) received.push(ev.data.slice(1))
     else if (typeof ev.data === 'string') signals.push(ev.data)
   })
   ws.binaryType = 'arraybuffer'
@@ -122,7 +121,7 @@ const host = (room: Room, headers: Record<string, string> = {}) =>
 
 /** The upgrade headers of a guest with a comment-only or read-only link. */
 const asReader = (room: Room) => ({
-  'Sec-WebSocket-Protocol': legacyProtocols(room.read).join(', '),
+  'Sec-WebSocket-Protocol': currentProtocols(room.read).join(', '),
 })
 
 /**
@@ -152,14 +151,14 @@ describe('rooms', () => {
     for (let i = 0; i < MAX_PEERS + 1; i++) {
       expect((await upgrade(room.id, { 'Sec-WebSocket-Protocol': '' })).status).toBe(403)
     }
-    const wrong = legacyProtocols('B'.repeat(43)).join(', ')
+    const wrong = currentProtocols('B'.repeat(43)).join(', ')
     expect((await upgrade(room.id, { 'Sec-WebSocket-Protocol': wrong })).status).toBe(403)
     expect(
       (await upgrade(room.id, { 'Sec-WebSocket-Protocol': wrong, 'X-Pedit-Host': '1' })).status,
     ).toBe(403)
     const valid = await upgrade(room.id)
     expect(valid.status).toBe(101)
-    expect(valid.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v5')
+    expect(valid.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v7')
     valid.webSocket?.accept()
     valid.webSocket?.close()
   })
@@ -179,14 +178,14 @@ describe('rooms', () => {
   it('tells clients of another protocol version to update, before admission', async () => {
     const room = await createRoom()
     await host(room)
-    const admission = legacyProtocols(admissions.get(room.id)!)[1]
+    const admission = currentProtocols(admissions.get(room.id)!)[1]
     // pedit-v4 is a pedit from before peers signed their frames.
     const old = await upgrade(room.id, { 'Sec-WebSocket-Protocol': `pedit-v4, ${admission}` })
     expect(old.status).toBe(101)
     expect(old.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v4')
     // A wrong admission makes no difference: the version is checked first.
     const newer = await connect(room.id, {
-      'Sec-WebSocket-Protocol': `pedit-v7, pedit-admission.${'B'.repeat(43)}`,
+      'Sec-WebSocket-Protocol': `pedit-v8, pedit-admission.${'B'.repeat(43)}`,
     })
     expect((await newer.closed).code).toBe(SERVER_OUTDATED)
     const ws = old.webSocket!
@@ -201,7 +200,7 @@ describe('rooms', () => {
   it('only lets the host register admission and preserves it across hibernation', async () => {
     const room = await createRoom()
     const attacker = await connect(room.id, {
-      'Sec-WebSocket-Protocol': legacyProtocols('B'.repeat(43)).join(', '),
+      'Sec-WebSocket-Protocol': currentProtocols('B'.repeat(43)).join(', '),
     })
     expect((await attacker.closed).code).toBe(ROOM_CLOSED)
     await host(room)
@@ -211,7 +210,7 @@ describe('rooms', () => {
     expect(
       (
         await upgrade(room.id, {
-          'Sec-WebSocket-Protocol': legacyProtocols('B'.repeat(43)).join(', '),
+          'Sec-WebSocket-Protocol': currentProtocols('B'.repeat(43)).join(', '),
         })
       ).status,
     ).toBe(403)
@@ -220,7 +219,7 @@ describe('rooms', () => {
       (
         await upgrade(room.id, {
           Authorization: `Bearer ${room.hostToken}`,
-          'Sec-WebSocket-Protocol': legacyProtocols('B'.repeat(43)).join(', '),
+          'Sec-WebSocket-Protocol': currentProtocols('B'.repeat(43)).join(', '),
         })
       ).status,
     ).toBe(403)
@@ -251,11 +250,11 @@ describe('rooms', () => {
     const a = await host(room)
     const b = await connect(room.id)
     const c = await connect(room.id)
-    a.ws.send(new Uint8Array([1, 2, 3]))
+    a.ws.send(withKind(Kind.Live, new Uint8Array([1, 2, 3])))
     await until(() => b.received.length === 1 && c.received.length === 1)
     expect([...new Uint8Array(b.received[0] ?? new ArrayBuffer(0))]).toEqual([1, 2, 3])
     expect(a.received).toHaveLength(0)
-    b.ws.send(new Uint8Array([4]))
+    b.ws.send(withKind(Kind.Live, new Uint8Array([4])))
     await until(() => a.received.length === 1)
   })
 
@@ -263,11 +262,11 @@ describe('rooms', () => {
     const room = await createRoom()
     const h = await host(room)
     const first = await connect(room.id)
-    h.ws.send(new Uint8Array([1]))
+    h.ws.send(withKind(Kind.Live, new Uint8Array([1])))
     await until(() => first.received.length === 1)
 
     const late = await connect(room.id)
-    h.ws.send(new Uint8Array([2]))
+    h.ws.send(withKind(Kind.Live, new Uint8Array([2])))
     await until(() => late.received.length === 1)
     expect([...new Uint8Array(late.received[0] ?? new ArrayBuffer(0))]).toEqual([2])
   })
@@ -278,7 +277,7 @@ describe('rooms', () => {
     const a = await host(one)
     const other = await host(two)
     const b = await connect(two.id)
-    a.ws.send(new Uint8Array([9]))
+    a.ws.send(withKind(Kind.Live, new Uint8Array([9])))
     await new Promise((r) => setTimeout(r, 50))
     expect(other.received).toHaveLength(0)
     expect(b.received).toHaveLength(0)
@@ -367,7 +366,7 @@ describe('rooms', () => {
     const guest = await connect(room.id)
     stale.ws.close(1000, 'replaced')
     await new Promise((r) => setTimeout(r, 50))
-    guest.ws.send(new Uint8Array([1]))
+    guest.ws.send(withKind(Kind.Live, new Uint8Array([1])))
     const closedEarly = await Promise.race([
       guest.closed.then(() => true),
       new Promise((r) => setTimeout(() => r(false), 50)),
@@ -396,11 +395,11 @@ describe('rooms', () => {
 
     // The most a frame may have is relayed; one byte more is not.
     const fits = await connect(room.id)
-    fits.ws.send(new Uint8Array(MAX_FRAME_BYTES))
+    fits.ws.send(withKind(Kind.Live, new Uint8Array(MAX_FRAME_BYTES)))
     await until(() => h.received.some((m) => m.byteLength === MAX_FRAME_BYTES))
 
     const big = await connect(room.id)
-    big.ws.send(new Uint8Array(MAX_FRAME_BYTES + 1))
+    big.ws.send(withKind(Kind.Live, new Uint8Array(MAX_FRAME_BYTES + 1)))
     expect((await big.closed).code).toBe(MESSAGE_TOO_BIG)
   })
 
@@ -446,7 +445,7 @@ describe('rooms', () => {
     const other = await createRoom()
     await host(other)
     const spoof = await upgrade(other.id, {
-      'Sec-WebSocket-Protocol': legacyProtocols('B'.repeat(43)).join(', '),
+      'Sec-WebSocket-Protocol': currentProtocols('B'.repeat(43)).join(', '),
       [READ_ADMISSION_HEADER]: 'B'.repeat(43),
     })
     expect(spoof.status).toBe(403)
@@ -507,7 +506,8 @@ describe('rooms', () => {
     const h = await host(room)
     const guest = await connect(room.id)
     await stopClock(room)
-    for (let i = 0; i <= MESSAGE_RATE.burst; i++) guest.ws.send(new Uint8Array(1))
+    for (let i = 0; i <= MESSAGE_RATE.burst; i++)
+      guest.ws.send(withKind(Kind.Live, new Uint8Array(1)))
     expect((await guest.closed).code).toBe(RATE_LIMITED)
     // The burst itself was relayed, and nobody else was cut off. Relaying a
     // whole burst can take seconds on a busy machine, as in the test below.
@@ -521,7 +521,8 @@ describe('rooms', () => {
     const guest = await connect(room.id)
     await stopClock(room)
     const big = new Uint8Array(MAX_FRAME_BYTES)
-    for (let i = 0; i <= BYTE_RATE.burst / MAX_FRAME_BYTES; i++) guest.ws.send(big)
+    for (let i = 0; i <= BYTE_RATE.burst / MAX_FRAME_BYTES; i++)
+      guest.ws.send(withKind(Kind.Live, big))
     expect((await guest.closed).code).toBe(RATE_LIMITED)
   })
 
@@ -535,12 +536,14 @@ describe('rooms', () => {
     // allowance at the time it was sent.
     const relayed = (n: number) =>
       vi.waitFor(() => expect(h.received.length).toBe(n), { timeout: 10_000 })
-    for (let i = 0; i < MESSAGE_RATE.burst; i++) guest.ws.send(new Uint8Array(1))
+    for (let i = 0; i < MESSAGE_RATE.burst; i++)
+      guest.ws.send(withKind(Kind.Live, new Uint8Array(1)))
     let total = MESSAGE_RATE.burst
     await relayed(total)
     for (let second = 0; second < 2; second++) {
       tick(1000)
-      for (let i = 0; i < MESSAGE_RATE.perSecond; i++) guest.ws.send(new Uint8Array(1))
+      for (let i = 0; i < MESSAGE_RATE.perSecond; i++)
+        guest.ws.send(withKind(Kind.Live, new Uint8Array(1)))
       total += MESSAGE_RATE.perSecond
       await relayed(total)
     }
@@ -605,7 +608,7 @@ describe('blobs', () => {
     const res = await exports.default.fetch(blobUrl(room, id), {
       headers: {
         Upgrade: 'websocket',
-        'Sec-WebSocket-Protocol': legacyProtocols('B'.repeat(43)).join(', '),
+        'Sec-WebSocket-Protocol': currentProtocols('B'.repeat(43)).join(', '),
         'X-Pedit-Host': '1',
       },
     })
@@ -879,7 +882,7 @@ describe('rate limits', () => {
     expect(turnedAway.map((r) => r.status)).toEqual(Array(60).fill(403))
     const res = await upgrade(room.id, { 'CF-Connecting-IP': ip })
     expect(res.status).toBe(101)
-    expect(res.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v5')
+    expect(res.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v7')
     const ws = res.webSocket as WebSocket
     const closed = new Promise<CloseEvent>((resolve) => ws.addEventListener('close', resolve))
     ws.accept()
@@ -913,7 +916,7 @@ describe('maintenance', () => {
       new Request(`https://pedit.test/api/rooms/${room.id}/ws`, {
         headers: {
           Upgrade: 'websocket',
-          'Sec-WebSocket-Protocol': legacyProtocols(room.admission).join(', '),
+          'Sec-WebSocket-Protocol': currentProtocols(room.admission).join(', '),
         },
       }),
     )
@@ -938,7 +941,7 @@ describe('maintenance', () => {
     await runInDurableObject(stub, (instance: RoomObject) => {
       instance['env'] = { ...instance['env'], MAINTENANCE: 'closed' } as Env
     })
-    guest.ws.send(new Uint8Array(1))
+    guest.ws.send(withKind(Kind.Live, new Uint8Array(1)))
     expect((await guest.closed).code).toBe(RELAY_MAINTENANCE)
     expect((await h.closed).code).toBe(RELAY_MAINTENANCE)
     expect(h.received).toHaveLength(0)
@@ -955,13 +958,13 @@ describe('maintenance', () => {
       new Request(`https://pedit.test/api/rooms/${room.id}/ws`, {
         headers: {
           Upgrade: 'websocket',
-          'Sec-WebSocket-Protocol': legacyProtocols(room.admission).join(', '),
+          'Sec-WebSocket-Protocol': currentProtocols(room.admission).join(', '),
           Authorization: `Bearer ${room.hostToken}`,
         },
       }),
     )
     expect(upgraded.status).toBe(101)
-    expect(upgraded.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v5')
+    expect(upgraded.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v7')
     const ws = upgraded.webSocket as WebSocket
     const closed = new Promise<CloseEvent>((resolve) => ws.addEventListener('close', resolve))
     ws.accept()
@@ -1120,7 +1123,7 @@ describe('room lifetime', () => {
         new Request(`https://pedit.test/api/rooms/${room.id}/ws`, {
           headers: {
             Upgrade: 'websocket',
-            'Sec-WebSocket-Protocol': legacyProtocols(admissions.get(room.id)!).join(', '),
+            'Sec-WebSocket-Protocol': currentProtocols(admissions.get(room.id)!).join(', '),
             'X-Pedit-Host': '1',
           },
         }),
@@ -1188,7 +1191,7 @@ describe('room lifetime', () => {
     const h = await host(room)
     const guest = await connect(room.id)
     await backdate(room)
-    guest.ws.send(new Uint8Array(1))
+    guest.ws.send(withKind(Kind.Live, new Uint8Array(1)))
     expect((await guest.closed).code).toBe(ROOM_EXPIRED)
     expect((await h.closed).code).toBe(ROOM_EXPIRED)
     expect(h.received).toHaveLength(0)
@@ -1208,7 +1211,7 @@ describe('room lifetime', () => {
     const h = await host(room)
     await backdate(room)
     await withVars(room, { MAINTENANCE: 'closed' })
-    h.ws.send(new Uint8Array(1))
+    h.ws.send(withKind(Kind.Live, new Uint8Array(1)))
     expect((await h.closed).code).toBe(ROOM_EXPIRED)
 
     const other = await createRoom()
@@ -1218,7 +1221,7 @@ describe('room lifetime', () => {
       new Request(`https://pedit.test/api/rooms/${other.id}/ws`, {
         headers: {
           Upgrade: 'websocket',
-          'Sec-WebSocket-Protocol': legacyProtocols(other.admission).join(', '),
+          'Sec-WebSocket-Protocol': currentProtocols(other.admission).join(', '),
         },
       }),
       { ...env, MAINTENANCE: 'closed' },
@@ -1314,10 +1317,10 @@ describe('a host that drops', () => {
     const back = await host(room)
     await until(() => guest.signals.includes('host back') && late.signals.includes('host back'))
     expect(await awayUntil(room)).toBeUndefined()
-    guest.ws.send(ciphertext)
+    guest.ws.send(withKind(Kind.Live, ciphertext))
     await until(() => back.received.length === 1)
     expect(back.received).toEqual([ciphertext.buffer])
-    back.ws.send(ciphertext)
+    back.ws.send(withKind(Kind.Live, ciphertext))
     await until(() => guest.received.length === 1)
     expect(guest.received).toEqual([ciphertext.buffer])
     expect((await putBlob(room, blobId(2), ciphertext)).status).toBe(201)
@@ -1327,7 +1330,7 @@ describe('a host that drops', () => {
     const room = await createRoom()
     await host(room)
     await evictDurableObject(stubOf(room), { webSockets: 'close' })
-    const wrong = { 'Sec-WebSocket-Protocol': legacyProtocols('B'.repeat(43)).join(', ') }
+    const wrong = { 'Sec-WebSocket-Protocol': currentProtocols('B'.repeat(43)).join(', ') }
     const refused = await connect(room.id, wrong)
     expect((await refused.closed).code).toBe(ROOM_CLOSED)
     expect(await awayUntil(room)).toBeUndefined()
@@ -1399,7 +1402,7 @@ describe('a host that drops', () => {
     await until(() => guest.signals.includes('host back') && late.signals.includes('host back'))
     expect(back.signals).toEqual([])
     expect(await awayUntil(room)).toBeUndefined()
-    guest.ws.send(new Uint8Array([7]))
+    guest.ws.send(withKind(Kind.Live, new Uint8Array([7])))
     await until(() => back.received.length > 0)
   })
 

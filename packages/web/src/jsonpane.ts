@@ -57,6 +57,7 @@ export class JsonPane {
   #timer: ReturnType<typeof setTimeout> | null = null
   #readOnly = new Compartment()
   #closed = false
+  #paused = false
 
   constructor(doc: Y.Doc, options: JsonPaneOptions) {
     this.#doc = doc
@@ -145,7 +146,7 @@ export class JsonPane {
   check(): void {
     if (this.#timer) clearTimeout(this.#timer)
     this.#timer = null
-    if (this.#closed) return
+    if (this.#closed || this.#paused) return
     const text = this.#text
     // Waiting for an answer: checked again once it comes.
     if (this.#inFlight) return
@@ -199,17 +200,21 @@ export class JsonPane {
    * without applying it twice.
    */
   reconnected(): void {
+    if (this.#closed || this.#paused) return
     if (this.#inFlight) this.#send({ kind: 'edit', ...this.#inFlight })
+    else this.check()
   }
 
   /** While the host is away: nobody would apply an edit. */
   set readOnly(on: boolean) {
-    if (this.#closed) return
+    if (this.#closed || this.#paused === on) return
+    this.#paused = on
     this.#view.dispatch({
       effects: this.#readOnly.reconfigure(
         on ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : [],
       ),
     })
+    if (!on) this.reconnected()
   }
 
   /** Once the room has closed: nothing can be sent, so nothing can be typed. */

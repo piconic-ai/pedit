@@ -3,6 +3,8 @@ package protocol
 import (
 	"testing"
 
+	"github.com/reearth/ygo/crdt"
+
 	"github.com/reearth/ygo/encoding"
 )
 
@@ -74,5 +76,21 @@ func TestValidateKeptTextUpdateNestedParentID(t *testing.T) {
 	e.WriteVarUint(0)
 	if err := ValidateKeptTextUpdate(e.Bytes()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestValidateKeptCanvasRoots(t *testing.T) {
+	for _, root := range []string{"nodes", "edges", "extra", "content", "foreign"} {
+		t.Run(root, func(t *testing.T) {
+			doc := crdt.New()
+			defer doc.Destroy()
+			m := doc.GetMap(root)
+			doc.Transact(func(tx *crdt.Transaction) { m.Set(tx, "value", "test") })
+			err := ValidateKeptDocUpdate(crdt.EncodeStateAsUpdateV1(doc, nil), "nodes", "edges", "extra")
+			allowed := root == "nodes" || root == "edges" || root == "extra"
+			if (err == nil) != allowed {
+				t.Fatalf("root %s: %v", root, err)
+			}
+		})
 	}
 }

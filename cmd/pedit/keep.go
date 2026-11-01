@@ -60,10 +60,9 @@ func applyConfigKeep(opts *commandArgs) error {
 		if runtime.GOOS == "windows" {
 			return nil // kept rooms need Unix file permissions
 		}
-		// A canvas cannot be kept, and a file that does not exist yet is
-		// created from a template, not shared as it is.
+		// A missing file is created from a template, not shared as it is.
 		for _, file := range append([]string{opts.File}, opts.More...) {
-			if _, err := os.Stat(file); err != nil || strings.EqualFold(filepath.Ext(file), ".canvas") {
+			if _, err := os.Stat(file); err != nil {
 				return nil
 			}
 		}

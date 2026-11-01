@@ -22,7 +22,7 @@ import (
 	"github.com/reearth/ygo/crdt"
 )
 
-// awayRoom is a relay speaking version 6 that records what the host sends,
+// awayRoom is a relay speaking version 7 that records what the host sends,
 // answers its checkpoints, and replays a log to a returning host.
 type awayRoom struct {
 	t       *testing.T
@@ -65,7 +65,7 @@ func newAwayRoom(t *testing.T, content string) *awayRoom {
 		replay := a.replay
 		a.replay = nil
 		a.mu.Unlock()
-		if c.Header.Get(protocol.KeepHeader) != "" && c.Subprotocol() == "pedit-v6" {
+		if c.Header.Get(protocol.KeepHeader) != "" && c.Subprotocol() == "pedit-v7" {
 			c.Say(a.keep)
 		}
 		for _, m := range replay {
@@ -210,7 +210,7 @@ func TestKeepAsksTheRelayAndSnapshotsRightAfterConnecting(t *testing.T) {
 	if got := conn.Header.Get(protocol.AfterHeader); got != "0" {
 		t.Fatalf("%s = %q", protocol.AfterHeader, got)
 	}
-	if !strings.Contains(conn.Header.Get("Sec-WebSocket-Protocol"), "pedit-v6, pedit-v5") {
+	if !strings.Contains(conn.Header.Get("Sec-WebSocket-Protocol"), protocol.SocketProtocols) {
 		t.Fatalf("offered %q", conn.Header.Get("Sec-WebSocket-Protocol"))
 	}
 	// The relay clamps the keep, and the session says so.

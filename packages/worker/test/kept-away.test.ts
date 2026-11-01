@@ -57,7 +57,7 @@ async function createRoom(): Promise<Room> {
 interface Options {
   host?: boolean
   reader?: boolean
-  version?: 5 | 6
+  version?: 5 | 6 | 7
   keep?: string
   after?: number
   /** Send the cursor as `?after=` on the URL, as a browser must. */
@@ -69,7 +69,7 @@ async function join(room: Room, o: Options = {}): Promise<Peer> {
     Upgrade: 'websocket',
     'Sec-WebSocket-Protocol': admissionProtocols(
       o.reader ? room.read : room.admission,
-      o.version ?? 6,
+      o.version ?? 7,
     ).join(', '),
     'CF-Connecting-IP': nextAddress(),
   }
@@ -84,7 +84,7 @@ async function join(room: Room, o: Options = {}): Promise<Peer> {
     headers,
   })
   expect(res.status).toBe(101)
-  expect(res.headers.get('Sec-WebSocket-Protocol')).toBe(`pedit-v${o.version ?? 6}`)
+  expect(res.headers.get('Sec-WebSocket-Protocol')).toBe(`pedit-v${o.version ?? 7}`)
   const ws = res.webSocket as WebSocket
   const binary: Uint8Array[] = []
   const signals: string[] = []
@@ -131,30 +131,22 @@ const state = (room: Room) =>
     rows: st.storage.kv.get('awayData') === undefined ? 0 : 1,
   }))
 
-describe('framing of protocol version 6', () => {
-  it('adds and strips the kind byte for a version 5 peer, and sends it no other kind', async () => {
+describe('framing of protocol version 7', () => {
+  it('rejects old peers and relays current kind-prefixed frames', async () => {
     const room = await createRoom()
     const h = await join(room, { host: true })
-    const old = await join(room, { version: 5 })
+    for (const version of [5, 6] as const) {
+      const old = await join(room, { version })
+      expect((await old.closed).code).toBe(CLIENT_OUTDATED)
+      expect(old.binary).toHaveLength(0)
+    }
     const fresh = await join(room)
-    // v6 to v5 and v6: the byte is stripped for the v5 peer only.
     h.ws.send(withKind(Kind.Live, bytes(7, 8)))
-    await until(() => old.binary.length === 1 && fresh.binary.length === 1)
-    expect([...old.binary[0]!]).toEqual([7, 8])
+    await until(() => fresh.binary.length === 1)
     expect([...fresh.binary[0]!]).toEqual([0, 7, 8])
-    // v5 to v6: the kind is put before.
-    old.ws.send(bytes(5, 5, 5))
-    await until(() => h.binary.length === 1 && fresh.binary.length === 2)
-    expect([...h.binary[0]!]).toEqual([0, 5, 5, 5])
-    expect([...fresh.binary[1]!]).toEqual([0, 5, 5, 5])
-    // An entry while the host is here goes to the host and the other v6 peers only.
     fresh.ws.send(withKind(Kind.Entry, bytes(1, 2, 3)))
-    await until(() => h.binary.length === 2)
-    expect([...h.binary[1]!]).toEqual([1, 1, 2, 3])
-    h.ws.send(withKind(Kind.Live, bytes(4)))
-    await until(() => old.binary.length === 2)
-    expect([...old.binary[1]!]).toEqual([4])
-    expect(old.binary).toHaveLength(2)
+    await until(() => h.binary.length === 1)
+    expect([...h.binary[0]!]).toEqual([1, 1, 2, 3])
   })
 
   it('accepts the newest version a client offers', async () => {
@@ -163,16 +155,16 @@ describe('framing of protocol version 6', () => {
     const both = await exports.default.fetch(`https://pedit.test/api/rooms/${room.id}/ws`, {
       headers: {
         Upgrade: 'websocket',
-        'Sec-WebSocket-Protocol': `pedit-v5, pedit-v6, pedit-admission.${room.admission}`,
+        'Sec-WebSocket-Protocol': `pedit-v5, pedit-v7, pedit-admission.${room.admission}`,
         'CF-Connecting-IP': nextAddress(),
       },
     })
-    expect(both.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v6')
+    expect(both.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v7')
     both.webSocket?.accept()
     both.webSocket?.close()
   })
 
-  it('closes a peer whose version 6 message has no kind, or a kind only the relay sends', async () => {
+  it('closes a peer whose version 7 message has no kind, or a kind only the relay sends', async () => {
     const room = await createRoom()
     await join(room, { host: true })
     const empty = await join(room)
@@ -248,12 +240,12 @@ describe('the host declares a keep', () => {
     expect(res.status).toBe(403)
   })
 
-  it('is not kept for a version 5 host', async () => {
+  it('rejects a version 5 host before creating kept state', async () => {
     const room = await createRoom()
     const h = await join(room, { host: true, keep: '3600', version: 5 })
-    await quiet()
+    expect((await h.closed).code).toBe(CLIENT_OUTDATED)
     expect(h.signals).toEqual([])
-    expect((await state(room)).keep).toBe(0)
+    expect((await state(room)).keep).toBeUndefined()
   })
 
   it('gives a connected host the session limit, whatever the keep', async () => {
@@ -429,20 +421,14 @@ describe('a room kept while its host is away', () => {
     expect(decodeLogged(partial.binary[0]!.subarray(1))?.id).toBe(3)
   })
 
-  it('tells a version 5 peer that the host is away, as for a host that dropped', async () => {
+  it('rejects a version 5 peer while preserving the kept log', async () => {
     const { room, writer } = await away()
     writer.ws.send(withKind(Kind.Entry, bytes(10)))
     await until(() => writer.binary.length === 1)
     const old = await join(room, { version: 5 })
-    await until(() => old.signals.length === 1)
-    expect(old.signals).toEqual(['host away'])
-    await quiet()
+    expect((await old.closed).code).toBe(CLIENT_OUTDATED)
     expect(old.binary).toHaveLength(0)
-    writer.ws.send(withKind(Kind.Entry, bytes(11)))
-    writer.ws.send(withKind(Kind.Live, bytes(1)))
-    await until(() => old.binary.length === 1)
-    // Only the live frame, without its kind.
-    expect([...old.binary[0]!]).toEqual([1])
+    expect((await state(room)).log.tail).toBe(1)
   })
 
   it('takes images from editors and shows them to readers', async () => {
@@ -604,6 +590,73 @@ describe('a kept room and the clients and deploys that meet it', () => {
     })
     await runDurableObjectAlarm(stubOf(room))
     expect((await state(room)).until).toBeGreaterThan(Date.now())
+  })
+
+  it('closes a pre-upgrade socket before admitting a v7 peer without losing kept data', async () => {
+    const room = await createRoom()
+    const h = await hostOf(room)
+    const writer = await join(room)
+    await leave(room, h)
+    writer.ws.send(withKind(Kind.Entry, bytes(10)))
+    await until(() => writer.binary.length === 1)
+    let oldClosed: number | undefined
+    await inRoom(room, (_, st) => {
+      const pair = new WebSocketPair()
+      st.acceptWebSocket(pair[1], ['v6'])
+      pair[0].addEventListener('close', (event) => {
+        oldClosed = event.code
+      })
+      pair[0].accept()
+    })
+    const fresh = await join(room)
+    await until(() => oldClosed === CLIENT_OUTDATED)
+    await until(() => fresh.binary.length === 3)
+    expect(kinds(fresh)).toEqual([Kind.Replay, Kind.Logged, Kind.LogEnd])
+    expect((await state(room)).log.tail).toBe(1)
+  })
+
+  it.each([
+    { host: false, oldPeers: 31 },
+    { host: true, oldPeers: 32 },
+  ])(
+    'retires $oldPeers old sockets before admitting host=$host without losing kept data',
+    async ({ host, oldPeers }) => {
+      const room = await createRoom()
+      const h = await hostOf(room)
+      const writer = await join(room)
+      await leave(room, h)
+      writer.ws.send(withKind(Kind.Entry, bytes(10)))
+      await until(() => writer.binary.length === 1)
+      await inRoom(room, (_, st) => {
+        for (let i = 0; i < oldPeers; i++) {
+          const pair = new WebSocketPair()
+          st.acceptWebSocket(pair[1], ['v6'])
+          pair[0].accept()
+        }
+      })
+      const fresh = await join(room, { host })
+      const expected = host ? [Kind.Logged, Kind.LogEnd] : [Kind.Replay, Kind.Logged, Kind.LogEnd]
+      await until(() => fresh.binary.length === expected.length)
+      expect(kinds(fresh)).toEqual(expected)
+      expect(await closedWithin(fresh)).toBeUndefined()
+      expect((await state(room)).log.tail).toBe(1)
+    },
+  )
+
+  it('does not count outdated sockets while their close handshakes are pending', async () => {
+    const room = await createRoom()
+    await hostOf(room)
+    await inRoom(room, (r, st) => {
+      for (let i = 0; i < 32; i++) {
+        const pair = new WebSocketPair()
+        st.acceptWebSocket(pair[1], ['v6'])
+        pair[0].accept()
+      }
+      r['closeOutdatedPeers']()
+      expect(st.getWebSockets('v6').length).toBe(33)
+      expect(r['full'](false, 'editor')).toBe(false)
+      expect(r['full'](true, 'editor')).toBe(false)
+    })
   })
 
   it('fixes the keep at the first connection, with every image under kept/', async () => {

@@ -219,7 +219,7 @@ const KEPT_AWAY_KEY = 'keptAwayUntil'
 const EXPIRED_KEY = 'expired'
 const CLOSED_KEY = 'closedByHost'
 // The tag of a socket that speaks protocol version 6 (a kind byte before each
-// message); one without it speaks version 5. Tagged `v5` or `v6` at accept.
+// message); one without it speaks version 5. Retained across protocol upgrades.
 const V6_TAG = 'v6'
 // A socket accepted only to be closed with a reason (`refuse`).
 const REFUSED_TAG = 'refused'
@@ -349,7 +349,7 @@ export class Room extends DurableObject<Env> {
 
   private joinFrom(request: Request, version: number, isHost: boolean): Join {
     // Keeping a room needs the kind bytes of version 6.
-    const keeps = isHost && version === 6
+    const keeps = isHost && version >= 6
     return {
       version,
       protocol: socketProtocol(version),
@@ -414,6 +414,7 @@ export class Room extends DurableObject<Env> {
     // register the verifiers; a guest cannot claim an unopened room's tokens.
     const role = isHost ? this.registerHost(digest, readDigest) : this.role(digest)
     if (!role) return new Response('invalid room admission', { status: 403 })
+    this.closeOutdatedPeers()
     if (this.full(isHost, role)) return this.refuse(ROOM_FULL, 'room is full', join.protocol)
     return this.accept(isHost, role, join)
   }
@@ -437,17 +438,24 @@ export class Room extends DurableObject<Env> {
   }
 
   // Takes a peer admitted to a place. Nothing awaits before the accept.
+  private closeOutdatedPeers(): void {
+    for (const peer of this.peers()) {
+      if (!this.ctx.getTags(peer).includes(SOCKET_PROTOCOL))
+        safeClose(peer, CLIENT_OUTDATED, 'pedit is outdated; update it')
+    }
+  }
+
   private async accept(isHost: boolean, role: Role, join: Join): Promise<Response> {
     const kv = this.ctx.storage.kv
     // The clock starts at the host's first connection and never again.
     const first = isHost && this.openedAt() === undefined
     if (first) kv.put(OPENED_KEY, Date.now())
     const { 0: client, 1: server } = new WebSocketPair()
-    const tags = [`v${join.version}`]
+    const tags = [V6_TAG, SOCKET_PROTOCOL]
     if (isHost) tags.push(HOST_TAG)
     else if (role === 'reader') tags.push(READER_TAG)
     this.ctx.acceptWebSocket(server, tags)
-    const v6 = join.version === 6
+    const v6 = join.version >= 6
     if (isHost) {
       this.log('host connected')
       // Fixed at the first connection, before any image is stored under the
@@ -571,12 +579,13 @@ export class Room extends DurableObject<Env> {
    */
   private full(isHost: boolean, role: Role): boolean {
     const { guests, readers } = limits(this.env)
-    const reading = this.ctx.getWebSockets(READER_TAG).length
+    const peers = this.peers().filter((peer) => this.ctx.getTags(peer).includes(SOCKET_PROTOCOL))
+    const reading = peers.filter((peer) => this.ctx.getTags(peer).includes(READER_TAG)).length
     if (role === 'reader') return reading >= readers
-    const editing = this.peers().length - reading
+    const editing = peers.length - reading
     if (editing >= MAX_PEERS) return true
     if (isHost) return false
-    return editing - this.hosts().length >= guests
+    return editing - peers.filter((peer) => this.isHost(peer)).length >= guests
   }
 
   private openedAt(): number | undefined {
@@ -685,6 +694,10 @@ export class Room extends DurableObject<Env> {
 
   override async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     if (this.refused(ws)) return
+    if (!this.ctx.getTags(ws).includes(SOCKET_PROTOCOL)) {
+      safeClose(ws, CLIENT_OUTDATED, 'pedit is outdated; update it')
+      return
+    }
     if (typeof message === 'string') {
       this.closePeer(ws, 1003, 'binary frames only')
       return

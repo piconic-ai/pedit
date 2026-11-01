@@ -81,13 +81,14 @@ func readKeptSource(path, project string, id uint32, multi bool) (keptTextFileSt
 		return file, nil, errors.New("kept source must be a regular file")
 	}
 	data, e := io.ReadAll(io.LimitReader(input, protocol.MaxFrameBytes+1))
-	if e != nil || isCanvas(absolute) || len(data) > protocol.MaxFrameBytes || !utf8.Valid(data) {
+	if e != nil || len(data) > protocol.MaxFrameBytes || !utf8.Valid(data) {
 		return file, nil, errors.New("cannot read kept UTF-8 file")
 	}
 	doc := crdt.New()
 	defer doc.Destroy()
-	text := doc.GetText("content")
-	doc.Transact(func(tx *crdt.Transaction) { text.Insert(tx, 0, string(data), nil) })
+	if _, err := newContent(doc, absolute, string(data), nil); err != nil {
+		return file, nil, err
+	}
 	file.State, file.Text = crdt.EncodeStateAsUpdateV1(doc, nil), string(data)
 	return file, info, nil
 }
@@ -127,11 +128,15 @@ func attachKeptMeta(project string, file *keptTextFileState) error {
 	}
 	content := crdt.New()
 	defer content.Destroy()
-	if err := applyKeptText(content, file.State); err != nil {
+	target := &keptTextDocument{root: keptRoot(file.Path)}
+	if err := target.apply(content, file.State); err != nil {
 		return err
 	}
-	tracker := meta.NewTracker(content)
-	defer tracker.Close()
+	var tracker *meta.Tracker
+	if !isCanvas(file.Path) {
+		tracker = meta.NewTracker(content)
+		defer tracker.Close()
+	}
 	doc := crdt.New(crdt.WithGC(false))
 	defer doc.Destroy()
 	meta.Load(doc, loaded, tracker)
