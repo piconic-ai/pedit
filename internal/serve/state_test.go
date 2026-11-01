@@ -241,3 +241,30 @@ func TestCrashAroundAFileWriteDoesNotRepeatTheEdit(t *testing.T) {
 		})
 	}
 }
+
+// With a write in doubt, a file that is neither text cannot be merged from a
+// known base: the state is discarded rather than guessed at.
+func TestFileChangedAroundAnUncertainWriteStartsAfresh(t *testing.T) {
+	r := newRestarter(t, "hello\n")
+	s1 := r.open()
+	c1 := dial(t, s1.SocketPath())
+	eventually(t, "the text", func() bool { return c1.get() == "hello\n" })
+	c1.insert(5, " world")
+	eventually(t, "the file", fileIs(t, r.file, "hello world\n"))
+	path, gen := s1.statePath, s1.Generation()
+	if err := s1.Close(); err != nil {
+		t.Fatal(err)
+	}
+	rec := readState(path)
+	pending := "hello world\n"
+	rec.Written, rec.Pending = "hello\n", &pending
+	if err := writeState(path, *rec); err != nil {
+		t.Fatal(err)
+	}
+	write(t, r.file, "hello world!\n")
+	s2 := r.open()
+	t.Cleanup(func() { _ = s2.Close() })
+	if s2.Generation() == gen || s2.render() != "hello world!\n" {
+		t.Fatalf("generation kept %v, doc %q", s2.Generation() == gen, s2.render())
+	}
+}

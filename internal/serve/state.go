@@ -158,8 +158,13 @@ func (s *Server) restore(rec *stateRecord, initial string) (ok bool) {
 		return false
 	}
 	// The file holds what pedit wrote, or what it was about to write (then the
-	// doc is ahead of the file and is written again): anything else is an edit.
-	if initial != rec.Written && (rec.Pending == nil || initial != *rec.Pending) {
+	// doc is ahead of the file and is written again). Anything else is an
+	// edit by someone else, to be merged from the text the editor started
+	// from; with a write in doubt that text is not known, so start afresh.
+	if rec.Pending != nil && initial != rec.Written && initial != *rec.Pending {
+		return false
+	}
+	if initial != rec.Written && rec.Pending == nil {
 		merge.ExternalEdit(s.doc, s.text, base, s.normalize(initial), &fileOrigin{})
 	}
 	return true
