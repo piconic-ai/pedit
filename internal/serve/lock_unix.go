@@ -24,8 +24,8 @@ func openLockRead(root *os.Root, name string) (*os.File, error) {
 // isNotLock reports an open that failed because of what is at the path: a
 // symlink, a directory or a device.
 func isNotLock(err error) bool {
-	return errors.Is(err, unix.ELOOP) || errors.Is(err, unix.EISDIR) || errors.Is(err, unix.ENXIO) ||
-		strings.Contains(err.Error(), "path escapes from parent") // os.Root on a link planted after the Lstat
+	return err != nil && (errors.Is(err, unix.ELOOP) || errors.Is(err, unix.EISDIR) || errors.Is(err, unix.ENXIO) ||
+		strings.Contains(err.Error(), "path escapes from parent")) // os.Root on a link planted after the Lstat
 }
 
 // ours reports a regular file owned by the current user.

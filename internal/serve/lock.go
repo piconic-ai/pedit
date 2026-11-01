@@ -85,27 +85,13 @@ func acquire(file, app string) (release func(), err error) {
 	}
 	name := filepath.Base(path)
 	for range 5 {
-		// Lstat first: the checks on the open file below are what count, but
-		// this names a planted link without asking the OS to resolve it.
-		if info, err := root.Lstat(name); err == nil && !info.Mode().IsRegular() {
-			_ = root.Close()
-			return nil, errNotLock(path)
-		}
-		f, err := openLock(root, name)
+		f, err := openOurs(root, name, path)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue // removed by the previous holder as we created it
 		}
 		if err != nil {
 			_ = root.Close()
-			if isNotLock(err) {
-				return nil, errNotLock(path)
-			}
 			return nil, err
-		}
-		if info, err := f.Stat(); err != nil || !ours(info) {
-			_ = f.Close()
-			_ = root.Close()
-			return nil, errNotLock(path)
 		}
 		ok, err := lockFile(f)
 		if err != nil {
@@ -143,6 +129,27 @@ func acquire(file, app string) (release func(), err error) {
 	}
 	_ = root.Close()
 	return nil, fmt.Errorf("cannot take the lock %s", path)
+}
+
+// openOurs opens the lock file, which must be a regular file of ours.
+func openOurs(root *os.Root, name, path string) (*os.File, error) {
+	// Lstat first: the checks on the open file below are what count, but
+	// this names a planted link without asking the OS to resolve it.
+	if info, err := root.Lstat(name); err == nil && !info.Mode().IsRegular() {
+		return nil, errNotLock(path)
+	}
+	f, err := openLock(root, name)
+	if isNotLock(err) {
+		return nil, errNotLock(path)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if info, err := f.Stat(); err != nil || !ours(info) {
+		_ = f.Close()
+		return nil, errNotLock(path)
+	}
+	return f, nil
 }
 
 // readHolder reads who holds the lock, from a lock file that is ours and
