@@ -126,6 +126,14 @@ configuration. Besides the
 copy, it writes only the update check cache. A save of the copy that fails is
 retried and reported the same way.
 
+## Serving a file to a local app: `pedit serve <file>` (experimental)
+
+| | What | What keeps it in bounds |
+| --- | --- | --- |
+| Reads, Writes | The file, as when sharing it | The same guards as above, but no room, relay or network. |
+| Writes | A lock, `.<name>.pedit-lock` beside the file, with pid and app name | Created `0600`, removed on exit; a lock whose process is gone is taken over. |
+| Listens | A Unix socket in a new directory under `os.UserConfigDir()/pedit/serve/` (the temp directory if that path is too long for a socket) | Directory `0700`, removed on exit. Never TCP. Clients speak the y-websocket protocol unencrypted: whoever can open the socket can edit the file. |
+
 ## Programs pedit runs
 
 | Program | When | Arguments |

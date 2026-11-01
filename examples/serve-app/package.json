@@ -1,0 +1,24 @@
+{
+  "name": "pedit-serve-app",
+  "private": true,
+  "type": "module",
+  "description": "A sample local app whose editor is bound to the document that `pedit serve` holds",
+  "scripts": {
+    "start": "node app.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@codemirror/lang-markdown": "^6.3.0",
+    "codemirror": "^6.0.1",
+    "ws": "^8.18.0",
+    "y-codemirror.next": "^0.3.5",
+    "y-protocols": "^1.0.6",
+    "y-websocket": "^3.0.0",
+    "yjs": "^13.6.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}
