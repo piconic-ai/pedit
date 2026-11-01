@@ -6,6 +6,7 @@ package serve
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -57,6 +58,12 @@ type Options struct {
 	// it, and a path that leaves it (an absolute one, "..", or a link in a
 	// directory component) is refused.
 	Root *os.Root
+	// PingInterval is how often each connection is pinged; 30s by default. A
+	// connection that misses two pongs in a row is closed.
+	PingInterval time.Duration
+	// FrameRate and Step1Rate are the most frames, and the most sync step 1
+	// messages, per second one connection may send: 1000 and 10 by default.
+	FrameRate, Step1Rate int
 }
 
 type Server struct {
@@ -125,6 +132,15 @@ func Open(file string, opts Options) (*Server, error) {
 	if opts.WriteDelay == 0 {
 		opts.WriteDelay = 250 * time.Millisecond
 	}
+	if opts.PingInterval == 0 {
+		opts.PingInterval = defaultPingInterval
+	}
+	if opts.FrameRate == 0 {
+		opts.FrameRate = defaultFrameRate
+	}
+	if opts.Step1Rate == 0 {
+		opts.Step1Rate = defaultStep1Rate
+	}
 	if opts.OnError == nil {
 		opts.OnError = func(error) {}
 	}
@@ -145,19 +161,9 @@ func Open(file string, opts Options) (*Server, error) {
 		_ = bound.Close()
 		return nil, fmt.Errorf("%s is not UTF-8 text", file)
 	}
-	// The lock and the watch name the directory by path, which the bound
-	// handle does not: refuse if the path no longer leads to the directory
-	// the file was opened in, before and after the lock is taken.
-	if err := sameDir(bound, dir); err != nil {
-		_ = bound.Close()
-		return nil, err
-	}
-	release, err := acquire(file, opts.App)
-	if err == nil {
-		if err = sameDir(bound, dir); err != nil {
-			release()
-		}
-	}
+	// The lock is taken through the handle on the directory; only the watch
+	// below needs its path.
+	release, err := acquire(bound.Dir(), file, opts.App)
 	if err != nil {
 		_ = bound.Close()
 		return nil, err
@@ -190,6 +196,9 @@ func Open(file string, opts Options) (*Server, error) {
 		s.cleanup()
 		return nil, err
 	}
+	// fsnotify watches a path, not a handle: refuse if the path does not lead
+	// to the directory the file was opened in, checked after the watch is set
+	// so that a swap before it cannot go unseen.
 	if err := s.watch(); err != nil {
 		s.cleanup()
 		return nil, err
@@ -286,8 +295,9 @@ func (s *Server) cleanup() {
 	if s.dir != "" {
 		_ = os.RemoveAll(s.dir)
 	}
-	_ = s.bound.Close()
+	// The lock is released through the directory handle: close that last.
 	s.release()
+	_ = s.bound.Close()
 }
 
 // text as the doc has it now.
@@ -401,7 +411,11 @@ type client struct {
 	conn   *websocket.Conn
 	out    chan []byte
 	ids    map[uint64]bool // awareness client IDs it announced
+	seen   map[uint64]bool // every ID it introduced to the room, removed ones too
 	closed bool            // out is closed; guarded by Server.mu
+	reader bool            // may send sync step 1 and awareness only
+	// frames and step1 limit what it sends; the read loop alone uses them.
+	frames, step1 *bucket
 }
 
 // send queues msg for c; the caller holds s.mu. A client that falls far
@@ -434,12 +448,20 @@ func (s *Server) accept(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	conn.SetReadLimit(maxFrame)
-	c := &client{conn: conn, out: make(chan []byte, 1024), ids: map[uint64]bool{}}
+	c := &client{
+		conn: conn, out: make(chan []byte, 1024), ids: map[uint64]bool{}, seen: map[uint64]bool{},
+		reader: r.Header.Get(roleHeader) == roleRead,
+		frames: newBucket(s.opts.FrameRate), step1: newBucket(s.opts.Step1Rate),
+	}
 	s.wg.Add(1)
 	defer s.wg.Done()
+	hbCtx, stopHeartbeat := context.WithCancel(s.ctx)
+	defer stopHeartbeat()
+	s.wg.Go(func() { heartbeat(hbCtx, conn, s.opts.PingInterval) })
 
 	s.mu.Lock()
 	s.clients[c] = struct{}{}
+	// c owns the awareness IDs ygo accepted from it, not the ones it echoed.
 	off := s.aw.OnUpdate(func(ev awareness.UpdateEvent) {
 		if ev.Origin == c {
 			for _, id := range append(ev.Added, ev.Updated...) {
@@ -447,7 +469,9 @@ func (s *Server) accept(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	})
-	s.send(c, frame(msgSync, ysync.EncodeSyncStep1(s.doc)))
+	if !c.reader { // a reader has nothing to send back
+		s.send(c, frame(msgSync, ysync.EncodeSyncStep1(s.doc)))
+	}
 	if len(s.aw.GetStates()) > 0 {
 		s.send(c, awarenessFrame(s.aw.EncodeUpdate(nil)))
 	}
@@ -463,16 +487,21 @@ func (s *Server) accept(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
+	var ending error
 	for {
 		typ, data, err := conn.Read(s.ctx)
 		if err != nil {
 			break
 		}
+		if !c.frames.allow() { // text frames count too
+			ending = errTooManyFrames
+			break
+		}
 		if typ != websocket.MessageBinary {
 			continue
 		}
-		if err := s.handle(c, data); err != nil {
-			s.opts.OnError(err)
+		if ending = s.handle(c, data); ending != nil {
+			s.opts.OnError(ending)
 			break
 		}
 	}
@@ -484,6 +513,10 @@ func (s *Server) accept(w http.ResponseWriter, r *http.Request) {
 	close(c.out)
 	s.mu.Unlock()
 	<-done
+	var ce *closeError
+	if errors.As(ending, &ce) {
+		_ = conn.Close(ce.code, ce.reason)
+	}
 	_ = conn.CloseNow()
 }
 
@@ -496,6 +529,8 @@ func awarenessFrame(update []byte) []byte {
 // leave tells the others that c's awareness clients are gone, as
 // y-websocket's server does; the caller holds s.mu.
 func (s *Server) leave(c *client) {
+	// Forget old tombstones so that churn does not grow the awareness.
+	defer s.aw.PurgeTombstones(time.Minute)
 	var gone []uint64
 	states := s.aw.GetStates()
 	for id := range c.ids {
@@ -519,40 +554,71 @@ func (s *Server) leave(c *client) {
 	}
 }
 
-// handle applies one frame from c. An error closes the connection.
+// handle applies one frame from c. An error closes the connection, with the
+// code of a *closeError if it is one.
 func (s *Server) handle(c *client, data []byte) (err error) {
 	defer func() {
 		// ygo can panic on a malformed update; a client must not end the process.
 		if r := recover(); r != nil {
-			err = fmt.Errorf("malformed frame: %v", r)
+			err = malformed(fmt.Errorf("%v", r))
 		}
 	}()
-	if len(data) == 0 {
-		return nil
+	kind, sub, rest, err := parseFrame(data)
+	if err != nil {
+		return malformed(err)
 	}
-	kind, payload := data[0], data[1:]
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	switch kind {
 	case msgSync:
-		reply, err := ysync.ApplySyncMessage(s.doc, payload, c)
-		if err != nil {
-			return err
-		}
-		if len(reply) > 0 {
-			s.send(c, frame(msgSync, reply))
-		}
+		return s.handleSync(c, sub, rest)
 	case msgAwareness:
-		update, err := encoding.NewDecoder(payload).ReadVarBytes()
-		if err != nil {
-			return err
-		}
-		if err := s.aw.ApplyUpdate(update, c); err != nil {
-			return err
-		}
-		s.broadcast(data, c)
+		return s.handleAwareness(c, rest)
 	}
 	// Other types (query awareness, auth) are not used by pedit.
+	return nil
+}
+
+// handleSync applies a sync message; sub is its sub-type as parseFrame read it,
+// the same way ApplySyncMessage will. The caller holds s.mu.
+func (s *Server) handleSync(c *client, sub uint64, msg []byte) error {
+	if c.reader && sub != ysync.MsgSyncStep1 {
+		return errReadOnly
+	}
+	if sub == ysync.MsgSyncStep1 && !c.step1.allow() {
+		return errTooManyStep1
+	}
+	reply, err := ysync.ApplySyncMessage(s.doc, msg, c)
+	if err != nil {
+		return malformed(err)
+	}
+	if len(reply) > 0 {
+		s.send(c, frame(msgSync, reply))
+	}
+	return nil
+}
+
+// handleAwareness applies an awareness update, within the caps on how many
+// client IDs a connection and the room may announce. The caller holds s.mu.
+func (s *Server) handleAwareness(c *client, payload []byte) error {
+	update, err := encoding.NewDecoder(payload).ReadVarBytes()
+	if err == nil {
+		var entries []awEntry
+		if entries, err = awarenessEntries(update); err == nil {
+			err = s.checkAwareness(c, entries)
+		}
+	}
+	var ce *closeError
+	switch {
+	case errors.As(err, &ce):
+		return ce
+	case err != nil:
+		return malformed(err)
+	}
+	if err := s.aw.ApplyUpdate(update, c); err != nil {
+		return malformed(err)
+	}
+	s.broadcast(frame(msgAwareness, payload), c)
 	return nil
 }
 
