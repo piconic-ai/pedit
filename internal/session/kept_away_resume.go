@@ -78,7 +78,7 @@ func (r *resumed) dialer(dial protocol.Dialer) protocol.Dialer {
 // beginKeep prepares a session that keeps its room, or takes one in again.
 func beginKeep(ctx context.Context, opts *Options) (*resumed, error) {
 	if (opts.Keep > 0 || opts.Resume != "") && runtime.GOOS == "windows" {
-		return nil, errors.New("--keep and --resume require Unix file permissions; Windows is not supported")
+		return nil, errors.New("kept rooms (--keep, pedit resume) require Unix file permissions; Windows is not supported")
 	}
 	if opts.OnKeep == nil {
 		opts.OnKeep = func(int64) {}

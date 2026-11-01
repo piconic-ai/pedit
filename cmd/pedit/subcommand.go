@@ -20,9 +20,18 @@ type subcommand struct {
 }
 
 var subcommands = map[string]subcommand{
-	"close": {closeUsage, runClose},
-	"rooms": {roomsUsage, runRooms},
+	"close":  {closeUsage, runClose},
+	"resume": {resumeUsage, runResume},
+	"rooms":  {roomsUsage, runRooms},
 }
+
+const resumeUsage = `Usage: pedit resume [room|link]
+
+Take up a kept room of this project again: pedit merges what you changed in
+its files meanwhile with what guests wrote while you were away, saves the
+files, and carries on as the host of a live room. pedit <file> does the same
+for the room that holds the file. Without a room, pedit takes up the project's
+only kept room, or lists them and asks which.`
 
 const closeUsage = `Usage: pedit close [room|link]
 
@@ -64,25 +73,35 @@ func usageError(stderr io.Writer, usage string, err error) int {
 }
 
 func runClose(args []string, stdout, stderr io.Writer) int {
-	opts, err := parseCloseArgs(args)
+	opts, err := parseRoomArgs("close", args)
 	if err != nil {
 		return usageError(stderr, closeUsage, err)
 	}
+	opts.Close = true
 	return closeRoom(opts, stdout, stderr)
 }
 
-// parseCloseArgs takes at most one room ID or share link. A room ID may begin
-// with "-", so it is taken as one before anything is read as an option.
-func parseCloseArgs(args []string) (commandArgs, error) {
+func runResume(args []string, stdout, stderr io.Writer) int {
+	opts, err := parseRoomArgs("resume", args)
+	if err != nil {
+		return usageError(stderr, resumeUsage, err)
+	}
+	return runShare(opts, stdout, stderr)
+}
+
+// parseRoomArgs takes at most one room ID or share link, for the subcommand
+// verb. A room ID may begin with "-", so it is taken as one before anything is
+// read as an option.
+func parseRoomArgs(verb string, args []string) (commandArgs, error) {
 	if len(args) > 0 && args[0] == "--" {
 		args = args[1:]
 	}
-	opts := commandArgs{Close: true}
+	var opts commandArgs
 	switch {
 	case len(args) == 0:
 		opts.ResumeAny = true
 	case len(args) > 1:
-		return opts, errors.New("close takes one room ID or share link")
+		return opts, errors.New(verb + " takes one room ID or share link")
 	case roomIDArg.MatchString(args[0]) || isShareLink(args[0]):
 		opts.Resume = args[0]
 	default:
@@ -166,11 +185,19 @@ func printRoomsJSON(stdout, stderr io.Writer, records []session.KeptTextRecord) 
 	return 0
 }
 
-// closeOptionNotice is printed for --close, kept for one release as an alias.
-func closeOptionNotice(stderr io.Writer, opts commandArgs) {
+// optionNotice says where --close and --resume went: each is kept for one
+// release as an alias of its subcommand. A link carries the room key, which
+// the notice must not repeat.
+func optionNotice(stderr io.Writer, opts commandArgs) {
+	verb := "resume"
+	if opts.Close {
+		verb = "close"
+	} else if opts.Resume == "" && !opts.ResumeAny {
+		return
+	}
 	room := ""
 	if opts.Resume != "" && !strings.Contains(opts.Resume, "/r/") {
 		room = " " + opts.Resume
 	}
-	fmt.Fprintf(stderr, "pedit: --close is now pedit close%s; the option goes in a later release.\n", room)
+	fmt.Fprintf(stderr, "pedit: --%s is now pedit %s%s; the option goes in a later release.\n", verb, verb, room)
 }

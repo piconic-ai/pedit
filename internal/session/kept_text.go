@@ -117,7 +117,7 @@ type keptTextHost struct {
 // changes made outside this session are refused rather than overwritten.
 func CloseKept(ctx context.Context, opts KeptTextOptions) error {
 	if runtime.GOOS == "windows" {
-		return errors.New("--keep and --resume require Unix file permissions; Windows is not supported")
+		return errors.New("kept rooms (--keep, pedit resume) require Unix file permissions; Windows is not supported")
 	}
 	h, err := openAway(opts)
 	if err != nil {

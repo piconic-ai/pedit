@@ -75,7 +75,7 @@ func applyConfigKeep(opts *commandArgs) error {
 }
 
 // resumeHeld makes `pedit <file>` resume the live kept room of this project
-// that holds the file, as --resume does. The room's set of files is fixed, so
+// that holds the file, as pedit resume does. The room's set of files is fixed, so
 // a file it does not hold is an error. --keep 0 asks for a separate room.
 func resumeHeld(opts *commandArgs, stdout, stderr io.Writer) (code int) {
 	if opts.File == "" || opts.KeepOff || opts.Room != "" || opts.Resume != "" || opts.ResumeAny || opts.Template != "" || opts.Directory != "" {
@@ -138,7 +138,7 @@ func formatKeep(seconds int64) string {
 func printKeepHint(w io.Writer, room string, others bool, file string) {
 	resume := "pedit " + file
 	if others {
-		resume += "  (or: pedit --resume " + room + ")"
+		resume += "  (or: pedit resume " + room + ")"
 	}
 	fmt.Fprintf(w, "Leave with Ctrl+C. To take in the edits later, run in this directory:\n  %s\n", resume)
 }
@@ -151,7 +151,7 @@ func describeKept(r session.KeptTextRecord) string {
 	return fmt.Sprintf("%s  %s  until %s", r.Room, strings.Join(r.Paths, ", "), until)
 }
 
-// pickKept chooses the room for a bare --resume. It returns the room ID, or an
+// pickKept chooses the room for pedit resume or close without a room. It returns the room ID, or an
 // exit code when there is nothing to resume or no way to ask.
 func pickKept(records []session.KeptTextRecord, in io.Reader, interactive bool, stdout, stderr io.Writer) (string, int) {
 	switch len(records) {
@@ -179,7 +179,7 @@ func pickKept(records []session.KeptTextRecord, in io.Reader, interactive bool, 
 	return records[n-1].Room, 0
 }
 
-// chooseResume settles which room --resume or --close is about, asking when
+// chooseResume settles which room pedit resume or close is about, asking when
 // the project has several, and sets the files from its record.
 func chooseResume(opts *commandArgs, stdout, stderr io.Writer) (code int) {
 	cwd, err := os.Getwd()
@@ -227,7 +227,7 @@ func pruneKept(project string, stdout io.Writer) {
 	})
 }
 
-// displayPaths shows a record's paths as displayPath does, so --resume names
+// displayPaths shows a record's paths as displayPath does, so pedit resume names
 // the files as the first run did.
 func displayPaths(paths []string) []string {
 	shown := make([]string, len(paths))

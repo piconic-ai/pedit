@@ -18,7 +18,8 @@ func TestSubcommandHelp(t *testing.T) {
 		{[]string{"close", "--help"}, "Usage: pedit close [room|link]"},
 		{[]string{"close", "-h"}, "Usage: pedit close [room|link]"},
 		{[]string{"rooms", "--help"}, "Usage: pedit rooms [--json]"},
-		{[]string{"--help"}, "Commands:\n  pedit close [room|link]"},
+		{[]string{"resume", "--help"}, "Usage: pedit resume [room|link]"},
+		{[]string{"--help"}, "Commands:\n  pedit resume [room|link]"},
 	} {
 		var stdout, stderr strings.Builder
 		if code := run(c.args, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), c.want) {
@@ -27,21 +28,21 @@ func TestSubcommandHelp(t *testing.T) {
 	}
 }
 
-func TestCloseSubcommandArguments(t *testing.T) {
+func TestRoomSubcommandArguments(t *testing.T) {
 	for args, want := range map[string]commandArgs{
-		"":                             {Close: true, ResumeAny: true},
-		testRoom:                       {Close: true, Resume: testRoom},
-		"-AAAAAAAAAAAAAAAAAAAAA":       {Close: true, Resume: "-AAAAAAAAAAAAAAAAAAAAA"},
-		"-- " + testRoom:               {Close: true, Resume: testRoom},
-		"https://x.test/r/" + testRoom: {Close: true, Resume: "https://x.test/r/" + testRoom},
+		"":                             {ResumeAny: true},
+		testRoom:                       {Resume: testRoom},
+		"-AAAAAAAAAAAAAAAAAAAAA":       {Resume: "-AAAAAAAAAAAAAAAAAAAAA"},
+		"-- " + testRoom:               {Resume: testRoom},
+		"https://x.test/r/" + testRoom: {Resume: "https://x.test/r/" + testRoom},
 	} {
-		got, err := parseCloseArgs(strings.Fields(args))
-		if err != nil || got.Close != want.Close || got.Resume != want.Resume || got.ResumeAny != want.ResumeAny {
+		got, err := parseRoomArgs("close", strings.Fields(args))
+		if err != nil || got.Resume != want.Resume || got.ResumeAny != want.ResumeAny {
 			t.Fatalf("%q: %+v %v", args, got, err)
 		}
 	}
 	for _, args := range [][]string{{"short"}, {"a.md"}, {"--json"}, {testRoom, testRoom}} {
-		if _, err := parseCloseArgs(args); err == nil {
+		if _, err := parseRoomArgs("close", args); err == nil {
 			t.Fatalf("accepted %v", args)
 		}
 	}
@@ -62,6 +63,11 @@ func TestSubcommandsWithoutKeptRooms(t *testing.T) {
 		{[]string{"close"}, 1, "", "no kept room in this project"},
 		{[]string{"close", testRoom}, 1, "", "no kept room " + testRoom},
 		{[]string{"close", "a.md"}, 2, "", "Usage: pedit close"},
+		{[]string{"resume"}, 1, "", "no kept room in this project"},
+		{[]string{"resume", testRoom}, 1, "", "no kept room " + testRoom},
+		{[]string{"resume", "a.md"}, 2, "", "Usage: pedit resume"},
+		{[]string{"--resume", testRoom}, 1, "", "--resume is now pedit resume " + testRoom + ";"},
+		{[]string{"--resume", "https://x.test/r/" + testRoom + "#secret"}, 1, "", "--resume is now pedit resume;"},
 		// The alias says where the verb went, then does the same.
 		{[]string{"--close", testRoom}, 1, "", "--close is now pedit close " + testRoom + ";"},
 		// A command's name after another word, or after --, is a file.

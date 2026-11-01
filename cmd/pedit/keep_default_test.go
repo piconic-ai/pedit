@@ -185,7 +185,7 @@ func TestKeepHintNamesTheFile(t *testing.T) {
 	}
 	out.Reset()
 	printKeepHint(&out, testRoom, true, "docs/a.md")
-	if !strings.HasSuffix(out.String(), "\n  pedit docs/a.md  (or: pedit --resume "+testRoom+")\n") {
+	if !strings.HasSuffix(out.String(), "\n  pedit docs/a.md  (or: pedit resume "+testRoom+")\n") {
 		t.Fatal(out.String())
 	}
 }

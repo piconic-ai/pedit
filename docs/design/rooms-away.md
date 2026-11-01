@@ -152,7 +152,7 @@ stable ids, and the comments doc paired with each. It sends a snapshot (kind 2) 
 changes taken in or 5 minutes with changes, and just before leaving. On Ctrl+C
 it saves the files, sends the last snapshot, leaves with `HOST_LEFT`, writes the
 record once more, with the files as saved, and prints the deadline and
-`pedit --resume`. A relay that speaks version 5 cannot keep the room: the host
+`pedit resume`. A relay that speaks version 5 cannot keep the room: the host
 says so, and the room ends when it leaves.
 
 While the host is here, a kind 1 entry (from a guest that has not heard
@@ -162,7 +162,7 @@ and skipped. A host that dropped for so long that the room went into the kept
 state is sent the log on reconnecting: it takes the entries in like entries of
 kind 1 and checkpoints at the tail.
 
-`pedit --resume [room]` reads the record. It first merges the edits made to the
+`pedit resume [room]` (formerly `--resume`) reads the record. It first merges the edits made to the
 files while it was away into the record's documents, as a live room merges a
 save from another editor. It then connects as the host with `X-Pedit-After`,
 takes the replay (kind 5 if sent, kind 4, kind 6) in with the intake below (invalid entries skipped and counted, images under `assets/`,
@@ -210,7 +210,7 @@ cannot be listed, has no comments doc.
 
 On `--keep`, an existing `.pedit/meta/<path>.json` is loaded into the doc,
 anchors re-found by their saved text; a file pedit cannot read is left alone
-and offers no comments. On `--resume`, after the text writes of the same file,
+and offers no comments. On `pedit resume`, after the text writes of the same file,
 the doc is rendered with the live room's code (`meta.Read`, `meta.Render`) and
 written through the same journal as the text: the file is created only once
 there is a thread, never removed, and never written over a file changed outside

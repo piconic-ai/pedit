@@ -234,7 +234,7 @@ func TestGoHostKeepsAWebSocketRoomWhileAway(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resumed := keptCommand(t, project, binary, "--resume")
+	resumed := keptCommand(t, project, binary, "--resume") // the alias of pedit resume
 	resumed.link(t)
 	prototest.WaitFor(t, 10*time.Second, func() bool {
 		got := read()
