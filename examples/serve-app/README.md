@@ -1,41 +1,46 @@
 # serve-app
 
-A sample local app whose editor is bound to the document that `pedit serve`
-holds (experimental, issue #372). There is no room and no relay: pedit listens
-on a Unix socket only, the app's own server on `127.0.0.1` forwards the page's
-WebSocket to it frame for frame, and pedit alone writes the file.
+A sample local app built on `@pedit/serve` (experimental, issue #235): an editor
+bound to a file that `pedit serve` holds. There is no room and no relay. The
+library starts `pedit serve` for the file, checks every request, and bridges the
+page's WebSocket to pedit's Unix socket; pedit alone writes the file.
 
 ## Run
 
 ```sh
-npm install
-node app.mjs notes.md        # notes.md must exist; PEDIT=/path/to/pedit if not on the PATH
+npm install                   # links ../../packages/serve; Node 22.18 or later
+PEDIT=/path/to/pedit node server.mjs   # PEDIT only if pedit is not on the PATH
 ```
 
-It prints `http://127.0.0.1:<port>/<token>/`. Open it. The token is a secret
-generated for each run; the bridge refuses any connection without it, so other
-users on the machine cannot reach your file. Do not share the URL. Ctrl+C in the terminal saves the
-file and removes the socket and the lock.
+It prints `http://127.0.0.1:<port>/` (set `PORT` to pin it) and edits
+`content/demo.md`, which it creates if missing. `PEDIT=... node --test` runs the
+test. Ctrl+C ends pedit's children, which save the file.
 
-## What to try
+The previous version of this sample put a per-run secret in the URL. That is
+gone: access is now the library's Host and Origin checks plus a single-use token
+per connection. There is still no login (see below).
 
-- Type in the page: `notes.md` is written about a quarter second after you stop.
-- Save `notes.md` from another editor, with no dialog: the page takes the
-  change in as an edit, and what you typed meanwhile is kept unless you both
-  changed the same words.
-- Open the page in two tabs: edits and cursors show in both.
-- Run `pedit serve notes.md` in a second terminal: it is refused, naming the
-  holder (`pid ..., app "sample"`). Kill the app with `kill -9` and run it
-  again: the stale lock (`.notes.md.pedit-lock`) is taken over.
-- Try a file with CRLF line endings, a BOM or YAML frontmatter: the file keeps
-  its bytes.
+## Files
 
-## What to look at
+- `server.mjs`: Hono, `@hono/node-server`, `@hono/node-ws` and `peditRoutes`.
+  `resolve` maps the fixed id `demo` to `content/demo.md`. No authentication, and
+  `allowRemote` stays false, so only loopback peers are served.
+- `page.mjs`: CodeMirror 6, `connect` from `@pedit/serve/client` and `yCollab`.
+  For role `read` it adds `EditorState.readOnly.of(true)`.
 
-- `app.mjs`: starts `pedit serve --json --app sample`, reads the socket path
-  from the `listening` event, serves the page, and bridges the sockets. A
-  `held` or `error` event (pedit's exit code 3 or 1, which the app passes on)
-  is printed as a line before the app ends; `saved` and `external_save` also
-  exist (see `pedit serve --help`) but the sample does not use them. pedit ends when this process does, because its stdin is a pipe.
-- `page.mjs`: CodeMirror 6, y-codemirror.next and y-websocket's
-  `WebsocketProvider`, unchanged, on `doc.getText('content')`.
+## First-hour gotchas
+
+- The file must exist before the first session; pedit does not create it.
+- Do not write the file yourself while a page is connected (pedit takes outside
+  saves in as edits, but a program that rewrites the file in place can race it).
+  Open the file in an editor only if it saves whole-file and without a dialog.
+- When the last page leaves, the child stops after 60 s (`idleMs`) and saves; the
+  next session starts it again.
+- Hot reload (`node --watch`, Vite) re-runs the server module: keep the
+  `peditRoutes` result on `globalThis` and close the old one, or the new process
+  is refused as `held` by the old child.
+- Files with CRLF line endings are not handled well yet (#382).
+- The token is a query parameter of the WebSocket URL, so access logs and proxies
+  must drop `token` from logged URLs.
+- Awareness (names and cursors) is unauthenticated: any connected page can claim
+  any name.

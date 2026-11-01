@@ -132,7 +132,7 @@ retried and reported the same way.
 | --- | --- | --- |
 | Reads, Writes | The file, as when sharing it | The same guards as above, but no room, relay or network. |
 | Writes | A lock, `.<name>.pedit-lock` beside the file, with pid and app name | Created `0600`, removed on exit; a lock whose process is gone is taken over. Opened through a handle on the file's directory and never followed as a symlink; if that name is a link, a directory, a FIFO or a file of another user, pedit refuses to serve ("is not a lock file pedit made") and neither writes to nor removes it. The pid and app name in it are labels, shown capped and without control characters; pedit never signals the pid. |
-| Listens | A Unix socket in a new directory under `os.UserConfigDir()/pedit/serve/` (the temp directory if that path is too long for a socket) | Directory `0700`, removed on exit. Never TCP. Clients speak the y-websocket protocol unencrypted: whoever can open the socket can edit the file. There is no authentication beyond the directory's mode: any process of the same user can connect. The sample app's `127.0.0.1` bridge requires a per-run secret in its URL. |
+| Listens | A Unix socket in a new directory under `os.UserConfigDir()/pedit/serve/` (the temp directory if that path is too long for a socket) | Directory `0700`, removed on exit. Never TCP. Clients speak the y-websocket protocol unencrypted: whoever can open the socket can edit the file. There is no authentication beyond the directory's mode: any process of the same user can connect. `@pedit/serve` is the supported way to expose it to a browser. |
 | Takes a root | `--root <dir>`: the file is a path relative to `<dir>` | pedit itself refuses an absolute path, `..` or a link in a directory component that leaves `<dir>`; the lock and the watch use the file's directory. |
 
 With `--json`, stdout carries one JSON event per line and nothing else:
@@ -142,6 +142,14 @@ file, `external_save` when a save by another editor was taken in, `held` (with
 one-line `message`) for any other failure. Exit codes, with or without
 `--json`: 0 normal, 1 error, 2 usage, 3 refused because another process serves
 the file.
+
+For an app that serves pedit to browsers, use the `@pedit/serve` package
+(`packages/serve`) instead of bridging the socket yourself. On top of the raw
+socket it adds a session and a single-use token for each connection, Host and
+Origin checks, loopback-only peers by default, limits on files and clients, and
+an idle shutdown that stops the child when the last page leaves. It has no
+authentication of its own: the app's `resolve` hook decides who gets which file.
+`examples/serve-app` is a complete sample.
 
 ## Programs pedit runs
 
