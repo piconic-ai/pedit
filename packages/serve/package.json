@@ -1,0 +1,33 @@
+{
+  "name": "@pedit/serve",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  },
+  "peerDependencies": {
+    "hono": "^4.9.0"
+  },
+  "peerDependenciesMeta": {
+    "hono": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@hono/node-server": "^1.19.5",
+    "@hono/node-ws": "^1.2.0",
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.18.1",
+    "hono": "^4.9.0"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./hono": "./src/hono.ts",
+    "./client": "./src/client.ts"
+  }
+}
