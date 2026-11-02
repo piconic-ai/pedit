@@ -176,11 +176,26 @@ function Install-Pedit {
       }
       return
     }
-    $user = [Environment]::GetEnvironmentVariable('Path', 'User')
-    if (-not (Test-OnPath $user $Dir)) {
-      if ([string]::IsNullOrEmpty($user)) { $new = $Dir } else { $new = $user.TrimEnd(';') + ';' + $Dir }
-      [Environment]::SetEnvironmentVariable('Path', $new, 'User')
-      Write-Host "Added $Dir to your user PATH (set PEDIT_NO_MODIFY_PATH=1 to skip this). Open a new terminal to use pedit there."
+    # Read and write the registry value itself, not through [Environment]: that
+    # expands %VAR% references and stores the result, which would rewrite the
+    # entries of other tools.
+    $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment')
+    try {
+      $raw = $key.GetValue('Path', $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+      $kind = [Microsoft.Win32.RegistryValueKind]::String
+      if ($null -ne $raw) { $kind = $key.GetValueKind('Path') }
+      $present = ($null -ne $raw) -and ((Test-OnPath $raw $Dir) -or (Test-OnPath ([Environment]::ExpandEnvironmentVariables($raw)) $Dir))
+      if (-not $present) {
+        if ([string]::IsNullOrEmpty($raw)) { $new = $Dir } else { $new = $raw.TrimEnd(';') + ';' + $Dir }
+        $key.SetValue('Path', $new, $kind)
+        # Tell running programs (Explorer, new terminals) that the environment
+        # changed. Removing a variable that does not exist broadcasts and
+        # changes nothing else.
+        [Environment]::SetEnvironmentVariable('PEDIT_INSTALL_BROADCAST', $null, 'User')
+        Write-Host "Added $Dir to your user PATH (set PEDIT_NO_MODIFY_PATH=1 to skip this). Open a new terminal to use pedit there."
+      }
+    } finally {
+      $key.Close()
     }
     if (-not $inSession) { $env:Path = $env:Path.TrimEnd(';') + ';' + $Dir }
   }
@@ -194,6 +209,8 @@ function Install-Pedit {
   if ([string]::IsNullOrEmpty($version)) { $version = Get-LatestVersion }
   $installDir = $env:PEDIT_INSTALL_DIR
   if ([string]::IsNullOrEmpty($installDir)) { $installDir = Join-Path $env:LOCALAPPDATA 'Programs\pedit' }
+  # A relative directory would end up on PATH as written, and mean something else elsewhere.
+  $installDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($installDir)
   # PEDIT_DOWNLOAD_URL replaces GitHub in tests (scripts/test-install.ps1).
   $base = $env:PEDIT_DOWNLOAD_URL
   if ([string]::IsNullOrEmpty($base)) { $base = "https://github.com/$repo/releases/download/$version" }

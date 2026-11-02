@@ -91,7 +91,7 @@ function Try-Install([string]$Name, [hashtable]$Env = @{}, [string]$Source = $re
     [Environment]::SetEnvironmentVariable($key, $vars[$key])
   }
   try {
-    $p = Start-Process -FilePath $engine -Wait -PassThru -NoNewWindow `
+    $p = Start-Process -FilePath $engine -Wait -PassThru -NoNewWindow -WorkingDirectory (Get-Location).Path `
       -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $wrapper) `
       -RedirectStandardOutput (Join-Path $dir 'out') -RedirectStandardError (Join-Path $dir 'err')
     return $p.ExitCode
@@ -121,11 +121,39 @@ function Assert-Installed([string]$Name) {
 # Assert-Contains NAME FILE PATTERN / Assert-Lacks NAME FILE PATTERN, where FILE
 # is out, err or gh.log and PATTERN a regular expression.
 function Assert-Contains([string]$Name, [string]$File, [string]$Pattern) {
-  if ((Get-Text $Name $File) -notmatch $Pattern) { Fail "${Name}: $File does not contain '$Pattern'" }
+  if ((Get-Text $Name $File) -notmatch $Pattern) {
+    Fail "${Name}: $File does not contain '$Pattern'. out: $(Get-Text $Name 'out') err: $(Get-Text $Name 'err')"
+  }
 }
 
 function Assert-Lacks([string]$Name, [string]$File, [string]$Pattern) {
   if ((Get-Text $Name $File) -match $Pattern) { Fail "${Name}: $File contains '$Pattern'" }
+}
+
+# The user PATH as stored: its text and registry kind, without expanding %VAR%.
+function Get-RawUserPath {
+  $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment')
+  try {
+    $value = $key.GetValue('Path', $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+    $kind = $null
+    if ($null -ne $value) { $kind = $key.GetValueKind('Path') }
+    return @{ Value = $value; Kind = $kind }
+  } finally {
+    $key.Close()
+  }
+}
+
+function Set-RawUserPath($Stored) {
+  $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+  try {
+    if ($null -eq $Stored.Value) {
+      $key.DeleteValue('Path', $false)
+    } else {
+      $key.SetValue('Path', $Stored.Value, $Stored.Kind)
+    }
+  } finally {
+    $key.Close()
+  }
 }
 
 function Get-UserPathCount([string]$Dir) {
@@ -167,6 +195,35 @@ function Path-Is-Added-Once {
   Assert-Installed twice
   if ((Get-UserPathCount (Join-Path $work 'twice\bin')) -ne 1) { Fail 'twice: the install directory is not on the user PATH exactly once' }
   Assert-Lacks twice out 'Added'
+}
+
+function Path-Keeps-Expandable-Entries {
+  $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+  try {
+    $key.SetValue('Path', '%SystemRoot%\pedit-test-entry', [Microsoft.Win32.RegistryValueKind]::ExpandString)
+  } finally {
+    $key.Close()
+  }
+  Invoke-Install expandable
+  $stored = Get-RawUserPath
+  if ($stored.Kind -ne [Microsoft.Win32.RegistryValueKind]::ExpandString) { Fail "expandable: the user PATH is now $($stored.Kind)" }
+  if (-not $stored.Value.StartsWith('%SystemRoot%\pedit-test-entry;')) { Fail "expandable: an existing entry was rewritten: $($stored.Value)" }
+  if ((Get-UserPathCount (Join-Path $work 'expandable\bin')) -ne 1) { Fail 'expandable: the install directory is not on the user PATH' }
+}
+
+function Resolve-A-Relative-Install-Directory {
+  $dir = Join-Path $work 'relative'
+  New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  Push-Location $dir
+  try {
+    Invoke-Install relative @{ PEDIT_INSTALL_DIR = 'rel-bin' }
+  } finally {
+    Pop-Location
+  }
+  $full = Join-Path $dir 'rel-bin'
+  if ((& (Join-Path $full 'pedit.exe') --version) -ne $Version) { Fail 'relative: pedit is not under the resolved directory' }
+  if ((Get-UserPathCount $full) -ne 1) { Fail 'relative: the user PATH lacks the absolute install directory' }
+  if ((Get-UserPathCount 'rel-bin') -ne 0) { Fail 'relative: the relative directory is on the user PATH' }
 }
 
 function Path-Is-Left-Alone-When-Asked {
@@ -246,8 +303,8 @@ function Refuse-A-Missing-Entry {
 }
 
 function Refuse-An-Unsupported-Architecture {
-  Assert-Failure x86 @{ PROCESSOR_ARCHITECTURE = 'x86'; PROCESSOR_ARCHITEW6432 = $null }
-  Assert-Contains x86 err 'unsupported architecture x86'
+  Assert-Failure x86 @{ PROCESSOR_ARCHITECTURE = 'MIPS'; PROCESSOR_ARCHITEW6432 = $null }
+  Assert-Contains x86 err 'unsupported architecture MIPS'
 }
 
 function Refuse-A-Directory-Destination {
@@ -300,11 +357,12 @@ function Refuse-Failed-Provenance {
 
 # --- Run -------------------------------------------------------------------
 
-$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+$userPath = Get-RawUserPath
 $sessionPath = $env:Path
 try {
   Initialize-Mocks
-  foreach ($case in 'Install-Fresh', 'Path-Is-Added-Once', 'Path-Is-Left-Alone-When-Asked',
+  foreach ($case in 'Install-Fresh', 'Path-Is-Added-Once', 'Path-Keeps-Expandable-Entries',
+      'Resolve-A-Relative-Install-Directory', 'Path-Is-Left-Alone-When-Asked',
       'Install-To-The-Default-Directory', 'Upgrade-Over-A-Running-Pedit', 'Upgrade-Over-An-Existing-Pedit',
       'Refuse-A-Checksum-Mismatch', 'Refuse-A-Missing-Entry', 'Refuse-An-Unsupported-Architecture',
       'Refuse-A-Directory-Destination', 'Verify-Provenance-When-Gh-Is-Signed-In',
@@ -315,7 +373,7 @@ try {
   }
   Write-Host 'ok'
 } finally {
-  [Environment]::SetEnvironmentVariable('Path', $userPath, 'User')
+  Set-RawUserPath $userPath
   $env:Path = $sessionPath
   Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 }
