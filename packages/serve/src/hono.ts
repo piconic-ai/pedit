@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { statSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
-import { isAbsolute, relative, sep } from 'node:path'
+import { isAbsolute, sep } from 'node:path'
 import { type Context, type Env, Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import type { UpgradeWebSocket, WSContext } from 'hono/ws'
@@ -93,12 +93,13 @@ function validate(
 }
 
 /**
- * Component-wise: `root-private/x` is not under `root`. On Windows, `relative` of paths on two
- * drives is an absolute path, which is refused.
+ * Component-wise: `root-private/x` is not under `root`. Both are native realpaths, so a prefix test
+ * is exact. `path.relative` is not: on Windows it folds case, and `Root` and `root` can be two
+ * directories (per-directory case sensitivity). Another drive or share is never a prefix.
  */
 export function inside(root: string, path: string): boolean {
-  const rel = relative(root, path)
-  return rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)
+  const prefix = root.endsWith(sep) ? root : root + sep
+  return path.length > prefix.length && path.startsWith(prefix)
 }
 
 interface Grant {

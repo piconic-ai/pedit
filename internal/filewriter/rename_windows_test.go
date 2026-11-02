@@ -39,7 +39,7 @@ func TestReplaceWaitsForAHolderWithoutShareDelete(t *testing.T) {
 	if err := os.WriteFile(tmp, []byte("new\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := bound.rename(".tmp"); err != nil {
+	if err := bound.renameChecked("old\n", ".tmp"); err != nil {
 		t.Fatalf("rename: %v", err)
 	}
 	if got, _ := os.ReadFile(path); string(got) != "new\n" {

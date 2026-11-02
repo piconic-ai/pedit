@@ -48,9 +48,14 @@ async function start(role: 'edit' | 'read' = 'edit', text = 'hello\n') {
   const { dir, cleanup } = tmpRoot()
   // pedit keeps its recovery state under the user's config directory: give it one of our own.
   const home = realpathSync(mkdtempSync(join(tmpdir(), 'pedit-serve-home-')))
-  const saved = { HOME: process.env.HOME, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME }
+  const saved = {
+    HOME: process.env.HOME,
+    XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+    APPDATA: process.env.APPDATA,
+  }
   process.env.HOME = home
   process.env.XDG_CONFIG_HOME = join(home, '.config')
+  process.env.APPDATA = join(home, 'AppData') // Go's os.UserConfigDir on Windows
   const root = join(dir, 'root')
   mkdirSync(root)
   const file = write(root, 'a.md', text)

@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { mkdirSync, statSync, symlinkSync } from 'node:fs'
 import { request as httpRequest, type Server } from 'node:http'
 import { createServer } from 'node:net'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { serve } from '@hono/node-server'
 import { createNodeWebSocket } from '@hono/node-ws'
 import { Hono } from 'hono'
@@ -256,6 +256,16 @@ process.stdin.resume()
   })
 })
 
+describe('inside', () => {
+  it('is component-wise and case-exact', () => {
+    const root = join(sep, 'srv', 'Root')
+    expect(inside(root, join(root, 'a.md'))).toBe(true)
+    expect(inside(root, join(sep, 'srv', 'Root-private', 'a.md'))).toBe(false)
+    expect(inside(root, join(sep, 'srv', 'root', 'a.md'))).toBe(false)
+    expect(inside(root, root)).toBe(false)
+  })
+})
+
 /** The 8.3 name of an existing path (itself when it has none). Fails loudly on anything else. */
 const shortName = (path: string): string => {
   const { stdout: out } = spawnSync(
@@ -272,6 +282,8 @@ describe.runIf(process.platform === 'win32')('root on Windows', () => {
   it('refuses another drive', () => {
     expect(inside('C:\\root', 'C:\\root\\a.md')).toBe(true)
     expect(inside('C:\\root', 'D:\\root\\a.md')).toBe(false)
+    expect(inside('C:\\Root', 'C:\\root\\a.md')).toBe(false) // another directory when case-sensitive
+    expect(inside('C:\\', 'C:\\a.md')).toBe(true)
     expect(inside('C:\\root', '\\\\server\\share\\root\\a.md')).toBe(false)
   })
 

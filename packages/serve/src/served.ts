@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from 'node:child_process'
 import { stat } from 'node:fs/promises'
+import type { Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute } from 'node:path'
 import { type Bridge, EVENT, FrameParser, Streams } from './bridge.ts'
@@ -188,6 +189,9 @@ export class ServedFiles {
         clearTimeout(entry.idle)
         if (this.#byPath.get(path) === entry) this.#byPath.delete(path)
         if (this.#byIno.get(entry.ino) === entry) this.#byIno.delete(entry.ino)
+        // Let the host exit without waiting for a child it will not kill.
+        child.unref()
+        for (const s of [child.stdin, child.stdout, child.stderr]) (s as Socket | null)?.unref?.()
         onFail(new Error(message))
         onExit()
       },

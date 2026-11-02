@@ -554,7 +554,7 @@ func (f *BoundFile) create(tmpName string) error {
 		return err
 	}
 	// No hard links either (FAT, exFAT); a file created in between is replaced.
-	return f.rename(tmpName)
+	return f.calls.rename(f.root, tmpName, f.name)
 }
 
 // createChecked creates the file, or reports a change if something appeared
@@ -570,6 +570,21 @@ func (f *BoundFile) createChecked(tmpName string) error {
 // cannot exchange. It checks that the file still holds expected first, and
 // reports a save written into the replaced file afterwards.
 func (f *BoundFile) renameChecked(expected, tmpName string) error {
+	err := f.renameCheckedOnce(expected, tmpName)
+	for _, d := range renameBackoff {
+		if err == nil || !transient(err) {
+			return err
+		}
+		// Another process holds the file open (Windows): wait, then check the file
+		// again from the start, so a save made meanwhile is reported, not replaced.
+		time.Sleep(d)
+		err = f.renameCheckedOnce(expected, tmpName)
+	}
+	return err
+}
+
+// renameCheckedOnce is one try of renameChecked.
+func (f *BoundFile) renameCheckedOnce(expected, tmpName string) error {
 	e, held, err := f.look(f.name)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
@@ -605,18 +620,13 @@ func (f *BoundFile) renameChecked(expected, tmpName string) error {
 	case !os.SameFile(info, e.info) || info.Size() != e.info.Size() || !info.ModTime().Equal(e.info.ModTime()):
 		return ErrExternalChange
 	}
-	if held != nil {
-		// Our own handle may be what blocks the rename: close it before retrying.
-		err = f.calls.rename(f.root, tmpName, f.name)
-	} else {
-		err = f.rename(tmpName)
-	}
+	err = f.calls.rename(f.root, tmpName, f.name)
 	if err != nil && held != nil {
 		// Windows volumes without POSIX rename semantics (FAT, exFAT, some SMB
 		// shares) refuse to replace an open file.
 		_ = held.Close()
 		held = nil
-		err = f.rename(tmpName)
+		err = f.calls.rename(f.root, tmpName, f.name)
 	}
 	if err != nil || held == nil {
 		return err
