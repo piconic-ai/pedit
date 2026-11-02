@@ -1,7 +1,16 @@
 # serve-app
 
-A text editor in the browser, bound to a local file that `pedit serve` holds,
-built on [`@pedit/serve`](../../packages/serve). No room, no relay, no login.
+The host side of embedding pedit in a local app (#235), as small as it gets: a
+Hono server runs `pedit serve` for one file through
+[`@pedit/serve`](../../packages/serve), and a page edits that file live in
+CodeMirror. Everything stays on this machine. There is no login: whoever can
+reach the page edits the file, so the server listens on 127.0.0.1 only.
+
+## Requirements
+
+- pedit 0.4.0 or later on the PATH (`brew install piconic-ai/tap/pedit`, the
+  install script, or a GitHub release), or `PEDIT=/path/to/pedit`.
+- Node 22 or later, on macOS or Linux.
 
 ## Run
 
@@ -18,7 +27,9 @@ It prints `http://127.0.0.1:<port>/` and edits `content/demo.md`. `PEDIT=... nod
 
 ## Notes
 
-- The file must exist before the first page connects; pedit does not create it.
+- pedit edits an existing file and never creates one: an app's "new document"
+  creates the file first (empty is fine), then connects. This sample creates
+  `content/demo.md` at start for that reason.
 - Do not write the file yourself while a page is connected.
 - The child stops 60 s after the last page leaves and resumes the same document.
 - `gone` is rare (pedit's saved state was discarded); the app decides what to show.
