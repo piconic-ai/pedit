@@ -2,7 +2,7 @@
   "$schema": "https://biomejs.dev/schemas/2.6.3/schema.json",
   "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
   "files": {
-    "includes": ["**", "!**/worker-configuration.d.ts", "!**/web/src/components/xyflow"]
+    "includes": ["**", "!**/worker-configuration.d.ts", "!**/dist", "!**/web/src/components/xyflow"]
   },
   "formatter": { "indentStyle": "space", "indentWidth": 2, "lineWidth": 100 },
   "linter": { "enabled": true, "rules": { "preset": "none" } },

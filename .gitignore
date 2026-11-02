@@ -8,3 +8,4 @@ dist/
 .env
 __pycache__/
 /pedit
+packages/serve/LICENSE

@@ -4,6 +4,29 @@ import { access, realpath, stat } from 'node:fs/promises'
 import { delimiter, isAbsolute, join } from 'node:path'
 import { NoPeditError } from './errors.ts'
 
+/** The first pedit release with `pedit serve --root`, `generation` in `listening` and `X-Pedit-Role`. */
+export const MIN_PEDIT_VERSION = '0.4.0'
+
+const UPDATE_HINT =
+  'update with Homebrew (brew upgrade pedit), the install script (https://edit.piconic.ai/install.sh) or GitHub releases (https://github.com/piconic-ai/pedit/releases)'
+
+/**
+ * True when `output` (what `pedit --version` prints) is at least MIN_PEDIT_VERSION. A source build
+ * prints `dev` or a Go pseudo-version such as `v0.3.1-0.20261031060942-98b75f74184d`; its base
+ * says nothing about the commit, so those are accepted and left to the feature checks.
+ */
+export function peditVersionOk(output: string, min = MIN_PEDIT_VERSION): boolean {
+  const v = output.trim().replace(/^pedit\s+/, '')
+  if (v === 'dev' || /-(0\.)?\d{14}-[0-9a-f]{12}(\+.*)?$/.test(v)) return true
+  const parse = (s: string) => s.replace(/^v/, '').split(/[-+]/)[0]?.split('.').map(Number) ?? []
+  const [got, want] = [parse(v), parse(min)]
+  if (got.length !== 3 || got.some(Number.isNaN)) return false
+  for (let i = 0; i < 3; i++) {
+    if (got[i] !== want[i]) return (got[i] ?? 0) > (want[i] ?? 0)
+  }
+  return !/^v?\d+\.\d+\.\d+-/.test(v) // 0.4.0-rc1 is older than 0.4.0
+}
+
 /** The only environment a pedit child gets. */
 export function peditEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {}
@@ -55,5 +78,10 @@ export async function resolvePedit(
       err ? reject(new NoPeditError('pedit --version failed')) : resolve(stdout.trim()),
     )
   })
+  if (!peditVersionOk(version)) {
+    throw new NoPeditError(
+      `pedit ${version} is too old: @pedit/serve needs ${MIN_PEDIT_VERSION} or later; ${UPDATE_HINT}`,
+    )
+  }
   return { bin, version }
 }

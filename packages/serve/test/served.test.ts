@@ -14,6 +14,7 @@ import {
   HeldError,
   LimitError,
   NoPeditError,
+  peditVersionOk,
   resolvePedit,
   ServedFiles,
   type ServeEvent,
@@ -204,5 +205,29 @@ describe('without a usable pedit', () => {
     await expect(resolvePedit({ bin: fake })).rejects.toBeInstanceOf(NoPeditError)
     chmodSync(fake, 0o755)
     expect(await resolvePedit({ bin: fake })).toEqual({ bin: fake, version: '1.2.3' })
+  })
+
+  it('refuses a pedit older than the minimum and says how to update', async () => {
+    const { dir, cleanup } = tmpRoot()
+    cleanups.push(cleanup)
+    const old = write(dir, 'pedit', '#!/bin/sh\necho v0.3.0\n')
+    chmodSync(old, 0o755)
+    await expect(resolvePedit({ bin: old })).rejects.toThrow(
+      /v0\.3\.0 is too old.*brew.*install\.sh/,
+    )
+  })
+
+  it('compares versions and accepts the dev forms', () => {
+    for (const ok of [
+      'v0.4.0',
+      '0.4.1',
+      'v1.0.0',
+      'dev',
+      'v0.3.1-0.20261031060942-98b75f74184d',
+      'v0.3.1-0.20261031060942-98b75f74184d+dirty',
+    ])
+      expect(peditVersionOk(ok), ok).toBe(true)
+    for (const bad of ['v0.3.9', 'v0.4.0-rc1', '', 'garbage'])
+      expect(peditVersionOk(bad), bad).toBe(false)
   })
 })

@@ -1,23 +1,63 @@
 {
   "name": "@pedit/serve",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
+  "description": "Run pedit serve for a local app: the file's Yjs document over a Unix socket, with Hono routes and a browser client",
+  "keywords": [
+    "pedit",
+    "yjs",
+    "crdt",
+    "collaborative-editing",
+    "hono",
+    "local-first"
+  ],
+  "license": "MIT",
+  "homepage": "https://github.com/piconic-ai/pedit/tree/main/packages/serve#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/piconic-ai/pedit.git",
+    "directory": "packages/serve"
+  },
   "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "prepack": "cp ../../LICENSE LICENSE",
+    "postpack": "rm -f LICENSE",
     "typecheck": "tsc -p .",
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "ws": "^8.18.3",
+    "ws": "^8.18.3"
+  },
+  "peerDependencies": {
+    "hono": "^4.9.0",
     "y-protocols": "^1.0.7",
     "y-websocket": "^3.0.0",
     "yjs": "^13.6.33"
   },
-  "peerDependencies": {
-    "hono": "^4.9.0"
-  },
   "peerDependenciesMeta": {
     "hono": {
+      "optional": true
+    },
+    "y-protocols": {
+      "optional": true
+    },
+    "y-websocket": {
+      "optional": true
+    },
+    "yjs": {
       "optional": true
     }
   },
@@ -26,11 +66,23 @@
     "@hono/node-ws": "^1.2.0",
     "@types/node": "^22.0.0",
     "@types/ws": "^8.18.1",
-    "hono": "^4.9.0"
+    "hono": "^4.9.0",
+    "y-protocols": "^1.0.7",
+    "y-websocket": "^3.0.0",
+    "yjs": "^13.6.33"
   },
   "exports": {
-    ".": "./src/index.ts",
-    "./hono": "./src/hono.ts",
-    "./client": "./src/client.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./hono": {
+      "types": "./dist/hono.d.ts",
+      "import": "./dist/hono.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "import": "./dist/client.js"
+    }
   }
 }

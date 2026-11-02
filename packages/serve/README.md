@@ -1,0 +1,107 @@
+# @pedit/serve
+
+Run [`pedit serve`](https://github.com/piconic-ai/pedit) for a local app. pedit holds one file's Yjs
+document and writes the file; this package starts it, checks every request, and bridges a browser's
+WebSocket to pedit's Unix socket. Your page edits the file live, with several pages at once, and
+there is no room, relay or account.
+
+Experimental (0.x): the API may change.
+
+## Requirements
+
+- pedit 0.4.0 or later on the PATH (or pass `bin`). Older ones are refused with a message on how to update.
+- Node 22 or later, on macOS or Linux (Unix sockets; not Windows).
+
+## Install
+
+```sh
+npm install @pedit/serve yjs y-protocols y-websocket   # the browser client's peers
+npm install hono @hono/node-server @hono/node-ws       # for the Hono routes
+```
+
+`@pedit/serve/client` needs `yjs`, `y-protocols` and `y-websocket`; `@pedit/serve/hono` needs `hono`.
+They are peers, so your app keeps one copy of Yjs.
+
+## Server
+
+```js
+import { serve } from '@hono/node-server'
+import { createNodeWebSocket } from '@hono/node-ws'
+import { peditRoutes } from '@pedit/serve/hono'
+import { Hono } from 'hono'
+
+const app = new Hono()
+const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app })
+const server = serve({ fetch: app.fetch, port: 3000, hostname: '127.0.0.1' })
+const routes = peditRoutes({
+  upgradeWebSocket,
+  root: '/home/me/notes', // only files under it are served
+  origins: ['http://127.0.0.1:3000'],
+  app: 'my-app',
+  resolve: async (id) => (id === 'todo' ? { path: '/home/me/notes/todo.md', role: 'edit' } : null),
+})
+app.route('/edit', routes)
+injectWebSocket(server)
+process.on('SIGINT', () => routes.close().finally(() => process.exit(0)))
+```
+
+## Browser
+
+```js
+import { connect } from '@pedit/serve/client'
+import { yCollab } from 'y-codemirror.next'
+
+const conn = await connect('/edit', 'todo', { name: 'Ann' })
+conn.status.subscribe((status, error) => {
+  if (error?.code === 'gone') showReload() // your UI
+})
+const extensions = [yCollab(conn.text, conn.awareness)] // plus basicSetup, EditorState.readOnly for 'read'
+```
+
+## API
+
+`@pedit/serve/hono`
+
+| Export | |
+| --- | --- |
+| `peditRoutes(options)` | A Hono app: `POST /:id/session` and the WebSocket `GET /:id/doc`. Has `close()`. |
+| `options.resolve(id, c)` | Maps an id to `{ path, role: 'edit' \| 'read' }`, or `null` for 404. |
+| `options.root`, `origins`, `app` | The served directory, the exact page origins, and a label shown if another process holds the file. |
+| `options.bin`, `idleMs`, `allowRemote`, `onEvent` | Absolute path to pedit; idle stop (default 60 s); accept non-loopback peers (default false); `started`/`stopped`/`error` events. |
+
+`@pedit/serve/client`
+
+| Export | |
+| --- | --- |
+| `connect(base, id, { name, color })` | Resolves after the first sync with `{ doc, text, awareness, role, status, synced, destroy }`. |
+| `conn.status` | `get()` and `subscribe(cb)`; states `connecting`, `connected`, `reconnecting`, `closed`. |
+| `PeditError.code` | `not-found`, `held`, `busy`, `forbidden`, `gone`, `unavailable`. |
+
+`@pedit/serve`
+
+| Export | |
+| --- | --- |
+| `ServedFiles` | The layer below the routes: `acquire(path)` starts or reuses a child, `close()` ends all. |
+| `resolvePedit({ bin })`, `MIN_PEDIT_VERSION` | Finds pedit, checks the binary and its version. |
+| `HeldError`, `LimitError`, `NoPeditError` | Another process serves the file; 32 files or 8 clients; pedit missing or too old. |
+
+## Security model
+
+- One hook, `resolve`, decides which ids exist and their role. Every other request is refused by default.
+- Files must be under `root` (realpath checked); ids are `[A-Za-z0-9_-]` only.
+- Host and Origin must match `origins`, and peers must be on loopback unless `allowRemote` is set.
+- A session token is single use and expires in 60 s; it travels in the WebSocket URL, so log no `token`.
+- A `read` role is enforced by pedit itself, not just by the page: updates from a reader close the socket.
+- The browser never sees a path, a pid or a socket name.
+
+## Known limits
+
+- Unix only; one id is one file; at most 32 files and 8 clients per file.
+- Awareness (names, cursors) is unauthenticated: any connected page can claim any name.
+- `gone`: pedit's saved state was discarded, so the page's copy cannot merge into the new document.
+  The client stops; the app decides whether to offer the text or reload.
+- Don't write the file yourself while a page is connected.
+
+Design: [docs/design/serve.md](https://github.com/piconic-ai/pedit/blob/main/docs/design/serve.md).
+Sample: [examples/serve-app](https://github.com/piconic-ai/pedit/tree/main/examples/serve-app).
+MIT license.

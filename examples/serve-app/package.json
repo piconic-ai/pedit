@@ -4,6 +4,7 @@
   "type": "module",
   "description": "A sample local app built on @pedit/serve: an editor bound to a file that `pedit serve` holds",
   "scripts": {
+    "build": "esbuild page.mjs --bundle --format=esm --alias:yjs=./node_modules/yjs --alias:y-protocols=./node_modules/y-protocols --outfile=public/page.js",
     "start": "node server.mjs",
     "test": "node --test"
   },
@@ -12,15 +13,15 @@
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.3.0",
-    "@codemirror/state": "^6.5.0",
     "@hono/node-server": "^1.19.5",
     "@hono/node-ws": "^1.2.0",
     "@pedit/serve": "file:../../packages/serve",
     "codemirror": "^6.0.1",
     "hono": "^4.9.0",
     "y-codemirror.next": "^0.3.5",
-    "y-protocols": "^1.0.6",
-    "yjs": "^13.6.0"
+    "y-protocols": "^1.0.7",
+    "y-websocket": "^3.0.0",
+    "yjs": "^13.6.33"
   },
   "devDependencies": {
     "esbuild": "^0.25.0",
