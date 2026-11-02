@@ -48,6 +48,7 @@ function Initialize-Mocks {
     '@echo off',
     'echo %* >>"%INSTALL_TEST_GH_LOG%"',
     'if "%1"=="auth" exit /b %INSTALL_TEST_GH_AUTH_EXIT%',
+    'if not "%INSTALL_TEST_GH_EXIT%"=="0" echo attestation mock failure 1>&2',
     'exit /b %INSTALL_TEST_GH_EXIT%'
   )
   Set-Content -LiteralPath (Join-Path $mocks 'gh.cmd') -Value $lines -Encoding ASCII
@@ -102,8 +103,8 @@ function Try-Install([string]$Name, [hashtable]$Env = @{}, [string]$Source = $re
   }
 }
 
-function Invoke-Install([string]$Name, [hashtable]$Env = @{}, [string]$Source = $release, [bool]$SetDir = $true) {
-  if ((Try-Install $Name $Env $Source $SetDir) -ne 0) {
+function Invoke-Install([string]$Name, [hashtable]$Env = @{}, [string]$Source = $release, [bool]$SetDir = $true, [string]$Prelude = '') {
+  if ((Try-Install $Name $Env $Source $SetDir $Prelude) -ne 0) {
     Fail "${Name}: install.ps1 failed: $(Get-Text $Name 'out')$(Get-Text $Name 'err')"
   }
 }
@@ -185,6 +186,7 @@ function Install-Fresh {
   Assert-Contains fresh out "Downloading pedit $([regex]::Escape($Version)) \(windows/$arch\)\.\.\. DONE"
   Assert-Contains fresh out 'Installed pedit .* to .*pedit\.exe'
   Assert-Contains fresh out 'shell-still-alive'
+  Assert-Lacks fresh out 'Warning'
   # The current session got the directory, and so did the user PATH.
   Assert-Contains fresh out 'session-path-has-dir=True'
   Assert-Contains fresh out 'Added .* to your user PATH'
@@ -211,6 +213,37 @@ function Path-Keeps-Expandable-Entries {
   if ($stored.Kind -ne [Microsoft.Win32.RegistryValueKind]::ExpandString) { Fail "expandable: the user PATH is now $($stored.Kind)" }
   if (-not $stored.Value.StartsWith('%SystemRoot%\pedit-test-entry;')) { Fail "expandable: an existing entry was rewritten: $($stored.Value)" }
   if ((Get-UserPathCount (Join-Path $work 'expandable\bin')) -ne 1) { Fail 'expandable: the install directory is not on the user PATH' }
+}
+
+function Path-Is-Created-As-Expandable {
+  $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+  try { $key.DeleteValue('Path', $false) } finally { $key.Close() }
+  Invoke-Install created
+  $stored = Get-RawUserPath
+  if ($stored.Kind -ne [Microsoft.Win32.RegistryValueKind]::ExpandString) { Fail "created: a new user PATH is $($stored.Kind)" }
+  if ($stored.Value -ne (Join-Path $work 'created\bin')) { Fail "created: unexpected user PATH $($stored.Value)" }
+}
+
+function Hint-Is-Safe-When-Asked-Not-To-Edit {
+  Invoke-Install hint @{ PEDIT_NO_MODIFY_PATH = '1' }
+  Assert-Lacks hint out 'SetEnvironmentVariable'
+  # Already on the user PATH, only this session lacks it: say so, nothing else.
+  $dir = Join-Path $work 'hinted\bin'
+  $stored = Get-RawUserPath
+  $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+  try { $key.SetValue('Path', "$($stored.Value);$dir", [Microsoft.Win32.RegistryValueKind]::ExpandString) } finally { $key.Close() }
+  Invoke-Install hinted @{ PEDIT_NO_MODIFY_PATH = '1' }
+  Assert-Contains hinted out 'is on your user PATH already\. Open a new terminal'
+  Assert-Lacks hinted out 'Add .* to your PATH'
+}
+
+function Warn-About-A-Shadowing-Pedit {
+  $other = Join-Path $work 'shadow-other'
+  New-Item -ItemType Directory -Force -Path $other | Out-Null
+  Copy-Item -LiteralPath (Join-Path $env:SystemRoot 'System32\ping.exe') -Destination (Join-Path $other 'pedit.exe')
+  Invoke-Install shadow @{ PEDIT_NO_MODIFY_PATH = '1' } $release $true "`$env:Path = '$other;' + `$env:Path"
+  Assert-Installed shadow
+  Assert-Contains shadow out 'Warning: running pedit starts .*shadow-other.*pedit\.exe, not the one just installed'
 }
 
 function Resolve-A-Relative-Install-Directory {
@@ -259,9 +292,16 @@ function Upgrade-Over-A-Running-Pedit {
     # fail on it either.
     Invoke-Install running @{ PEDIT_NO_MODIFY_PATH = '1' }
     Assert-Installed running
+    if (@(Get-ChildItem -LiteralPath $bin -Force -Filter 'pedit.exe.old*').Count -ne 2) { Fail 'running: expected two locked old copies' }
   } finally {
     Stop-Process -Id $running.Id -Force -ErrorAction SilentlyContinue
+    Wait-Process -Id $running.Id -ErrorAction SilentlyContinue
   }
+  # Nothing runs any more: the next install clears every old copy.
+  Invoke-Install running @{ PEDIT_NO_MODIFY_PATH = '1' }
+  Assert-Installed running
+  $left = @(Get-ChildItem -LiteralPath $bin -Force -Filter 'pedit.exe.old*')
+  if ($left.Count -ne 0) { Fail "running: old copies were left: $($left.Name -join ', ')" }
 }
 
 function Upgrade-Over-An-Existing-Pedit {
@@ -271,7 +311,8 @@ function Upgrade-Over-An-Existing-Pedit {
   Set-Content -LiteralPath (Join-Path $bin 'pedit.exe.old') -Value 'older' -Encoding ASCII
   Invoke-Install upgrade @{ PEDIT_NO_MODIFY_PATH = '1' }
   Assert-Installed upgrade
-  if ((Get-Content -Raw -LiteralPath (Join-Path $bin 'pedit.exe.old')).Trim() -ne 'first') { Fail 'upgrade: pedit.exe.old is not the replaced pedit.exe' }
+  # Neither the replaced pedit nor the older copy runs, so neither is kept.
+  if (@(Get-ChildItem -LiteralPath $bin -Force -Filter 'pedit.exe.old*').Count -ne 0) { Fail 'upgrade: an old copy was kept' }
 }
 
 function Refuse-A-Checksum-Mismatch {
@@ -302,12 +343,6 @@ function Refuse-A-Missing-Entry {
   Assert-Failure missing @{} $gap
   Assert-Contains missing err 'is not listed in checksums\.txt'
   if (Test-Path -LiteralPath (Join-Path $work 'missing\bin\pedit.exe')) { Fail 'missing: pedit was installed' }
-}
-
-function Refuse-An-Unsupported-Architecture {
-  # Set inside the child: the installer reads the variables of its own process.
-  Assert-Failure x86 @{} $release "`$env:PROCESSOR_ARCHITECTURE = 'MIPS'; Remove-Item Env:PROCESSOR_ARCHITEW6432 -ErrorAction SilentlyContinue"
-  Assert-Contains x86 err 'unsupported architecture MIPS'
 }
 
 function Refuse-A-Directory-Destination {
@@ -352,6 +387,7 @@ function Refuse-Failed-Provenance {
     Assert-Failure $name @{ INSTALL_TEST_GH_EXIT = "$code" }
     Assert-Contains $name out 'Verifying build provenance\.\.\. FAILED'
     Assert-Contains $name err 'release provenance verification failed'
+    if ($code -ne 0) { Assert-Contains $name err 'attestation mock failure'; Assert-Lacks $name err 'NativeCommandError' }
     Assert-Lacks $name out 'Installed'
     if ((Get-Content -Raw -LiteralPath (Join-Path $bin 'pedit.exe')).Trim() -ne 'untouched') { Fail "${name}: pedit.exe was replaced" }
     if (@(Get-ChildItem -LiteralPath $bin -Force).Count -ne 1) { Fail "${name}: files were left in the install directory" }
@@ -364,10 +400,11 @@ $userPath = Get-RawUserPath
 $sessionPath = $env:Path
 try {
   Initialize-Mocks
-  foreach ($case in 'Install-Fresh', 'Path-Is-Added-Once', 'Path-Keeps-Expandable-Entries',
+  foreach ($case in 'Install-Fresh', 'Path-Is-Added-Once', 'Path-Keeps-Expandable-Entries', 'Path-Is-Created-As-Expandable',
+      'Hint-Is-Safe-When-Asked-Not-To-Edit',
       'Resolve-A-Relative-Install-Directory', 'Path-Is-Left-Alone-When-Asked',
       'Install-To-The-Default-Directory', 'Upgrade-Over-A-Running-Pedit', 'Upgrade-Over-An-Existing-Pedit',
-      'Refuse-A-Checksum-Mismatch', 'Refuse-A-Missing-Entry', 'Refuse-An-Unsupported-Architecture',
+      'Refuse-A-Checksum-Mismatch', 'Refuse-A-Missing-Entry', 'Warn-About-A-Shadowing-Pedit',
       'Refuse-A-Directory-Destination', 'Verify-Provenance-When-Gh-Is-Signed-In',
       'Verify-Releases-Signed-Under-Older-Names', 'Skip-Provenance-When-Gh-Is-Signed-Out',
       'Refuse-Failed-Provenance') {

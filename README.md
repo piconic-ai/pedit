@@ -246,8 +246,11 @@ curl -fsSL https://edit.piconic.ai/install.sh | sh
 Windows (PowerShell):
 
 ```powershell
-irm https://edit.piconic.ai/install.ps1 | iex
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 'Tls12'; irm https://edit.piconic.ai/install.ps1 | iex
 ```
+
+The first part makes older Windows PowerShell versions use TLS 1.2, which the
+relay requires; PowerShell 7 does not need it.
 
 `install.ps1` adds the install directory to your user PATH; set
 `PEDIT_NO_MODIFY_PATH=1` to skip that.

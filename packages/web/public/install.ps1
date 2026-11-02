@@ -39,10 +39,16 @@ function Install-Pedit {
     if ($env:OS -ne 'Windows_NT') {
       Fail "unsupported OS; on macOS or Linux use install.sh, or download a binary from https://github.com/$repo/releases"
     }
+    # The OS architecture: an x64 PowerShell on ARM64 Windows reports AMD64 in
+    # its environment variables. The type is missing on Windows PowerShell 5.1
+    # with older .NET Framework, so fall back to the variables, where
     # PROCESSOR_ARCHITEW6432 is the real architecture inside a 32-bit process.
-    $machine = $env:PROCESSOR_ARCHITEW6432
+    $machine = $null
+    try { $machine = [string][Runtime.InteropServices.RuntimeInformation]::OSArchitecture } catch {}
+    if ($machine -eq 'X64') { $machine = 'AMD64' }
+    if ([string]::IsNullOrEmpty($machine)) { $machine = $env:PROCESSOR_ARCHITEW6432 }
     if ([string]::IsNullOrEmpty($machine)) { $machine = $env:PROCESSOR_ARCHITECTURE }
-    switch ($machine) {
+    switch ($machine.ToUpperInvariant()) {
       'AMD64' { return 'amd64' }
       'ARM64' { return 'arm64' }
       default { Fail "unsupported architecture $machine; download a binary from https://github.com/$repo/releases" }
@@ -106,12 +112,22 @@ function Install-Pedit {
     return 'release-build.yml'
   }
 
-  # Run gh and return its exit code and output. Windows PowerShell 5.1 turns a
-  # native command's stderr into an error under 'Stop', so relax it here.
+  # Run gh and return its exit code and output, stdout and stderr as gh wrote
+  # them. Redirecting to files avoids PowerShell turning stderr into error
+  # records, which Windows PowerShell 5.1 wraps in NativeCommandError text.
   function Invoke-Gh([string[]]$GhArgs) {
-    $ErrorActionPreference = 'Continue'
-    $text = (& gh @GhArgs 2>&1 | Out-String)
-    return @{ Code = $LASTEXITCODE; Text = $text }
+    $gh = (Get-Command gh -ErrorAction Stop | Select-Object -First 1).Source
+    $quoted = $GhArgs | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }
+    $stdout = [IO.Path]::GetTempFileName()
+    $stderr = [IO.Path]::GetTempFileName()
+    try {
+      $p = Start-Process -FilePath $gh -ArgumentList $quoted -NoNewWindow -Wait -PassThru `
+        -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+      $text = (Get-Content -Raw -LiteralPath $stdout) + (Get-Content -Raw -LiteralPath $stderr)
+      return @{ Code = $p.ExitCode; Text = $text }
+    } finally {
+      Remove-Item -LiteralPath $stdout, $stderr -Force -ErrorAction SilentlyContinue
+    }
   }
 
   function Test-Provenance([string]$Archive, [string]$Version) {
@@ -136,6 +152,13 @@ function Install-Pedit {
     Write-Host 'DONE'
   }
 
+  # Remove what earlier upgrades left beside pedit.exe. A copy that is still
+  # running cannot be deleted and stays for the next install.
+  function Remove-OldCopies([string]$Dest) {
+    Get-ChildItem -LiteralPath (Split-Path -Parent $Dest) -Force -Filter ((Split-Path -Leaf $Dest) + '.old*') -ErrorAction SilentlyContinue |
+      ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
+  }
+
   # Move the staged file over the destination. A running pedit.exe cannot be
   # overwritten but can be renamed, so the old one moves aside first, and goes
   # back if the new one cannot take its place.
@@ -143,12 +166,10 @@ function Install-Pedit {
     $old = "$Dest.old"
     $hadOld = Test-Path -LiteralPath $Dest
     if ($hadOld) {
+      Remove-OldCopies $Dest
       if (Test-Path -LiteralPath $old) {
         # Still running from an earlier upgrade? Then pick another name.
-        Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue
-        if (Test-Path -LiteralPath $old) {
-          $old = "$Dest.old.$([guid]::NewGuid().ToString('N').Substring(0, 8))"
-        }
+        $old = "$Dest.old.$([guid]::NewGuid().ToString('N').Substring(0, 8))"
       }
       Move-Item -LiteralPath $Dest -Destination $old -Force
     }
@@ -158,6 +179,8 @@ function Install-Pedit {
       if ($hadOld) { Move-Item -LiteralPath $old -Destination $Dest -Force }
       throw
     }
+    # The replaced pedit goes too unless it is running.
+    Remove-OldCopies $Dest
   }
 
   function Test-OnPath([string]$PathValue, [string]$Dir) {
@@ -168,36 +191,65 @@ function Install-Pedit {
     return $false
   }
 
-  function Update-Path([string]$Dir) {
-    $inSession = Test-OnPath $env:Path $Dir
-    if ($env:PEDIT_NO_MODIFY_PATH -eq '1') {
-      if (-not $inSession) {
-        Write-Host "Add $Dir to your PATH to run pedit, for example: [Environment]::SetEnvironmentVariable('Path', `"$Dir;`" + [Environment]::GetEnvironmentVariable('Path', 'User'), 'User')"
-      }
-      return
-    }
-    # Read and write the registry value itself, not through [Environment]: that
-    # expands %VAR% references and stores the result, which would rewrite the
-    # entries of other tools.
-    $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment')
+  # The user PATH as stored in the registry, without expanding %VAR%: setting
+  # it through [Environment] would store the expanded text and so rewrite the
+  # entries of other tools.
+  function Get-StoredUserPath {
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment')
+    if (-not $key) { return @{ Value = $null; Kind = $null } }
     try {
-      $raw = $key.GetValue('Path', $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
-      $kind = [Microsoft.Win32.RegistryValueKind]::String
-      if ($null -ne $raw) { $kind = $key.GetValueKind('Path') }
-      $present = ($null -ne $raw) -and ((Test-OnPath $raw $Dir) -or (Test-OnPath ([Environment]::ExpandEnvironmentVariables($raw)) $Dir))
-      if (-not $present) {
-        if ([string]::IsNullOrEmpty($raw)) { $new = $Dir } else { $new = $raw.TrimEnd(';') + ';' + $Dir }
-        $key.SetValue('Path', $new, $kind)
-        # Tell running programs (Explorer, new terminals) that the environment
-        # changed. Removing a variable that does not exist broadcasts and
-        # changes nothing else.
-        [Environment]::SetEnvironmentVariable('PEDIT_INSTALL_BROADCAST', $null, 'User')
-        Write-Host "Added $Dir to your user PATH (set PEDIT_NO_MODIFY_PATH=1 to skip this). Open a new terminal to use pedit there."
-      }
+      $value = $key.GetValue('Path', $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+      $kind = $null
+      if ($null -ne $value) { $kind = $key.GetValueKind('Path') }
+      return @{ Value = $value; Kind = $kind }
     } finally {
       $key.Close()
     }
+  }
+
+  function Test-OnUserPath($Stored, [string]$Dir) {
+    if ($null -eq $Stored.Value) { return $false }
+    return (Test-OnPath $Stored.Value $Dir) -or (Test-OnPath ([Environment]::ExpandEnvironmentVariables($Stored.Value)) $Dir)
+  }
+
+  function Update-Path([string]$Dir) {
+    $inSession = Test-OnPath $env:Path $Dir
+    $stored = Get-StoredUserPath
+    $onUserPath = Test-OnUserPath $stored $Dir
+    if ($env:PEDIT_NO_MODIFY_PATH -eq '1') {
+      if ($onUserPath) {
+        if (-not $inSession) { Write-Host "$Dir is on your user PATH already. Open a new terminal to use pedit there." }
+      } elseif (-not $inSession) {
+        Write-Host "Add $Dir to your PATH to run pedit (Start menu, Edit environment variables for your account, Path)."
+      }
+      return
+    }
+    if (-not $onUserPath) {
+      $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment')
+      try {
+        # Windows itself stores a new Path as REG_EXPAND_SZ.
+        $kind = [Microsoft.Win32.RegistryValueKind]::ExpandString
+        if ($null -ne $stored.Kind) { $kind = $stored.Kind }
+        if ([string]::IsNullOrEmpty($stored.Value)) { $new = $Dir } else { $new = $stored.Value.TrimEnd(';') + ';' + $Dir }
+        $key.SetValue('Path', $new, $kind)
+      } finally {
+        $key.Close()
+      }
+      # Tell running programs (Explorer, new terminals) that the environment
+      # changed. Removing a variable that does not exist broadcasts and
+      # changes nothing else.
+      [Environment]::SetEnvironmentVariable('PEDIT_INSTALL_BROADCAST', $null, 'User')
+      Write-Host "Added $Dir to your user PATH (set PEDIT_NO_MODIFY_PATH=1 to skip this). Open a new terminal to use pedit there."
+    }
     if (-not $inSession) { $env:Path = $env:Path.TrimEnd(';') + ';' + $Dir }
+  }
+
+  # Another pedit earlier on PATH would keep running instead of this one.
+  function Test-Shadowing([string]$Dest) {
+    $found = Get-Command pedit -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($found -and ($found.Source -ine $Dest)) {
+      Write-Host "Warning: running pedit starts $($found.Source), not the one just installed, because its directory comes earlier on your PATH. Remove it or put $(Split-Path -Parent $Dest) first."
+    }
   }
 
   try {
@@ -229,28 +281,27 @@ function Install-Pedit {
     }
     Test-Provenance (Join-Path $tmp $archive) $version
 
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $zip = [System.IO.Compression.ZipFile]::OpenRead((Join-Path $tmp $archive))
-    try {
-      $entry = $zip.Entries | Where-Object { $_.FullName -eq 'pedit.exe' } | Select-Object -First 1
-      if (-not $entry) { Fail "$archive has no pedit.exe" }
-      [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, (Join-Path $tmp 'pedit.exe'))
-    } finally {
-      $zip.Dispose()
-    }
-
     New-Item -ItemType Directory -Force -Path $installDir | Out-Null
     $dest = Join-Path $installDir 'pedit.exe'
     # Move-Item would move the binary into a directory instead of replacing it.
     if (Test-Path -LiteralPath $dest -PathType Container) { Fail "$dest is a directory" }
     # Stage next to the destination so the final move is a rename on one volume.
     $staged = Join-Path $installDir ('.pedit-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.tmp')
-    Copy-Item -LiteralPath (Join-Path $tmp 'pedit.exe') -Destination $staged
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [System.IO.Compression.ZipFile]::OpenRead((Join-Path $tmp $archive))
+    try {
+      $entry = $zip.Entries | Where-Object { $_.FullName -eq 'pedit.exe' } | Select-Object -First 1
+      if (-not $entry) { Fail "$archive has no pedit.exe" }
+      [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $staged)
+    } finally {
+      $zip.Dispose()
+    }
     Install-File $staged $dest
     $staged = $null
     Write-Host "Installed pedit $version to $dest"
 
     Update-Path $installDir
+    Test-Shadowing $dest
   } finally {
     if ($staged) { Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue }
     Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
