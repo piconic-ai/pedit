@@ -88,15 +88,9 @@ export class ServedFiles {
       if (this.#closed) throw new Error('ServedFiles is closed')
       const real = await nativeRealpath(path)
       const ino = await inodeOf(real)
-      // An inode alias counts only while the other path still has that inode: an atomic save
-      // gives the served path a new one and splits a hard link into two files.
-      const alias = ino === '' ? undefined : this.#byIno.get(ino)
-      const aliasHolds =
-        alias !== undefined &&
-        alias.path !== real &&
-        (await inodeOf(alias.path).catch(() => '')) === ino
+      const alias = await this.#aliasFor(real, ino)
       if (this.#closed) throw new Error('ServedFiles is closed')
-      let entry = this.#byPath.get(real) ?? (aliasHolds ? alias : undefined)
+      let entry = this.#byPath.get(real) ?? alias
       if (entry && entry.ino !== ino && entry.path === real) this.#reindex(entry, ino)
       if (entry?.stopping) {
         await entry.exited
@@ -109,6 +103,17 @@ export class ServedFiles {
       await entry.ready
       return entry.handle
     }
+  }
+
+  /**
+   * The entry that already serves this file under another name. An inode alias counts only while
+   * the other path still has that inode: an atomic save gives the served path a new one and splits
+   * a hard link into two files. No inode (''), no alias.
+   */
+  async #aliasFor(real: string, ino: string): Promise<Entry | undefined> {
+    const alias = ino === '' ? undefined : this.#byIno.get(ino)
+    if (alias === undefined || alias.path === real) return undefined
+    return (await inodeOf(alias.path).catch(() => '')) === ino ? alias : undefined
   }
 
   #reindex(entry: Entry, ino: string) {

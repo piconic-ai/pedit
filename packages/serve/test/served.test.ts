@@ -173,23 +173,27 @@ process.stdin.resume()
     expect(await files.acquire(served.path)).not.toBe(served)
   })
 
-  it('reports exited when the child dies, then starts a fresh one', async () => {
-    const { dir, files, events } = setup()
-    const served = await files.acquire(write(dir, 'a.md'))
-    const bridge = await served.dial('edit')
-    const gone = closed(bridge)
-    const pids = execFileSync('pgrep', ['-f', `serve --stdio --root ${dir}`])
-      .toString()
-      .trim()
-      .split('\n')
-    for (const pid of pids) process.kill(Number(pid), 'SIGKILL')
-    await gone
-    await sleep(300)
-    expect(events).toContainEqual({ type: 'stopped', path: served.path, reason: 'exited' })
-    await expect(served.dial('edit')).rejects.toThrow()
-    const next = await files.acquire(served.path)
-    expect(isSyncStep1(await nextFrame(await next.dial('edit')))).toBe(true)
-  })
+  // Windows has no signal to kill a child with (and the design never kills one).
+  it.skipIf(process.platform === 'win32')(
+    'reports exited when the child dies, then starts a fresh one',
+    async () => {
+      const { dir, files, events } = setup()
+      const served = await files.acquire(write(dir, 'a.md'))
+      const bridge = await served.dial('edit')
+      const gone = closed(bridge)
+      const pids = execFileSync('pgrep', ['-f', `serve --stdio --root ${dir}`])
+        .toString()
+        .trim()
+        .split('\n')
+      for (const pid of pids) process.kill(Number(pid), 'SIGKILL')
+      await gone
+      await sleep(300)
+      expect(events).toContainEqual({ type: 'stopped', path: served.path, reason: 'exited' })
+      await expect(served.dial('edit')).rejects.toThrow()
+      const next = await files.acquire(served.path)
+      expect(isSyncStep1(await nextFrame(await next.dial('edit')))).toBe(true)
+    },
+  )
 
   it('limits clients to 8 per file', async () => {
     const { dir, files } = setup()

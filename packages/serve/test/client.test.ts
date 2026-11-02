@@ -198,41 +198,50 @@ live('connect', () => {
     c.destroy()
   })
 
-  it('reconnects to a restarted pedit that kept its state, without duplicating the text', async () => {
-    const { file, root } = await start()
-    const c = await connect('/edit', 'a')
-    cleanups.push(() => c.destroy())
-    const before = sessions
-    execFileSync('pkill', ['-TERM', '-f', root])
-    await until(() => sessions > before && c.status.get() === 'connected', 15000)
-    expect(generations.at(-1)).toBe(generations[0])
-    expect(c.text.toString()).toBe('hello\n')
-    await sleep(300)
-    expect(c.text.toString()).toBe('hello\n')
-    expect(readFileSync(file, 'utf8')).toBe('hello\n')
-  })
+  // The two restart tests signal the child (pkill), which Windows cannot do without killing it.
+  const unix = process.platform === 'win32' ? it.skip : it
 
-  it('stops with `gone` when the restarted pedit lost its state, and keeps the page text', async () => {
-    const { root, discardState } = await start()
-    const c = await connect('/edit', 'a')
-    cleanups.push(() => c.destroy())
-    c.text.insert(5, ' typed')
-    const before = sessions
-    // The child saves on SIGTERM, so remove the state once it has exited.
-    execFileSync('pkill', ['-TERM', '-f', root])
-    await sleep(300)
-    await until(() => execFileSyncOk('pgrep', ['-f', root]) === false)
-    discardState()
-    const err = await new Promise<PeditError | undefined>((resolve) =>
-      c.status.subscribe((s, e) => s === 'closed' && resolve(e)),
-    )
-    expect(err).toMatchObject({ code: 'gone' })
-    expect(generations).toHaveLength(sessions)
-    expect(sessions).toBeGreaterThan(before)
-    expect(generations.at(-1)).not.toBe(generations[0])
-    expect(sockets).toHaveLength(1)
-    expect(c.text.toString()).toBe('hello typed\n')
-  })
+  unix(
+    'reconnects to a restarted pedit that kept its state, without duplicating the text',
+    async () => {
+      const { file, root } = await start()
+      const c = await connect('/edit', 'a')
+      cleanups.push(() => c.destroy())
+      const before = sessions
+      execFileSync('pkill', ['-TERM', '-f', root])
+      await until(() => sessions > before && c.status.get() === 'connected', 15000)
+      expect(generations.at(-1)).toBe(generations[0])
+      expect(c.text.toString()).toBe('hello\n')
+      await sleep(300)
+      expect(c.text.toString()).toBe('hello\n')
+      expect(readFileSync(file, 'utf8')).toBe('hello\n')
+    },
+  )
+
+  unix(
+    'stops with `gone` when the restarted pedit lost its state, and keeps the page text',
+    async () => {
+      const { root, discardState } = await start()
+      const c = await connect('/edit', 'a')
+      cleanups.push(() => c.destroy())
+      c.text.insert(5, ' typed')
+      const before = sessions
+      // The child saves on SIGTERM, so remove the state once it has exited.
+      execFileSync('pkill', ['-TERM', '-f', root])
+      await sleep(300)
+      await until(() => execFileSyncOk('pgrep', ['-f', root]) === false)
+      discardState()
+      const err = await new Promise<PeditError | undefined>((resolve) =>
+        c.status.subscribe((s, e) => s === 'closed' && resolve(e)),
+      )
+      expect(err).toMatchObject({ code: 'gone' })
+      expect(generations).toHaveLength(sessions)
+      expect(sessions).toBeGreaterThan(before)
+      expect(generations.at(-1)).not.toBe(generations[0])
+      expect(sockets).toHaveLength(1)
+      expect(c.text.toString()).toBe('hello typed\n')
+    },
+  )
 
   it('rejects connect when the first socket drops and the retry session is refused', async () => {
     await start()

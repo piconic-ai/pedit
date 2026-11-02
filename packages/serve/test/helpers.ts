@@ -1,22 +1,19 @@
-import {
-  chmodSync,
-  copyFileSync,
-  mkdirSync,
-  mkdtempSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs'
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { encodeFrame } from '../src/bridge.ts'
 import type { Bridge } from '../src/index.ts'
+import { nativeRealpathSync } from '../src/paths.ts'
 
 export const BIN = process.env.PEDIT_TEST_BIN
 
 export function tmpRoot(): { dir: string; cleanup: () => void } {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'pedit-serve-test-')))
-  return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) }
+  // Native: on Windows the temp dir is an 8.3 name (RUNNER~1) until the disk spelling is asked for.
+  const dir = nativeRealpathSync(mkdtempSync(join(tmpdir(), 'pedit-serve-test-')))
+  return {
+    dir, // A child that just exited may hold the directory for a moment on Windows.
+    cleanup: () => rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }),
+  }
 }
 
 export function write(dir: string, name: string, text = 'hello\n'): string {

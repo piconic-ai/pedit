@@ -1,9 +1,10 @@
 import { execFile } from 'node:child_process'
 import { constants } from 'node:fs'
-import { access, realpath, stat } from 'node:fs/promises'
+import { access, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, isAbsolute, join } from 'node:path'
 import { NoPeditError } from './errors.ts'
+import { nativeRealpath } from './paths.ts'
 
 /** The first pedit release with `pedit serve --stdio`: framed streams on the child's stdin and stdout. */
 export const MIN_PEDIT_VERSION = '0.5.0'
@@ -92,7 +93,7 @@ export async function resolvePedit(
   if (!isAbsolute(given)) throw new NoPeditError('the pedit binary must be an absolute path')
   let bin: string
   try {
-    bin = await realpath(given)
+    bin = await nativeRealpath(given)
     const st = await stat(bin)
     if (!st.isFile()) throw new NoPeditError('the pedit binary is not a regular file')
     // Windows has neither uid nor mode bits: the install location's ACL is what protects it.
