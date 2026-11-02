@@ -1,5 +1,15 @@
 # Changelog
 
+## [v0.5.0](https://github.com/piconic-ai/pedit/compare/v0.4.0...v0.5.0) - 2026-11-02
+
+- Sample: depend on the published @pedit/serve by @kfly8 in https://github.com/piconic-ai/pedit/pull/404
+- Design: serve over the child's stdio, and what Windows needs by @kfly8 in https://github.com/piconic-ai/pedit/pull/406
+- serve: talk to the child over stdio instead of a Unix socket by @kfly8 in https://github.com/piconic-ai/pedit/pull/407
+- cmd/pedit tests: run pedit without go build by @kfly8 in https://github.com/piconic-ai/pedit/pull/408
+- serve: support Windows by @kfly8 in https://github.com/piconic-ai/pedit/pull/410
+- Add install.ps1 for Windows by @kfly8 in https://github.com/piconic-ai/pedit/pull/409
+- Install on Windows with the short irm | iex command by @kfly8 in https://github.com/piconic-ai/pedit/pull/411
+
 ## [v0.4.0](https://github.com/piconic-ai/pedit/compare/v0.3.0...v0.4.0) - 2026-11-02
 
 - Add pedit resume; keep --resume as an alias for one release by @kfly8 in https://github.com/piconic-ai/pedit/pull/367
