@@ -1,9 +1,9 @@
 # serve-app
 
-The host side of embedding pedit in a local app (#235), as small as it gets: a
-Hono server runs `pedit serve` for one file through
-[`@pedit/serve`](../../packages/serve), and a page edits that file live in
-CodeMirror. Everything stays on this machine. There is no login: whoever can
+A local app with pedit inside, as small as it gets: a Hono server runs
+`pedit serve` for one file through [`@pedit/serve`](../../packages/serve), and a
+page edits that file live in CodeMirror. pedit writes the file; the page edits
+the document. Everything stays on this machine. There is no login: whoever can
 reach the page edits the file, so the server listens on 127.0.0.1 only.
 
 ## Requirements
@@ -17,10 +17,10 @@ reach the page edits the file, so the server listens on 127.0.0.1 only.
 ```sh
 npm install                # needs ../../packages/serve built: pnpm --filter @pedit/serve build
 npm run build              # bundles page.mjs into public/page.js
-node server.mjs            # PEDIT=/path/to/pedit only if pedit is not on the PATH
+node server.mjs            # PEDIT=/path/to/pedit only if pedit is not on the PATH; PORT=... for another port
 ```
 
-It prints `http://127.0.0.1:<port>/` and edits `content/demo.md`. `PEDIT=... node --test` checks it.
+Open `http://127.0.0.1:3000/`; it edits `content/demo.md`. `PEDIT=... node --test` checks it.
 
 - `server.mjs`: Hono, `peditRoutes` (the id `demo` is the only file served) and the static page.
 - `page.mjs`: `connect` from `@pedit/serve/client`, CodeMirror 6 with `yCollab`, a status line.
@@ -30,8 +30,6 @@ It prints `http://127.0.0.1:<port>/` and edits `content/demo.md`. `PEDIT=... nod
 - pedit edits an existing file and never creates one: an app's "new document"
   creates the file first (empty is fine), then connects. This sample creates
   `content/demo.md` at start for that reason.
-- Do not write the file yourself while a page is connected.
-- The child stops 60 s after the last page leaves and resumes the same document.
 - `gone` is rare (pedit's saved state was discarded); the app decides what to show.
 - The token is in the WebSocket URL: access logs must drop `token`.
 

@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawn } from 'node:child_process'
 import { request } from 'node:http'
+import { createServer } from 'node:net'
 import { createInterface } from 'node:readline'
 import { test } from 'node:test'
 import { WebSocket } from 'ws'
@@ -21,7 +22,18 @@ function post(origin, path, headers) {
 
 test('the app serves its page, guards the routes, and bridges the file', { skip }, async () => {
   execFileSync('npm', ['run', 'build'], { stdio: 'ignore' })
-  const app = spawn('node', ['server.mjs'], { stdio: ['ignore', 'pipe', 'inherit'] })
+  // A free port, so the test does not collide with a running sample on 3000.
+  const port = await new Promise((resolve) => {
+    const probe = createServer()
+    probe.listen(0, '127.0.0.1', () => {
+      const { port } = probe.address()
+      probe.close(() => resolve(port))
+    })
+  })
+  const app = spawn('node', ['server.mjs'], {
+    stdio: ['ignore', 'pipe', 'inherit'],
+    env: { ...process.env, PORT: String(port) },
+  })
   try {
     const line = await new Promise((resolve) =>
       createInterface({ input: app.stdout }).once('line', resolve),
