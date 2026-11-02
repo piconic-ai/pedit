@@ -176,7 +176,7 @@ func TestGoHostKeepsAWebSocketRoomWhileAway(t *testing.T) {
 	early := dialAwayGuest(t, relay, link, "")
 	shared, _ := url.Parse(link)
 	if out := host.stop(t); !strings.Contains(out, "Room stays open until") || !strings.Contains(out, "Room: "+strings.TrimPrefix(shared.Path, "/r/")) || !strings.Contains(out, "pedit notes.md") {
-		t.Fatalf("Ctrl+C did not say how long the room stays:\n%s", out)
+		t.Fatalf("Ctrl+C did not say how long the room stays:\n%s\nstderr:\n%s", out, host.stderr())
 	}
 	var kept string
 	for kept == "" {

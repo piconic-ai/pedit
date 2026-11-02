@@ -232,7 +232,7 @@ func TestKeptRoomEndToEnd(t *testing.T) {
 		t.Fatalf("the guest does not see the text: %+v", s)
 	}
 	if out := host.stop(t); !strings.Contains(out, "Room stays open until") {
-		t.Fatalf("Ctrl+C did not say how long the room stays:\n%s", out)
+		t.Fatalf("Ctrl+C did not say how long the room stays:\n%s\nstderr:\n%s", out, host.stderr())
 	}
 	first.editAway(r, link)
 	if r.logEntries(link) < 2 {
