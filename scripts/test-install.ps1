@@ -71,7 +71,8 @@ function Try-Install([string]$Name, [hashtable]$Env = @{}, [string]$Source = $re
   if ($SetDir) { $check = "Write-Host ('session-path-has-dir=' + ((`$env:Path -split ';') -contains `$env:PEDIT_INSTALL_DIR))" }
   Set-Content -LiteralPath $wrapper -Encoding ASCII -Value @(
     "`$ErrorActionPreference = 'Stop'",
-    "Get-Content -Raw -LiteralPath '$script' | Invoke-Expression",
+    # PowerShell 7 formats a thrown error with colors and line breaks; print the plain message.
+    "try { Get-Content -Raw -LiteralPath '$script' | Invoke-Expression } catch { [Console]::Error.WriteLine(`$_.Exception.Message); exit 1 }",
     "Write-Host 'shell-still-alive'",
     $check
   )
