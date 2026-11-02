@@ -15,8 +15,8 @@ reach the page edits the file, so the server listens on 127.0.0.1 only.
 ## Run
 
 ```sh
-npm install                # needs ../../packages/serve built: pnpm --filter @pedit/serve build
-npm run build              # bundles page.mjs into public/page.js
+npm install
+npm run build              # builds ../../packages/serve first (pnpm, with `pnpm install` run there once), then bundles page.mjs into public/page.js
 node server.mjs            # PEDIT=/path/to/pedit only if pedit is not on the PATH; PORT=... for another port
 ```
 
