@@ -35,10 +35,13 @@ func keptCommand(t *testing.T, directory string, args ...string) *keptProcess {
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	cmd.Dir = directory
 	keptGroup(cmd)
-	stdout, err := cmd.StdoutPipe()
+	// Not StdoutPipe: Wait closes its read end as soon as the process exits,
+	// which can drop the last lines (the ones printed on Ctrl+C) unread.
+	stdout, stdoutWriter, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
+	cmd.Stdout = stdoutWriter
 	input, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -48,7 +51,9 @@ func keptCommand(t *testing.T, directory string, args ...string) *keptProcess {
 		t.Fatal(err)
 	}
 	cmd.Stderr = log
-	if err := cmd.Start(); err != nil {
+	err = cmd.Start()
+	stdoutWriter.Close()
+	if err != nil {
 		t.Fatal(err)
 	}
 	p := &keptProcess{cmd: cmd, lines: make(chan string, 64), exited: make(chan struct{}), input: input, log: log.Name()}
@@ -58,6 +63,7 @@ func keptCommand(t *testing.T, directory string, args ...string) *keptProcess {
 			p.lines <- scanner.Text()
 		}
 		close(p.lines)
+		stdout.Close()
 	}()
 	go func() {
 		p.err = cmd.Wait()
@@ -129,6 +135,12 @@ func (p *keptProcess) stop(t *testing.T) string {
 		lines = append(lines, line)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// stderr returns what the process wrote to its log.
+func (p *keptProcess) stderr() string {
+	data, _ := os.ReadFile(p.log)
+	return string(data)
 }
 func keptRelay(t *testing.T) string {
 	t.Helper()
