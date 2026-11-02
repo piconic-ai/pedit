@@ -12,5 +12,5 @@ import (
 // and the final `saved` event is written while the file is being flushed on
 // the way out. Ignoring the signal turns that write into an EPIPE error, which
 // the event writer drops, and the shutdown (the last write, the state file,
-// the lock and the socket) completes.
+// the lock) completes.
 func ignoreSIGPIPE() { signal.Ignore(syscall.SIGPIPE) }

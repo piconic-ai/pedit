@@ -49,11 +49,11 @@ func newGeneration() string {
 	return hex.EncodeToString(b)
 }
 
-// stateDir is where states go: under SocketBase when it is set, else pedit's
+// stateRoot is where states go: under StateDir when it is set, else pedit's
 // config directory. It is empty when there is no safe place (not the temp directory).
-func (o Options) stateDir() string {
-	if o.SocketBase != "" {
-		return filepath.Join(o.SocketBase, "state")
+func (o Options) stateRoot() string {
+	if o.StateDir != "" {
+		return filepath.Join(o.StateDir, "state")
 	}
 	cfg, err := os.UserConfigDir()
 	if err != nil {
@@ -63,7 +63,7 @@ func (o Options) stateDir() string {
 }
 
 func (o Options) statePath(file string) string {
-	dir := o.stateDir()
+	dir := o.stateRoot()
 	if dir == "" {
 		return ""
 	}

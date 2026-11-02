@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { WebSocket } from 'ws'
 import { isLoopback, type PeditEvent, type PeditOptions, peditRoutes } from '../src/hono.ts'
 import { ServedFiles } from '../src/index.ts'
-import { BIN, isSyncStep1, sleep, syncStep1, tmpRoot, write } from './helpers.ts'
+import { BIN, isSyncStep1, printEvent, sleep, syncStep1, tmpRoot, write } from './helpers.ts'
 
 const cleanups: (() => void | Promise<void>)[] = []
 afterEach(async () => {
@@ -154,7 +154,7 @@ live('peditRoutes with a real pedit', () => {
       `#!/bin/sh
 [ "$1" = --version ] && { echo 1.2.3; exit 0; }
 n=$(cat '${counter}' 2>/dev/null || echo 0); n=$((n+1)); echo $n > '${counter}'
-echo '{"event":"listening","socket":"/nonexistent","generation":"g'$n'"}'
+${printEvent({ event: 'listening', generation: 'g#' }, 'n')}
 read _
 `,
     )

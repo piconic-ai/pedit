@@ -1,7 +1,6 @@
 package serve
 
 import (
-	"context"
 	"time"
 
 	"github.com/coder/websocket"
@@ -18,15 +17,8 @@ const (
 	// connection may introduce over its lifetime.
 	maxIntroduced = 1024
 
-	defaultPingInterval = 30 * time.Second
-	defaultFrameRate    = 1000 // frames per second, as the relay's burst limit
-	defaultStep1Rate    = 10   // sync step 1 per second: each encodes the whole doc
-
-	// roleHeader marks a read-only connection. It is trusted: only processes
-	// of the same user reach the 0700 socket, and the embedding library that
-	// drives them sets it for the clients it does not trust.
-	roleHeader = "X-Pedit-Role"
-	roleRead   = "read"
+	defaultFrameRate = 1000 // frames per second, as the relay's burst limit
+	defaultStep1Rate = 10   // sync step 1 per second: each encodes the whole doc
 )
 
 // closeError ends a connection with a WebSocket close code and a reason.
@@ -53,6 +45,8 @@ var (
 	errTooManyFrames = &closeError{websocket.StatusPolicyViolation, "too many frames", nil}
 	errTooManyStep1  = &closeError{websocket.StatusPolicyViolation, "too many sync requests", nil}
 	errTooManyAware  = &closeError{websocket.StatusPolicyViolation, "too many awareness clients", nil}
+	errTooLarge      = &closeError{websocket.StatusMessageTooBig, "message too large", nil}
+	errTooSlow       = &closeError{websocket.StatusTryAgainLater, "too slow", nil}
 )
 
 // bucket is a token bucket of rate tokens per second, rate at most at once.
@@ -167,34 +161,4 @@ func (s *Server) checkAwareness(c *client, entries []awEntry) error {
 		c.seen[id] = true
 	}
 	return nil
-}
-
-// heartbeat pings conn every interval and closes it with 1001 after two pings
-// in a row went unanswered, so an idle tab that is gone does not keep the
-// server (and its child process) alive. It runs until ctx ends.
-func heartbeat(ctx context.Context, conn *websocket.Conn, interval time.Duration) {
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	missed := 0
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-		}
-		pctx, cancel := context.WithTimeout(ctx, interval)
-		err := conn.Ping(pctx)
-		cancel()
-		switch {
-		case err == nil:
-			missed = 0
-		case ctx.Err() != nil:
-			return
-		default:
-			if missed++; missed >= 2 {
-				_ = conn.Close(websocket.StatusGoingAway, "ping timeout")
-				return
-			}
-		}
-	}
 }

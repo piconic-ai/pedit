@@ -29,7 +29,7 @@ func (r *restarter) open() *Server {
 	s, err := Open(r.file, Options{
 		App:        "test",
 		WriteDelay: 20 * time.Millisecond,
-		SocketBase: r.base,
+		StateDir:   r.base,
 		OnError:    func(err error) { r.t.Log("serve error:", err) },
 	})
 	if err != nil {
@@ -45,7 +45,7 @@ func reconnectWith(t *testing.T, s *Server, old *tclient) *tclient {
 	old.mu.Lock()
 	state := crdt.EncodeStateAsUpdateV1(old.doc, nil)
 	old.mu.Unlock()
-	c := dial(t, s.SocketPath())
+	c := dial(t, s)
 	c.mu.Lock()
 	err := crdt.ApplyUpdateV1(c.doc, state, nil)
 	c.mu.Unlock()
@@ -58,7 +58,7 @@ func reconnectWith(t *testing.T, s *Server, old *tclient) *tclient {
 func TestRestartResumesTheDocumentAndItsGeneration(t *testing.T) {
 	r := newRestarter(t, "hello\n")
 	s1 := r.open()
-	c1 := dial(t, s1.SocketPath())
+	c1 := dial(t, s1)
 	eventually(t, "the text", func() bool { return c1.get() == "hello\n" })
 	c1.insert(5, " world")
 	eventually(t, "the file", fileIs(t, r.file, "hello world\n"))
@@ -85,7 +85,7 @@ func TestRestartResumesTheDocumentAndItsGeneration(t *testing.T) {
 func TestFileEditedWhileDownIsMergedAndKeepsTheGeneration(t *testing.T) {
 	r := newRestarter(t, "hello\n")
 	s1 := r.open()
-	c1 := dial(t, s1.SocketPath())
+	c1 := dial(t, s1)
 	eventually(t, "the text", func() bool { return c1.get() == "hello\n" })
 	gen := s1.Generation()
 	if err := s1.Close(); err != nil {
@@ -181,7 +181,7 @@ func TestStateIsRemovedWhenTheFileIsGone(t *testing.T) {
 	if err := writeState(path, stateRecord{Version: stateVersion, Generation: "x", Saved: time.Now(), Doc: []byte{0}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Open(r.file, Options{SocketBase: r.base}); err == nil {
+	if _, err := Open(r.file, Options{StateDir: r.base}); err == nil {
 		t.Fatalf("open of a missing file: %v", err)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -195,7 +195,7 @@ func TestTwoInstancesNeverShareAState(t *testing.T) {
 	t.Cleanup(func() { _ = s1.Close() })
 	before := readState(s1.statePath)
 	var held *HeldError
-	if _, err := Open(r.file, Options{App: "second", SocketBase: r.base}); !errors.As(err, &held) {
+	if _, err := Open(r.file, Options{App: "second", StateDir: r.base}); !errors.As(err, &held) {
 		t.Fatalf("second open: %v", err)
 	}
 	if after := readState(s1.statePath); after == nil || after.Generation != before.Generation {
@@ -211,7 +211,7 @@ func TestCrashAroundAFileWriteDoesNotRepeatTheEdit(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			r := newRestarter(t, "hello\n")
 			s1 := r.open()
-			c1 := dial(t, s1.SocketPath())
+			c1 := dial(t, s1)
 			eventually(t, "the text", func() bool { return c1.get() == "hello\n" })
 			c1.insert(5, " world")
 			eventually(t, "the file", fileIs(t, r.file, "hello world\n"))
@@ -247,7 +247,7 @@ func TestCrashAroundAFileWriteDoesNotRepeatTheEdit(t *testing.T) {
 func TestFileChangedAroundAnUncertainWriteStartsAfresh(t *testing.T) {
 	r := newRestarter(t, "hello\n")
 	s1 := r.open()
-	c1 := dial(t, s1.SocketPath())
+	c1 := dial(t, s1)
 	eventually(t, "the text", func() bool { return c1.get() == "hello\n" })
 	c1.insert(5, " world")
 	eventually(t, "the file", fileIs(t, r.file, "hello world\n"))

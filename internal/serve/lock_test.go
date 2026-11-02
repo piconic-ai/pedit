@@ -21,7 +21,7 @@ func lockTestFile(t *testing.T) string {
 
 func wantNotLock(t *testing.T, file string) {
 	t.Helper()
-	s, err := Open(file, Options{SocketBase: base(t)})
+	s, err := Open(file, Options{StateDir: base(t)})
 	if err == nil {
 		_ = s.Close()
 		t.Fatal("Open succeeded on a lock path that is not a lock file")
@@ -102,7 +102,7 @@ func TestHolderNameFromLockFileIsCappedAndClean(t *testing.T) {
 	if ok, err := lockFile(f); !ok || err != nil {
 		t.Fatalf("lockFile = %v, %v", ok, err)
 	}
-	_, err = Open(file, Options{SocketBase: base(t)})
+	_, err = Open(file, Options{StateDir: base(t)})
 	var held *HeldError
 	if !errors.As(err, &held) {
 		t.Fatalf("Open = %v, want *HeldError", err)

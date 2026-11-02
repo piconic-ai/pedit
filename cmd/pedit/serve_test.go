@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"io"
 	"os"
@@ -17,21 +19,21 @@ import (
 func TestServeHelpIsExperimental(t *testing.T) {
 	var stdout, stderr strings.Builder
 	if code := run([]string{"serve", "--help"}, &stdout, &stderr); code != 0 ||
-		!strings.Contains(stdout.String(), "Usage: pedit serve [--root <dir>] <file>") ||
+		!strings.Contains(stdout.String(), "Usage: pedit serve --stdio") ||
 		!strings.Contains(stdout.String(), "EXPERIMENTAL") {
 		t.Fatalf("code %d\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
 	}
 }
 
 func TestParseServeArgs(t *testing.T) {
-	got, err := parseServeArgs([]string{"a.md", "--json", "--app", "sample"})
-	if err != nil || got != (serveArgs{file: "a.md", app: "sample", json: true}) {
+	got, err := parseServeArgs([]string{"--stdio", "--app", "sample", "--", "a.md"})
+	if err != nil || got != (serveArgs{file: "a.md", app: "sample", stdio: true}) {
 		t.Fatalf("%+v %v", got, err)
 	}
-	if got, err := parseServeArgs([]string{"--", "--odd.md"}); err != nil || got.file != "--odd.md" {
+	if got, err := parseServeArgs([]string{"--stdio", "--", "--odd.md"}); err != nil || got.file != "--odd.md" {
 		t.Fatalf("%+v %v", got, err)
 	}
-	for _, args := range [][]string{{}, {"a", "b"}, {"a", "--app"}, {"a", "--tcp"}} {
+	for _, args := range [][]string{{"a.md"}, {"--stdio"}, {"--stdio", "a", "b"}, {"--stdio", "a", "--app"}, {"--stdio", "a", "--tcp"}, {"--stdio", "a", "--json"}} {
 		if _, err := parseServeArgs(args); err == nil {
 			t.Errorf("accepted %v", args)
 		}
@@ -44,7 +46,7 @@ func TestParseServeArgs(t *testing.T) {
 
 type lockedBuilder struct {
 	mu sync.Mutex
-	b  strings.Builder
+	b  bytes.Buffer
 }
 
 func (l *lockedBuilder) Write(p []byte) (int, error) {
@@ -59,101 +61,168 @@ func (l *lockedBuilder) String() string {
 	return l.b.String()
 }
 
-func TestServeRunsUntilStdinCloses(t *testing.T) {
-	file := filepath.Join(t.TempDir(), "a.md")
-	if err := os.WriteFile(file, []byte("hi\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	pr, pw := io.Pipe()
-	serveStdin = pr
-	t.Cleanup(func() { serveStdin = os.Stdin })
-
-	var stdout, stderr lockedBuilder
-	done := make(chan int)
-	go func() { done <- run([]string{"serve", file, "--json", "--app", "t"}, &stdout, &stderr) }()
-
-	var event struct{ Event, Socket, Generation string }
-	deadline := time.Now().Add(5 * time.Second)
-	for json.Unmarshal([]byte(stdout.String()), &event) != nil {
-		if time.Now().After(deadline) {
-			t.Fatalf("no listening event; stderr: %s", stderr.String())
+// frames parses all of out as frames; anything else fails the test.
+func frames(t *testing.T, out string) []frame {
+	t.Helper()
+	var got []frame
+	b := []byte(out)
+	for len(b) > 0 {
+		if len(b) < 9 {
+			t.Fatalf("stdout has %d stray bytes: %q", len(b), b)
 		}
-		time.Sleep(5 * time.Millisecond)
+		n := int(binary.BigEndian.Uint32(b[5:]))
+		if len(b) < 9+n {
+			t.Fatalf("frame cut short in stdout: %q", b)
+		}
+		got = append(got, frame{kind: b[0], stream: binary.BigEndian.Uint32(b[1:]), payload: b[9 : 9+n]})
+		b = b[9+n:]
 	}
-	if event.Event != "listening" {
-		t.Fatalf("event %+v", event)
-	}
-	if _, err := os.Stat(event.Socket); err != nil {
-		t.Fatal(err)
-	}
-	if matched, _ := regexp.MatchString(`^[0-9a-f]{32}$`, event.Generation); !matched {
-		t.Fatalf("generation %q, want 32 hex digits", event.Generation)
-	}
-
-	// A second one is refused, naming the first.
-	var out2, err2 strings.Builder
-	if code := runServe([]string{file, "--app", "second"}, &out2, &err2); code != 3 || !strings.Contains(err2.String(), `app "t"`) {
-		t.Fatalf("second serve: code %d, stderr %s", code, err2.String())
-	}
-
-	_ = pw.Close()
-	if code := <-done; code != 0 {
-		t.Fatalf("code %d, stderr %s", code, stderr.String())
-	}
-	if _, err := os.Stat(event.Socket); !os.IsNotExist(err) {
-		t.Fatalf("socket left behind: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(filepath.Dir(file), ".a.md.pedit-lock")); !os.IsNotExist(err) {
-		t.Fatalf("lock left behind: %v", err)
-	}
+	return got
 }
 
-// waitFor polls out until it holds at least n lines, and returns them.
-func waitFor(t *testing.T, out *lockedBuilder, n int) []string {
+type frame struct {
+	kind    byte
+	stream  uint32
+	payload []byte
+}
+
+// eventFrames are the events in out, which must hold event frames only.
+func eventFrames(t *testing.T, out string) []map[string]any {
+	t.Helper()
+	var events []map[string]any
+	for _, f := range frames(t, out) {
+		var e map[string]any
+		if f.kind != 4 || f.stream != 0 || json.Unmarshal(f.payload, &e) != nil {
+			t.Fatalf("not an event frame: %+v", f)
+		}
+		events = append(events, e)
+	}
+	return events
+}
+
+// waitFor polls out until it holds at least n events, and returns them.
+func waitFor(t *testing.T, out *lockedBuilder, n int) []map[string]any {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-		if len(lines) >= n && lines[0] != "" {
-			return lines
+		s := out.String()
+		if len(s) >= 9 {
+			// Only whole frames count.
+			var events []map[string]any
+			b := []byte(s)
+			for len(b) >= 9 && len(b) >= 9+int(binary.BigEndian.Uint32(b[5:])) {
+				var e map[string]any
+				_ = json.Unmarshal(b[9:9+int(binary.BigEndian.Uint32(b[5:]))], &e)
+				events = append(events, e)
+				b = b[9+int(binary.BigEndian.Uint32(b[5:])):]
+			}
+			if len(events) >= n {
+				return events
+			}
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("want %d lines, have %q", n, out.String())
+			t.Fatalf("want %d events, have %q", n, out.String())
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
 }
 
-func eventNames(t *testing.T, out string) []string {
-	t.Helper()
-	var names []string
-	for _, l := range strings.Split(strings.TrimSpace(out), "\n") {
-		var e struct{ Event string }
-		if err := json.Unmarshal([]byte(l), &e); err != nil {
-			t.Fatalf("not an event: %q", l)
-		}
-		names = append(names, e.Event)
-	}
-	return names
-}
-
-func startServe(t *testing.T, args ...string) (stdout, stderr *lockedBuilder, stop func() int) {
+func startServe(t *testing.T, args ...string) (stdout, stderr *lockedBuilder, stdin *io.PipeWriter, stop func() int) {
 	t.Helper()
 	pr, pw := io.Pipe()
 	serveStdin = pr
 	t.Cleanup(func() { serveStdin = os.Stdin })
 	stdout, stderr = &lockedBuilder{}, &lockedBuilder{}
 	done := make(chan int, 1)
-	go func() { done <- run(append([]string{"serve"}, args...), stdout, stderr) }()
-	return stdout, stderr, func() int { _ = pw.Close(); return <-done }
+	go func() { done <- run(append([]string{"serve", "--stdio"}, args...), stdout, stderr) }()
+	return stdout, stderr, pw, func() int { _ = pw.Close(); return <-done }
 }
 
-func TestServeJSONEventsInOrder(t *testing.T) {
+func writeFile(t *testing.T, content string) string {
+	t.Helper()
 	file := filepath.Join(t.TempDir(), "a.md")
-	if err := os.WriteFile(file, []byte("hi\n"), 0o644); err != nil {
+	if err := os.WriteFile(file, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	stdout, stderr, stop := startServe(t, file, "--json")
+	return file
+}
+
+func TestServeRunsUntilStdinCloses(t *testing.T) {
+	file := writeFile(t, "hi\n")
+	stdout, stderr, _, stop := startServe(t, "--app", "t", "--", file)
+	event := waitFor(t, stdout, 1)[0]
+	if event["event"] != "listening" || event["socket"] != nil {
+		t.Fatalf("event %+v", event)
+	}
+	if matched, _ := regexp.MatchString(`^[0-9a-f]{32}$`, event["generation"].(string)); !matched {
+		t.Fatalf("generation %q, want 32 hex digits", event["generation"])
+	}
+
+	// A second one is refused, naming the first.
+	var out2, err2 strings.Builder
+	if code := runServe([]string{"--stdio", "--app", "second", "--", file}, &out2, &err2); code != 3 || !strings.Contains(err2.String(), `app "t"`) {
+		t.Fatalf("second serve: code %d, stderr %s", code, err2.String())
+	}
+
+	if code := stop(); code != 0 {
+		t.Fatalf("code %d, stderr %s", code, stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(file), ".a.md.pedit-lock")); !os.IsNotExist(err) {
+		t.Fatalf("lock left behind: %v", err)
+	}
+}
+
+func TestServeStdoutIsFramesOnly(t *testing.T) {
+	file := writeFile(t, "hi\n")
+	stdout, stderr, stdin, stop := startServe(t, "--", file)
+	waitFor(t, stdout, 1)
+	// A stream, an edit that is saved, and a close: all of it frames.
+	open := []byte{1, 0, 0, 0, 1, 0, 0, 0, 1, 0}
+	if _, err := stdin.Write(open); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, stdout, 2)
+	if err := os.WriteFile(file, []byte("hi there\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(stdout.String(), "external_save") && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if code := stop(); code != 0 {
+		t.Fatalf("code %d, stderr %s", code, stderr.String())
+	}
+	kinds := map[byte]int{}
+	for _, f := range frames(t, stdout.String()) {
+		kinds[f.kind]++
+	}
+	if kinds[4] < 2 || kinds[2] == 0 {
+		t.Fatalf("kinds %v: want events and data", kinds)
+	}
+}
+
+func TestServeFormatViolationExitsOneAfterSaving(t *testing.T) {
+	file := writeFile(t, "hi\n")
+	stdout, stderr, stdin, stop := startServe(t, "--", file)
+	waitFor(t, stdout, 1)
+	if _, err := stdin.Write([]byte{9, 0, 0, 0, 1, 0, 0, 0, 0}); err != nil {
+		t.Fatal(err)
+	}
+	if code := stop(); code != 1 || !strings.Contains(stderr.String(), "framing") {
+		t.Fatalf("code %d, stderr %s", code, stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(file), ".a.md.pedit-lock")); !os.IsNotExist(err) {
+		t.Fatalf("lock left behind: %v", err)
+	}
+	events := eventFrames(t, stdout.String())
+	if last := events[len(events)-1]; last["event"] != "error" {
+		t.Fatalf("events %v", events)
+	}
+}
+
+func TestServeEventsInOrder(t *testing.T) {
+	file := writeFile(t, "hi\n")
+	stdout, stderr, _, stop := startServe(t, "--", file)
 	waitFor(t, stdout, 1)
 	if err := os.WriteFile(file, []byte("hi there\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -162,45 +231,36 @@ func TestServeJSONEventsInOrder(t *testing.T) {
 	if code := stop(); code != 0 {
 		t.Fatalf("code %d, stderr %s", code, stderr.String())
 	}
-	if got := eventNames(t, stdout.String()); got[0] != "listening" || got[1] != "external_save" {
+	if got := eventFrames(t, stdout.String()); got[0]["event"] != "listening" || got[1]["event"] != "external_save" {
 		t.Fatalf("events %v", got)
 	}
 }
 
 func TestServeErrorEventExitsOne(t *testing.T) {
-	var stdout, stderr strings.Builder
+	var stdout, stderr bytes.Buffer
 	missing := filepath.Join(t.TempDir(), "missing.md")
-	if code := runServe([]string{missing, "--json"}, &stdout, &stderr); code != 1 {
+	if code := runServe([]string{"--stdio", "--", missing}, &stdout, &stderr); code != 1 {
 		t.Fatalf("code %d", code)
 	}
-	var e struct{ Event, Message string }
-	if err := json.Unmarshal([]byte(stdout.String()), &e); err != nil || e.Event != "error" || e.Message == "" || strings.Contains(e.Message, "\n") {
-		t.Fatalf("stdout %q: %v", stdout.String(), err)
-	}
-	// Without --json the exit code is the same and stdout stays empty.
-	stdout.Reset()
-	if code := runServe([]string{missing}, &stdout, &stderr); code != 1 || stdout.String() != "" {
-		t.Fatalf("code %d, stdout %q", code, stdout.String())
+	e := eventFrames(t, stdout.String())
+	msg, _ := e[0]["message"].(string)
+	if len(e) != 1 || e[0]["event"] != "error" || msg == "" || strings.Contains(msg, "\n") {
+		t.Fatalf("events %v", e)
 	}
 }
 
 func TestServeHeldEventExitsThree(t *testing.T) {
-	file := filepath.Join(t.TempDir(), "a.md")
-	if err := os.WriteFile(file, []byte("hi\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	stdout, _, stop := startServe(t, file, "--json", "--app", "first")
+	file := writeFile(t, "hi\n")
+	stdout, _, _, stop := startServe(t, "--app", "first", "--", file)
 	waitFor(t, stdout, 1)
-	var out2, err2 strings.Builder
-	if code := runServe([]string{file, "--json"}, &out2, &err2); code != 3 {
+	var out2 bytes.Buffer
+	var err2 strings.Builder
+	if code := runServe([]string{"--stdio", "--", file}, &out2, &err2); code != 3 {
 		t.Fatalf("code %d, stderr %s", code, err2.String())
 	}
-	var e struct {
-		Event, App string
-		PID        int
-	}
-	if err := json.Unmarshal([]byte(out2.String()), &e); err != nil || e.Event != "held" || e.App != "first" || e.PID != os.Getpid() {
-		t.Fatalf("stdout %q: %+v %v", out2.String(), e, err)
+	e := eventFrames(t, out2.String())
+	if len(e) != 1 || e[0]["event"] != "held" || e[0]["app"] != "first" || e[0]["pid"] != float64(os.Getpid()) {
+		t.Fatalf("events %v", e)
 	}
 	stop()
 }
@@ -222,14 +282,15 @@ func TestServeRootRefusesPathsOutside(t *testing.T) {
 		t.Skip("no symlinks:", err)
 	}
 	for _, name := range []string{"../x", filepath.Join(base, "x"), "link/y.md"} {
-		var stdout, stderr strings.Builder
-		code := runServe([]string{"--root", root, name, "--json"}, &stdout, &stderr)
-		if code != 1 || !strings.Contains(stderr.String(), "is outside") || !strings.Contains(stdout.String(), `"event":"error"`) {
+		var stdout bytes.Buffer
+		var stderr strings.Builder
+		code := runServe([]string{"--stdio", "--root", root, "--", name}, &stdout, &stderr)
+		if code != 1 || !strings.Contains(stderr.String(), "is outside") || !strings.Contains(stdout.String(), "error") {
 			t.Errorf("%s: code %d, stdout %q, stderr %q", name, code, stdout.String(), stderr.String())
 		}
 	}
 
-	stdout, stderr, stop := startServe(t, "--root", root, filepath.Join("sub", "ok.md"), "--json")
+	stdout, stderr, _, stop := startServe(t, "--root", root, "--", filepath.Join("sub", "ok.md"))
 	waitFor(t, stdout, 1)
 	if _, err := os.Stat(filepath.Join(root, "sub", ".ok.md.pedit-lock")); err != nil {
 		t.Error(err)
@@ -253,21 +314,15 @@ func TestMain(m *testing.M) {
 }
 
 func TestServeGenerationSurvivesARestart(t *testing.T) {
-	file := filepath.Join(t.TempDir(), "a.md")
-	if err := os.WriteFile(file, []byte("hi\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	var seen []string
+	file := writeFile(t, "hi\n")
+	var seen []any
 	for range 2 {
-		stdout, stderr, stop := startServe(t, file, "--json")
-		var e struct{ Generation string }
-		if err := json.Unmarshal([]byte(waitFor(t, stdout, 1)[0]), &e); err != nil {
-			t.Fatal(err)
-		}
+		stdout, stderr, _, stop := startServe(t, "--", file)
+		g := waitFor(t, stdout, 1)[0]["generation"]
 		if code := stop(); code != 0 {
 			t.Fatalf("code %d, stderr %s", code, stderr.String())
 		}
-		seen = append(seen, e.Generation)
+		seen = append(seen, g)
 	}
 	if seen[0] == "" || seen[0] != seen[1] {
 		t.Fatalf("generations %q, want the same twice", seen)
@@ -291,7 +346,7 @@ func TestServeSurvivesAParentThatStoppedReading(t *testing.T) {
 	if err := os.WriteFile(file, []byte("hi\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(bin, "serve", file, "--json", "--app", "t")
+	cmd := exec.Command(bin, "serve", "--stdio", "--app", "t", "--", file)
 	cmd.Env = append(os.Environ(), "HOME="+t.TempDir())
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -306,7 +361,7 @@ func TestServeSurvivesAParentThatStoppedReading(t *testing.T) {
 	}
 	var first [4096]byte
 	n, err := stdout.Read(first[:])
-	if err != nil || !strings.Contains(string(first[:n]), `"listening"`) {
+	if err != nil || !strings.Contains(string(first[:n]), "listening") {
 		t.Fatalf("first line %q: %v", first[:n], err)
 	}
 	// The parent is gone: nobody reads stdout any more.
