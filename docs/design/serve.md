@@ -56,3 +56,112 @@ The state is removed when the file is gone (on exit, and when pedit is asked to
 serve a path that does not exist). Age does not remove it: an old state is only
 ignored, and replaced by the next write. A state for a file that is never
 served again stays until removed by hand.
+
+## Transport: the child's standard streams
+
+Until now the child listened on a Unix socket in a `0700` directory, and the
+app dialled it once per page. Node cannot reach an AF_UNIX socket on Windows
+(it takes a path there as a named pipe), and a host without Node, such as a
+Tauri app, would have to speak WebSocket to the socket. So the socket goes:
+the app talks to the child over the child's stdin and stdout, one stream per
+page. The browser side does not change: the routes, the session token, the
+Origin check and `resolve` stay in `@pedit/serve`, and `ServedFile.dial`
+still returns a `Bridge`.
+
+`pedit serve --stdio` is the only way to serve; the socket mode and the
+`listening.socket` field are removed, not kept beside it. `@pedit/serve`
+requires the pedit version that ships this (`MIN_PEDIT_VERSION`), and its
+version check refuses an older one as today.
+
+### What may reach a file
+
+The transport must not widen what the child can read or write. These hold,
+and tests pin them:
+
+- The file is chosen once, by the command line (`--root <dir> -- <name>`), and
+  bound under `os.Root`. No frame names a path or asks to open anything; a
+  second file is a second child.
+- Besides the file, the child touches only its lock beside the file and its
+  state file (see above). The socket directory is gone.
+- A stream's role is set by its `open` frame and never changes. `read` is
+  enforced by pedit: an update from a reader closes the stream (4003).
+- Only the parent holds the pipes. Any process of the user could dial the old
+  socket; nothing but the parent reaches stdin.
+- The child gets only its three pipes and the environment `peditEnv()` lists.
+
+### Frames
+
+Each direction is a sequence of frames, nothing else:
+
+    kind (1 byte) | stream (uint32, big-endian) | length (uint32, big-endian) | payload
+
+| Kind | From | Payload |
+| --- | --- | --- |
+| `1` open | app | one byte: `0` edit, `1` read |
+| `2` data | both | one y-websocket message, as a WebSocket binary frame carried it |
+| `3` close | both | from the app, empty; from pedit, a uint16 close code and a UTF-8 reason of at most 123 bytes |
+| `4` event | pedit | stream 0; one JSON event as `--json` printed it (`listening`, `saved`, `external_save`, `held`, `error`) |
+
+- Stream ids are chosen by the app, start at 1 and only increase; an id is
+  never reused within a child. At most 8 streams are open at once.
+- A frame from the app that breaks the format ends the child (it saves first):
+  an unknown kind, a length over 64 MiB, an `open` with an id that is not
+  greater than every earlier one, an eighth-plus-one open stream, or `data`
+  or `close` for an id never opened.
+- `data` or `close` for a stream pedit has already closed is ignored: the app
+  may have sent it before the close arrived.
+- A malformed y-websocket message inside `data` closes that stream only, with
+  the codes used today (1003, 1008, 4003).
+- stdout carries frames only. Every message for people goes to stderr; a test
+  parses all of stdout as frames.
+
+### Liveness and back-pressure
+
+- The pipe has no peer to lose but the parent: when stdin ends, pedit saves
+  and exits, as it does now. No ping per stream: the app watches the browser's
+  WebSocket and closes the stream when the page goes.
+- One goroutine writes stdout. Each stream keeps its queue of 1024 messages; a
+  stream that fills it is closed (1013) instead of holding the others back.
+- The app reads stdout without pause and never waits on a browser; a page
+  whose socket buffers more than 16 MiB is closed (1013), as today.
+
+## Windows
+
+`@pedit/serve` refuses Windows today (`served.ts`, `resolve.ts`). With the
+transport above, these are what remain to check before lifting that, each
+with a test on `windows-latest`:
+
+- Stopping: Node's `child.kill('SIGTERM')` is `TerminateProcess` on Windows, a
+  hard kill inside the write delay. Stop by closing stdin only, and give up
+  (with an error event) instead of killing.
+- The state file: Windows has no `0600`. `readState` refuses any state whose
+  mode is not `0600`, so every restart would start afresh and pages would get
+  `gone`. Check that the state directory is the user's own (by SID, as the
+  configuration check already does) instead of the mode.
+- Writing the file: the atomic replace (`internal/filewriter`) can fail while
+  another process (an editor, an indexer, antivirus) holds the file open
+  without sharing delete. Retry, then report, and never leave a partial file.
+- Watching: fsnotify uses `ReadDirectoryChangesW`; check that an editor's
+  atomic save is still taken in as an external save.
+- One file, one child: `ServedFiles` keys a file by realpath and `dev:ino`.
+  Node can report an `ino` of 0 on some file systems (FAT, network shares),
+  which would make different files one; and paths differ only in case. Do not
+  alias on an `ino` of 0, and compare paths case-insensitively.
+- `root`: `inside()` uses `path.relative`, which returns an absolute path
+  across drives; that is refused already, and a test should say so. Cover
+  `\\?\` paths, 8.3 short names and junctions too.
+- The binary: find `pedit.exe` on the PATH, and set the environment
+  `peditEnv()` passes for Windows (`USERPROFILE`, `APPDATA`, `LOCALAPPDATA`,
+  `SystemRoot`, `TEMP`).
+- Line endings: a file with CRLF stays CRLF (`internal/lineend`).
+
+## Order of work
+
+1. This design.
+2. pedit: `--stdio`, frames, the socket removed; tests including the stdout
+   check and the format violations above.
+3. `@pedit/serve`: the bridge over the child's pipes, `MIN_PEDIT_VERSION`
+   raised; `hono.ts` and the client unchanged.
+4. `examples/serve-app` on macOS, then its test on `windows-latest` in CI.
+5. The Windows checks above, then lift the refusal.
+6. irori-cms, as a trial on a branch of its own.
