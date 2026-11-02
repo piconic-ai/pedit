@@ -21,6 +21,14 @@ name: tagpr
 on:
   push:
     branches: ["main"]
+  # Publish @pedit/serve again for a tag that exists (for example after the
+  # npm trusted publisher was fixed). Only the publish job runs then.
+  workflow_dispatch:
+    inputs:
+      publish_tag:
+        type: string
+        required: true
+        description: Existing release tag whose @pedit/serve to publish (e.g. v0.4.0)
 
 # Read-only by default; each job asks for the writes it needs.
 permissions:
@@ -32,6 +40,7 @@ concurrency:
 
 jobs:
   tagpr:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     # Pushes the release PR branch and the tag, opens and labels the release PR.
     permissions:
@@ -85,6 +94,24 @@ jobs:
         run: gh release upload "$TAG" "$RUNNER_TEMP"/pedit-release/* --clobber
       - name: Publish the completed release
         run: gh release edit "$TAG" --draft=false
+
+  # npm validates the calling workflow's file name for trusted publishing, so
+  # the package's trusted publisher names tagpr.yml; the steps live in
+  # publish-npm.yml. Runs after the Release is complete, or alone on dispatch.
+  publish-npm:
+    name: Publish @pedit/serve
+    needs: [tagpr, release-cli]
+    if: >-
+      always() && (
+        (github.event_name == 'workflow_dispatch' && inputs.publish_tag != '') ||
+        (needs.tagpr.outputs.tag != '' && needs.release-cli.result == 'success')
+      )
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/publish-npm.yml
+    with:
+      tag: ${{ inputs.publish_tag || needs.tagpr.outputs.tag }}
 
   update-homebrew-formula:
     needs: [tagpr, release-cli]

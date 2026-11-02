@@ -161,22 +161,26 @@ and `edit-lab-blobs` is the lab's.
 
 ### npm package
 
-`@pedit/serve` (packages/serve) is published to npm by
-`.github/workflows/publish-npm.yml` when a Release is published, with the
-release's version: the package and the CLI share one version number. tagpr.yml
-publishes the Release only after the CLI archives were built and attached, so a
-release whose build failed publishes no package. The job authenticates with
-npm's trusted publishing (a GitHub OIDC token; no npm token is stored) and
-publishes with provenance.
+`@pedit/serve` (packages/serve) is published to npm by tagpr.yml's
+`publish-npm` job, which calls `.github/workflows/publish-npm.yml` once the
+Release is complete, with the release's version: the package and the CLI share
+one version number. The job runs only after the CLI archives were built and
+attached, so a release whose build failed publishes no package. (A `release`
+trigger would not do: a Release published with `GITHUB_TOKEN` starts no other
+workflow.) The job authenticates with npm's trusted publishing (a GitHub OIDC
+token; no npm token is stored) and publishes with provenance.
 
 One-time setup, done by hand: the first version was published from a
 maintainer's machine (`pnpm --filter @pedit/serve build`, then `npm publish
---access public` in packages/serve), because npm lets a trusted publisher be
-configured only on a package that exists. Then, on npmjs.com under the
-package's settings, "Trusted Publisher": GitHub Actions, organization
-`piconic-ai`, repository `pedit`, workflow `publish-npm.yml`, no environment.
-To publish a release again (for example after fixing that configuration), run
-the workflow by hand with the tag.
+--access public --provenance=false` in packages/serve; provenance needs a
+cloud CI runner, which the package's `publishConfig` otherwise asks for),
+because npm lets a trusted publisher be configured only on a package that
+exists. Then, on npmjs.com under the package's settings, "Trusted Publisher":
+GitHub Actions, organization `piconic-ai`, repository `pedit`, workflow
+`tagpr.yml` (npm checks the calling workflow's file name, not the reusable
+one), no environment. To publish a release again (for example after fixing
+that configuration), run the tagpr workflow by hand with the tag in
+`publish_tag`: only the publish job runs then.
 
 ### Lab
 

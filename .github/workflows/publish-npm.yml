@@ -1,22 +1,21 @@
 name: publish-npm
 
-# Publishes @pedit/serve to npm with the version of the pedit release that
-# tagpr.yml just completed: the package follows the CLI's version, one number
-# for both (docs/contributing/deployment.md "npm package"). It runs once a
-# Release is published, which tagpr.yml does only after the CLI archives were
-# built and attached, so a release whose build failed publishes nothing.
+# Publishes @pedit/serve to npm with the version of a pedit release: the
+# package follows the CLI's version, one number for both
+# (docs/contributing/deployment.md "npm package"). tagpr.yml calls this after
+# the CLI archives were built and attached to the Release, so a release whose
+# build failed publishes nothing. It is a reusable workflow, not a `release`
+# trigger: a Release published with GITHUB_TOKEN starts no other workflow.
 #
 # Authentication is npm's trusted publishing: the job presents a GitHub OIDC
-# token (id-token: write) and npm checks it against the trusted publisher
-# configured for the package (this repository and this workflow file). No
-# token is stored. The publish carries provenance, which npm shows on the
-# package page and `npm audit signatures` verifies.
+# token (id-token: write, in the caller too) and npm checks it against the
+# trusted publisher configured for the package. npm validates the calling
+# workflow's file name, so the trusted publisher names tagpr.yml, not this
+# file. No token is stored. The publish carries provenance, which npm shows on
+# the package page and `npm audit signatures` verifies.
 
 on:
-  release:
-    types: [published]
-  # A retry for a release whose publish failed; the tag must already exist.
-  workflow_dispatch:
+  workflow_call:
     inputs:
       tag:
         type: string
@@ -34,7 +33,7 @@ jobs:
       contents: read
       id-token: write
     env:
-      TAG: ${{ inputs.tag || github.event.release.tag_name }}
+      TAG: ${{ inputs.tag }}
     steps:
       - name: Check the tag
         run: |
