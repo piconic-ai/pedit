@@ -9,16 +9,14 @@ reach the page edits the file, so the server listens on 127.0.0.1 only.
 ## Requirements
 
 - pedit 0.4.0 or later on the PATH (`brew install piconic-ai/tap/pedit`, the
-  install script, or a GitHub release), or `PEDIT=/path/to/pedit`. Until 0.4.0
-  is out, build it from this repository: `go build -o /tmp/pedit ./cmd/pedit`
-  at the repository root, then `PEDIT=/tmp/pedit`.
+  install script, or a GitHub release), or `PEDIT=/path/to/pedit`.
 - Node 22 or later, on macOS or Linux.
 
 ## Run
 
 ```sh
 npm install
-npm run build              # installs and builds ../../packages/serve (needs pnpm), then bundles page.mjs into public/page.js
+npm run build              # bundles page.mjs into public/page.js
 node server.mjs            # PEDIT=/path/to/pedit only if pedit is not on the PATH; PORT=... for another port
 ```
 
