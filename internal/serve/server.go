@@ -370,7 +370,7 @@ func (s *Server) watch() error {
 // when quit closes, and reports false for a message that cannot be sent.
 type conn interface {
 	write(msg []byte, quit <-chan struct{}) bool
-	close(*closeError)
+	close(ce *closeError, quit <-chan struct{})
 }
 
 // A client is one stream's end. Everything sent to it goes through out, so a
@@ -382,6 +382,7 @@ type client struct {
 	pumped chan struct{} // closes when the writer of out has returned
 	off    func()
 	once   sync.Once
+	dropIt sync.Once
 	ids    map[uint64]bool // awareness client IDs it announced
 	seen   map[uint64]bool // every ID it introduced to the room, removed ones too
 	closed bool            // out is closed; guarded by Server.mu
@@ -490,10 +491,16 @@ func (s *Server) receive(c *client, data []byte) {
 	}
 }
 
+// drop makes c's writes give up and its queue be dropped.
+func (c *client) drop() { c.dropIt.Do(func() { close(c.quit) }) }
+
 // finish ends c once: it leaves the room and the stream is closed with the
 // code of ending, if it is a *closeError. With drain, what was queued is sent
 // first; without, it is dropped.
 func (c *client) finish(s *Server, ending error, drain bool) {
+	if !drain {
+		c.drop() // even if another finish is already draining
+	}
 	c.once.Do(func() {
 		c.off()
 		s.mu.Lock()
@@ -504,13 +511,10 @@ func (c *client) finish(s *Server, ending error, drain bool) {
 			close(c.out)
 		}
 		s.mu.Unlock()
-		if !drain {
-			close(c.quit)
-		}
 		<-c.pumped
 		var ce *closeError
 		errors.As(ending, &ce)
-		c.conn.close(ce)
+		c.conn.close(ce, c.quit)
 	})
 }
 

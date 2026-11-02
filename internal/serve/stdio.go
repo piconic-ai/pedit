@@ -142,12 +142,12 @@ func (x *stream) write(msg []byte, quit <-chan struct{}) bool {
 
 // close frees the stream's slot before telling the app, so that the open
 // that the app sends on seeing the close finds it free.
-func (x *stream) close(ce *closeError) {
+func (x *stream) close(ce *closeError, quit <-chan struct{}) {
 	x.sess.mu.Lock()
 	delete(x.sess.open, x.id)
 	x.sess.mu.Unlock()
 	if ce != nil {
-		x.st.put(closeFrame(x.id, ce), nil)
+		x.st.put(closeFrame(x.id, ce), quit)
 	}
 }
 

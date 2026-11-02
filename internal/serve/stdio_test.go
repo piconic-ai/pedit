@@ -235,3 +235,30 @@ func TestAppCloseDoesNotHoldUpTheReadLoop(t *testing.T) {
 		return len(s.clients) == 1
 	})
 }
+
+// A client that is already being closed, with its messages draining into a
+// stdout nobody reads, must not hold up the shutdown.
+func TestShutdownDuringADrainingCloseDoesNotWait(t *testing.T) {
+	s, _, _ := open(t, "x\n")
+	_, in, _ := pipeUnread(t, s)
+	_, _ = in.Write(openRole(1, 1)) // a reader
+	other := dial(t, s)
+	eventually(t, "the stream", func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return len(s.clients) == 2
+	})
+	// More broadcasts than the reader's queue and stdout's hold.
+	for range 3000 {
+		other.insert(0, "x")
+	}
+	_, _ = in.Write(encodeFrame(kindData, 1, frame(msgSync, ysync.EncodeUpdate(insertUpdate("no")))))
+	time.Sleep(200 * time.Millisecond) // the reader is retired, draining
+	done := make(chan error, 1)
+	go func() { done <- s.Close() }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close waited on a draining client")
+	}
+}
