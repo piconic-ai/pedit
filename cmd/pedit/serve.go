@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/piconic-ai/pedit/internal/serve"
 )
@@ -100,6 +101,10 @@ func parseServeArgs(args []string) (serveArgs, error) {
 	return opts, nil
 }
 
+// serveDrainWait is how long the exit waits for the app to take the frames
+// still queued for it.
+const serveDrainWait = 2 * time.Second
+
 // serveStdin is what ends pedit serve when it closes.
 var serveStdin io.Reader = os.Stdin
 
@@ -121,7 +126,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	}
 	ignoreSIGPIPE()
 	st := serve.NewStdio(stdout)
-	defer st.Close()
+	defer st.Close(serveDrainWait)
 	fail := func(err error) int {
 		fmt.Fprintln(stderr, "pedit:", err)
 		return failure(st, err)
@@ -156,15 +161,17 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	}()
 	<-ctx.Done()
 	closeErr := s.Close()
+	var broke error
 	select {
 	case err := <-violation:
 		if err != nil {
-			return fail(fmt.Errorf("the app broke the framing: %w", err))
+			broke = fmt.Errorf("the app broke the framing: %w", err)
 		}
 	default:
 	}
-	if closeErr != nil {
-		return fail(closeErr)
+	// A violation and a failed last save are both reported.
+	if err := errors.Join(broke, closeErr); err != nil {
+		return fail(err)
 	}
 	return 0
 }

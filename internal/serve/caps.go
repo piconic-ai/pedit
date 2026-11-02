@@ -45,6 +45,7 @@ var (
 	errTooManyFrames = &closeError{websocket.StatusPolicyViolation, "too many frames", nil}
 	errTooManyStep1  = &closeError{websocket.StatusPolicyViolation, "too many sync requests", nil}
 	errTooManyAware  = &closeError{websocket.StatusPolicyViolation, "too many awareness clients", nil}
+	errTooLarge      = &closeError{websocket.StatusMessageTooBig, "message too large", nil}
 	errTooSlow       = &closeError{websocket.StatusTryAgainLater, "too slow", nil}
 )
 

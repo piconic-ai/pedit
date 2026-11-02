@@ -148,7 +148,7 @@ func pipeTo(t *testing.T, s *Server) *tconn {
 	c := &tconn{t: t, in: inW, out: bufio.NewReader(outR), outR: outR, id: 1, served: make(chan error, 1)}
 	go func() {
 		c.served <- st.Serve(s, inR)
-		st.Close()
+		st.Close(time.Second)
 		_ = outW.Close()
 	}()
 	t.Cleanup(func() { _ = inW.Close(); _ = outR.Close() })

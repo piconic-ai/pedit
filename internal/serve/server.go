@@ -235,7 +235,7 @@ func (s *Server) Close() error {
 	}
 	s.mu.Unlock()
 	for _, c := range open {
-		c.finish(s, nil)
+		c.finish(s, nil, false)
 	}
 	// A save by another editor in the last moments is taken in first.
 	s.syncing.Lock()
@@ -366,17 +366,19 @@ func (s *Server) watch() error {
 }
 
 // conn is one client's end of a stream: the messages pedit sends it, and how a
-// stream is ended. A close of nil ends it without a word.
+// stream is ended. A close of nil ends it without a word. A write gives up
+// when quit closes, and reports false for a message that cannot be sent.
 type conn interface {
-	write(msg []byte) error
+	write(msg []byte, quit <-chan struct{}) bool
 	close(*closeError)
 }
 
-// A client is one connection. Everything sent to it goes through out, so a
+// A client is one stream's end. Everything sent to it goes through out, so a
 // slow client never holds up the others.
 type client struct {
 	conn   conn
 	out    chan []byte
+	quit   chan struct{} // closes to drop what out still holds
 	pumped chan struct{} // closes when the writer of out has returned
 	off    func()
 	once   sync.Once
@@ -397,10 +399,20 @@ func (s *Server) send(c *client, msg []byte) {
 	select {
 	case c.out <- msg:
 	default:
-		c.closed = true
-		close(c.out)
-		go c.finish(s, errTooSlow)
+		s.retire(c, errTooSlow)
 	}
+}
+
+// retire stops c taking part now (it is sent nothing and its messages are
+// ignored) and ends it in the background, so that a queue to drain never holds
+// up the caller. The caller holds s.mu.
+func (s *Server) retire(c *client, ending error) {
+	if c.closed {
+		return
+	}
+	c.closed = true
+	close(c.out)
+	go c.finish(s, ending, true)
 }
 
 // broadcast sends msg to every client but origin. The caller holds s.mu.
@@ -416,7 +428,7 @@ func (s *Server) broadcast(msg []byte, origin any) {
 // when the server is closing.
 func (s *Server) attach(cn conn, reader bool) *client {
 	c := &client{
-		conn: cn, out: make(chan []byte, 1024), pumped: make(chan struct{}), ids: map[uint64]bool{}, seen: map[uint64]bool{},
+		conn: cn, out: make(chan []byte, 1024), quit: make(chan struct{}), pumped: make(chan struct{}), ids: map[uint64]bool{}, seen: map[uint64]bool{},
 		reader: reader,
 		frames: newBucket(s.opts.FrameRate), step1: newBucket(s.opts.Step1Rate),
 	}
@@ -442,8 +454,20 @@ func (s *Server) attach(cn conn, reader bool) *client {
 	}
 	go func() {
 		defer close(c.pumped)
-		for msg := range c.out {
-			_ = cn.write(msg) // a failed write only drops the message
+		for {
+			select {
+			case msg, ok := <-c.out:
+				if !ok {
+					return
+				}
+				if !cn.write(msg, c.quit) {
+					s.mu.Lock()
+					s.retire(c, errTooLarge)
+					s.mu.Unlock()
+				}
+			case <-c.quit:
+				return
+			}
 		}
 	}()
 	return c
@@ -453,18 +477,23 @@ func (s *Server) attach(cn conn, reader bool) *client {
 // of a *closeError if it is one.
 func (s *Server) receive(c *client, data []byte) {
 	if !c.frames.allow() {
-		c.finish(s, errTooManyFrames)
+		s.mu.Lock()
+		s.retire(c, errTooManyFrames)
+		s.mu.Unlock()
 		return
 	}
 	if err := s.handle(c, data); err != nil {
 		s.opts.OnError(err)
-		c.finish(s, err)
+		s.mu.Lock()
+		s.retire(c, err)
+		s.mu.Unlock()
 	}
 }
 
-// finish ends c once: it leaves the room, what was queued is sent, and the
-// stream is closed with the code of ending, if it is a *closeError.
-func (c *client) finish(s *Server, ending error) {
+// finish ends c once: it leaves the room and the stream is closed with the
+// code of ending, if it is a *closeError. With drain, what was queued is sent
+// first; without, it is dropped.
+func (c *client) finish(s *Server, ending error, drain bool) {
 	c.once.Do(func() {
 		c.off()
 		s.mu.Lock()
@@ -475,6 +504,9 @@ func (c *client) finish(s *Server, ending error) {
 			close(c.out)
 		}
 		s.mu.Unlock()
+		if !drain {
+			close(c.quit)
+		}
 		<-c.pumped
 		var ce *closeError
 		errors.As(ending, &ce)
