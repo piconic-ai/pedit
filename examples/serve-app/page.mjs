@@ -11,7 +11,9 @@ try {
   const show = (s, error) => {
     if (error?.code !== 'gone') return void (status.textContent = error ? `${s}: ${error.code}` : s)
     // pedit started a new document: this page's copy cannot merge into it. The app decides; here, reload.
-    status.innerHTML = 'The document was reset. <button onclick="location.reload()">Reload</button>'
+    const reload = Object.assign(document.createElement('button'), { textContent: 'Reload' })
+    reload.onclick = () => location.reload()
+    status.replaceChildren('The document was reset. ', reload)
   }
   conn.status.subscribe(show)
   show(conn.status.get())
