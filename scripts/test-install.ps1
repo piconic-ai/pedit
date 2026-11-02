@@ -292,7 +292,9 @@ function Upgrade-Over-A-Running-Pedit {
     # fail on it either.
     Invoke-Install running @{ PEDIT_NO_MODIFY_PATH = '1' }
     Assert-Installed running
-    if (@(Get-ChildItem -LiteralPath $bin -Force -Filter 'pedit.exe.old*').Count -ne 2) { Fail 'running: expected two locked old copies' }
+    # Only the copy that still runs is left; the one the second upgrade moved aside is gone.
+    $kept = @(Get-ChildItem -LiteralPath $bin -Force -Filter 'pedit.exe.old*')
+    if ($kept.Count -ne 1 -or $kept[0].Name -ne 'pedit.exe.old') { Fail "running: expected only the locked pedit.exe.old, got: $($kept.Name -join ', ')" }
   } finally {
     Stop-Process -Id $running.Id -Force -ErrorAction SilentlyContinue
     Wait-Process -Id $running.Id -ErrorAction SilentlyContinue
