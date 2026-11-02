@@ -71,21 +71,23 @@ async function start(role: 'edit' | 'read' = 'edit', text = 'hello\n') {
   parent.route('/edit', routes)
   const server = serve({ fetch: parent.fetch, port, hostname: '127.0.0.1' })
   injectWebSocket(server)
+  // Cleanups run last to first: pedit must be stopped before its directories are removed (Windows
+  // refuses to remove a directory a running child holds).
   cleanups.push(
-    () => routes.close(),
-    () =>
-      new Promise<void>((r) => {
-        ;(server as Server).close(() => r())
-        ;(server as Server).closeAllConnections()
-      }),
     cleanup,
+    () => rmSync(home, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }),
     () => {
       for (const [k, v] of Object.entries(saved)) {
         if (v === undefined) delete process.env[k]
         else process.env[k] = v
       }
-      rmSync(home, { recursive: true, force: true })
     },
+    () =>
+      new Promise<void>((r) => {
+        ;(server as Server).close(() => r())
+        ;(server as Server).closeAllConnections()
+      }),
+    () => routes.close(),
   )
   g.location = { origin }
   globalThis.fetch = (url, init = {}) => {

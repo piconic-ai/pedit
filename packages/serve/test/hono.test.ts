@@ -1,5 +1,5 @@
-import { execFileSync } from 'node:child_process'
-import { mkdirSync, symlinkSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { mkdirSync, statSync, symlinkSync } from 'node:fs'
 import { request as httpRequest, type Server } from 'node:http'
 import { createServer } from 'node:net'
 import { join } from 'node:path'
@@ -89,15 +89,17 @@ async function start(over: Partial<PeditOptions> = {}): Promise<Fixture> {
   parent.route('/edit', routes)
   const server = serve({ fetch: parent.fetch, port, hostname: '127.0.0.1' })
   injectWebSocket(server)
+  // Cleanups run last to first: pedit must be stopped before its directory is removed (Windows
+  // refuses to remove a directory a running child holds).
   cleanups.push(
-    () => routes.close(),
+    cleanup,
     () =>
       new Promise<void>((r) => {
         const http = server as Server
         http.close(() => r())
         http.closeAllConnections()
       }),
-    cleanup,
+    () => routes.close(),
   )
   const base = `${origin}/edit`
   const session = (id: string, init: RequestInit = {}) =>
@@ -254,13 +256,17 @@ process.stdin.resume()
   })
 })
 
-const shortName = (path: string): string =>
-  execFileSync('cmd.exe', ['/d', '/s', '/c', `for %I in ("${path}") do @echo %~sI`], {
-    encoding: 'utf8',
-  })
-    .trim()
-    .split(/\r?\n/)
-    .pop() as string
+/** The 8.3 name of an existing path (itself when it has none). Fails loudly on anything else. */
+const shortName = (path: string): string => {
+  const { stdout: out } = spawnSync(
+    'cmd.exe',
+    ['/d', '/s', '/c', `"for %I in ("${path}") do @echo %~sI"`],
+    { encoding: 'utf8', windowsVerbatimArguments: true },
+  )
+  const short = out.trim().split(/\r?\n/).pop() as string
+  statSync(short) // throws if the command misfired
+  return short
+}
 
 describe.runIf(process.platform === 'win32')('root on Windows', () => {
   it('refuses another drive', () => {
