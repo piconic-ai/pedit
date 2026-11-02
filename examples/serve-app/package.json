@@ -4,7 +4,7 @@
   "type": "module",
   "description": "A sample local app built on @pedit/serve: an editor bound to a file that `pedit serve` holds",
   "scripts": {
-    "prebuild": "pnpm --dir ../../packages --filter @pedit/serve build",
+    "prebuild": "pnpm --dir ../../packages install --frozen-lockfile && pnpm --dir ../../packages --filter @pedit/serve build",
     "build": "esbuild page.mjs --bundle --format=esm --alias:yjs=./node_modules/yjs --alias:y-protocols=./node_modules/y-protocols --outfile=public/page.js",
     "start": "node server.mjs",
     "test": "node --test"
