@@ -1,6 +1,6 @@
-// Run with: PEDIT=/path/to/pedit node --test
+// Run with: PEDIT=/path/to/pedit node --test (builds public/page.js first)
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { request } from 'node:http'
 import { createInterface } from 'node:readline'
 import { test } from 'node:test'
@@ -20,6 +20,7 @@ function post(origin, path, headers) {
 }
 
 test('the app serves its page, guards the routes, and bridges the file', { skip }, async () => {
+  execFileSync('npm', ['run', 'build'], { stdio: 'ignore' })
   const app = spawn('node', ['server.mjs'], { stdio: ['ignore', 'pipe', 'inherit'] })
   try {
     const line = await new Promise((resolve) =>
