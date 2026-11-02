@@ -40,6 +40,8 @@ app.route(
     origins: [origin],
     app: 'serve-app',
     bin: process.env.PEDIT,
+    // Why a page saw `busy`: pedit missing, too old, or failed to start. Never log a token.
+    onEvent: (e) => e.type === 'error' && console.error(`pedit: ${e.message}`),
     // Which file an id names, and what the caller may do with it. There is no login here, so every
     // caller may edit demo.md: that is why the server listens on loopback only.
     resolve: async (id) => (id === 'demo' ? { path: `${root}/demo.md`, role: 'edit' } : null),

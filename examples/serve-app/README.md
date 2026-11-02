@@ -9,7 +9,9 @@ reach the page edits the file, so the server listens on 127.0.0.1 only.
 ## Requirements
 
 - pedit 0.4.0 or later on the PATH (`brew install piconic-ai/tap/pedit`, the
-  install script, or a GitHub release), or `PEDIT=/path/to/pedit`.
+  install script, or a GitHub release), or `PEDIT=/path/to/pedit`. Until 0.4.0
+  is out, build it from this repository: `go build -o /tmp/pedit ./cmd/pedit`
+  at the repository root, then `PEDIT=/tmp/pedit`.
 - Node 22 or later, on macOS or Linux.
 
 ## Run
@@ -30,6 +32,9 @@ Open `http://127.0.0.1:3000/`; it edits `content/demo.md`. `PEDIT=... node --tes
 - pedit edits an existing file and never creates one: an app's "new document"
   creates the file first (empty is fine), then connects. This sample creates
   `content/demo.md` at start for that reason.
+- A page that says `busy` means pedit could not be started: the reason (not
+  found, too old, no permission) is on the server's stderr. `held` means
+  another program holds the file.
 - `gone` is rare (pedit's saved state was discarded); the app decides what to show.
 - The token is in the WebSocket URL: access logs must drop `token`.
 
