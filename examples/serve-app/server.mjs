@@ -9,6 +9,11 @@ import { peditRoutes } from '@pedit/serve/hono'
 import { Hono } from 'hono'
 
 const port = Number(process.env.PORT ?? 3000)
+// The origin is fixed before the server starts, so the port must be a real one (no 0).
+if (!Number.isInteger(port) || port < 1 || port > 65535) {
+  console.error(`PORT must be a port number from 1 to 65535, not ${process.env.PORT}`)
+  process.exit(2)
+}
 const origin = `http://127.0.0.1:${port}`
 const root = fileURLToPath(new URL('content', import.meta.url))
 await mkdir(root, { recursive: true })
