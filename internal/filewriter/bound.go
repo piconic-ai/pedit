@@ -572,7 +572,7 @@ func (f *BoundFile) createChecked(tmpName string) error {
 func (f *BoundFile) renameChecked(expected, tmpName string) error {
 	err := f.renameCheckedOnce(expected, tmpName)
 	for _, d := range renameBackoff {
-		if err == nil || !transient(err) {
+		if err == nil || !transient(err) || f.deniedForGood() {
 			return err
 		}
 		// Another process holds the file open (Windows): wait, then check the file

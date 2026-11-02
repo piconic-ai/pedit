@@ -21,7 +21,7 @@ import {
   ServedFiles,
   type ServeEvent,
 } from '../src/index.ts'
-import { peditEnv } from '../src/resolve.ts'
+import { candidateNames, peditEnv } from '../src/resolve.ts'
 import {
   BIN,
   closed,
@@ -68,7 +68,7 @@ live('ServedFiles', () => {
     bridge.close()
   })
 
-  it('kills a child that writes something that is not a frame', async () => {
+  it.skipIf(!FAKE)('kills a child that writes something that is not a frame', async () => {
     const { dir, cleanup } = tmpRoot()
     cleanups.push(cleanup)
     const fake = fakePedit(
@@ -87,7 +87,7 @@ process.stdin.resume()
     await vi.waitFor(() => expect(events.some((e) => e.type === 'stopped')).toBe(true))
   })
 
-  it('reports the generation, and refuses a child that gives none', async () => {
+  it.skipIf(!FAKE)('reports the generation, and refuses a child that gives none', async () => {
     const { dir, files } = setup()
     const served = await files.acquire(write(dir, 'a.md'))
     expect(served.generation).toMatch(/^[0-9a-f]{32}$/)
@@ -226,6 +226,46 @@ process.stdin.resume()
   })
 })
 
+describe.skipIf(!FAKE)('a child that ignores the end of stdin, as on Windows', () => {
+  it('stays indexed and counted until it exits, refuses a second child, and reports once', async () => {
+    const { dir, cleanup } = tmpRoot()
+    cleanups.push(cleanup)
+    const pidFile = join(dir, 'pid')
+    const fake = fakePedit(
+      dir,
+      'pedit',
+      `require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid))
+${printEvent({ event: 'listening', generation: 'g' })}
+setInterval(() => {}, 1000)
+`,
+    )
+    const events: ServeEvent[] = []
+    const files = new ServedFiles({
+      bin: fake,
+      app: 'test-app',
+      idleMs: 50,
+      graceMs: 200,
+      platform: 'win32',
+      onEvent: (e) => events.push(e),
+    })
+    cleanups.push(() => files.close())
+    const path = write(dir, 'a.md')
+    await files.acquire(path)
+    await vi.waitFor(() => expect(events.some((e) => e.type === 'error')).toBe(true))
+    // The child still holds the file: a second pedit would only be refused.
+    await expect(files.acquire(path)).rejects.toBeInstanceOf(HeldError)
+    const pid = Number(readFileSync(pidFile, 'utf8'))
+    expect(() => process.kill(pid, 0)).not.toThrow() // never killed
+    const before = events.length
+    process.kill(pid) // it exits at last
+    await sleep(500)
+    expect(events).toHaveLength(before) // no 'stopped' and no second 'error' for the old child
+    const next = await files.acquire(path)
+    expect(next.generation).toBe('g')
+    process.kill(Number(readFileSync(pidFile, 'utf8')))
+  })
+})
+
 const win = BIN && FAKE && process.platform === 'win32' ? describe : describe.skip
 
 win('ServedFiles on Windows', () => {
@@ -285,6 +325,14 @@ setInterval(() => {}, 1000) // ignores the end of stdin
 })
 
 describe('the child environment and binary lookup', () => {
+  it('follows PATHEXT for pedit.exe and pedit.com, and falls back to .exe', () => {
+    expect(candidateNames(false, '.EXE')).toEqual(['pedit'])
+    expect(candidateNames(true, '.COM;.EXE;.BAT')).toEqual(['pedit.com', 'pedit.exe'])
+    expect(candidateNames(true, '.BAT;.EXE;.COM')).toEqual(['pedit.exe', 'pedit.com'])
+    expect(candidateNames(true, '.BAT;.CMD')).toEqual(['pedit.exe'])
+    expect(candidateNames(true, undefined)).toEqual(['pedit.com', 'pedit.exe'])
+  })
+
   it('passes what Go needs on Windows, and nothing else', () => {
     const env = peditEnv()
     if (process.platform === 'win32') {

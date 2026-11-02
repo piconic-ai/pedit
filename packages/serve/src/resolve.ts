@@ -10,7 +10,7 @@ import { nativeRealpath } from './paths.ts'
 export const MIN_PEDIT_VERSION = '0.5.0'
 
 const UPDATE_HINT =
-  'update with Homebrew (brew upgrade pedit), the install script (https://edit.piconic.ai/install.sh) or GitHub releases (https://github.com/piconic-ai/pedit/releases)'
+  'update with Homebrew (brew upgrade pedit), the install script (https://edit.piconic.ai/install.sh; on Windows: irm https://edit.piconic.ai/install.ps1 | iex) or GitHub releases (https://github.com/piconic-ai/pedit/releases)'
 
 /**
  * True when `output` (what `pedit --version` prints) is at least MIN_PEDIT_VERSION. A source build
@@ -59,11 +59,15 @@ export function peditEnv(): NodeJS.ProcessEnv {
   return env
 }
 
-/** The names to try for `pedit` in a directory: with PATHEXT's .exe and .com on Windows (a script cannot be spawned without a shell). */
-function candidateNames(): string[] {
-  if (!WIN) return ['pedit']
-  const exts = (process.env.PATHEXT ?? '.EXE').split(';').map((e) => e.toLowerCase())
-  return ['.exe', '.com'].filter((e) => exts.includes(e)).map((e) => `pedit${e}`)
+/**
+ * The names to try for `pedit` in a directory. On Windows: PATHEXT's `.exe` and `.com` in its order
+ * (a script cannot be spawned without a shell), and `.exe` when PATHEXT lists neither.
+ */
+export function candidateNames(win = WIN, pathext = process.env.PATHEXT): string[] {
+  if (!win) return ['pedit']
+  const exts = (pathext ?? '.COM;.EXE;.BAT;.CMD').split(';').map((e) => e.toLowerCase())
+  const names = exts.filter((e) => e === '.exe' || e === '.com')
+  return (names.length > 0 ? names : ['.exe']).map((e) => `pedit${e}`)
 }
 
 async function findOnPath(): Promise<string | undefined> {

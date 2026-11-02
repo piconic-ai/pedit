@@ -13,6 +13,7 @@ import { inside, isLoopback, type PeditEvent, type PeditOptions, peditRoutes } f
 import { ServedFiles } from '../src/index.ts'
 import {
   BIN,
+  FAKE,
   fakePedit,
   isSyncStep1,
   printEvent,
@@ -156,14 +157,16 @@ live('peditRoutes with a real pedit', () => {
     expect(two.generation).toBe(one.generation)
   })
 
-  it('refuses the doc with 403 when the child restarted with another generation', async () => {
-    const { dir } = tmpRoot()
-    // A fake pedit: a new generation per start, exits when its stdin closes (after idleMs).
-    const counter = join(dir, 'count')
-    const fake = fakePedit(
-      dir,
-      'pedit',
-      `const fs = require('node:fs')
+  it.skipIf(!FAKE)(
+    'refuses the doc with 403 when the child restarted with another generation',
+    async () => {
+      const { dir } = tmpRoot()
+      // A fake pedit: a new generation per start, exits when its stdin closes (after idleMs).
+      const counter = join(dir, 'count')
+      const fake = fakePedit(
+        dir,
+        'pedit',
+        `const fs = require('node:fs')
 if (process.argv[2] === '--version') { console.log('1.2.3'); process.exit(0) }
 let n = 0
 try { n = Number(fs.readFileSync(${JSON.stringify(counter)}, 'utf8')) } catch {}
@@ -172,14 +175,15 @@ fs.writeFileSync(${JSON.stringify(counter)}, String(n))
 ${printEvent({ event: 'listening', generation: 'g#' }, 'n')}
 process.stdin.resume()
 `,
-    )
-    const f = await start({ bin: fake, idleMs: 100 })
-    const res = await f.session('a')
-    const body = (await res.json()) as { token: string; generation: string }
-    expect(body.generation).toBe('g1')
-    await vi.waitFor(() => expect(f.events.some((e) => e.type === 'stopped')).toBe(true))
-    expect(await f.dial('a', body.token)).toBe(403)
-  })
+      )
+      const f = await start({ bin: fake, idleMs: 100 })
+      const res = await f.session('a')
+      const body = (await res.json()) as { token: string; generation: string }
+      expect(body.generation).toBe('g1')
+      await vi.waitFor(() => expect(f.events.some((e) => e.type === 'stopped')).toBe(true))
+      expect(await f.dial('a', body.token)).toBe(403)
+    },
+  )
 
   it('a reader gets step 2 for its step 1 and is closed with 4003 on an update', async () => {
     const f = await start()

@@ -46,3 +46,34 @@ func TestReplaceWaitsForAHolderWithoutShareDelete(t *testing.T) {
 		t.Fatalf("file = %q", got)
 	}
 }
+
+// A read-only target is refused for good: it is reported at once, not retried.
+func TestReplaceDoesNotRetryAReadOnlyTarget(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a.txt")
+	if err := os.WriteFile(path, []byte("old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(path, 0o600)
+	bound, err := OpenBound(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bound.Close()
+	if err := os.WriteFile(filepath.Join(dir, ".tmp"), []byte("new\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	real := bound.calls.rename
+	bound.calls.rename = func(r *os.Root, a, b string) error { calls++; return real(r, a, b) }
+	start := time.Now()
+	if err := bound.renameChecked("old\n", ".tmp"); err == nil {
+		t.Fatal("replaced a read-only file")
+	}
+	if calls > 2 || time.Since(start) > 500*time.Millisecond {
+		t.Fatalf("retried: %d renames in %v", calls, time.Since(start))
+	}
+}

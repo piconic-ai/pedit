@@ -16,13 +16,17 @@ export default function setup() {
     execFileSync('go', ['build', '-o', bin, './cmd/pedit'], { cwd: root, stdio: 'pipe' })
     chmodSync(bin, 0o755) // a umask of 002 would leave it group-writable, which resolvePedit refuses
     process.env.PEDIT_TEST_BIN = bin
+  } catch (e) {
+    console.warn(`@pedit/serve: skipping tests that need pedit, go build failed: ${e}`)
+  }
+  try {
     execFileSync('go', ['build', '-o', fake, './packages/serve/test/fakepedit'], {
       cwd: root,
       stdio: 'pipe',
     })
     process.env.PEDIT_TEST_FAKE = fake
   } catch (e) {
-    console.warn(`@pedit/serve: skipping tests that need pedit, go build failed: ${e}`)
+    console.warn(`@pedit/serve: skipping tests that use a fake pedit, go build failed: ${e}`)
   }
   return () => rmSync(dir, { recursive: true, force: true })
 }

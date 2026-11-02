@@ -23,6 +23,8 @@ export interface ServedFilesOptions {
   idleMs?: number
   /** How long a child may take to exit after stdin closed, before SIGTERM (Windows: before it is given up on). Default 5 s. */
   graceMs?: number
+  /** Tests only: behave as this platform (Windows never signals a child). */
+  platform?: NodeJS.Platform
   /** This layer knows paths, not IDs. */
   onEvent?: (event: ServeEvent) => void
 }
@@ -48,12 +50,12 @@ interface Entry {
   stopping: 'idle' | 'shutdown' | undefined
   exited: Promise<void>
   dead: boolean
+  /** Windows: the child did not exit and was left running; it stays indexed until it does. */
+  givenUp: boolean
   /** Forget a child that did not exit (Windows, where it is never killed). */
   giveUp: () => void
   handle: ServedFile
 }
-
-const WIN = process.platform === 'win32'
 
 /**
  * `dev:ino`, or '' when the file system gives no inode (Node reports 0 on FAT and some shares):
@@ -71,11 +73,13 @@ export class ServedFiles {
   #byPath = new Map<string, Entry>()
   #byIno = new Map<string, Entry>()
   #closed = false
+  #win: boolean
 
   constructor(options: ServedFilesOptions) {
     if (!isAbsolute(options.bin)) throw new TypeError('bin must be an absolute path')
     if (!options.app) throw new TypeError('app is required')
     this.#options = options
+    this.#win = (options.platform ?? process.platform) === 'win32'
   }
 
   /**
@@ -93,6 +97,8 @@ export class ServedFiles {
       if (this.#closed) throw new Error('ServedFiles is closed')
       let entry = this.#byPath.get(real) ?? alias
       if (entry && entry.ino !== ino && entry.path === real) this.#reindex(entry, ino)
+      // A child that was given up on still runs and holds the file: a second one would be refused.
+      if (entry?.givenUp) throw new HeldError({ pid: entry.child.pid ?? 0 })
       if (entry?.stopping) {
         await entry.exited
         continue
@@ -180,15 +186,15 @@ export class ServedFiles {
       stopping: undefined,
       exited,
       dead: false,
+      givenUp: false,
       giveUp: () => {
         if (entry.dead) return
         entry.dead = true
+        entry.givenUp = true // stays in the indexes (and counts) until it really exits
         const message = 'pedit did not exit after its input was closed'
         this.#emit({ type: 'error', path, message })
         entry.streams.abort()
         clearTimeout(entry.idle)
-        if (this.#byPath.get(path) === entry) this.#byPath.delete(path)
-        if (this.#byIno.get(entry.ino) === entry) this.#byIno.delete(entry.ino)
         // Let the host exit without waiting for a child it will not kill.
         child.unref()
         for (const s of [child.stdin, child.stdout, child.stderr]) (s as Socket | null)?.unref?.()
@@ -260,10 +266,8 @@ export class ServedFiles {
     })
     child.on('close', (code) => {
       entry.dead = true
-      entry.streams.abort()
-      clearTimeout(entry.idle)
-      if (this.#byPath.get(path) === entry) this.#byPath.delete(path)
-      if (this.#byIno.get(entry.ino) === entry) this.#byIno.delete(entry.ino)
+      this.#forget(entry)
+      if (entry.givenUp) return // already reported; its events must not reach a newer child's id
       if (!entry.listening) {
         if (missing) onFail(new NoPeditError('the pedit binary cannot be run'))
         else if (code === 3 && held) onFail(new HeldError(held))
@@ -276,6 +280,19 @@ export class ServedFiles {
       onExit()
     })
     return entry
+  }
+
+  /** Drop an exited entry from the indexes and end what hangs off it. */
+  #forget(entry: Entry) {
+    entry.streams.abort()
+    clearTimeout(entry.idle)
+    if (this.#byPath.get(entry.path) === entry) this.#byPath.delete(entry.path)
+    if (this.#byIno.get(entry.ino) === entry) this.#byIno.delete(entry.ino)
+  }
+
+  /** Run `overdue` if the child is still alive after the grace period. */
+  #grace(entry: Entry, overdue: () => void) {
+    setTimeout(() => entry.dead || overdue(), this.#options.graceMs ?? TERM_AFTER_MS).unref()
   }
 
   #armIdle(entry: Entry) {
@@ -291,16 +308,15 @@ export class ServedFiles {
     clearTimeout(entry.idle)
     entry.child.stdin?.end()
     // Saving takes a write delay: ask nicely first, and never SIGKILL.
-    const overdue = () => (WIN ? entry.giveUp() : entry.child.kill('SIGTERM'))
-    setTimeout(() => entry.dead || overdue(), this.#options.graceMs ?? TERM_AFTER_MS).unref()
+    this.#grace(entry, () => (this.#win ? entry.giveUp() : entry.child.kill('SIGTERM')))
   }
 
   /** Ask the child to end after it did not in time, or broke the protocol. */
   #terminate(entry: Entry) {
-    if (!WIN) return void entry.child.kill('SIGTERM')
+    if (!this.#win) return void entry.child.kill('SIGTERM')
     // Windows: closing stdin is the only stop. Wait once more, then give up without killing.
     entry.child.stdin?.end()
-    setTimeout(() => entry.dead || entry.giveUp(), this.#options.graceMs ?? TERM_AFTER_MS).unref()
+    this.#grace(entry, () => entry.giveUp())
   }
 
   async #dial(entry: Entry, role: Role): Promise<Bridge> {

@@ -26,6 +26,8 @@ export interface PeditOptions<E extends Env = Env> {
   /** Absolute path to pedit; default: `pedit` on the PATH. Config only. */
   bin?: string
   idleMs?: number
+  /** How long a child may take to exit after its input closed (default 5 s) before SIGTERM; on Windows it is given up on, never killed. */
+  graceMs?: number
   /** Default false: refuse peers that are not on loopback. */
   allowRemote?: boolean
   onEvent?: (event: PeditEvent) => void
@@ -129,6 +131,7 @@ export function peditRoutes<E extends Env = Env>(
           bin,
           app: options.app,
           idleMs: options.idleMs,
+          graceMs: options.graceMs,
           onEvent(e) {
             const id = (e.path !== null && idByPath.get(e.path)) || null
             if (e.type === 'error') emit({ type: 'error', id, message: e.message })

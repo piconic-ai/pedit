@@ -77,7 +77,7 @@ func readState(path string) *stateRecord {
 		return nil
 	}
 	before, err := os.Lstat(path)
-	if err != nil || !stateTrusted(path, before) {
+	if err != nil || !before.Mode().IsRegular() {
 		return nil
 	}
 	f, err := os.Open(path)
@@ -85,6 +85,10 @@ func readState(path string) *stateRecord {
 		return nil
 	}
 	defer f.Close()
+	// Judged on the handle that is read from, not on the name.
+	if !stateTrusted(f, before) {
+		return nil
+	}
 	raw, err := io.ReadAll(io.LimitReader(f, stateMaxBytes+1))
 	var rec stateRecord
 	dec := json.NewDecoder(bytes.NewReader(raw))
@@ -106,8 +110,15 @@ func writeState(path string, rec stateRecord) error {
 	if err != nil || len(raw) > stateMaxBytes {
 		return errors.New("serve state exceeded its limit")
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	dir := filepath.Dir(path)
+	_, statErr := os.Stat(dir)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
+	}
+	if statErr != nil {
+		if err := privateDir(dir); err != nil {
+			return err
+		}
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".state-*")
 	if err != nil {
