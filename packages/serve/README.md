@@ -10,7 +10,7 @@ carries the same version number; the pedit it needs is listed below.
 
 ## Requirements
 
-- pedit 0.4.0 or later on the PATH (or pass `bin`). Older ones are refused with a message on how to update.
+- pedit 0.5.0 or later on the PATH (or pass `bin`). Older ones are refused with a message on how to update.
 - Node 22 or later, on macOS or Linux (not Windows yet).
 
 ## Install

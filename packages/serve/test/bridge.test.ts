@@ -1,4 +1,4 @@
-import { PassThrough } from 'node:stream'
+import { PassThrough, Writable } from 'node:stream'
 import { describe, expect, it } from 'vitest'
 import {
   CLOSE,
@@ -124,11 +124,61 @@ describe('FrameParser', () => {
   })
 
   it('refuses an unknown kind and a length over 64 MiB', () => {
-    expect(() => new FrameParser().push(encodeFrame(9, 0))).toThrow(FrameError)
-    expect(() => new FrameParser().push(encodeFrame(0, 0))).toThrow(FrameError)
     const big = Buffer.alloc(9)
     big[0] = DATA
     big.writeUInt32BE(64 * 1024 * 1024 + 1, 5)
-    expect(() => new FrameParser().push(big)).toThrow(FrameError)
+    for (const bad of [encodeFrame(9, 0), encodeFrame(0, 0), big]) {
+      const parser = new FrameParser()
+      expect(parser.push(bad)).toEqual([])
+      expect(parser.error).toBeInstanceOf(FrameError)
+    }
+  })
+
+  it('keeps the frames before a bad one, and parses nothing after it', () => {
+    const parser = new FrameParser()
+    const bytes = Buffer.concat([
+      encodeFrame(EVENT, 0, Buffer.from('{}')),
+      encodeFrame(9, 0),
+      encodeFrame(DATA, 1, Buffer.from([1])),
+    ])
+    expect(parser.push(bytes).map((f) => f.kind)).toEqual([EVENT])
+    expect(parser.error).toBeInstanceOf(FrameError)
+    expect(parser.push(encodeFrame(DATA, 1, Buffer.from([1])))).toEqual([])
+  })
+
+  it('takes a 64 MiB frame in 64 KiB chunks without copying it over and over', () => {
+    const size = 64 * 1024 * 1024
+    const bytes = encodeFrame(DATA, 1, Buffer.alloc(size))
+    const parser = new FrameParser()
+    const start = Date.now()
+    const got = []
+    for (let at = 0; at < bytes.length; at += 65536)
+      got.push(...parser.push(bytes.subarray(at, at + 65536)))
+    expect(got).toHaveLength(1)
+    expect(got[0]?.payload.length).toBe(size)
+    expect(Date.now() - start).toBeLessThan(5000)
+  })
+})
+
+describe('back-pressure', () => {
+  it('closes the stream that is behind, not the one that sends next', async () => {
+    // A child that takes nothing: no write ever completes.
+    const stdin = new Writable({ highWaterMark: 1, write() {} })
+    const streams = new Streams(stdin)
+    const slow = streams.open('edit', () => {})
+    const quick = streams.open('edit', () => {})
+    const codes: Record<string, number | undefined> = {}
+    slow.onclose = (_, c) => {
+      codes.slow = c
+    }
+    quick.onclose = (_, c) => {
+      codes.quick = c
+    }
+    const chunk = new Uint8Array(MAX_FRAME / 2 + 1)
+    slow.send(chunk)
+    slow.send(chunk)
+    quick.send(new Uint8Array([1]))
+    await sleep(10)
+    expect(codes).toEqual({ slow: 1013 })
   })
 })

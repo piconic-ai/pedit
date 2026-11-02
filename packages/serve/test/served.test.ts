@@ -62,13 +62,14 @@ live('ServedFiles', () => {
     const fake = write(
       dir,
       'pedit',
-      `#!/bin/sh\n${printEvent({ event: 'listening', generation: 'g' })}\nprintf '\\011\\000\\000\\000\\000\\000\\000\\000\\000'\nexec sleep 30\n`,
+      // The good event and the bad frame in one write: they reach us in one chunk.
+      `#!/bin/sh\n${printEvent({ event: 'listening', generation: 'g' }).slice(0, -1)}\\011\\000\\000\\000\\000\\000\\000\\000\\000'\nexec sleep 30\n`,
     )
     chmodSync(fake, 0o755)
     const events: ServeEvent[] = []
     const files = new ServedFiles({ bin: fake, app: 'test-app', onEvent: (e) => events.push(e) })
     cleanups.push(() => files.close())
-    await files.acquire(write(dir, 'a.md'))
+    await files.acquire(write(dir, 'a.md')) // the event before the bad frame is not lost
     await vi.waitFor(() => expect(events.some((e) => e.type === 'stopped')).toBe(true))
   })
 

@@ -2,7 +2,7 @@ import { type ChildProcess, spawn } from 'node:child_process'
 import { realpath, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute } from 'node:path'
-import { type Bridge, EVENT, FrameError, FrameParser, Streams } from './bridge.ts'
+import { type Bridge, EVENT, FrameParser, Streams } from './bridge.ts'
 import { HeldError, LimitError, NoPeditError } from './errors.ts'
 import { peditEnv } from './resolve.ts'
 import type { Role, ServeEvent } from './types.ts'
@@ -202,17 +202,19 @@ export class ServedFiles {
         errorMessage = ev.message.slice(0, STDERR_KEEP)
       }
     }
+    let broken = false
+    const frameBroke = () => {
+      broken = true
+      child.kill('SIGTERM')
+    }
     child.stdout.on('data', (d: Buffer) => {
-      try {
-        for (const f of parser.push(d)) {
-          if (f.kind !== EVENT) entry.streams.deliver(f)
-          else if (f.stream !== 0 || f.payload.length > MAX_EVENT) throw new FrameError('bad event')
-          else onEvent(f.payload)
-        }
-      } catch (e) {
-        if (!(e instanceof FrameError)) throw e
-        child.kill('SIGTERM')
+      if (broken) return
+      for (const f of parser.push(d)) {
+        if (f.kind !== EVENT) entry.streams.deliver(f)
+        else if (f.stream !== 0 || f.payload.length > MAX_EVENT) return frameBroke()
+        else onEvent(f.payload)
       }
+      if (parser.error) frameBroke()
     })
     child.stdout.on('error', () => {})
     child.on('error', (e: NodeJS.ErrnoException) => {

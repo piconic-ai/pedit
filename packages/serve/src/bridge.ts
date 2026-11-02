@@ -40,26 +40,76 @@ export function encodeFrame(kind: number, stream: number, payload?: Uint8Array):
   return Buffer.concat([head, body])
 }
 
-/** Splits the child's stdout into frames; throws FrameError on anything that is not one. */
+interface Head {
+  kind: number
+  stream: number
+  length: number
+}
+
+/**
+ * Splits the child's stdout into frames. On anything that is not a frame it keeps what it parsed
+ * before, sets `error`, and parses nothing more.
+ */
 export class FrameParser {
-  #buf: Buffer = Buffer.alloc(0)
+  /** Set once the stream broke the format; nothing is parsed after it. */
+  error: FrameError | undefined
+  #chunks: Buffer[] = []
+  #size = 0
+  #head: Head | undefined
+
+  /** Take `n` bytes off the front. A frame within one chunk is not copied. */
+  #take(n: number): Buffer {
+    this.#size -= n
+    const first = this.#chunks[0]
+    if (first && first.length >= n) {
+      if (first.length === n) this.#chunks.shift()
+      else this.#chunks[0] = first.subarray(n)
+      return first.subarray(0, n)
+    }
+    const parts: Buffer[] = []
+    for (let left = n; left > 0; ) {
+      const chunk = this.#chunks[0] as Buffer
+      if (chunk.length <= left) {
+        parts.push(chunk)
+        this.#chunks.shift()
+        left -= chunk.length
+      } else {
+        parts.push(chunk.subarray(0, left))
+        this.#chunks[0] = chunk.subarray(left)
+        left = 0
+      }
+    }
+    return Buffer.concat(parts, n)
+  }
+
+  #readHead(): Head | undefined {
+    if (this.#size < HEADER) return undefined
+    const b = this.#take(HEADER)
+    const head = { kind: b[0] as number, stream: b.readUInt32BE(1), length: b.readUInt32BE(5) }
+    if (head.kind < DATA || head.kind > EVENT)
+      throw new FrameError(`unknown frame kind ${head.kind}`)
+    if (head.length > MAX_PAYLOAD) throw new FrameError('frame too large')
+    return head
+  }
 
   push(chunk: Buffer): Frame[] {
-    this.#buf = this.#buf.length ? Buffer.concat([this.#buf, chunk]) : chunk
     const frames: Frame[] = []
-    for (;;) {
-      if (this.#buf.length < HEADER) break
-      const kind = this.#buf[0] as number
-      const length = this.#buf.readUInt32BE(5)
-      if (kind < DATA || kind > EVENT) throw new FrameError(`unknown frame kind ${kind}`)
-      if (length > MAX_PAYLOAD) throw new FrameError('frame too large')
-      if (this.#buf.length < HEADER + length) break
-      frames.push({
-        kind,
-        stream: this.#buf.readUInt32BE(1),
-        payload: this.#buf.subarray(HEADER, HEADER + length),
-      })
-      this.#buf = this.#buf.subarray(HEADER + length)
+    if (this.error) return frames
+    this.#chunks.push(chunk)
+    this.#size += chunk.length
+    try {
+      for (;;) {
+        this.#head ??= this.#readHead()
+        const head = this.#head
+        if (!head || this.#size < head.length) break
+        frames.push({ kind: head.kind, stream: head.stream, payload: this.#take(head.length) })
+        this.#head = undefined
+      }
+    } catch (e) {
+      if (!(e instanceof FrameError)) throw e
+      this.error = e
+      this.#chunks = []
+      this.#size = 0
     }
     return frames
   }
@@ -95,8 +145,8 @@ export class Streams {
     for (const s of [...this.#streams.values()]) s.end('', 1006)
   }
 
-  #write(frame: Buffer) {
-    if (this.#stdin.writable && !this.#stdin.destroyed) this.#stdin.write(frame)
+  #write(frame: Buffer, flushed?: () => void) {
+    if (this.#stdin.writable && !this.#stdin.destroyed) this.#stdin.write(frame, flushed)
   }
 
   /** Open a stream. `onGone` is called once, when it ends. */
@@ -106,6 +156,7 @@ export class Streams {
     let handler: Bridge['onframe'] = null
     const held: Uint8Array[] = []
     let heldBytes = 0
+    let queued = 0 // bytes of this stream's data written to stdin and not yet taken by the child
     let closeHandler: Bridge['onclose'] = null
     let ended: { reason: string; code: number } | undefined
     const end = (reason: string, code: number) => {
@@ -134,8 +185,12 @@ export class Streams {
       send: (frame) => {
         if (ended) return
         if (frame.byteLength > MAX_FRAME) return close(1009, 'frame too large')
-        this.#write(encodeFrame(DATA, id, frame))
-        if (this.#stdin.writableLength > MAX_FRAME) close(1013, 'too slow')
+        const out = encodeFrame(DATA, id, frame)
+        queued += out.length
+        this.#write(out, () => {
+          queued -= out.length
+        })
+        if (queued > MAX_FRAME) close(1013, 'too slow')
       },
       get onframe() {
         return handler
