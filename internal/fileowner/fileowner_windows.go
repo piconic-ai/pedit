@@ -62,6 +62,9 @@ func Private(f *os.File) bool {
 		if windows.GetAce(acl, i, &ace) != nil {
 			return false
 		}
+		if UnparsedAllow(ace.Header.AceType) && ace.Header.AceFlags&windows.INHERIT_ONLY_ACE == 0 {
+			return false // grants access in a form this check does not read
+		}
 		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE || ace.Header.AceFlags&windows.INHERIT_ONLY_ACE != 0 || ace.Mask&writeMask == 0 {
 			continue
 		}
