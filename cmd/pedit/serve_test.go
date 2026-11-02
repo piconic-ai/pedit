@@ -300,7 +300,14 @@ func TestServeRootRefusesPathsOutside(t *testing.T) {
 	}
 }
 
+// runMainEnv makes the test binary run the CLI's entry point instead of the tests.
+const runMainEnv = "PEDIT_TEST_RUN_MAIN"
+
 func TestMain(m *testing.M) {
+	// A test may start this binary as pedit itself: no go build, no network.
+	if os.Getenv(runMainEnv) == "1" {
+		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	}
 	// serve keeps its state under the user's config directory: not the real one.
 	dir, err := os.MkdirTemp("", "pedit-cmd-test")
 	if err != nil {
@@ -337,9 +344,10 @@ func TestServeSurvivesAParentThatStoppedReading(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("SIGPIPE is a Unix signal")
 	}
-	bin := filepath.Join(t.TempDir(), "pedit")
-	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
-		t.Fatalf("go build: %v\n%s", err, out)
+	// The test binary re-executed as pedit: same run() as main, in its own process.
+	bin, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
 	}
 	dir := t.TempDir()
 	file := filepath.Join(dir, "a.md")
@@ -347,7 +355,7 @@ func TestServeSurvivesAParentThatStoppedReading(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(bin, "serve", "--stdio", "--app", "t", "--", file)
-	cmd.Env = append(os.Environ(), "HOME="+t.TempDir())
+	cmd.Env = append(os.Environ(), "HOME="+t.TempDir(), runMainEnv+"=1")
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
