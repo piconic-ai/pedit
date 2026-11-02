@@ -73,6 +73,13 @@ export async function servePage(
   if (new URL(request.url).protocol === 'https:') {
     out.set('Strict-Transport-Security', 'max-age=31536000')
   }
+  // `irm | iex` only gets text for a text type; the asset server has no type for .ps1.
+  if (
+    new URL(request.url).pathname.endsWith('.ps1') &&
+    !(out.get('Content-Type') ?? '').startsWith('text/')
+  ) {
+    out.set('Content-Type', 'text/plain; charset=utf-8')
+  }
   if (!(out.get('Content-Type') ?? '').startsWith('text/html')) {
     return new Response(asset.body, {
       status: asset.status,

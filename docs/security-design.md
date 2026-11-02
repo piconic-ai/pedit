@@ -17,8 +17,8 @@ To run no code from the relay:
 
 - **Join with the CLI**: `pedit '<link>'`. It decrypts on your machine and runs
   nothing the relay sends. Install it from Homebrew, with `go install`, or from
-  a release archive you check with `gh attestation verify`. `install.sh` is
-  served from the relay's domain, so it is only as trustworthy as the relay.
+  a release archive you check with `gh attestation verify`. `install.sh` and
+  `install.ps1` are served from the relay's domain, so they are only as trustworthy as the relay.
   The CLI is still the maintainers' code, but everyone gets the same tagged
   release, which the relay cannot change for one user. Canvas rooms cannot be
   joined from the CLI yet.
