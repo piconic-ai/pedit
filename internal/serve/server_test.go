@@ -51,7 +51,13 @@ func openWith(t *testing.T, content string, tune func(*Options)) (*Server, strin
 		WriteDelay: 20 * time.Millisecond,
 		StateDir:   base(t),
 		OnError:    func(err error) { t.Log("serve error:", err) },
-		OnWritten:  func(int) { written <- struct{}{} },
+		OnWritten: func(int) {
+			// Called with the writer's lock held: never block.
+			select {
+			case written <- struct{}{}:
+			default:
+			}
+		},
 	}
 	if tune != nil {
 		tune(&opts)

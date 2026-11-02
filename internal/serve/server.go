@@ -48,6 +48,7 @@ type Options struct {
 	// OnError receives problems that do not stop serving.
 	OnError func(error)
 	// OnWritten is called after each write of the file, with its size in bytes.
+	// The file writer's lock is held: it must not block for long.
 	OnWritten func(bytes int)
 	// OnExternalSave is called when a save made by another editor was taken in.
 	OnExternalSave func()
