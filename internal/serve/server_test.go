@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -260,7 +261,16 @@ func saveElsewhere(t *testing.T, file, content string) {
 	t.Helper()
 	tmp := file + ".other"
 	write(t, tmp, content)
-	if err := os.Rename(tmp, file); err != nil {
+	// On Windows the rename is refused while pedit has the file open for a moment (it
+	// shares no delete access); an editor tries again, so does this.
+	var err error
+	for range 100 {
+		if err = os.Rename(tmp, file); err == nil || runtime.GOOS != "windows" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err != nil {
 		t.Fatal(err)
 	}
 }
