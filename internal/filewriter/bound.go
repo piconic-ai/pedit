@@ -554,7 +554,7 @@ func (f *BoundFile) create(tmpName string) error {
 		return err
 	}
 	// No hard links either (FAT, exFAT); a file created in between is replaced.
-	return f.calls.rename(f.root, tmpName, f.name)
+	return f.rename(tmpName)
 }
 
 // createChecked creates the file, or reports a change if something appeared
@@ -605,13 +605,18 @@ func (f *BoundFile) renameChecked(expected, tmpName string) error {
 	case !os.SameFile(info, e.info) || info.Size() != e.info.Size() || !info.ModTime().Equal(e.info.ModTime()):
 		return ErrExternalChange
 	}
-	err = f.calls.rename(f.root, tmpName, f.name)
+	if held != nil {
+		// Our own handle may be what blocks the rename: close it before retrying.
+		err = f.calls.rename(f.root, tmpName, f.name)
+	} else {
+		err = f.rename(tmpName)
+	}
 	if err != nil && held != nil {
 		// Windows volumes without POSIX rename semantics (FAT, exFAT, some SMB
 		// shares) refuse to replace an open file.
 		_ = held.Close()
 		held = nil
-		err = f.calls.rename(f.root, tmpName, f.name)
+		err = f.rename(tmpName)
 	}
 	if err != nil || held == nil {
 		return err

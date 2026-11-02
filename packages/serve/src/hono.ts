@@ -1,11 +1,12 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { realpathSync, statSync } from 'node:fs'
-import { realpath, stat } from 'node:fs/promises'
+import { statSync } from 'node:fs'
+import { stat } from 'node:fs/promises'
 import { isAbsolute, relative, sep } from 'node:path'
 import { type Context, type Env, Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import type { UpgradeWebSocket, WSContext } from 'hono/ws'
 import { HeldError } from './errors.ts'
+import { nativeRealpath, nativeRealpathSync } from './paths.ts'
 import { resolvePedit } from './resolve.ts'
 import { ServedFiles } from './served.ts'
 import type { Role } from './types.ts'
@@ -83,7 +84,7 @@ function validate(
   }
   let root: string
   try {
-    root = realpathSync(options.root)
+    root = nativeRealpathSync(options.root)
     if (!statSync(root).isDirectory()) throw new Error()
   } catch {
     throw new TypeError('root must be an existing directory')
@@ -91,8 +92,11 @@ function validate(
   return { root, hosts, origins: new Set(options.origins) }
 }
 
-/** Component-wise: `root-private/x` is not under `root`. */
-function inside(root: string, path: string): boolean {
+/**
+ * Component-wise: `root-private/x` is not under `root`. On Windows, `relative` of paths on two
+ * drives is an absolute path, which is refused.
+ */
+export function inside(root: string, path: string): boolean {
   const rel = relative(root, path)
   return rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)
 }
@@ -165,7 +169,7 @@ export function peditRoutes<E extends Env = Env>(
     if (!found || (found.role !== 'edit' && found.role !== 'read')) return null
     if (typeof found.path !== 'string' || !isAbsolute(found.path)) return null
     try {
-      const real = await realpath(found.path)
+      const real = await nativeRealpath(found.path)
       if (!inside(root, real) || !(await stat(real)).isFile()) return null
       return { path: found.path, real, role: found.role }
     } catch {

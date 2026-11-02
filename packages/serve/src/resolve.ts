@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import { constants } from 'node:fs'
 import { access, realpath, stat } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { delimiter, isAbsolute, join } from 'node:path'
 import { NoPeditError } from './errors.ts'
 
@@ -27,24 +28,54 @@ export function peditVersionOk(output: string, min = MIN_PEDIT_VERSION): boolean
   return !/^v?\d+\.\d+\.\d+-/.test(v) // 0.5.0-rc1 is older than 0.5.0
 }
 
+const WIN = process.platform === 'win32'
+
+/**
+ * What Go needs on Windows: os.UserConfigDir (APPDATA), os.UserHomeDir (USERPROFILE), os.TempDir
+ * (TMP, TEMP, USERPROFILE), the loader and sockets (SystemRoot, windir), and the drive.
+ */
+const WINDOWS_VARS = [
+  'USERPROFILE',
+  'APPDATA',
+  'LOCALAPPDATA',
+  'SystemRoot',
+  'windir',
+  'SystemDrive',
+  'TEMP',
+  'TMP',
+  'HOMEDRIVE',
+  'HOMEPATH',
+]
+
 /** The only environment a pedit child gets. */
 export function peditEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {}
-  for (const k of ['PATH', 'HOME', 'XDG_CONFIG_HOME', 'TMPDIR']) {
+  const names = ['PATH', 'HOME', 'XDG_CONFIG_HOME', 'TMPDIR', ...(WIN ? WINDOWS_VARS : [])]
+  for (const k of names) {
     const v = process.env[k]
     if (v !== undefined) env[k] = v
   }
   return env
 }
 
+/** The names to try for `pedit` in a directory: with PATHEXT's .exe and .com on Windows (a script cannot be spawned without a shell). */
+function candidateNames(): string[] {
+  if (!WIN) return ['pedit']
+  const exts = (process.env.PATHEXT ?? '.EXE').split(';').map((e) => e.toLowerCase())
+  return ['.exe', '.com'].filter((e) => exts.includes(e)).map((e) => `pedit${e}`)
+}
+
 async function findOnPath(): Promise<string | undefined> {
+  const names = candidateNames()
   for (const dir of (process.env.PATH ?? '').split(delimiter)) {
     if (!dir || !isAbsolute(dir)) continue
-    const candidate = join(dir, 'pedit')
-    try {
-      await access(candidate, constants.X_OK)
-      return candidate
-    } catch {}
+    for (const name of names) {
+      const candidate = join(dir, name)
+      try {
+        await access(candidate, constants.X_OK)
+        return candidate
+      } catch {}
+    }
   }
   return undefined
 }
@@ -56,7 +87,6 @@ async function findOnPath(): Promise<string | undefined> {
 export async function resolvePedit(
   options: { bin?: string } = {},
 ): Promise<{ bin: string; version: string }> {
-  if (process.platform === 'win32') throw new Error('@pedit/serve does not support Windows')
   const given = options.bin ?? (await findOnPath())
   if (given === undefined) throw new NoPeditError('pedit was not found on the PATH')
   if (!isAbsolute(given)) throw new NoPeditError('the pedit binary must be an absolute path')
@@ -65,17 +95,24 @@ export async function resolvePedit(
     bin = await realpath(given)
     const st = await stat(bin)
     if (!st.isFile()) throw new NoPeditError('the pedit binary is not a regular file')
-    if (st.uid !== process.getuid?.() && st.uid !== 0) {
-      throw new NoPeditError('the pedit binary has another owner')
+    // Windows has neither uid nor mode bits: the install location's ACL is what protects it.
+    if (!WIN) {
+      if (st.uid !== process.getuid?.() && st.uid !== 0) {
+        throw new NoPeditError('the pedit binary has another owner')
+      }
+      if (st.mode & 0o022) throw new NoPeditError('the pedit binary is writable by others')
     }
-    if (st.mode & 0o022) throw new NoPeditError('the pedit binary is writable by others')
   } catch (e) {
     if (e instanceof NoPeditError) throw e
     throw new NoPeditError('the pedit binary cannot be used')
   }
   const version = await new Promise<string>((resolve, reject) => {
-    execFile(bin, ['--version'], { env: peditEnv(), timeout: 5000, cwd: '/' }, (err, stdout) =>
-      err ? reject(new NoPeditError('pedit --version failed')) : resolve(stdout.trim()),
+    execFile(
+      bin,
+      ['--version'],
+      { env: peditEnv(), timeout: 5000, cwd: tmpdir() },
+      (err, stdout) =>
+        err ? reject(new NoPeditError('pedit --version failed')) : resolve(stdout.trim()),
     )
   })
   if (!peditVersionOk(version)) {

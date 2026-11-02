@@ -3,12 +3,14 @@ import {
   chmodSync,
   existsSync,
   linkSync,
+  mkdirSync,
   readdirSync,
+  readFileSync,
   renameSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs'
-import { join } from 'node:path'
+import { delimiter, dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   HeldError,
@@ -19,10 +21,14 @@ import {
   ServedFiles,
   type ServeEvent,
 } from '../src/index.ts'
+import { peditEnv } from '../src/resolve.ts'
 import {
   BIN,
   closed,
   emptyUpdate,
+  eventBytes,
+  FAKE,
+  fakePedit,
   isSyncStep1,
   nextFrame,
   printEvent,
@@ -38,10 +44,16 @@ afterEach(async () => {
   for (const c of cleanups.splice(0).reverse()) await c()
 })
 
-function setup(app = 'test-app', idleMs?: number) {
+function setup(app = 'test-app', idleMs?: number, graceMs?: number) {
   const { dir, cleanup } = tmpRoot()
   const events: ServeEvent[] = []
-  const files = new ServedFiles({ bin: BIN as string, app, idleMs, onEvent: (e) => events.push(e) })
+  const files = new ServedFiles({
+    bin: BIN as string,
+    app,
+    idleMs,
+    graceMs,
+    onEvent: (e) => events.push(e),
+  })
   cleanups.push(cleanup, () => files.close())
   return { dir, files, events }
 }
@@ -59,13 +71,15 @@ live('ServedFiles', () => {
   it('kills a child that writes something that is not a frame', async () => {
     const { dir, cleanup } = tmpRoot()
     cleanups.push(cleanup)
-    const fake = write(
+    const fake = fakePedit(
       dir,
       'pedit',
-      // The good event and the bad frame in one write: they reach us in one chunk.
-      `#!/bin/sh\n${printEvent({ event: 'listening', generation: 'g' }).slice(0, -1)}\\011\\000\\000\\000\\000\\000\\000\\000\\000'\nexec sleep 30\n`,
+      // The good event and the bad frame (kind 9) in one write: they reach us in one chunk.
+      `const good = ${eventBytes({ event: 'listening', generation: 'g' })}
+process.stdout.write(Buffer.concat([good, Buffer.from([9, 0, 0, 0, 0, 0, 0, 0, 0])]))
+process.stdin.resume()
+`,
     )
-    chmodSync(fake, 0o755)
     const events: ServeEvent[] = []
     const files = new ServedFiles({ bin: fake, app: 'test-app', onEvent: (e) => events.push(e) })
     cleanups.push(() => files.close())
@@ -77,12 +91,11 @@ live('ServedFiles', () => {
     const { dir, files } = setup()
     const served = await files.acquire(write(dir, 'a.md'))
     expect(served.generation).toMatch(/^[0-9a-f]{32}$/)
-    const old = write(
+    const old = fakePedit(
       dir,
       'old-pedit',
-      `#!/bin/sh\n${printEvent({ event: 'listening' })}\nread _\n`,
+      `${printEvent({ event: 'listening' })}\nprocess.stdin.resume()\n`,
     )
-    chmodSync(old, 0o755)
     const other = new ServedFiles({ bin: old, app: 'test-app' })
     cleanups.push(() => other.close())
     await expect(other.acquire(write(dir, 'b.md'))).rejects.toThrow(/generation/)
@@ -92,10 +105,15 @@ live('ServedFiles', () => {
     const { dir, files, events } = setup()
     const a = write(dir, 'a.md')
     linkSync(a, join(dir, 'b.md'))
-    symlinkSync(a, join(dir, 'c.md'))
+    let symlinked = true
+    try {
+      symlinkSync(a, join(dir, 'c.md'))
+    } catch {
+      symlinked = false // creating a symlink needs a privilege on some Windows hosts
+    }
     const first = await files.acquire(a)
     expect(await files.acquire(join(dir, 'b.md'))).toBe(first)
-    expect(await files.acquire(join(dir, 'c.md'))).toBe(first)
+    if (symlinked) expect(await files.acquire(join(dir, 'c.md'))).toBe(first)
     const upper = join(dir, 'A.md')
     // Only a case-insensitive file system has this variant.
     if (existsSync(upper)) expect(await files.acquire(upper)).toBe(first)
@@ -204,6 +222,108 @@ live('ServedFiles', () => {
   })
 })
 
+const win = BIN && FAKE && process.platform === 'win32' ? describe : describe.skip
+
+win('ServedFiles on Windows', () => {
+  it('stops a child by closing stdin only, and gives up on one that stays, without killing it', async () => {
+    const { dir, cleanup } = tmpRoot()
+    cleanups.push(cleanup)
+    const pidFile = join(dir, 'pid')
+    const fake = fakePedit(
+      dir,
+      'pedit',
+      `require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid))
+${printEvent({ event: 'listening', generation: 'g' })}
+setInterval(() => {}, 1000) // ignores the end of stdin
+`,
+    )
+    const events: ServeEvent[] = []
+    const files = new ServedFiles({
+      bin: fake,
+      app: 'test-app',
+      graceMs: 300,
+      onEvent: (e) => events.push(e),
+    })
+    await files.acquire(write(dir, 'a.md'))
+    await files.close() // resolves: it gave up
+    expect(events.some((e) => e.type === 'error' && /did not exit/.test(e.message))).toBe(true)
+    const pid = Number(readFileSync(pidFile, 'utf8'))
+    expect(() => process.kill(pid, 0)).not.toThrow() // still running: never killed
+    process.kill(pid) // the test cleans up its own child
+  })
+
+  it('keeps case-distinct files apart in a case-sensitive directory', async (ctx) => {
+    const { dir, files } = setup()
+    const sensitive = join(dir, 'cs')
+    mkdirSync(sensitive)
+    try {
+      execFileSync('fsutil.exe', ['file', 'setCaseSensitiveInfo', sensitive, 'enable'], {
+        stdio: 'pipe',
+      })
+    } catch (e) {
+      return ctx.skip(`this runner cannot make a case-sensitive directory: ${e}`)
+    }
+    const upper = write(sensitive, 'FOO.txt', 'upper\n')
+    const lower = write(sensitive, 'foo.txt', 'lower\n')
+    const a = await files.acquire(upper)
+    const b = await files.acquire(lower)
+    expect(b).not.toBe(a)
+    expect([a.path, b.path]).toEqual([upper, lower])
+  })
+
+  it('reuses the child for another casing or short name of one file', async () => {
+    const { dir, files, events } = setup()
+    const first = await files.acquire(write(dir, 'Long File Name.md'))
+    expect(await files.acquire(join(dir, 'LONG FILE NAME.MD'))).toBe(first)
+    expect(first.path).toBe(join(dir, 'Long File Name.md')) // the spelling on disk
+    expect(events.filter((e) => e.type === 'started')).toHaveLength(1)
+  })
+})
+
+describe('the child environment and binary lookup', () => {
+  it('passes what Go needs on Windows, and nothing else', () => {
+    const env = peditEnv()
+    if (process.platform === 'win32') {
+      for (const k of ['USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'SystemRoot', 'TEMP'])
+        expect(env[k], k).toBeTruthy()
+    }
+    const allowed = new Set(
+      [
+        'PATH',
+        'HOME',
+        'XDG_CONFIG_HOME',
+        'TMPDIR',
+        'USERPROFILE',
+        'APPDATA',
+        'LOCALAPPDATA',
+        'SystemRoot',
+        'windir',
+        'SystemDrive',
+        'TEMP',
+        'TMP',
+        'HOMEDRIVE',
+        'HOMEPATH',
+      ].map((k) => k.toLowerCase()),
+    )
+    for (const k of Object.keys(env)) expect(allowed.has(k.toLowerCase()), k).toBe(true)
+  })
+
+  it.skipIf(!FAKE)('finds pedit on the PATH (pedit.exe on Windows)', async () => {
+    const { dir, cleanup } = tmpRoot()
+    cleanups.push(cleanup)
+    const fake = fakePedit(dir, 'pedit', "console.log('1.2.3')")
+    const saved = { PATH: process.env.PATH, PATHEXT: process.env.PATHEXT }
+    cleanups.push(() => {
+      process.env.PATH = saved.PATH
+      if (saved.PATHEXT === undefined) delete process.env.PATHEXT
+      else process.env.PATHEXT = saved.PATHEXT
+    })
+    process.env.PATH = [dir, dirname(process.execPath)].join(delimiter) // the fake needs node
+    if (process.platform === 'win32') process.env.PATHEXT = '.COM;.EXE;.BAT;.CMD'
+    expect(await resolvePedit()).toEqual({ bin: fake, version: '1.2.3' })
+  })
+})
+
 describe('without a usable pedit', () => {
   it('a missing binary is a NoPeditError', async () => {
     const { dir, cleanup } = tmpRoot()
@@ -215,21 +335,25 @@ describe('without a usable pedit', () => {
     await expect(resolvePedit({ bin: 'relative/pedit' })).rejects.toBeInstanceOf(NoPeditError)
   })
 
-  it('resolvePedit refuses a group-writable binary and accepts a sound one', async () => {
-    const { dir, cleanup } = tmpRoot()
-    cleanups.push(cleanup)
-    const fake = write(dir, 'pedit', '#!/bin/sh\necho 1.2.3\n')
-    chmodSync(fake, 0o775)
-    await expect(resolvePedit({ bin: fake })).rejects.toBeInstanceOf(NoPeditError)
-    chmodSync(fake, 0o755)
-    expect(await resolvePedit({ bin: fake })).toEqual({ bin: fake, version: '1.2.3' })
-  })
+  it.skipIf(!FAKE)(
+    'resolvePedit refuses a group-writable binary and accepts a sound one',
+    async () => {
+      const { dir, cleanup } = tmpRoot()
+      cleanups.push(cleanup)
+      const fake = fakePedit(dir, 'pedit', "console.log('1.2.3')")
+      if (process.platform !== 'win32') {
+        chmodSync(fake, 0o775) // Windows has no mode bits to refuse on
+        await expect(resolvePedit({ bin: fake })).rejects.toBeInstanceOf(NoPeditError)
+        chmodSync(fake, 0o755)
+      }
+      expect(await resolvePedit({ bin: fake })).toEqual({ bin: fake, version: '1.2.3' })
+    },
+  )
 
-  it('refuses a pedit older than the minimum and says how to update', async () => {
+  it.skipIf(!FAKE)('refuses a pedit older than the minimum and says how to update', async () => {
     const { dir, cleanup } = tmpRoot()
     cleanups.push(cleanup)
-    const old = write(dir, 'pedit', '#!/bin/sh\necho v0.3.0\n')
-    chmodSync(old, 0o755)
+    const old = fakePedit(dir, 'pedit', "console.log('v0.3.0')")
     await expect(resolvePedit({ bin: old })).rejects.toThrow(
       /v0\.3\.0 is too old.*brew.*install\.sh/,
     )

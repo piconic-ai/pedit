@@ -77,7 +77,7 @@ func readState(path string) *stateRecord {
 		return nil
 	}
 	before, err := os.Lstat(path)
-	if err != nil || !before.Mode().IsRegular() || before.Mode().Perm() != 0o600 {
+	if err != nil || !stateTrusted(path, before) {
 		return nil
 	}
 	f, err := os.Open(path)

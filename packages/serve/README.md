@@ -11,7 +11,7 @@ carries the same version number; the pedit it needs is listed below.
 ## Requirements
 
 - pedit 0.5.0 or later on the PATH (or pass `bin`). Older ones are refused with a message on how to update.
-- Node 22 or later, on macOS or Linux (not Windows yet).
+- Node 22 or later, on macOS, Linux or Windows. On Windows, pedit stops a child by closing its input and never kills it: a child that does not exit in time is reported as an error event.
 
 ## Install
 
