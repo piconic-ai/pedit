@@ -5,7 +5,8 @@ document and writes the file; this package starts it, checks every request, and 
 WebSocket to pedit's Unix socket. Your page edits the file live, with several pages at once, and
 there is no room, relay or account.
 
-Experimental (0.x): the API may change.
+Experimental (0.x): the API may change. The package is published with every pedit release and
+carries the same version number; the pedit it needs is listed below.
 
 ## Requirements
 
