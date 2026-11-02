@@ -517,21 +517,35 @@ describe('comments from peers, at the limits', () => {
     const { meta, view, shown } = setup('hello world')
     const id = view.start(0, 5, 'Why?') as string
     const snapshot = Y.encodeStateAsUpdate(meta)
+    const vector = Y.encodeStateVector(meta)
+    const updates: Uint8Array[] = []
     for (let i = 0; i < 1022; i++) {
       const fork = new Y.Doc()
       Y.applyUpdate(fork, snapshot)
       ;(fork.getMap('comments').get(id) as Y.Map<unknown>).set('resolved', true)
-      const update = Y.encodeStateAsUpdate(fork)
-      if (checkMetaUpdate(meta, update) === null) Y.applyUpdate(meta, update)
+      updates.push(Y.encodeStateAsUpdate(fork, vector))
+      fork.destroy()
     }
+    const update = Y.mergeUpdates(updates)
+    expect(checkMetaUpdate(meta, update)).toBeNull()
+    Y.applyUpdate(meta, update)
+
     const peer = new Y.Doc()
     Y.applyUpdate(peer, Y.encodeStateAsUpdate(meta))
+    const before = Y.encodeStateVector(peer)
+    ;(peer.getMap('comments').get(id) as Y.Map<unknown>).set('resolved', false)
+    expect(checkMetaUpdate(meta, Y.encodeStateAsUpdate(peer, before))).toEqual({
+      reason: 'its lists would take too long to apply',
+    })
+    peer.destroy()
+
     const sent: Uint8Array[] = []
     meta.on('update', (u: Uint8Array) => sent.push(u))
-    shown()
+    expect(only(shown()).resolved).toBe(true)
     view.resolve(id, false)
-    view.reply(id, 'and?')
-    for (const u of sent) expect(checkMetaUpdate(peer, u)).toBeNull()
+    expect(view.reply(id, 'and?')).toBe(false)
+    expect(sent).toEqual([])
+    expect(only(shown())).toMatchObject({ resolved: true, messages: [{ body: 'Why?' }] })
   })
 })
 
