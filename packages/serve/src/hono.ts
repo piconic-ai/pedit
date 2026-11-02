@@ -1,11 +1,12 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { realpathSync, statSync } from 'node:fs'
-import { realpath, stat } from 'node:fs/promises'
-import { isAbsolute, relative, sep } from 'node:path'
+import { statSync } from 'node:fs'
+import { stat } from 'node:fs/promises'
+import { isAbsolute, sep } from 'node:path'
 import { type Context, type Env, Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import type { UpgradeWebSocket, WSContext } from 'hono/ws'
 import { HeldError } from './errors.ts'
+import { nativeRealpath, nativeRealpathSync } from './paths.ts'
 import { resolvePedit } from './resolve.ts'
 import { ServedFiles } from './served.ts'
 import type { Role } from './types.ts'
@@ -25,6 +26,8 @@ export interface PeditOptions<E extends Env = Env> {
   /** Absolute path to pedit; default: `pedit` on the PATH. Config only. */
   bin?: string
   idleMs?: number
+  /** How long a child may take to exit after its input closed (default 5 s) before SIGTERM; on Windows it is given up on, never killed. */
+  graceMs?: number
   /** Default false: refuse peers that are not on loopback. */
   allowRemote?: boolean
   onEvent?: (event: PeditEvent) => void
@@ -83,7 +86,7 @@ function validate(
   }
   let root: string
   try {
-    root = realpathSync(options.root)
+    root = nativeRealpathSync(options.root)
     if (!statSync(root).isDirectory()) throw new Error()
   } catch {
     throw new TypeError('root must be an existing directory')
@@ -91,10 +94,14 @@ function validate(
   return { root, hosts, origins: new Set(options.origins) }
 }
 
-/** Component-wise: `root-private/x` is not under `root`. */
-function inside(root: string, path: string): boolean {
-  const rel = relative(root, path)
-  return rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)
+/**
+ * Component-wise: `root-private/x` is not under `root`. Both are native realpaths, so a prefix test
+ * is exact. `path.relative` is not: on Windows it folds case, and `Root` and `root` can be two
+ * directories (per-directory case sensitivity). Another drive or share is never a prefix.
+ */
+export function inside(root: string, path: string): boolean {
+  const prefix = root.endsWith(sep) ? root : root + sep
+  return path.length > prefix.length && path.startsWith(prefix)
 }
 
 interface Grant {
@@ -124,6 +131,7 @@ export function peditRoutes<E extends Env = Env>(
           bin,
           app: options.app,
           idleMs: options.idleMs,
+          graceMs: options.graceMs,
           onEvent(e) {
             const id = (e.path !== null && idByPath.get(e.path)) || null
             if (e.type === 'error') emit({ type: 'error', id, message: e.message })
@@ -165,7 +173,7 @@ export function peditRoutes<E extends Env = Env>(
     if (!found || (found.role !== 'edit' && found.role !== 'read')) return null
     if (typeof found.path !== 'string' || !isAbsolute(found.path)) return null
     try {
-      const real = await realpath(found.path)
+      const real = await nativeRealpath(found.path)
       if (!inside(root, real) || !(await stat(real)).isFile()) return null
       return { path: found.path, real, role: found.role }
     } catch {

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -138,6 +139,9 @@ func TestUnusableStateIsDiscardedWithANewGeneration(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
+			if name == "not private" && runtime.GOOS == "windows" {
+				t.Skip("Windows has no file mode; the owner is checked by SID instead")
+			}
 			r := newRestarter(t, "hello\n")
 			s1 := r.open()
 			gen, path := s1.Generation(), s1.statePath

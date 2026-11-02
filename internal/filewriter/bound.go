@@ -570,6 +570,21 @@ func (f *BoundFile) createChecked(tmpName string) error {
 // cannot exchange. It checks that the file still holds expected first, and
 // reports a save written into the replaced file afterwards.
 func (f *BoundFile) renameChecked(expected, tmpName string) error {
+	err := f.renameCheckedOnce(expected, tmpName)
+	for _, d := range renameBackoff {
+		if err == nil || !transient(err) || f.deniedForGood() {
+			return err
+		}
+		// Another process holds the file open (Windows): wait, then check the file
+		// again from the start, so a save made meanwhile is reported, not replaced.
+		time.Sleep(d)
+		err = f.renameCheckedOnce(expected, tmpName)
+	}
+	return err
+}
+
+// renameCheckedOnce is one try of renameChecked.
+func (f *BoundFile) renameCheckedOnce(expected, tmpName string) error {
 	e, held, err := f.look(f.name)
 	switch {
 	case errors.Is(err, os.ErrNotExist):

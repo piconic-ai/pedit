@@ -1,9 +1,11 @@
 import { type ChildProcess, spawn } from 'node:child_process'
-import { realpath, stat } from 'node:fs/promises'
+import { stat } from 'node:fs/promises'
+import type { Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute } from 'node:path'
 import { type Bridge, EVENT, FrameParser, Streams } from './bridge.ts'
 import { HeldError, LimitError, NoPeditError } from './errors.ts'
+import { nativeRealpath } from './paths.ts'
 import { peditEnv } from './resolve.ts'
 import type { Role, ServeEvent } from './types.ts'
 
@@ -19,6 +21,10 @@ export interface ServedFilesOptions {
   app: string
   /** Stop the child this long after the last client left. Default 60 s. */
   idleMs?: number
+  /** How long a child may take to exit after stdin closed, before SIGTERM (Windows: before it is given up on). Default 5 s. */
+  graceMs?: number
+  /** Tests only: behave as this platform (Windows never signals a child). */
+  platform?: NodeJS.Platform
   /** This layer knows paths, not IDs. */
   onEvent?: (event: ServeEvent) => void
 }
@@ -44,13 +50,22 @@ interface Entry {
   stopping: 'idle' | 'shutdown' | undefined
   exited: Promise<void>
   dead: boolean
+  /** Windows: the child did not exit and was left running; it stays indexed until it does. */
+  givenUp: boolean
+  /** Forget a child that did not exit (Windows, where it is never killed). */
+  giveUp: () => void
   handle: ServedFile
 }
 
+/**
+ * `dev:ino`, or '' when the file system gives no inode (Node reports 0 on FAT and some shares):
+ * different files would look like one, so an empty id is never used to alias. bigint keeps the
+ * 64-bit file ids of NTFS exact.
+ */
 async function inodeOf(real: string): Promise<string> {
-  const st = await stat(real)
+  const st = await stat(real, { bigint: true })
   if (!st.isFile()) throw new Error('not a regular file')
-  return `${st.dev}:${st.ino}`
+  return st.ino === 0n ? '' : `${st.dev}:${st.ino}`
 }
 
 export class ServedFiles {
@@ -58,34 +73,32 @@ export class ServedFiles {
   #byPath = new Map<string, Entry>()
   #byIno = new Map<string, Entry>()
   #closed = false
+  #win: boolean
 
   constructor(options: ServedFilesOptions) {
-    if (process.platform === 'win32') throw new Error('@pedit/serve does not support Windows')
     if (!isAbsolute(options.bin)) throw new TypeError('bin must be an absolute path')
     if (!options.app) throw new TypeError('app is required')
     this.#options = options
+    this.#win = (options.platform ?? process.platform) === 'win32'
   }
 
   /**
-   * Start or reuse the child serving `path` (absolute). Keyed by realpath and dev:ino, so a hard
-   * link or a case variant of one file never gets two children.
+   * Start or reuse the child serving `path` (absolute). Keyed by the native realpath (never case
+   * folded: on Windows two names that differ in case can be two files) and dev:ino, so a hard link
+   * or another spelling of one file never gets two children.
    */
   async acquire(path: string): Promise<ServedFile> {
     if (!isAbsolute(path)) throw new TypeError('path must be absolute')
     for (;;) {
       if (this.#closed) throw new Error('ServedFiles is closed')
-      const real = await realpath(path)
+      const real = await nativeRealpath(path)
       const ino = await inodeOf(real)
-      // An inode alias counts only while the other path still has that inode: an atomic save
-      // gives the served path a new one and splits a hard link into two files.
-      const alias = this.#byIno.get(ino)
-      const aliasHolds =
-        alias !== undefined &&
-        alias.path !== real &&
-        (await inodeOf(alias.path).catch(() => '')) === ino
+      const alias = await this.#aliasFor(real, ino)
       if (this.#closed) throw new Error('ServedFiles is closed')
-      let entry = this.#byPath.get(real) ?? (aliasHolds ? alias : undefined)
+      let entry = this.#byPath.get(real) ?? alias
       if (entry && entry.ino !== ino && entry.path === real) this.#reindex(entry, ino)
+      // A child that was given up on still runs and holds the file: a second one would be refused.
+      if (entry?.givenUp) throw new HeldError({ pid: entry.child.pid ?? 0 })
       if (entry?.stopping) {
         await entry.exited
         continue
@@ -99,13 +112,28 @@ export class ServedFiles {
     }
   }
 
+  /**
+   * The entry that already serves this file under another name. An inode alias counts only while
+   * the other path still has that inode: an atomic save gives the served path a new one and splits
+   * a hard link into two files. No inode (''), no alias.
+   */
+  async #aliasFor(real: string, ino: string): Promise<Entry | undefined> {
+    const alias = ino === '' ? undefined : this.#byIno.get(ino)
+    if (alias === undefined || alias.path === real) return undefined
+    return (await inodeOf(alias.path).catch(() => '')) === ino ? alias : undefined
+  }
+
   #reindex(entry: Entry, ino: string) {
     if (this.#byIno.get(entry.ino) === entry) this.#byIno.delete(entry.ino)
     entry.ino = ino
-    this.#byIno.set(ino, entry)
+    if (ino !== '') this.#byIno.set(ino, entry)
   }
 
-  /** End every child: close stdin, wait, SIGTERM after 5 s. Never SIGKILL inside the write delay. */
+  /**
+   * End every child: close stdin, wait, SIGTERM after 5 s. Never SIGKILL inside the write delay.
+   * On Windows there is no SIGTERM (it is TerminateProcess), so stdin only: a child that does not
+   * exit is reported and given up on, not killed.
+   */
   async close(): Promise<void> {
     this.#closed = true
     const entries = [...this.#byPath.values()]
@@ -158,6 +186,21 @@ export class ServedFiles {
       stopping: undefined,
       exited,
       dead: false,
+      givenUp: false,
+      giveUp: () => {
+        if (entry.dead) return
+        entry.dead = true
+        entry.givenUp = true // stays in the indexes (and counts) until it really exits
+        const message = 'pedit did not exit after its input was closed'
+        this.#emit({ type: 'error', path, message })
+        entry.streams.abort()
+        clearTimeout(entry.idle)
+        // Let the host exit without waiting for a child it will not kill.
+        child.unref()
+        for (const s of [child.stdin, child.stdout, child.stderr]) (s as Socket | null)?.unref?.()
+        onFail(new Error(message))
+        onExit()
+      },
       handle: {
         path,
         get generation() {
@@ -167,7 +210,7 @@ export class ServedFiles {
       },
     }
     this.#byPath.set(path, entry)
-    this.#byIno.set(ino, entry)
+    if (ino !== '') this.#byIno.set(ino, entry)
 
     let held: { pid: number; app?: string } | undefined
     let errorMessage: string | undefined
@@ -189,7 +232,7 @@ export class ServedFiles {
       if (ev.event === 'listening' && !entry.listening) {
         if (typeof ev.generation !== 'string' || ev.generation === '') {
           errorMessage = 'pedit did not report a generation; it is too old'
-          return child.kill('SIGTERM')
+          return this.#terminate(entry)
         }
         entry.listening = true
         entry.generation = ev.generation
@@ -205,7 +248,7 @@ export class ServedFiles {
     let broken = false
     const frameBroke = () => {
       broken = true
-      child.kill('SIGTERM')
+      this.#terminate(entry)
     }
     child.stdout.on('data', (d: Buffer) => {
       if (broken) return
@@ -223,10 +266,8 @@ export class ServedFiles {
     })
     child.on('close', (code) => {
       entry.dead = true
-      entry.streams.abort()
-      clearTimeout(entry.idle)
-      if (this.#byPath.get(path) === entry) this.#byPath.delete(path)
-      if (this.#byIno.get(entry.ino) === entry) this.#byIno.delete(entry.ino)
+      this.#forget(entry)
+      if (entry.givenUp) return // already reported; its events must not reach a newer child's id
       if (!entry.listening) {
         if (missing) onFail(new NoPeditError('the pedit binary cannot be run'))
         else if (code === 3 && held) onFail(new HeldError(held))
@@ -239,6 +280,19 @@ export class ServedFiles {
       onExit()
     })
     return entry
+  }
+
+  /** Drop an exited entry from the indexes and end what hangs off it. */
+  #forget(entry: Entry) {
+    entry.streams.abort()
+    clearTimeout(entry.idle)
+    if (this.#byPath.get(entry.path) === entry) this.#byPath.delete(entry.path)
+    if (this.#byIno.get(entry.ino) === entry) this.#byIno.delete(entry.ino)
+  }
+
+  /** Run `overdue` if the child is still alive after the grace period. */
+  #grace(entry: Entry, overdue: () => void) {
+    setTimeout(() => entry.dead || overdue(), this.#options.graceMs ?? TERM_AFTER_MS).unref()
   }
 
   #armIdle(entry: Entry) {
@@ -254,7 +308,15 @@ export class ServedFiles {
     clearTimeout(entry.idle)
     entry.child.stdin?.end()
     // Saving takes a write delay: ask nicely first, and never SIGKILL.
-    setTimeout(() => entry.dead || entry.child.kill('SIGTERM'), TERM_AFTER_MS).unref()
+    this.#grace(entry, () => (this.#win ? entry.giveUp() : entry.child.kill('SIGTERM')))
+  }
+
+  /** Ask the child to end after it did not in time, or broke the protocol. */
+  #terminate(entry: Entry) {
+    if (!this.#win) return void entry.child.kill('SIGTERM')
+    // Windows: closing stdin is the only stop. Wait once more, then give up without killing.
+    entry.child.stdin?.end()
+    this.#grace(entry, () => entry.giveUp())
   }
 
   async #dial(entry: Entry, role: Role): Promise<Bridge> {

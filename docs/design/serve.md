@@ -127,9 +127,8 @@ Each direction is a sequence of frames, nothing else:
 
 ## Windows
 
-`@pedit/serve` refuses Windows today (`served.ts`, `resolve.ts`). With the
-transport above, these are what remain to check before lifting that, each
-with a test on `windows-latest`:
+`@pedit/serve` supports Windows. With the transport above, these are what was
+checked before lifting the refusal, each with a test on `windows-latest`:
 
 - Stopping: Node's `child.kill('SIGTERM')` is `TerminateProcess` on Windows, a
   hard kill inside the write delay. Stop by closing stdin only, and give up

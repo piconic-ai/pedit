@@ -1,16 +1,27 @@
-import { chmodSync, mkdirSync, symlinkSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { mkdirSync, statSync, symlinkSync } from 'node:fs'
 import { request as httpRequest, type Server } from 'node:http'
 import { createServer } from 'node:net'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { serve } from '@hono/node-server'
 import { createNodeWebSocket } from '@hono/node-ws'
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { WebSocket } from 'ws'
-import { isLoopback, type PeditEvent, type PeditOptions, peditRoutes } from '../src/hono.ts'
+import { inside, isLoopback, type PeditEvent, type PeditOptions, peditRoutes } from '../src/hono.ts'
 import { ServedFiles } from '../src/index.ts'
-import { BIN, isSyncStep1, printEvent, sleep, syncStep1, tmpRoot, write } from './helpers.ts'
+import {
+  BIN,
+  FAKE,
+  fakePedit,
+  isSyncStep1,
+  printEvent,
+  sleep,
+  syncStep1,
+  tmpRoot,
+  write,
+} from './helpers.ts'
 
 const cleanups: (() => void | Promise<void>)[] = []
 afterEach(async () => {
@@ -47,7 +58,7 @@ async function start(over: Partial<PeditOptions> = {}): Promise<Fixture> {
   write(root, 'a.md')
   write(root, 'b.md')
   write(dir, 'root-private/x.md')
-  symlinkSync(join(dir, 'root-private'), join(root, 'link'))
+  symlinkSync(join(dir, 'root-private'), join(root, 'link'), 'junction')
   const port = await freePort()
   const origin = `http://127.0.0.1:${port}`
   const events: PeditEvent[] = []
@@ -79,15 +90,17 @@ async function start(over: Partial<PeditOptions> = {}): Promise<Fixture> {
   parent.route('/edit', routes)
   const server = serve({ fetch: parent.fetch, port, hostname: '127.0.0.1' })
   injectWebSocket(server)
+  // Cleanups run last to first: pedit must be stopped before its directory is removed (Windows
+  // refuses to remove a directory a running child holds).
   cleanups.push(
-    () => routes.close(),
+    cleanup,
     () =>
       new Promise<void>((r) => {
         const http = server as Server
         http.close(() => r())
         http.closeAllConnections()
       }),
-    cleanup,
+    () => routes.close(),
   )
   const base = `${origin}/edit`
   const session = (id: string, init: RequestInit = {}) =>
@@ -144,28 +157,33 @@ live('peditRoutes with a real pedit', () => {
     expect(two.generation).toBe(one.generation)
   })
 
-  it('refuses the doc with 403 when the child restarted with another generation', async () => {
-    const { dir } = tmpRoot()
-    // A fake pedit: a new generation per start, exits when its stdin closes (after idleMs).
-    const counter = join(dir, 'count')
-    const fake = write(
-      dir,
-      'pedit',
-      `#!/bin/sh
-[ "$1" = --version ] && { echo 1.2.3; exit 0; }
-n=$(cat '${counter}' 2>/dev/null || echo 0); n=$((n+1)); echo $n > '${counter}'
+  it.skipIf(!FAKE)(
+    'refuses the doc with 403 when the child restarted with another generation',
+    async () => {
+      const { dir } = tmpRoot()
+      // A fake pedit: a new generation per start, exits when its stdin closes (after idleMs).
+      const counter = join(dir, 'count')
+      const fake = fakePedit(
+        dir,
+        'pedit',
+        `const fs = require('node:fs')
+if (process.argv[2] === '--version') { console.log('1.2.3'); process.exit(0) }
+let n = 0
+try { n = Number(fs.readFileSync(${JSON.stringify(counter)}, 'utf8')) } catch {}
+n++
+fs.writeFileSync(${JSON.stringify(counter)}, String(n))
 ${printEvent({ event: 'listening', generation: 'g#' }, 'n')}
-read _
+process.stdin.resume()
 `,
-    )
-    chmodSync(fake, 0o755)
-    const f = await start({ bin: fake, idleMs: 100 })
-    const res = await f.session('a')
-    const body = (await res.json()) as { token: string; generation: string }
-    expect(body.generation).toBe('g1')
-    await vi.waitFor(() => expect(f.events.some((e) => e.type === 'stopped')).toBe(true))
-    expect(await f.dial('a', body.token)).toBe(403)
-  })
+      )
+      const f = await start({ bin: fake, idleMs: 100 })
+      const res = await f.session('a')
+      const body = (await res.json()) as { token: string; generation: string }
+      expect(body.generation).toBe('g1')
+      await vi.waitFor(() => expect(f.events.some((e) => e.type === 'stopped')).toBe(true))
+      expect(await f.dial('a', body.token)).toBe(403)
+    },
+  )
 
   it('a reader gets step 2 for its step 1 and is closed with 4003 on an update', async () => {
     const f = await start()
@@ -239,6 +257,60 @@ read _
     for (let i = 0; i < 12; i++) statuses.push((await f.session('a')).status)
     expect(statuses.slice(0, 10).every((s) => s === 200)).toBe(true)
     expect(statuses.slice(10)).toEqual([429, 429])
+  })
+})
+
+describe('inside', () => {
+  it('is component-wise and case-exact', () => {
+    const root = join(sep, 'srv', 'Root')
+    expect(inside(root, join(root, 'a.md'))).toBe(true)
+    expect(inside(root, join(sep, 'srv', 'Root-private', 'a.md'))).toBe(false)
+    expect(inside(root, join(sep, 'srv', 'root', 'a.md'))).toBe(false)
+    expect(inside(root, root)).toBe(false)
+  })
+})
+
+/** The 8.3 name of an existing path (itself when it has none). Fails loudly on anything else. */
+const shortName = (path: string): string => {
+  const { stdout: out } = spawnSync(
+    'cmd.exe',
+    ['/d', '/s', '/c', `"for %I in ("${path}") do @echo %~sI"`],
+    { encoding: 'utf8', windowsVerbatimArguments: true },
+  )
+  const short = out.trim().split(/\r?\n/).pop() as string
+  statSync(short) // throws if the command misfired
+  return short
+}
+
+describe.runIf(process.platform === 'win32')('root on Windows', () => {
+  it('refuses another drive', () => {
+    expect(inside('C:\\root', 'C:\\root\\a.md')).toBe(true)
+    expect(inside('C:\\root', 'D:\\root\\a.md')).toBe(false)
+    expect(inside('C:\\Root', 'C:\\root\\a.md')).toBe(false) // another directory when case-sensitive
+    expect(inside('C:\\', 'C:\\a.md')).toBe(true)
+    expect(inside('C:\\root', '\\\\server\\share\\root\\a.md')).toBe(false)
+  })
+
+  it('judges verbatim paths, short names and junctions by where they land', async () => {
+    let f: Fixture | undefined
+    const at = (...parts: string[]) => join((f as Fixture).dir, ...parts)
+    const paths: Record<string, () => string> = {
+      verbatimOut: () => `\\\\?\\${at('root-private', 'x.md')}`,
+      verbatimDrive: () => '\\\\?\\D:\\root\\a.md',
+      shortOut: () => join(shortName(at('root-private')), 'x.md'),
+      junction: () => at('root', 'link', 'x.md'),
+      shortIn: () => join(shortName(at('root')), 'a.md'),
+      verbatimIn: () => `\\\\?\\${at('root', 'a.md')}`,
+    }
+    f = await start({
+      resolve: async (id) =>
+        paths[id as string] ? { path: paths[id as string]?.() as string, role: 'edit' } : null,
+    })
+    for (const id of ['verbatimOut', 'verbatimDrive', 'shortOut', 'junction'])
+      expect((await f.session(id)).status, id).toBe(404)
+    if (BIN) {
+      for (const id of ['shortIn', 'verbatimIn']) expect((await f.session(id)).status, id).toBe(200)
+    }
   })
 })
 

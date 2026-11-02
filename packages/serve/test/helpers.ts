@@ -1,14 +1,19 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { encodeFrame } from '../src/bridge.ts'
 import type { Bridge } from '../src/index.ts'
+import { nativeRealpathSync } from '../src/paths.ts'
 
 export const BIN = process.env.PEDIT_TEST_BIN
 
 export function tmpRoot(): { dir: string; cleanup: () => void } {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'pedit-serve-test-')))
-  return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) }
+  // Native: on Windows the temp dir is an 8.3 name (RUNNER~1) until the disk spelling is asked for.
+  const dir = nativeRealpathSync(mkdtempSync(join(tmpdir(), 'pedit-serve-test-')))
+  return {
+    dir, // A child that just exited may hold the directory for a moment on Windows.
+    cleanup: () => rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }),
+  }
 }
 
 export function write(dir: string, name: string, text = 'hello\n'): string {
@@ -48,16 +53,34 @@ export const syncStep1 = new Uint8Array([0, 0, 1, 0])
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-const octal = (bytes: Uint8Array) =>
-  [...bytes].map((b) => `\\${b.toString(8).padStart(3, '0')}`).join('')
+/** The launcher that runs a fake pedit's Node script (see fakepedit/main.go); unset without Go. */
+export const FAKE = process.env.PEDIT_TEST_FAKE
 
 /**
- * Shell commands that write one event frame, as pedit does. A `#` in the JSON stands for one
- * character of the shell variable `fromVar`, so a fake can number its starts.
+ * A fake pedit: the launcher copied to `<dir>/<name>` with `js` as its script. Node runs the script
+ * with pedit's arguments, so it behaves the same on Windows, where a shell script cannot be spawned.
+ */
+export function fakePedit(dir: string, name: string, js: string): string {
+  const bin = join(dir, process.platform === 'win32' ? `${name}.exe` : name)
+  copyFileSync(FAKE as string, bin)
+  chmodSync(bin, 0o755)
+  writeFileSync(`${bin}.js`, js)
+  return bin
+}
+
+/**
+ * Script lines that write one event frame, as pedit does. A `#` in the JSON stands for the value
+ * of the script variable `fromVar`, so a fake can number its starts.
  */
 export function printEvent(event: Record<string, unknown>, fromVar?: string): string {
+  return `process.stdout.write(${eventBytes(event, fromVar)})`
+}
+
+/** A script expression for the bytes of one event frame (see printEvent). */
+export function eventBytes(event: Record<string, unknown>, fromVar?: string): string {
   const bytes = encodeFrame(4, 0, Buffer.from(JSON.stringify(event)))
   const at = fromVar ? bytes.indexOf('#'.charCodeAt(0), 9) : -1
-  if (at < 0) return `printf '${octal(bytes)}'`
-  return `printf '${octal(bytes.subarray(0, at))}'; printf %s "$${fromVar}"; printf '${octal(bytes.subarray(at + 1))}'`
+  const part = (b: Uint8Array) => `Buffer.from([${[...b]}])`
+  if (at < 0) return part(bytes)
+  return `Buffer.concat([${part(bytes.subarray(0, at))}, Buffer.from(String(${fromVar})), ${part(bytes.subarray(at + 1))}])`
 }

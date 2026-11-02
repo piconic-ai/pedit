@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/piconic-ai/pedit/internal/fileowner"
 	"gopkg.in/yaml.v3"
 )
 
@@ -181,9 +182,7 @@ func trustedOwner(uid, me int) bool { return uid == me || uid == 0 }
 // trustedSID is trustedOwner for Windows, by SID: the user's own file, or one
 // written by SYSTEM or an administrator, whose files the Administrators group
 // owns.
-func trustedSID(owner, me string) bool {
-	return owner == me || owner == "S-1-5-18" || owner == "S-1-5-32-544"
-}
+func trustedSID(owner, me string) bool { return fileowner.TrustedSID(owner, me) }
 
 func (c config) template(name string) ([]byte, error) {
 	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\\") || filepath.IsAbs(name) || filepath.VolumeName(name) != "" {

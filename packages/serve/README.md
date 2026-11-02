@@ -11,7 +11,7 @@ carries the same version number; the pedit it needs is listed below.
 ## Requirements
 
 - pedit 0.5.0 or later on the PATH (or pass `bin`). Older ones are refused with a message on how to update.
-- Node 22 or later, on macOS or Linux (not Windows yet).
+- Node 22 or later, on macOS, Linux or Windows. On Windows, pedit stops a child by closing its input and never kills it: a child that does not exit in time is reported as an error event.
 
 ## Install
 
@@ -68,7 +68,7 @@ const extensions = [yCollab(conn.text, conn.awareness)] // plus basicSetup, Edit
 | `peditRoutes(options)` | A Hono app: `POST /:id/session` and the WebSocket `GET /:id/doc`. Has `close()`. |
 | `options.resolve(id, c)` | Maps an id to `{ path, role: 'edit' \| 'read' }`, or `null` for 404. |
 | `options.root`, `origins`, `app` | The served directory, the exact page origins, and a label shown if another process holds the file. |
-| `options.bin`, `idleMs`, `allowRemote`, `onEvent` | Absolute path to pedit; idle stop (default 60 s); accept non-loopback peers (default false); `started`/`stopped`/`error` events. |
+| `options.bin`, `idleMs`, `graceMs`, `allowRemote`, `onEvent` | Absolute path to pedit; idle stop (default 60 s); how long a child may take to exit after its input closed (default 5 s; on Windows it is then given up on, never killed); accept non-loopback peers (default false); `started`/`stopped`/`error` events. |
 
 `@pedit/serve/client`
 
@@ -94,10 +94,11 @@ const extensions = [yCollab(conn.text, conn.awareness)] // plus basicSetup, Edit
 - A session token is single use and expires in 60 s; it travels in the WebSocket URL, so log no `token`.
 - A `read` role is enforced by pedit itself, not just by the page: updates from a reader close the socket.
 - The browser never sees a path, a pid or a socket name.
+- On Windows, `resolvePedit` cannot check the owner or write access of the pedit binary it finds on the PATH, so a writable PATH directory (such as `C:\tools`) could hold a planted `pedit.exe`. Pass an absolute `bin` that you trust.
 
 ## Known limits
 
-- Unix only; one id is one file; at most 32 files and 8 clients per file.
+- One id is one file; at most 32 files and 8 clients per file.
 - Awareness (names, cursors) is unauthenticated: any connected page can claim any name.
 - `gone`: pedit's saved state was discarded, so the page's copy cannot merge into the new document.
   The client stops; the app decides whether to offer the text or reload.
