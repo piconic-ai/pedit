@@ -128,6 +128,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return usageError(stderr, serveUsage, err)
 	}
+	ignoreSIGPIPE()
 	ev := &events{json: opts.json, w: stdout}
 	emit := ev.emit
 	fail := func(err error) int {
