@@ -215,10 +215,16 @@ func upgradeCommand(exe, goos, home string, goInstalled bool) string {
 // otherwise, so any other directory is passed in PEDIT_INSTALL_DIR. The path is
 // split by hand: filepath follows the host, and this runs on any OS in tests.
 func windowsUpgradeCommand(exe, home string) string {
-	const install = "irm https://edit.piconic.ai/install.ps1 | iex"
+	// The TLS line is what the README gives: Windows PowerShell 5.1 may not use
+	// TLS 1.2 by default, which the relay requires.
+	const install = "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 'Tls12'; irm https://edit.piconic.ai/install.ps1 | iex"
 	dir := exe
 	if i := strings.LastIndexAny(exe, `\/`); i >= 0 {
 		dir = exe[:i]
+		// D:\pedit.exe is in D:\; a bare "D:" means the drive's current directory.
+		if strings.HasSuffix(dir, ":") {
+			dir += `\`
+		}
 	}
 	def := home + `\AppData\Local\Programs\pedit`
 	if home != "" && strings.EqualFold(strings.TrimRight(dir, `\/`), def) {
