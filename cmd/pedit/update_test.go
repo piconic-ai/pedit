@@ -45,6 +45,7 @@ func TestNewerVersion(t *testing.T) {
 
 func TestUpgradeCommand(t *testing.T) {
 	const home = "/Users/me"
+	const tls = "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 'Tls12'; "
 	const install = "curl -fsSL https://edit.piconic.ai/install.sh | "
 	tests := []struct {
 		exe, goos   string
@@ -63,12 +64,23 @@ func TestUpgradeCommand(t *testing.T) {
 		// Installed with PEDIT_INSTALL_DIR, or put there by hand.
 		{"/usr/local/bin/pedit", "darwin", false, install + "PEDIT_INSTALL_DIR=/usr/local/bin sh"},
 		{"/Users/me/my tools/pedit", "darwin", false, install + "PEDIT_INSTALL_DIR='/Users/me/my tools' sh"},
-		{`C:\Users\me\bin\pedit.exe`, "windows", false, ""},
+		{`C:\Users\me\bin\pedit.exe`, "windows", false, `$env:PEDIT_INSTALL_DIR = 'C:\Users\me\bin'; ` + tls + `irm https://edit.piconic.ai/install.ps1 | iex`},
+		{`D:\pedit.exe`, "windows", false, `$env:PEDIT_INSTALL_DIR = 'D:\'; ` + tls + `irm https://edit.piconic.ai/install.ps1 | iex`},
+		{`C:\Users\o'brien\bin\pedit.exe`, "windows", false, `$env:PEDIT_INSTALL_DIR = 'C:\Users\o''brien\bin'; ` + tls + `irm https://edit.piconic.ai/install.ps1 | iex`},
 	}
 	for _, tt := range tests {
 		if got := upgradeCommand(tt.exe, tt.goos, home, tt.goInstalled); got != tt.want {
 			t.Errorf("upgradeCommand(%q, %q, %v) = %q, want %q", tt.exe, tt.goos, tt.goInstalled, got, tt.want)
 		}
+	}
+}
+
+func TestUpgradeCommandWindowsDefaultDirectory(t *testing.T) {
+	// install.ps1 without PEDIT_INSTALL_DIR needs no override to upgrade in place.
+	exe := `C:\Users\me\AppData\Local\Programs\pedit\pedit.exe`
+	want := "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 'Tls12'; irm https://edit.piconic.ai/install.ps1 | iex"
+	if got := upgradeCommand(exe, "windows", `C:\Users\me`, false); got != want {
+		t.Errorf("upgradeCommand(%q) = %q, want %q", exe, got, want)
 	}
 }
 

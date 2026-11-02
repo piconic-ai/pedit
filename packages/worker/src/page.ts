@@ -66,12 +66,17 @@ export async function servePage(
   }
   const asset = await env.ASSETS.fetch(forAssets)
   const out = new Headers(asset.headers)
+  const origin = new URL(request.url)
   out.set('X-Content-Type-Options', 'nosniff')
   out.set('Referrer-Policy', 'no-referrer')
   // Browsers that saw the relay over HTTPS once never try plain HTTP again
   // (see the redirect in index.ts). Only this host, not the rest of the domain.
-  if (new URL(request.url).protocol === 'https:') {
+  if (origin.protocol === 'https:') {
     out.set('Strict-Transport-Security', 'max-age=31536000')
+  }
+  // `irm | iex` only gets text for a text type; the asset server has no type for .ps1.
+  if (origin.pathname.endsWith('.ps1') && !(out.get('Content-Type') ?? '').startsWith('text/')) {
+    out.set('Content-Type', 'text/plain; charset=utf-8')
   }
   if (!(out.get('Content-Type') ?? '').startsWith('text/html')) {
     return new Response(asset.body, {
@@ -81,7 +86,6 @@ export async function servePage(
     })
   }
   const html = await asset.text()
-  const origin = new URL(request.url)
   const media = mediaSourcesFrom(env.MEDIA_SOURCES)
   const { frames, fetches } = embedSourcesFor(origin)
   out.set(

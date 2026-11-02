@@ -167,6 +167,18 @@ describe('pages', () => {
     expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff')
   })
 
+  it('serves install.ps1 as text, which irm hands to iex', async () => {
+    const res = await call(
+      'https://pedit.test/install.ps1',
+      {},
+      assets('Install-Pedit', 'application/octet-stream'),
+    )
+    expect(await res.text()).toBe('Install-Pedit')
+    expect(res.headers.get('Content-Type')).toBe('text/plain; charset=utf-8')
+    expect(res.headers.get('Content-Security-Policy')).toBeNull()
+    expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff')
+  })
+
   it('never lets the asset server answer 304 for a page', async () => {
     const a = assets(HTML)
     await call('https://pedit.test/', {}, a, {

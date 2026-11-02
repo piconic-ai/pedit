@@ -198,7 +198,7 @@ func upgradeCommand(exe, goos, home string, goInstalled bool) string {
 		// names; GitHub redirects it to piconic-ai/pedit.
 		return "mise upgrade --bump github:piconic-ai/edit"
 	case goos == "windows":
-		return ""
+		return windowsUpgradeCommand(exe, home)
 	}
 	// install.sh puts pedit in ~/.local/bin unless told otherwise. Anywhere
 	// else, it has to be told, or the new pedit lands beside the old one.
@@ -208,6 +208,29 @@ func upgradeCommand(exe, goos, home string, goInstalled bool) string {
 		return install + "sh"
 	}
 	return install + "PEDIT_INSTALL_DIR=" + shellQuote(dir) + " sh"
+}
+
+// windowsUpgradeCommand is the install.ps1 command for a pedit.exe at exe.
+// install.ps1 puts pedit in %LOCALAPPDATA%\Programs\pedit unless told
+// otherwise, so any other directory is passed in PEDIT_INSTALL_DIR. The path is
+// split by hand: filepath follows the host, and this runs on any OS in tests.
+func windowsUpgradeCommand(exe, home string) string {
+	// The TLS line is what the README gives: Windows PowerShell 5.1 may not use
+	// TLS 1.2 by default, which the relay requires.
+	const install = "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 'Tls12'; irm https://edit.piconic.ai/install.ps1 | iex"
+	dir := exe
+	if i := strings.LastIndexAny(exe, `\/`); i >= 0 {
+		dir = exe[:i]
+		// D:\pedit.exe is in D:\; a bare "D:" means the drive's current directory.
+		if strings.HasSuffix(dir, ":") {
+			dir += `\`
+		}
+	}
+	def := home + `\AppData\Local\Programs\pedit`
+	if home != "" && strings.EqualFold(strings.TrimRight(dir, `\/`), def) {
+		return install
+	}
+	return "$env:PEDIT_INSTALL_DIR = '" + strings.ReplaceAll(dir, "'", "''") + "'; " + install
 }
 
 // notifyUpdate tells the user about a newer release, if one was found.

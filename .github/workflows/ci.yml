@@ -118,6 +118,36 @@ jobs:
       - name: Install script
         run: bash scripts/test-install.sh v0.0.0-test "$RUNNER_TEMP/pedit-release"
 
+      - name: Upload CLI release archives (for the Windows install test)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pedit-release
+          path: ${{ runner.temp }}/pedit-release
+          retention-days: 1
+          if-no-files-found: error
+
+  install-windows:
+    # install.ps1 against the archives the test job built, in Windows PowerShell
+    # and in PowerShell 7. The test edits the user PATH of this throwaway runner
+    # and puts it back.
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: pedit-release
+          path: ${{ runner.temp }}/pedit-release
+
+      - name: Install script (Windows PowerShell 5.1)
+        shell: powershell
+        run: .\scripts\test-install.ps1 v0.0.0-test "$env:RUNNER_TEMP\pedit-release"
+
+      - name: Install script (PowerShell 7)
+        shell: pwsh
+        run: .\scripts\test-install.ps1 v0.0.0-test "$env:RUNNER_TEMP\pedit-release"
+
   go-macos:
     # Saving swaps files with renameatx_np on macOS, which ubuntu cannot run.
     runs-on: macos-latest

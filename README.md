@@ -243,8 +243,20 @@ macOS / Linux:
 curl -fsSL https://edit.piconic.ai/install.sh | sh
 ```
 
-`install.sh` is served by the relay. To install from GitHub instead, use one
-of the methods below.
+Windows (PowerShell):
+
+```powershell
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 'Tls12'; irm https://edit.piconic.ai/install.ps1 | iex
+```
+
+The first part makes older Windows PowerShell versions use TLS 1.2, which the
+relay requires; PowerShell 7 does not need it.
+
+`install.ps1` adds the install directory to your user PATH; set
+`PEDIT_NO_MODIFY_PATH=1` to skip that.
+
+`install.sh` and `install.ps1` are served by the relay. To install from
+GitHub instead, use one of the methods below.
 
 Homebrew (macOS / Linux):
 
@@ -321,8 +333,8 @@ In a browser, the editor's code comes from the relay, so you trust whoever
 runs it and Cloudflare, which hosts it: a modified editor could read the key
 and plaintext. The command line runs no code from the relay: guests can join
 with `pedit '<link>'` instead of a browser, using a pedit installed from
-Homebrew, `go install` or a release archive you verify, not from `install.sh`,
-which the relay serves. Or [self-host](#self-host) the relay and editor. See
+Homebrew, `go install` or a release archive you verify, not from `install.sh`
+or `install.ps1`, which the relay serves. Or [self-host](#self-host) the relay and editor. See
 [security design](docs/security-design.md) for the encryption and what it does
 not protect against, and [the public relay](docs/public-relay.md) for what
 `edit.piconic.ai` logs and keeps. The public relay's
