@@ -1,15 +1,14 @@
 package serve
 
 import (
-	"context"
+	"bufio"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
-	"net/http"
+	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -25,16 +24,8 @@ import (
 	ysync "github.com/reearth/ygo/sync"
 )
 
-// base is a short directory for sockets: t.TempDir can be too long for one.
-func base(t *testing.T) string {
-	t.Helper()
-	dir, err := os.MkdirTemp("", "ps")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	return dir
-}
+// base is a directory for state files.
+func base(t *testing.T) string { return t.TempDir() }
 
 func write(t *testing.T, path, content string) {
 	t.Helper()
@@ -58,7 +49,7 @@ func openWith(t *testing.T, content string, tune func(*Options)) (*Server, strin
 	opts := Options{
 		App:        "test",
 		WriteDelay: 20 * time.Millisecond,
-		SocketBase: base(t),
+		StateDir:   base(t),
 		OnError:    func(err error) { t.Log("serve error:", err) },
 		OnWritten:  func(int) { written <- struct{}{} },
 	}
@@ -76,7 +67,7 @@ func openWith(t *testing.T, content string, tune func(*Options)) (*Server, strin
 // A tclient is a y-websocket client written from y-protocols' encoding.
 type tclient struct {
 	t    *testing.T
-	conn *websocket.Conn
+	conn *tconn
 	mu   sync.Mutex
 	doc  *crdt.Doc
 	text *crdt.YText
@@ -88,27 +79,93 @@ type tclient struct {
 
 type remote struct{ _ byte }
 
-func dial(t *testing.T, sock string) *tclient { return dialAs(t, sock, "") }
+// tconn is a client's end of one stream over a pair of pipes, as an app has it.
+type tconn struct {
+	t    *testing.T
+	in   *io.PipeWriter // frames to pedit
+	out  *bufio.Reader  // frames from pedit
+	outR *io.PipeReader
+	mu   sync.Mutex
+	id   uint32
+	// served receives the result of Serve when it returns.
+	served chan error
+}
 
-// dialAs connects with the X-Pedit-Role header role, if any.
-func dialAs(t *testing.T, sock, role string) *tclient {
+// closeErr is a close frame from pedit.
+type closeErr struct {
+	code   websocket.StatusCode
+	reason string
+}
+
+func (e closeErr) Error() string { return fmt.Sprintf("closed %d %q", e.code, e.reason) }
+
+func (c *tconn) frame(kind byte, stream uint32, payload []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, _ = c.in.Write(encodeFrame(kind, stream, payload))
+}
+
+func (c *tconn) Write(b []byte) { c.frame(kindData, c.id, b) }
+
+// Close ends the stream from the app's side.
+func (c *tconn) Close() {
+	c.frame(kindClose, c.id, nil)
+	_ = c.outR.Close() // pedit answers a close with nothing: stop reading
+}
+
+func readFrame(r io.Reader) (kind byte, stream uint32, payload []byte, err error) {
+	var hdr [headerLen]byte
+	if _, err = io.ReadFull(r, hdr[:]); err != nil {
+		return
+	}
+	payload = make([]byte, binary.BigEndian.Uint32(hdr[5:]))
+	_, err = io.ReadFull(r, payload)
+	return hdr[0], binary.BigEndian.Uint32(hdr[1:]), payload, err
+}
+
+// Read returns the next message, or the close that ended the stream.
+func (c *tconn) Read() ([]byte, error) {
+	for {
+		kind, _, payload, err := readFrame(c.out)
+		if err != nil {
+			return nil, err
+		}
+		switch kind {
+		case kindData:
+			return payload, nil
+		case kindClose:
+			return nil, closeErr{websocket.StatusCode(binary.BigEndian.Uint16(payload)), string(payload[2:])}
+		}
+	}
+}
+
+// pipeTo starts a stdio session on s over pipes, and returns the app's ends.
+func pipeTo(t *testing.T, s *Server) *tconn {
 	t.Helper()
-	hc := &http.Client{Transport: &http.Transport{
-		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, "unix", sock)
-		},
-	}}
-	header := http.Header{}
-	if role != "" {
-		header.Set("X-Pedit-Role", role)
+	inR, inW := io.Pipe()
+	outR, outW := io.Pipe()
+	st := NewStdio(outW)
+	c := &tconn{t: t, in: inW, out: bufio.NewReader(outR), outR: outR, id: 1, served: make(chan error, 1)}
+	go func() {
+		c.served <- st.Serve(s, inR)
+		st.Close()
+		_ = outW.Close()
+	}()
+	t.Cleanup(func() { _ = inW.Close(); _ = outR.Close() })
+	return c
+}
+
+func dial(t *testing.T, s *Server) *tclient { return dialAs(t, s, "") }
+
+// dialAs opens a stream with the role, "read" or not.
+func dialAs(t *testing.T, s *Server, role string) *tclient {
+	t.Helper()
+	conn := pipeTo(t, s)
+	if role == "read" {
+		conn.frame(kindOpen, 1, []byte{1})
+	} else {
+		conn.frame(kindOpen, 1, []byte{0})
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	conn, _, err := websocket.Dial(ctx, "ws://pedit/room", &websocket.DialOptions{HTTPClient: hc, HTTPHeader: header})
-	if err != nil {
-		t.Fatal(err)
-	}
-	conn.SetReadLimit(1 << 24)
 	c := &tclient{t: t, conn: conn, doc: crdt.New(), done: make(chan struct{})}
 	c.text = c.doc.GetText("content")
 	c.aw = awareness.New(uint64(c.doc.ClientID()))
@@ -123,7 +180,7 @@ func dialAs(t *testing.T, sock, role string) *tclient {
 	go func() {
 		defer close(c.done)
 		for {
-			_, data, err := conn.Read(context.Background())
+			data, err := conn.Read()
 			if err != nil {
 				c.err = err
 				return
@@ -145,12 +202,11 @@ func dialAs(t *testing.T, sock, role string) *tclient {
 			c.mu.Unlock()
 		}
 	}()
-	t.Cleanup(func() { _ = conn.CloseNow() })
 	return c
 }
 
 func (c *tclient) send(kind uint64, payload []byte) {
-	_ = c.conn.Write(context.Background(), websocket.MessageBinary, frame(kind, payload))
+	c.conn.Write(frame(kind, payload))
 }
 
 func (c *tclient) get() string {
@@ -205,7 +261,7 @@ func saveElsewhere(t *testing.T, file, content string) {
 
 func TestClientEditsReachFileAndExternalSaveReachesClient(t *testing.T) {
 	s, file, _ := open(t, "alpha\nbeta\n")
-	c := dial(t, s.SocketPath())
+	c := dial(t, s)
 	eventually(t, "the file's text", func() bool { return c.get() == "alpha\nbeta\n" })
 
 	c.insert(5, " one")
@@ -224,7 +280,7 @@ func TestClientEditsReachFileAndExternalSaveReachesClient(t *testing.T) {
 func TestFrontmatterCRLFAndBOMSurvive(t *testing.T) {
 	start := "\ufeff---\r\ntitle: Draft\r\ntags: [a, b]\r\n---\r\n\r\nFirst line\r\nSecond line\r\n"
 	s, file, _ := open(t, start)
-	c := dial(t, s.SocketPath())
+	c := dial(t, s)
 	// The client sees LF: a CodeMirror client would miscount each CR.
 	lf := func(s string) string { return strings.ReplaceAll(s, "\r\n", "\n") }
 	eventually(t, "the file's text", func() bool { return c.get() == lf(start) })
@@ -254,7 +310,7 @@ func TestMixedLineEndingsAreHeldAsTheyAre(t *testing.T) {
 	}
 	mixed := "a\r\nb\nc\r\n"
 	s, file, _ := open(t, mixed)
-	c := dial(t, s.SocketPath())
+	c := dial(t, s)
 	eventually(t, "the text as it is", func() bool { return c.get() == mixed })
 	c.insert(0, "x")
 	eventually(t, "the edit, endings kept", fileIs(t, file, "x"+mixed))
@@ -262,7 +318,7 @@ func TestMixedLineEndingsAreHeldAsTheyAre(t *testing.T) {
 
 func TestSecondServeIsRefusedAndStaleLockTakenOver(t *testing.T) {
 	s, file, _ := open(t, "x\n")
-	_, err := Open(file, Options{App: "other", SocketBase: base(t)})
+	_, err := Open(file, Options{App: "other", StateDir: base(t)})
 	var held *HeldError
 	if !errors.As(err, &held) {
 		t.Fatalf("second Open = %v, want *HeldError", err)
@@ -280,14 +336,11 @@ func TestSecondServeIsRefusedAndStaleLockTakenOver(t *testing.T) {
 	if _, err := os.Stat(lockPath(file)); !os.IsNotExist(err) {
 		t.Fatalf("lock left behind: %v", err)
 	}
-	if _, err := os.Stat(s.dir); !os.IsNotExist(err) {
-		t.Fatalf("socket directory left behind: %v", err)
-	}
 
 	// A crash leaves the lock file with a name in it and no lock on it.
 	stale, _ := json.Marshal(holder{PID: 999999, App: "crashed"})
 	write(t, lockPath(file), string(stale))
-	s2, err := Open(file, Options{SocketBase: base(t)})
+	s2, err := Open(file, Options{StateDir: base(t)})
 	if err != nil {
 		t.Fatalf("stale lock not taken over: %v", err)
 	}
@@ -335,23 +388,9 @@ func TestOnlyOneOfManyConcurrentStartsHoldsTheLock(t *testing.T) {
 	}
 }
 
-func TestSocketDirectoryIsPrivate(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("no Unix permission bits")
-	}
-	s, _, _ := open(t, "x\n")
-	info, err := os.Stat(s.dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o700 {
-		t.Fatalf("socket directory mode = %v, want 0700", info.Mode().Perm())
-	}
-}
-
 func TestTwoClientsSeeEachOtherAndAwareness(t *testing.T) {
 	s, file, _ := open(t, "shared\n")
-	a, b := dial(t, s.SocketPath()), dial(t, s.SocketPath())
+	a, b := dial(t, s), dial(t, s)
 	eventually(t, "both synced", func() bool { return a.get() == "shared\n" && b.get() == "shared\n" })
 
 	a.insert(0, "A:")
@@ -369,14 +408,14 @@ func TestTwoClientsSeeEachOtherAndAwareness(t *testing.T) {
 		return ok
 	})
 	// A client that joins later is told who is there.
-	c := dial(t, s.SocketPath())
+	c := dial(t, s)
 	eventually(t, "A's awareness in a late client", func() bool {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		_, ok := c.aw.GetStates()[aid]
 		return ok
 	})
-	_ = a.conn.CloseNow()
+	a.conn.Close()
 	eventually(t, "A gone from B", func() bool {
 		b.mu.Lock()
 		defer b.mu.Unlock()
@@ -387,9 +426,9 @@ func TestTwoClientsSeeEachOtherAndAwareness(t *testing.T) {
 
 func TestMalformedFrameDoesNotStopServer(t *testing.T) {
 	s, _, _ := open(t, "ok\n")
-	bad := dial(t, s.SocketPath())
+	bad := dial(t, s)
 	bad.send(msgSync, []byte{2, 5, 1, 2})
-	good := dial(t, s.SocketPath())
+	good := dial(t, s)
 	eventually(t, "a good client", func() bool { return good.get() == "ok\n" })
 }
 
@@ -397,7 +436,7 @@ func TestMalformedFrameDoesNotStopServer(t *testing.T) {
 // client and the file (run with -v).
 func TestLatency(t *testing.T) {
 	s, file, written := open(t, "")
-	a, b := dial(t, s.SocketPath()), dial(t, s.SocketPath())
+	a, b := dial(t, s), dial(t, s)
 	time.Sleep(100 * time.Millisecond)
 	var toClient, toFile []time.Duration
 	for i := range 20 {
@@ -428,7 +467,7 @@ func TestSymlinkedDirectoryGetsTheSameLock(t *testing.T) {
 	if err := os.Symlink(filepath.Dir(file), link); err != nil {
 		t.Skip("symlinks unavailable:", err)
 	}
-	_, err := Open(filepath.Join(link, "doc.md"), Options{App: "other", SocketBase: base(t)})
+	_, err := Open(filepath.Join(link, "doc.md"), Options{App: "other", StateDir: base(t)})
 	var held *HeldError
 	if !errors.As(err, &held) {
 		t.Fatalf("Open through a linked directory = %v, want *HeldError", err)
@@ -453,7 +492,7 @@ func TestWrittenAndExternalSaveHooksFireInOrder(t *testing.T) {
 	events := make(chan string, 100)
 	s, err := Open(file, Options{
 		WriteDelay:     20 * time.Millisecond,
-		SocketBase:     base(t),
+		StateDir:       base(t),
 		OnWritten:      func(n int) { events <- fmt.Sprintf("saved %d", n) },
 		OnExternalSave: func() { events <- "external_save" },
 	})
@@ -472,7 +511,7 @@ func TestWrittenAndExternalSaveHooksFireInOrder(t *testing.T) {
 			t.Fatalf("no %q", e)
 		}
 	}
-	c := dial(t, s.SocketPath())
+	c := dial(t, s)
 	eventually(t, "the file's text", func() bool { return c.get() == "alpha\n" })
 	c.insert(5, "!")
 	want("saved 7")
@@ -500,7 +539,7 @@ func TestRootReplacedByLinkAfterOpeningIsRefused(t *testing.T) {
 	if err := os.Symlink(outside, rootDir); err != nil {
 		t.Skip("no symlinks:", err)
 	}
-	if s, err := Open("doc.md", Options{Root: root, SocketBase: base(t)}); err == nil {
+	if s, err := Open("doc.md", Options{Root: root, StateDir: base(t)}); err == nil {
 		_ = s.Close()
 		t.Fatal("opened")
 	}
@@ -529,14 +568,14 @@ func TestRootRefusesPathsOutside(t *testing.T) {
 	}
 	defer root.Close()
 	for _, name := range []string{"../x", filepath.Join(base0, "x"), "link/y.md"} {
-		if s, err := Open(name, Options{Root: root, SocketBase: base(t)}); err == nil {
+		if s, err := Open(name, Options{Root: root, StateDir: base(t)}); err == nil {
 			_ = s.Close()
 			t.Errorf("%s: opened", name)
 		} else if !strings.Contains(err.Error(), "is outside") {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
-	s, err := Open(filepath.Join("sub", "ok.md"), Options{Root: root, SocketBase: base(t)})
+	s, err := Open(filepath.Join("sub", "ok.md"), Options{Root: root, StateDir: base(t)})
 	if err != nil {
 		t.Fatal(err)
 	}

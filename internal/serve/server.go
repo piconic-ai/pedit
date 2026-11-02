@@ -1,15 +1,12 @@
-// Package serve holds a file's Yjs document for a local app: clients on a Unix
-// socket speak the y-websocket protocol (sync and awareness, unencrypted),
-// and pedit alone writes the file and merges saves made by other editors.
+// Package serve holds a file's Yjs document for a local app: clients, one per
+// stream on pedit's standard streams (stdio.go), speak the y-websocket
+// protocol (sync and awareness, unencrypted), and pedit alone writes the file and merges saves made by other editors.
 // There is no room and no relay (#372).
 package serve
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"net"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,7 +14,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/coder/websocket"
 	"github.com/fsnotify/fsnotify"
 	"github.com/piconic-ai/pedit/internal/filewriter"
 	"github.com/piconic-ai/pedit/internal/lineend"
@@ -46,9 +42,9 @@ type Options struct {
 	// WriteDelay is how long the file waits for more edits before it is
 	// written; 250ms by default.
 	WriteDelay time.Duration
-	// SocketBase is where the private socket directory is made; pedit's
-	// config directory by default.
-	SocketBase string
+	// StateDir is where recovery states are kept (in its "state" directory);
+	// pedit's config directory by default.
+	StateDir string
 	// OnError receives problems that do not stop serving.
 	OnError func(error)
 	// OnWritten is called after each write of the file, with its size in bytes.
@@ -59,9 +55,6 @@ type Options struct {
 	// it, and a path that leaves it (an absolute one, "..", or a link in a
 	// directory component) is refused.
 	Root *os.Root
-	// PingInterval is how often each connection is pinged; 30s by default. A
-	// connection that misses two pongs in a row is closed.
-	PingInterval time.Duration
 	// FrameRate and Step1Rate are the most frames, and the most sync step 1
 	// messages, per second one connection may send: 1000 and 10 by default.
 	FrameRate, Step1Rate int
@@ -73,14 +66,6 @@ type Server struct {
 	release func()
 	bound   *filewriter.BoundFile
 	writer  *filewriter.Writer
-
-	dir string
-	ln  net.Listener
-	srv *http.Server
-	// ctx ends when the server closes.
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
 
 	// crlf: the file ends its lines with CRLF throughout, which the doc holds
 	// as LF. Guarded by mu.
@@ -96,6 +81,8 @@ type Server struct {
 	text    *crdt.YText
 	aw      *awareness.Awareness
 	clients map[*client]struct{}
+	// closing: Close has begun, and no client is taken in.
+	closing bool
 
 	watcher *fsnotify.Watcher
 	// syncing serializes reads of the file; timer debounces them.
@@ -127,7 +114,7 @@ func openFile(file string, root *os.Root) (*filewriter.BoundFile, string, error)
 	return bound, filepath.Join(root.Name(), file), err
 }
 
-// Open locks and reads file, and listens on a Unix socket of its own. It
+// Open locks and reads file. Clients are attached to it with Stdio.Serve. It
 // returns a *HeldError when another process serves the file.
 func Open(file string, opts Options) (*Server, error) {
 	bound, file, err := openFile(file, opts.Root)
@@ -136,9 +123,6 @@ func Open(file string, opts Options) (*Server, error) {
 	}
 	if opts.WriteDelay == 0 {
 		opts.WriteDelay = 250 * time.Millisecond
-	}
-	if opts.PingInterval == 0 {
-		opts.PingInterval = defaultPingInterval
 	}
 	if opts.FrameRate == 0 {
 		opts.FrameRate = defaultFrameRate
@@ -177,7 +161,6 @@ func Open(file string, opts Options) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{file: file, opts: opts, release: release, bound: bound, clients: map[*client]struct{}{}}
-	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.crlf = lineend.IsCRLF(initial)
 	s.statePath = opts.statePath(file)
 	s.seed(initial)
@@ -208,10 +191,6 @@ func Open(file string, opts Options) (*Server, error) {
 		s.writer.Schedule(s.fileText())
 	}
 	s.doc.OnUpdate(s.onUpdate)
-	if err := s.listen(); err != nil {
-		s.cleanup()
-		return nil, err
-	}
 	s.saveState(s.writer.LastWritten(), nil)
 	// fsnotify watches a path, not a handle: refuse if the path does not lead
 	// to the directory the file was opened in, checked after the watch is set
@@ -240,49 +219,7 @@ func sameDir(bound *filewriter.BoundFile, dir string) error {
 	return nil
 }
 
-// SocketPath is where clients connect.
-func (s *Server) SocketPath() string { return filepath.Join(s.dir, "s") }
-
-// listen makes the socket's directory (0700, so only this user reaches it)
-// and serves WebSocket upgrades on it. A Unix socket path is limited to about
-// 100 bytes, so a long config path falls back to the temp directory.
-func (s *Server) listen() error {
-	base := s.opts.SocketBase
-	if base == "" {
-		cfg, err := os.UserConfigDir()
-		if err != nil || len(cfg) > 60 {
-			cfg = os.TempDir()
-		} else {
-			cfg = filepath.Join(cfg, "pedit", "serve")
-		}
-		base = cfg
-	}
-	if err := os.MkdirAll(base, 0o700); err != nil {
-		return err
-	}
-	dir, err := os.MkdirTemp(base, "p")
-	if err != nil {
-		return err
-	}
-	s.dir = dir
-	if err := os.Chmod(dir, 0o700); err != nil {
-		return err
-	}
-	ln, err := net.Listen("unix", s.SocketPath())
-	if err != nil {
-		return err
-	}
-	s.ln = ln
-	s.srv = &http.Server{Handler: http.HandlerFunc(s.accept)}
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		_ = s.srv.Serve(ln)
-	}()
-	return nil
-}
-
-// Close writes the file one last time, then removes the socket and the lock.
+// Close writes the file one last time, then removes the lock.
 func (s *Server) Close() error {
 	s.tmu.Lock()
 	s.stopped = true
@@ -290,9 +227,16 @@ func (s *Server) Close() error {
 		s.timer.Stop()
 	}
 	s.tmu.Unlock()
-	s.cancel()
-	_ = s.srv.Close()
-	s.wg.Wait()
+	s.mu.Lock()
+	s.closing = true
+	open := make([]*client, 0, len(s.clients))
+	for c := range s.clients {
+		open = append(open, c)
+	}
+	s.mu.Unlock()
+	for _, c := range open {
+		c.finish(s, nil)
+	}
 	// A save by another editor in the last moments is taken in first.
 	s.syncing.Lock()
 	s.syncFromDisk()
@@ -310,12 +254,6 @@ func (s *Server) Close() error {
 func (s *Server) cleanup() {
 	if s.watcher != nil {
 		_ = s.watcher.Close()
-	}
-	if s.ln != nil {
-		_ = s.ln.Close()
-	}
-	if s.dir != "" {
-		_ = os.RemoveAll(s.dir)
 	}
 	// The lock is released through the directory handle: close that last.
 	s.release()
@@ -427,21 +365,31 @@ func (s *Server) watch() error {
 	return nil
 }
 
+// conn is one client's end of a stream: the messages pedit sends it, and how a
+// stream is ended. A close of nil ends it without a word.
+type conn interface {
+	write(msg []byte) error
+	close(*closeError)
+}
+
 // A client is one connection. Everything sent to it goes through out, so a
 // slow client never holds up the others.
 type client struct {
-	conn   *websocket.Conn
+	conn   conn
 	out    chan []byte
+	pumped chan struct{} // closes when the writer of out has returned
+	off    func()
+	once   sync.Once
 	ids    map[uint64]bool // awareness client IDs it announced
 	seen   map[uint64]bool // every ID it introduced to the room, removed ones too
 	closed bool            // out is closed; guarded by Server.mu
 	reader bool            // may send sync step 1 and awareness only
-	// frames and step1 limit what it sends; the read loop alone uses them.
+	// frames and step1 limit what it sends; its receiver alone uses them.
 	frames, step1 *bucket
 }
 
 // send queues msg for c; the caller holds s.mu. A client that falls far
-// behind is dropped, and catches up when it reconnects.
+// behind is closed with 1013, and catches up when it reconnects.
 func (s *Server) send(c *client, msg []byte) {
 	if c.closed {
 		return
@@ -449,7 +397,9 @@ func (s *Server) send(c *client, msg []byte) {
 	select {
 	case c.out <- msg:
 	default:
-		_ = c.conn.CloseNow()
+		c.closed = true
+		close(c.out)
+		go c.finish(s, errTooSlow)
 	}
 }
 
@@ -462,29 +412,22 @@ func (s *Server) broadcast(msg []byte, origin any) {
 	}
 }
 
-func (s *Server) accept(w http.ResponseWriter, r *http.Request) {
-	// The socket is reachable only by this user, and a browser never
-	// connects to it directly: the Origin check does not apply.
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
-	if err != nil {
-		return
-	}
-	conn.SetReadLimit(maxFrame)
+// attach takes cn in as a client, a reader if reader is set. It returns nil
+// when the server is closing.
+func (s *Server) attach(cn conn, reader bool) *client {
 	c := &client{
-		conn: conn, out: make(chan []byte, 1024), ids: map[uint64]bool{}, seen: map[uint64]bool{},
-		reader: r.Header.Get(roleHeader) == roleRead,
+		conn: cn, out: make(chan []byte, 1024), pumped: make(chan struct{}), ids: map[uint64]bool{}, seen: map[uint64]bool{},
+		reader: reader,
 		frames: newBucket(s.opts.FrameRate), step1: newBucket(s.opts.Step1Rate),
 	}
-	s.wg.Add(1)
-	defer s.wg.Done()
-	hbCtx, stopHeartbeat := context.WithCancel(s.ctx)
-	defer stopHeartbeat()
-	s.wg.Go(func() { heartbeat(hbCtx, conn, s.opts.PingInterval) })
-
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closing {
+		return nil
+	}
 	s.clients[c] = struct{}{}
 	// c owns the awareness IDs ygo accepted from it, not the ones it echoed.
-	off := s.aw.OnUpdate(func(ev awareness.UpdateEvent) {
+	c.off = s.aw.OnUpdate(func(ev awareness.UpdateEvent) {
 		if ev.Origin == c {
 			for _, id := range append(ev.Added, ev.Updated...) {
 				c.ids[id] = true
@@ -497,49 +440,46 @@ func (s *Server) accept(w http.ResponseWriter, r *http.Request) {
 	if len(s.aw.GetStates()) > 0 {
 		s.send(c, awarenessFrame(s.aw.EncodeUpdate(nil)))
 	}
-	s.mu.Unlock()
-
-	done := make(chan struct{})
 	go func() {
-		defer close(done)
+		defer close(c.pumped)
 		for msg := range c.out {
-			if err := conn.Write(s.ctx, websocket.MessageBinary, msg); err != nil {
-				_ = conn.CloseNow()
-				return
-			}
+			_ = cn.write(msg) // a failed write only drops the message
 		}
 	}()
-	var ending error
-	for {
-		typ, data, err := conn.Read(s.ctx)
-		if err != nil {
-			break
-		}
-		if !c.frames.allow() { // text frames count too
-			ending = errTooManyFrames
-			break
-		}
-		if typ != websocket.MessageBinary {
-			continue
-		}
-		if ending = s.handle(c, data); ending != nil {
-			s.opts.OnError(ending)
-			break
-		}
+	return c
+}
+
+// receive applies one message from c; an error ends the client, with the code
+// of a *closeError if it is one.
+func (s *Server) receive(c *client, data []byte) {
+	if !c.frames.allow() {
+		c.finish(s, errTooManyFrames)
+		return
 	}
-	off()
-	s.mu.Lock()
-	delete(s.clients, c)
-	s.leave(c)
-	c.closed = true
-	close(c.out)
-	s.mu.Unlock()
-	<-done
-	var ce *closeError
-	if errors.As(ending, &ce) {
-		_ = conn.Close(ce.code, ce.reason)
+	if err := s.handle(c, data); err != nil {
+		s.opts.OnError(err)
+		c.finish(s, err)
 	}
-	_ = conn.CloseNow()
+}
+
+// finish ends c once: it leaves the room, what was queued is sent, and the
+// stream is closed with the code of ending, if it is a *closeError.
+func (c *client) finish(s *Server, ending error) {
+	c.once.Do(func() {
+		c.off()
+		s.mu.Lock()
+		delete(s.clients, c)
+		s.leave(c)
+		if !c.closed {
+			c.closed = true
+			close(c.out)
+		}
+		s.mu.Unlock()
+		<-c.pumped
+		var ce *closeError
+		errors.As(ending, &ce)
+		c.conn.close(ce)
+	})
 }
 
 func awarenessFrame(update []byte) []byte {
@@ -591,6 +531,9 @@ func (s *Server) handle(c *client, data []byte) (err error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if c.closed {
+		return nil
+	}
 	switch kind {
 	case msgSync:
 		return s.handleSync(c, sub, rest)
