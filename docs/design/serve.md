@@ -144,9 +144,19 @@ with a test on `windows-latest`:
 - Watching: fsnotify uses `ReadDirectoryChangesW`; check that an editor's
   atomic save is still taken in as an external save.
 - One file, one child: `ServedFiles` keys a file by realpath and `dev:ino`.
-  Node can report an `ino` of 0 on some file systems (FAT, network shares),
-  which would make different files one; and paths differ only in case. Do not
-  alias on an `ino` of 0, and compare paths case-insensitively.
+  Distinct files must never share a child, and other spellings of one file
+  must reach the same child.
+  - Never fold case in the key. Case sensitivity is per directory on Windows
+    (`fsutil file setCaseSensitiveInfo`), so `FOO.txt` and `foo.txt` can be
+    two files. Take the spelling from the native `realpath`, which asks the
+    open file for its final path, so another casing or an 8.3 short name of
+    one file comes back as the name on disk.
+  - Node can report an `ino` of 0 on some file systems (FAT, network shares),
+    which would make different files one: do not alias on an `ino` of 0.
+  - Tests on `windows-latest`: two case-distinct files in a case-sensitive
+    directory get two children; another casing of one file in an ordinary
+    directory reuses its child. Skip the first where the runner cannot make
+    a case-sensitive directory, and say so.
 - `root`: `inside()` uses `path.relative`, which returns an absolute path
   across drives; that is refused already, and a test should say so. Cover
   `\\?\` paths, 8.3 short names and junctions too.
