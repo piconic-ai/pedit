@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -269,5 +271,68 @@ func TestServeGenerationSurvivesARestart(t *testing.T) {
 	}
 	if seen[0] == "" || seen[0] != seen[1] {
 		t.Fatalf("generations %q, want the same twice", seen)
+	}
+}
+
+// The app that started pedit serve may exit first, closing the pipes it read
+// stdout and stderr from. A later event (here: an external save, which is
+// reported as `external_save`) is then a write to a broken pipe, which must
+// not end pedit with SIGPIPE: it goes on, and ends normally when stdin closes.
+func TestServeSurvivesAParentThatStoppedReading(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("SIGPIPE is a Unix signal")
+	}
+	bin := filepath.Join(t.TempDir(), "pedit")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v\n%s", err, out)
+	}
+	dir := t.TempDir()
+	file := filepath.Join(dir, "a.md")
+	if err := os.WriteFile(file, []byte("hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(bin, "serve", file, "--json", "--app", "t")
+	cmd.Env = append(os.Environ(), "HOME="+t.TempDir())
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	var first [4096]byte
+	n, err := stdout.Read(first[:])
+	if err != nil || !strings.Contains(string(first[:n]), `"listening"`) {
+		t.Fatalf("first line %q: %v", first[:n], err)
+	}
+	// The parent is gone: nobody reads stdout any more.
+	_ = stdout.Close()
+	// A save by another editor makes pedit report external_save to the broken pipe.
+	tmp := filepath.Join(dir, ".a.md.tmp")
+	if err := os.WriteFile(tmp, []byte("hi there\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, file); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(500 * time.Millisecond)
+	_ = stdin.Close()
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("pedit serve ended with %v, want a normal exit", err)
+		}
+	case <-time.After(10 * time.Second):
+		_ = cmd.Process.Kill()
+		t.Fatal("pedit serve did not end after stdin closed")
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".a.md.pedit-lock")); !os.IsNotExist(err) {
+		t.Fatalf("lock left behind: %v", err)
 	}
 }
