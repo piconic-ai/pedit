@@ -1,5 +1,32 @@
 # Changelog
 
+## [v0.4.0](https://github.com/piconic-ai/pedit/compare/v0.3.0...v0.4.0) - 2026-11-02
+
+- Add pedit resume; keep --resume as an alias for one release by @kfly8 in https://github.com/piconic-ai/pedit/pull/367
+- Remove the --resume and --close aliases by @kfly8 in https://github.com/piconic-ai/pedit/pull/371
+- Spike: pedit serve, the file's Yjs document over a Unix socket by @kfly8 in https://github.com/piconic-ai/pedit/pull/375
+- fix: preserve kept comment anchors through pruning by @kfly8 in https://github.com/piconic-ai/pedit/pull/373
+- feat: keep canvas board edits while the host is away by @kfly8 in https://github.com/piconic-ai/pedit/pull/376
+- Harden pedit serve and its sample app: bridge token, lock path, Windows lock release, CSP by @kfly8 in https://github.com/piconic-ai/pedit/pull/378
+- Build with Go 1.27.3, which fixes GO-2026-6809 in crypto/x509 by @kfly8 in https://github.com/piconic-ai/pedit/pull/379
+- pedit serve: never follow a symlink at the lock path, and check the lock file's owner by @kfly8 in https://github.com/piconic-ai/pedit/pull/385
+- pedit serve: JSON events with fixed exit codes, and --root by @kfly8 in https://github.com/piconic-ai/pedit/pull/386
+- pedit serve: read-only connections, per-connection caps, and the lock and watch through the directory handle by @kfly8 in https://github.com/piconic-ai/pedit/pull/387
+- Add @pedit/serve: run pedit serve for a local app and mount its routes in Hono by @kfly8 in https://github.com/piconic-ai/pedit/pull/388
+- Add @pedit/serve/client and rebuild the sample app on the library by @kfly8 in https://github.com/piconic-ai/pedit/pull/389
+- pedit serve: keep the document across restarts, with a generation id by @kfly8 in https://github.com/piconic-ai/pedit/pull/391
+- @pedit/serve: carry the document generation to the client, and stop on a changed one by @kfly8 in https://github.com/piconic-ai/pedit/pull/392
+- Hold a CRLF file as LF in the room and write it back with CRLF by @kfly8 in https://github.com/piconic-ai/pedit/pull/393
+- Make @pedit/serve publishable, and shorten the sample app by @kfly8 in https://github.com/piconic-ai/pedit/pull/394
+- Publish @pedit/serve with each pedit release, and say what the sample is for by @kfly8 in https://github.com/piconic-ai/pedit/pull/395
+- pedit serve: ignore SIGPIPE, so an app that exits first does not cut the shutdown short by @kfly8 in https://github.com/piconic-ai/pedit/pull/398
+- Sample: routes before the server, a fixed default port, and a shorter README by @kfly8 in https://github.com/piconic-ai/pedit/pull/397
+- Sample: build @pedit/serve before bundling by @kfly8 in https://github.com/piconic-ai/pedit/pull/399
+- Sample: install packages/ before building @pedit/serve by @kfly8 in https://github.com/piconic-ai/pedit/pull/400
+- Sample: log why pedit could not start by @kfly8 in https://github.com/piconic-ai/pedit/pull/401
+- test(web): batch comment limit fixture updates by @kfly8 in https://github.com/piconic-ai/pedit/pull/402
+- test(interop): stop dropping the last CLI lines on exit by @kfly8 in https://github.com/piconic-ai/pedit/pull/403
+
 ## [v0.3.0](https://github.com/piconic-ai/pedit/compare/v0.2.0...v0.3.0) - 2026-10-31
 
 - Read the ping intervals once, when a connection is dialled by @kfly8 in https://github.com/piconic-ai/pedit/pull/346
