@@ -8,9 +8,9 @@ reach the page edits the file, so the server listens on 127.0.0.1 only.
 
 ## Requirements
 
-- pedit 0.4.0 or later on the PATH (`brew install piconic-ai/tap/pedit`, the
+- pedit 0.5.0 or later on the PATH (`brew install piconic-ai/tap/pedit`, the
   install script, or a GitHub release), or `PEDIT=/path/to/pedit`.
-- Node 22 or later, on macOS or Linux.
+- Node 22 or later, on macOS, Linux or Windows.
 
 ## Run
 
