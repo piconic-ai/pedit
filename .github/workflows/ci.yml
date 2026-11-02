@@ -142,8 +142,12 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Go test (serve, file writes, configuration ownership)
-        run: go test ./internal/serve/ ./internal/filewriter/ ./cmd/pedit/
+      - name: Go test (serve, file writes)
+        run: go test ./internal/serve/ ./internal/filewriter/
+
+      - name: Go test (configuration ownership, serve command)
+        # Most of cmd/pedit's other tests assume Unix (read-only directories, path separators).
+        run: go test -run "Config|Owner|SID|KeepWindows|Serve" ./cmd/pedit/
 
   serve-windows:
     # @pedit/serve on Windows: the fake pedits are Node scripts, the real one is built by the tests.

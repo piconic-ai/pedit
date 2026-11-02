@@ -40,7 +40,7 @@ func TestWriteAtomic(t *testing.T) {
 		t.Fatalf("content = %q", got)
 	}
 	st, _ := os.Stat(path)
-	if st.Mode().Perm() != 0o600 {
+	if st.Mode().Perm() != 0o600 && runtime.GOOS != "windows" { // Windows has no mode bits
 		t.Fatalf("mode = %v", st.Mode().Perm())
 	}
 	entries, _ := os.ReadDir(filepath.Dir(path))
