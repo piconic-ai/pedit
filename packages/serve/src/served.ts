@@ -2,14 +2,14 @@ import { type ChildProcess, spawn } from 'node:child_process'
 import { realpath, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute } from 'node:path'
-import { type Bridge, dialSocket } from './bridge.ts'
+import { type Bridge, EVENT, FrameError, FrameParser, Streams } from './bridge.ts'
 import { HeldError, LimitError, NoPeditError } from './errors.ts'
 import { peditEnv } from './resolve.ts'
 import type { Role, ServeEvent } from './types.ts'
 
 const MAX_FILES = 32
 const MAX_CLIENTS = 8
-const MAX_LINE = 4096
+const MAX_EVENT = 4096
 const STDERR_KEEP = 1024
 const TERM_AFTER_MS = 5000
 
@@ -27,7 +27,7 @@ export interface ServedFile {
   readonly path: string
   /** Names the document: the same after a restart that restored it, new when it started afresh. */
   readonly generation: string
-  /** One connection to the child's socket; at most 8 per file (LimitError). */
+  /** One stream to the child; at most 8 per file (LimitError). */
   dial(role: Role): Promise<Bridge>
 }
 
@@ -35,8 +35,9 @@ interface Entry {
   path: string
   ino: string
   child: ChildProcess
-  ready: Promise<string>
-  socket: string | undefined
+  ready: Promise<void>
+  streams: Streams
+  listening: boolean
   generation: string
   clients: number
   idle: NodeJS.Timeout | undefined
@@ -123,9 +124,9 @@ export class ServedFiles {
       this.#options.bin,
       [
         'serve',
+        '--stdio',
         '--root',
         dirname(path),
-        '--json',
         '--app',
         this.#options.app,
         '--',
@@ -137,9 +138,9 @@ export class ServedFiles {
     const exited = new Promise<void>((r) => {
       onExit = r
     })
-    let onReady!: (socket: string) => void
+    let onReady!: () => void
     let onFail!: (e: Error) => void
-    const ready = new Promise<string>((res, rej) => {
+    const ready = new Promise<void>((res, rej) => {
       onReady = res
       onFail = rej
     })
@@ -149,7 +150,8 @@ export class ServedFiles {
       ino,
       child,
       ready,
-      socket: undefined,
+      streams: new Streams(child.stdin),
+      listening: false,
       generation: '',
       clients: 0,
       idle: undefined,
@@ -171,56 +173,59 @@ export class ServedFiles {
     let errorMessage: string | undefined
     let missing = false
     let stderr = ''
-    let buf = ''
+    const parser = new FrameParser()
     child.stdin.on('error', () => {})
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (d: string) => {
       if (stderr.length < STDERR_KEEP) stderr = (stderr + d).slice(0, STDERR_KEEP)
     })
-    const onLine = (line: string) => {
+    const onEvent = (payload: Buffer) => {
       let ev: Record<string, unknown>
       try {
-        ev = JSON.parse(line)
+        ev = JSON.parse(payload.toString())
       } catch {
         return
       }
-      if (ev.event === 'listening' && typeof ev.socket === 'string' && !entry.socket) {
+      if (ev.event === 'listening' && !entry.listening) {
         if (typeof ev.generation !== 'string' || ev.generation === '') {
           errorMessage = 'pedit did not report a generation; it is too old'
           return child.kill('SIGTERM')
         }
-        entry.socket = ev.socket
+        entry.listening = true
         entry.generation = ev.generation
         this.#emit({ type: 'started', path })
         this.#armIdle(entry)
-        onReady(ev.socket)
+        onReady()
       } else if (ev.event === 'held') {
         held = { pid: Number(ev.pid), ...(typeof ev.app === 'string' ? { app: ev.app } : {}) }
       } else if (ev.event === 'error' && typeof ev.message === 'string') {
         errorMessage = ev.message.slice(0, STDERR_KEEP)
       }
     }
-    child.stdout.setEncoding('utf8')
-    child.stdout.on('data', (d: string) => {
-      buf += d
-      for (let i = buf.indexOf('\n'); i >= 0; i = buf.indexOf('\n')) {
-        const line = buf.slice(0, i)
-        buf = buf.slice(i + 1)
-        if (line.length > MAX_LINE) return child.kill('SIGTERM')
-        onLine(line)
+    child.stdout.on('data', (d: Buffer) => {
+      try {
+        for (const f of parser.push(d)) {
+          if (f.kind !== EVENT) entry.streams.deliver(f)
+          else if (f.stream !== 0 || f.payload.length > MAX_EVENT) throw new FrameError('bad event')
+          else onEvent(f.payload)
+        }
+      } catch (e) {
+        if (!(e instanceof FrameError)) throw e
+        child.kill('SIGTERM')
       }
-      if (buf.length > MAX_LINE) child.kill('SIGTERM')
     })
+    child.stdout.on('error', () => {})
     child.on('error', (e: NodeJS.ErrnoException) => {
       if (e.code === 'ENOENT') missing = true
       else errorMessage = e.message
     })
     child.on('close', (code) => {
       entry.dead = true
+      entry.streams.abort()
       clearTimeout(entry.idle)
       if (this.#byPath.get(path) === entry) this.#byPath.delete(path)
       if (this.#byIno.get(entry.ino) === entry) this.#byIno.delete(entry.ino)
-      if (!entry.socket) {
+      if (!entry.listening) {
         if (missing) onFail(new NoPeditError('the pedit binary cannot be run'))
         else if (code === 3 && held) onFail(new HeldError(held))
         else onFail(new Error(errorMessage ?? (stderr.trim() || `pedit exited with code ${code}`)))
@@ -251,7 +256,7 @@ export class ServedFiles {
   }
 
   async #dial(entry: Entry, role: Role): Promise<Bridge> {
-    if (entry.dead || entry.stopping || !entry.socket)
+    if (entry.dead || entry.stopping || !entry.listening)
       throw new Error('the file is no longer served')
     if (entry.clients >= MAX_CLIENTS) throw new LimitError('too many clients for this file')
     entry.clients++
@@ -261,7 +266,7 @@ export class ServedFiles {
       this.#armIdle(entry)
     }
     try {
-      return await dialSocket(entry.socket, role, release)
+      return entry.streams.open(role, release)
     } catch (e) {
       release()
       throw e

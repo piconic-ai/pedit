@@ -2,7 +2,7 @@
 
 Run [`pedit serve`](https://github.com/piconic-ai/pedit) for a local app. pedit holds one file's Yjs
 document and writes the file; this package starts it, checks every request, and bridges a browser's
-WebSocket to pedit's Unix socket. Your page edits the file live, with several pages at once, and
+WebSocket to a stream on pedit's standard input and output. Your page edits the file live, with several pages at once, and
 there is no room, relay or account.
 
 Experimental (0.x): the API may change. The package is published with every pedit release and
@@ -11,7 +11,7 @@ carries the same version number; the pedit it needs is listed below.
 ## Requirements
 
 - pedit 0.4.0 or later on the PATH (or pass `bin`). Older ones are refused with a message on how to update.
-- Node 22 or later, on macOS or Linux (Unix sockets; not Windows).
+- Node 22 or later, on macOS or Linux (not Windows yet).
 
 ## Install
 

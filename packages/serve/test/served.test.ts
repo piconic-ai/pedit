@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   HeldError,
   LimitError,
@@ -25,6 +25,7 @@ import {
   emptyUpdate,
   isSyncStep1,
   nextFrame,
+  printEvent,
   sleep,
   syncStep1,
   tmpRoot,
@@ -55,6 +56,22 @@ live('ServedFiles', () => {
     bridge.close()
   })
 
+  it('kills a child that writes something that is not a frame', async () => {
+    const { dir, cleanup } = tmpRoot()
+    cleanups.push(cleanup)
+    const fake = write(
+      dir,
+      'pedit',
+      `#!/bin/sh\n${printEvent({ event: 'listening', generation: 'g' })}\nprintf '\\011\\000\\000\\000\\000\\000\\000\\000\\000'\nexec sleep 30\n`,
+    )
+    chmodSync(fake, 0o755)
+    const events: ServeEvent[] = []
+    const files = new ServedFiles({ bin: fake, app: 'test-app', onEvent: (e) => events.push(e) })
+    cleanups.push(() => files.close())
+    await files.acquire(write(dir, 'a.md'))
+    await vi.waitFor(() => expect(events.some((e) => e.type === 'stopped')).toBe(true))
+  })
+
   it('reports the generation, and refuses a child that gives none', async () => {
     const { dir, files } = setup()
     const served = await files.acquire(write(dir, 'a.md'))
@@ -62,7 +79,7 @@ live('ServedFiles', () => {
     const old = write(
       dir,
       'old-pedit',
-      '#!/bin/sh\necho \'{"event":"listening","socket":"/x"}\'\nread _\n',
+      `#!/bin/sh\n${printEvent({ event: 'listening' })}\nread _\n`,
     )
     chmodSync(old, 0o755)
     const other = new ServedFiles({ bin: old, app: 'test-app' })
@@ -142,7 +159,7 @@ live('ServedFiles', () => {
     const served = await files.acquire(write(dir, 'a.md'))
     const bridge = await served.dial('edit')
     const gone = closed(bridge)
-    const pids = execFileSync('pgrep', ['-f', `serve --root ${dir}`])
+    const pids = execFileSync('pgrep', ['-f', `serve --stdio --root ${dir}`])
       .toString()
       .trim()
       .split('\n')
@@ -219,15 +236,15 @@ describe('without a usable pedit', () => {
 
   it('compares versions and accepts the dev forms', () => {
     for (const ok of [
-      'v0.4.0',
-      '0.4.1',
+      'v0.5.0',
+      '0.5.1',
       'v1.0.0',
       'dev',
       'v0.3.1-0.20261031060942-98b75f74184d',
       'v0.3.1-0.20261031060942-98b75f74184d+dirty',
     ])
       expect(peditVersionOk(ok), ok).toBe(true)
-    for (const bad of ['v0.3.9', 'v0.4.0-rc1', '', 'garbage'])
+    for (const bad of ['v0.4.9', 'v0.5.0-rc1', '', 'garbage'])
       expect(peditVersionOk(bad), bad).toBe(false)
   })
 })

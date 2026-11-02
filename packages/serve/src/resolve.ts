@@ -4,8 +4,8 @@ import { access, realpath, stat } from 'node:fs/promises'
 import { delimiter, isAbsolute, join } from 'node:path'
 import { NoPeditError } from './errors.ts'
 
-/** The first pedit release with `pedit serve --root`, `generation` in `listening` and `X-Pedit-Role`. */
-export const MIN_PEDIT_VERSION = '0.4.0'
+/** The first pedit release with `pedit serve --stdio`: framed streams on the child's stdin and stdout. */
+export const MIN_PEDIT_VERSION = '0.5.0'
 
 const UPDATE_HINT =
   'update with Homebrew (brew upgrade pedit), the install script (https://edit.piconic.ai/install.sh) or GitHub releases (https://github.com/piconic-ai/pedit/releases)'
@@ -24,7 +24,7 @@ export function peditVersionOk(output: string, min = MIN_PEDIT_VERSION): boolean
   for (let i = 0; i < 3; i++) {
     if (got[i] !== want[i]) return (got[i] ?? 0) > (want[i] ?? 0)
   }
-  return !/^v?\d+\.\d+\.\d+-/.test(v) // 0.4.0-rc1 is older than 0.4.0
+  return !/^v?\d+\.\d+\.\d+-/.test(v) // 0.5.0-rc1 is older than 0.5.0
 }
 
 /** The only environment a pedit child gets. */
