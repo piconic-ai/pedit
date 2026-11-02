@@ -63,7 +63,7 @@ function Get-Text([string]$Name, [string]$File) {
 # Try-Install NAME [-Env @{...}] [-Release DIR]: run the installer into
 # $work\NAME\bin. Variables in -Env reach the installer; a $null value removes
 # the variable. Returns the exit code.
-function Try-Install([string]$Name, [hashtable]$Env = @{}, [string]$Source = $release, [bool]$SetDir = $true) {
+function Try-Install([string]$Name, [hashtable]$Env = @{}, [string]$Source = $release, [bool]$SetDir = $true, [string]$Prelude = '') {
   $dir = Join-Path $work $Name
   New-Item -ItemType Directory -Force -Path $dir | Out-Null
   $wrapper = Join-Path $dir 'run.ps1'
@@ -71,7 +71,7 @@ function Try-Install([string]$Name, [hashtable]$Env = @{}, [string]$Source = $re
   if ($SetDir) { $check = "Write-Host ('session-path-has-dir=' + ((`$env:Path -split ';') -contains `$env:PEDIT_INSTALL_DIR))" }
   Set-Content -LiteralPath $wrapper -Encoding ASCII -Value @(
     "`$ErrorActionPreference = 'Stop'",
-    "Write-Host ('arch-env=[' + `$env:PROCESSOR_ARCHITECTURE + '][' + `$env:PROCESSOR_ARCHITEW6432 + ']')",
+    $Prelude,
     # PowerShell 7 formats a thrown error with colors and line breaks; print the plain message.
     "try { Get-Content -Raw -LiteralPath '$script' | Invoke-Expression } catch { [Console]::Error.WriteLine(`$_.Exception.Message); exit 1 }",
     "Write-Host 'shell-still-alive'",
@@ -108,8 +108,8 @@ function Invoke-Install([string]$Name, [hashtable]$Env = @{}, [string]$Source = 
   }
 }
 
-function Assert-Failure([string]$Name, [hashtable]$Env = @{}, [string]$Source = $release) {
-  if ((Try-Install $Name $Env $Source) -eq 0) { Fail "${Name}: install.ps1 succeeded" }
+function Assert-Failure([string]$Name, [hashtable]$Env = @{}, [string]$Source = $release, [string]$Prelude = '') {
+  if ((Try-Install $Name $Env $Source $true $Prelude) -eq 0) { Fail "${Name}: install.ps1 succeeded" }
 }
 
 function Assert-Installed([string]$Name) {
@@ -305,7 +305,8 @@ function Refuse-A-Missing-Entry {
 }
 
 function Refuse-An-Unsupported-Architecture {
-  Assert-Failure x86 @{ PROCESSOR_ARCHITECTURE = 'MIPS'; PROCESSOR_ARCHITEW6432 = $null }
+  # Set inside the child: the installer reads the variables of its own process.
+  Assert-Failure x86 @{} $release "`$env:PROCESSOR_ARCHITECTURE = 'MIPS'; Remove-Item Env:PROCESSOR_ARCHITEW6432 -ErrorAction SilentlyContinue"
   Assert-Contains x86 err 'unsupported architecture MIPS'
 }
 
