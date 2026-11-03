@@ -246,6 +246,14 @@ never writes `.pedit/meta`: the host is the only one that saves comments.
 A read link stays refused: it can neither comment nor edit, and an agent that
 only reads has nothing to answer.
 
+A canvas (the first file of the room, or another) is copied as its JSON
+Canvas, rendered from the doc's nodes and edges (`canvas.Render`), under
+`.json`: an app that opens `.canvas` may show what its nodes link to. An
+edit to the copy is taken in as the host takes in an edit to its file
+(`canvas.Apply`), so a canvas room is open to an agent that is a guest, and
+its comments are on node ids as in the browser. Edits typed as JSON in the
+browser stay the host's to answer.
+
 ## Listing without a session
 
 `pedit comments list --file <path>` with no live session reads the metadata

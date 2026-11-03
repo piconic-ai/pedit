@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/piconic-ai/pedit/internal/canvas"
 	"github.com/piconic-ai/pedit/internal/meta"
 	"github.com/piconic-ai/pedit/internal/protocol"
 	"github.com/reearth/ygo/crdt"
@@ -144,7 +145,7 @@ func (k *keptGuest) copyOf(id uint32, format string) *relayCopy {
 	case protocol.FormatMeta:
 		c.roots, c.check = []string{protocol.KeptCommentsRoot}, meta.CheckUpdate
 	case protocol.FormatCanvas:
-		c.roots = nil // not followed from the command line; kept for the cursor only
+		c.roots = []string{canvas.NodesKey, canvas.EdgesKey, canvas.ExtraKey}
 	}
 	k.relay[id] = c
 	return c

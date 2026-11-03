@@ -21,7 +21,7 @@ import (
 
 // Why a file of the room is not mirrored.
 var (
-	errNotText = errors.New("it is a canvas, which only a browser can open; open the link in a browser")
+	errNotText = errors.New("pedit does not know its format; open the link in a browser")
 	errTooMany = fmt.Errorf("a room mirrors up to %d files", MaxFiles)
 	errBadID   = errors.New("its id is out of range")
 )
@@ -107,7 +107,7 @@ func (s *Session) mirrorFile(entry protocol.FileEntry) (string, error) {
 		// DecodeFiles refuses it; a list made by hand gets the same.
 		return file, errBadID
 	}
-	if entry.Format != protocol.FormatText {
+	if entry.Format != protocol.FormatText && entry.Format != protocol.FormatCanvas {
 		return file, errNotText
 	}
 	s.filesMu.Lock()
@@ -138,13 +138,17 @@ func (s *Session) mirrorFile(entry protocol.FileEntry) (string, error) {
 	}
 
 	doc := crdt.New()
+	var shared content = newTextContent(doc, "")
+	if entry.Format == protocol.FormatCanvas {
+		shared = &canvasContent{doc: doc}
+	}
 	f := &sharedFile{
 		id:         entry.ID,
 		file:       file,
 		path:       entry.Path,
 		doc:        doc,
 		bound:      bound,
-		content:    newTextContent(doc, ""),
+		content:    shared,
 		client:     s.Client,
 		onError:    s.onError,
 		notices:    newNotices(file, m.opts.OnNotice, s.onError),

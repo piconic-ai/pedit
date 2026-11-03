@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/piconic-ai/pedit/internal/canvas"
 	"github.com/piconic-ai/pedit/internal/meta"
 	"github.com/piconic-ai/pedit/internal/protocol"
 	"github.com/piconic-ai/pedit/internal/protocol/prototest"
@@ -35,6 +37,16 @@ type keptRelay struct {
 
 func newKeptRelay(t *testing.T) *keptRelay {
 	t.Helper()
+	content := crdt.New()
+	text := content.GetText("content")
+	content.Transact(func(txn *crdt.Transaction) { text.Insert(txn, 0, "hello world!\n", nil) })
+	return newKeptRelayOf(t, "notes.md", content, "hello")
+}
+
+// newKeptRelayOf keeps a room whose first file, name, is content, with a
+// saved thread whose quote is quote (a node id for a canvas).
+func newKeptRelayOf(t *testing.T, name string, content *crdt.Doc, quote string) *keptRelay {
+	t.Helper()
 	raw, err := protocol.DecodeKey(protocol.GenerateKey())
 	if err != nil {
 		t.Fatal(err)
@@ -43,18 +55,19 @@ func newKeptRelay(t *testing.T) *keptRelay {
 	if err != nil {
 		t.Fatal(err)
 	}
-	content := crdt.New()
-	text := content.GetText("content")
-	content.Transact(func(txn *crdt.Transaction) { text.Insert(txn, 0, "hello world!\n", nil) })
 	comments := crdt.New()
-	saved := &meta.File{Path: "notes.md", Comments: map[string]meta.Thread{"c0": {
-		Anchor: meta.Anchor{Type: meta.AnchorText, Text: &meta.Selector{Exact: "hello", Suffix: " world", Offset: 0}},
-		Quote:  "hello", Messages: map[string]meta.Message{"m0": {Author: "Host", Time: "2026-10-20T00:00:00Z", Body: "Saved before"}},
+	anchor := meta.Anchor{Type: meta.AnchorText, Text: &meta.Selector{Exact: quote, Suffix: " world", Offset: 0}}
+	tracker := meta.NewTracker(content)
+	if isCanvas(name) {
+		anchor, tracker = meta.Anchor{Type: meta.AnchorNode, ID: quote}, nil
+	}
+	saved := &meta.File{Path: name, Comments: map[string]meta.Thread{"c0": {
+		Anchor: anchor, Quote: quote, Messages: map[string]meta.Message{"m0": {Author: "Host", Time: "2026-10-20T00:00:00Z", Body: "Saved before"}},
 	}}}
-	meta.Load(comments, saved, meta.NewTracker(content))
+	meta.Load(comments, saved, tracker)
 	bundle, err := protocol.SealKeptBundle(keys, []protocol.KeptFileSnapshot{
-		{ID: 0, Path: "notes.md", Update: crdt.EncodeStateAsUpdateV1(content, nil)},
-		{ID: 1024, Path: protocol.MetaPath("notes.md"), Update: crdt.EncodeStateAsUpdateV1(comments, nil)},
+		{ID: 0, Path: name, Update: crdt.EncodeStateAsUpdateV1(content, nil)},
+		{ID: 1024, Path: protocol.MetaPath(name), Update: crdt.EncodeStateAsUpdateV1(comments, nil)},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +133,7 @@ func (r *keptRelay) link(access protocol.Access) string {
 
 func (r *keptRelay) join(t *testing.T, access protocol.Access, on func(CommentChange)) *Session {
 	t.Helper()
-	s, err := Join(context.Background(), JoinOptions{URL: r.link(access), Name: "tate-pm", Dial: r.relay.Dial, dir: t.TempDir(), WriteDelay: 10 * time.Millisecond, OnComments: on})
+	s, err := Join(context.Background(), JoinOptions{URL: r.link(access), Name: "tate-pm", Dial: r.relay.Dial, dir: t.TempDir(), WriteDelay: 10 * time.Millisecond, Watch: true, OnComments: on})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,5 +308,28 @@ func TestALiveReconnectDropsWhatTheGuestHeldOfTheKeptRoom(t *testing.T) {
 	prototest.WaitFor(t, 5*time.Second, func() bool { _, held := g.kept.cursor(); return !held && len(r.relay.Conns()) == 2 }, "the kept baseline dropped")
 	if has, held, _ := g.kept.relayHas(1024, crdt.New()); has || held {
 		t.Fatal("the relay's copies stayed")
+	}
+}
+
+func TestAGuestJoinsAKeptCanvasRoom(t *testing.T) {
+	parsed, err := canvas.Parse([]byte(board))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := crdt.New()
+	canvas.Apply(content, canvas.Canvas{}, parsed.Canvas, nil)
+	r := newKeptRelayOf(t, "board.canvas", content, "a1")
+	g := r.join(t, protocol.AccessEdit, nil)
+	if filepath.Base(g.File()) != "00-board.json" || !strings.Contains(readFile(t, g.File()), `"Hello"`) {
+		t.Fatalf("copy %s: %q", g.File(), readFile(t, g.File()))
+	}
+	if c := g.Comments(); len(c) != 1 || c[0].File != "board.canvas" || c[0].Threads[0].Node != "a1" {
+		t.Fatalf("comments %+v", c)
+	}
+	if res, err := g.Reply("", "c0", "r1", "Seen while away."); err != nil || !res.Delivered {
+		t.Fatalf("%+v %v", res, err)
+	}
+	if ids, _ := r.entries(); len(ids) != 1 || ids[0] != 1024 {
+		t.Fatalf("entries %v", ids)
 	}
 }

@@ -663,3 +663,41 @@ func TestGoHostKeepsCommentsFromJavaScriptGuest(t *testing.T) {
 		t.Fatalf("re-anchored %+v", c)
 	}
 }
+
+// A guest on the command line edits its copy of a canvas: the browser sees
+// the node's text change, kept as the Y.Text it types into.
+func TestGoGuestEditsACanvasForJavaScriptGuest(t *testing.T) {
+	dir := protocolDir(t)
+	server := newServer(t)
+	file := filepath.Join(t.TempDir(), "board.canvas")
+	const board = `{"nodes":[{"id":"a1","type":"text","text":"Hello","x":0,"y":0,"width":250,"height":60}],"edges":[]}`
+	if err := os.WriteFile(file, []byte(board), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := session.Start(context.Background(), session.Options{File: file, Server: server.URL, WriteDelay: 20 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Stop() })
+	prototest.WaitFor(t, 5*time.Second, func() bool { return s.Client.Status() == protocol.StatusConnected }, "host connected")
+
+	g, err := session.Join(context.Background(), session.JoinOptions{URL: s.URL, WriteDelay: 20 * time.Millisecond, Watch: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = g.Stop() })
+	copied, _ := os.ReadFile(g.File())
+	if err := os.WriteFile(g.File(), []byte(strings.Replace(string(copied), `"Hello"`, `"Hello from the CLI"`, 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	share, _ := url.Parse(s.URL)
+	guest := startGuest(t, "testdata/canvas-watch.mjs", dir, wsURL(server), share.Fragment, "Hello from the CLI")
+	var seen struct {
+		Texts       []string
+		TextIsYText bool
+	}
+	if line := guest.next("the edited node"); json.Unmarshal([]byte(line), &seen) != nil || len(seen.Texts) != 1 || seen.Texts[0] != "Hello from the CLI" || !seen.TextIsYText {
+		t.Fatalf("guest said %q\n%s", line, guest.stderr.String())
+	}
+	guest.wait()
+}

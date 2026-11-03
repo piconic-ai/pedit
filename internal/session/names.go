@@ -39,7 +39,12 @@ func copyName(id uint64, hostPath string) string {
 	if i := strings.LastIndexByte(last, '.'); i > 0 {
 		last, ext = last[:i], asciiLower(last[i+1:])
 	}
-	if !copyExts[ext] {
+	switch {
+	case ext == "canvas":
+		// JSON Canvas is JSON: an app that opens .canvas may show the web
+		// pages and files its nodes link to.
+		ext = "json"
+	case !copyExts[ext]:
 		ext = "txt"
 	}
 	var words []string

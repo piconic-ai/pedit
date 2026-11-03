@@ -152,8 +152,10 @@ it, never as the room names it:
 ```
 
 Quote the link in the shell: `#` starts a comment otherwise. Copy out what you
-want to keep before you leave. Canvas rooms can only be joined in a browser
-for now.
+want to keep before you leave. A canvas comes as its JSON Canvas, under
+`.json` (`00-board.json`): edit it as JSON and pedit sends the changed nodes
+and edges, as it takes in edits to the host's file. While the host is away
+from a kept room, edits to a copy wait until it is back.
 
 ### Several files in one room
 

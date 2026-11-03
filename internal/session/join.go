@@ -261,9 +261,7 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 		return fail(err)
 	}
 	host = s.kept.orFirstFile(host)
-	if format, _ := host["format"].(string); format == formatCanvas {
-		return fail(errors.New("this room shares a canvas as nodes and edges, which pedit cannot join from the command line yet; open the link in a browser"))
-	}
+	s.takeFormat(host)
 	hostName, _ := host["file"].(string)
 	if err := s.openCopy(root, dir, hostName, opts, onError); err != nil {
 		return fail(err)
@@ -294,6 +292,16 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 	s.startMirror()
 	s.mirrorMu.Unlock()
 	return s, nil
+}
+
+// takeFormat shares the first file as the host does: as text, or a canvas
+// as nodes and edges, whose copy is JSON Canvas rendered from them and
+// whose edits are taken in as the host takes in edits to its file.
+func (s *Session) takeFormat(host map[string]any) {
+	if format, _ := host["format"].(string); format == formatCanvas {
+		s.sharedFile.content = &canvasContent{doc: s.Doc}
+		s.Text = nil
+	}
 }
 
 // watchesCopies tells whether a guest watches its copies for edits: only an
