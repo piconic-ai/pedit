@@ -327,7 +327,7 @@ func handleRequest(s commentSession, r sessiondir.Request) sessiondir.Answer {
 	)
 	switch r.Op {
 	case sessiondir.OpList:
-		return sessiondir.Answer{OK: true, Threads: threadsOf(s.Comments())}
+		return sessiondir.Answer{OK: true, Threads: threadsOf(filesNamed(s.Comments(), r.File))}
 	case sessiondir.OpReply:
 		res, err = s.Reply(r.File, r.Thread, r.Message, r.Body)
 	case sessiondir.OpResolve, sessiondir.OpReopen:
@@ -338,6 +338,21 @@ func handleRequest(s commentSession, r sessiondir.Request) sessiondir.Answer {
 	}
 	delivered := res.Delivered
 	return sessiondir.Answer{OK: true, Message: r.Message, Delivered: &delivered}
+}
+
+// filesNamed keeps the threads of the file at path, as the room shows it,
+// or of every file when path is empty.
+func filesNamed(files []session.FileThreads, path string) []session.FileThreads {
+	if path == "" {
+		return files
+	}
+	var out []session.FileThreads
+	for _, f := range files {
+		if f.File == path {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 func threadsOf(files []session.FileThreads) []sessiondir.Thread {

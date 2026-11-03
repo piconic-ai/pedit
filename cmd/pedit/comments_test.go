@@ -75,6 +75,9 @@ func TestCommentsReachTheSession(t *testing.T) {
 	if code != 0 || out != "t1  board.canvas  \"node n1\"\n  Ada, 2026-10-21T00:00:00Z:\n    Which one?\n    This?\n" {
 		t.Fatalf("list: %d %q", code, out)
 	}
+	if code, out, _ := runCommentsCmd("list", "--file", "other.md", "--json"); code != 0 || out != "[]\n" {
+		t.Fatalf("another file's threads: %d %q", code, out)
+	}
 	code, out, _ = runCommentsCmd("list", "--all", "--json")
 	if code != 0 || !strings.HasPrefix(out, `[{"file":"board.canvas","thread":"t1","anchor":{"type":"node","id":"n1"},"quote":"Ideas","resolved":false,"messages":[{"id":"m1","author":"Ada"`) || !strings.Contains(out, `"thread":"t2"`) {
 		t.Fatalf("list --all --json: %d %s", code, out)

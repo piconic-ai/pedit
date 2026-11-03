@@ -152,3 +152,26 @@ func TestABaseOthersCanReachIsRefused(t *testing.T) {
 		t.Fatal("listed a directory others can reach")
 	}
 }
+
+func TestAnAnswerLostWithItsSessionIsUnknown(t *testing.T) {
+	b := base(t)
+	d, err := Register(b, Info{Room: "ROOM"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var acted bool
+	// The session acts on the request, then its directory goes before it
+	// answers, as when it dies and the next command cleans up after it.
+	if err := d.Serve(func(Request) Answer {
+		acted = true
+		_ = os.RemoveAll(filepath.Join(b, d.ID))
+		return Answer{OK: true}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	live, _ := List(b)
+	if _, err := live[0].Call(Request{Op: OpReply, Thread: "t1", Message: "m1", Body: "x"}, time.Second); !errors.Is(err, ErrUnknown) || !acted {
+		t.Fatalf("%v (acted %v)", err, acted)
+	}
+	d.Close()
+}

@@ -492,7 +492,8 @@ var (
 	// ErrUnknown means the session took the request but did not answer in
 	// time: what it did is not known.
 	ErrUnknown = errors.New("the session took the request but did not answer in time")
-	// ErrGone means the session ended before it answered.
+	// ErrGone means the session ended before the request was left for it:
+	// nothing was done.
 	ErrGone = errors.New("the session ended")
 )
 
@@ -536,7 +537,7 @@ func (l Live) await(w *fsnotify.Watcher, name string, wait time.Duration) (Answe
 		select {
 		case _, ok := <-w.Events:
 			if !ok {
-				return Answer{}, ErrGone
+				return Answer{}, l.withdraw(name)
 			}
 		case <-w.Errors:
 		case <-deadline.C:
@@ -550,15 +551,13 @@ func (l Live) await(w *fsnotify.Watcher, name string, wait time.Duration) (Answe
 }
 
 // withdraw takes back a request the session has not taken: ErrWithdrawn
-// when it could, ErrUnknown when the session had taken it.
+// when it could. Otherwise the session took it, and may have acted on it
+// before it ended or lost its directory: the outcome is unknown.
 func (l Live) withdraw(name string) error {
 	withdrawn := filepath.Join(l.path, reqDir, ".withdrawn-"+name)
 	if os.Rename(filepath.Join(l.path, reqDir, name), withdrawn) == nil {
 		_ = os.Remove(withdrawn)
 		return ErrWithdrawn
-	}
-	if _, err := os.Stat(l.path); err != nil {
-		return ErrGone
 	}
 	return ErrUnknown
 }
