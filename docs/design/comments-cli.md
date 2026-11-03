@@ -164,15 +164,20 @@ When the request is answered:
 - **A guest** answers `delivered` once the host has applied the write: the
   host saves comments, so another peer having it proves nothing about
   `.pedit/meta`, and every peer checks and may refuse an update on its own.
-  - Before writing, the session keeps the comments doc's state vector. After
-    writing, it sends a SyncStep1 with that earlier state vector, not the
-    current one. A peer that writes the doc answers it (`room_files.go`) with
-    everything it has past that state: the guest's write is in the answer if,
-    and only if, the peer applied it. (An answer to the current state vector
-    leaves the write out either way.)
-  - The write is covered when the answer holds the guest's structs of the
-    write, through its last clock, and its delete set holds what the write
-    deleted (resolving overwrites `resolved`; a reply deletes nothing).
+  - What is confirmed is the item that holds what the request asked for,
+    once the session has it: the reply's message under its id, or the
+    thread's `resolved` value. That is the item just written, or for a
+    request the doc already satisfied (a reply sent again, resolving a
+    resolved thread) the item that satisfied it, whoever wrote it. So a
+    retry is confirmed the same way as the first try.
+  - The session sends a SyncStep1 with its state vector, but with the
+    item's client lowered to the item's clock. A peer that writes the doc
+    answers it (`room_files.go`) with everything it has past that state:
+    the item is in the answer if, and only if, the peer has it. (An answer
+    to the current state vector leaves it out either way.)
+  - The item is covered when the answer holds its struct. Its deletions
+    follow: a map entry deletes the entry it overrides when it is
+    integrated, on every peer, and a reply deletes nothing.
   - Only the host's answer counts. The Client remembers which sender each
     awareness state came in, and the host is the editor whose state says
     `role: host`, as `join.go` finds it. An editor could claim the role, but
