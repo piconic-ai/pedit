@@ -101,14 +101,20 @@ A session started with `--json` registers itself in its own directory:
 - **A request** is `req/<nonce>.json`, written to a temporary name in `req/`
   and renamed, so the session never reads half of one:
 
-      {"version": 1, "op": "reply", "file": "docs/spec.md", "thread": "...", "body": "..."}
+      {"version": 1, "op": "reply", "file": "docs/spec.md", "thread": "...", "message": "...", "body": "..."}
 
   `op` is `list`, `reply`, `resolve` or `reopen`; `file` is a path as the room
-  shows it, and may be empty. A request names no path on disk and opens
+  shows it, and may be empty. `message` is the id of the reply, chosen by the
+  command (16 random characters, as the browser makes one) or given with
+  `--id`, so a reply sent twice is written once (see Writing). A request names no path on disk and opens
   nothing: it acts only on the comments docs the session already shares, with
   the session's name. The session takes a request only if it is a regular file
   in `req/` (no link), of at most 64 KiB, and parses under the checks of
   `internal/meta` (exact keys, limits).
+- **Taking a request.** The session renames `req/<nonce>.json` to
+  `work/<nonce>.json` before it acts on it, and a command that gives up
+  renames its request out of `req/` the same way. Only one rename succeeds,
+  so a request is either taken or withdrawn, never both.
 - **The answer** is `res/<nonce>.json`, written the same way, then the
   request is removed:
 
@@ -116,8 +122,13 @@ A session started with `--json` registers itself in its own directory:
       {"version": 1, "ok": false, "error": "no thread abc in this room"}
 
   `list` answers with the threads, as `pedit comments list --json` prints
-  them. The command waits for the answer with fsnotify, then removes it; after
-  10 seconds it gives up and removes its request. The session watches `req/`
+  them. The command waits for the answer with fsnotify, then removes it.
+  The session answers every request it took within 15 seconds: the delivery
+  wait below is 10. The command waits 30 seconds; then, if it can still
+  withdraw its request, nothing was written, and it says so (exit 1). If the
+  session had taken it, the outcome is unknown (exit 4), and the command says
+  how to retry safely: the same command with `--id <message id>`. The
+  session watches `req/`
   with fsnotify, as it watches the shared files, and also reads it once on
   start and every time the watch reports an overflow.
 - **Choosing a session.** Without `--room`, a command takes the only live
@@ -134,8 +145,12 @@ fsnotify, the lock, and the owner check.
 ## Writing
 
 The session writes as the browser does (`packages/web/src/comments.ts`), in
-Go (`internal/meta`): a reply is a message `{author, time, body}` under a new
-random id in the thread's `messages` map; resolving sets `resolved`. The same
+Go (`internal/meta`): a reply is a message `{author, time, body}` under the
+request's id in the thread's `messages` map; resolving sets `resolved`. A
+reply whose id the thread already holds, with the same author and body, is
+done already: the session answers as if it wrote it, and writes nothing. With
+another author or body it is refused. Resolving a resolved thread, or
+reopening an open one, writes nothing either. The same
 limits hold (4,000 UTF-16 code units in a body, 200 comments in a thread), and
 the update passes `meta.CheckUpdate` before the session applies it, as every
 peer's does.
@@ -146,15 +161,29 @@ When the request is answered:
   answer says `delivered` at once. The write is saved to `.pedit/meta` as any
   change of the comments is: the host now schedules a save for its own
   changes too, not only the room's (`internal/session/meta.go`).
-- **A guest** sends the update, then a SyncStep1 for the comments doc. Only
-  peers that write the doc answer one (the host, editors and commenters,
-  `room_files.go`), and a peer takes the guest's frames only once the guest
-  has answered its nonce (`fresh.go`). So when an answer's state covers the
-  update, a peer of the room has applied it, and the answer says
-  `delivered`; the host, when it is in the room, gets the update as that peer
-  did. After 10 seconds without one it answers `delivered: false`: the update
-  stays in the session's doc and reaches the room as every unsent update
-  does; it is not an error.
+- **A guest** answers `delivered` once the host has applied the write: the
+  host saves comments, so another peer having it proves nothing about
+  `.pedit/meta`, and every peer checks and may refuse an update on its own.
+  - Before writing, the session keeps the comments doc's state vector. After
+    writing, it sends a SyncStep1 with that earlier state vector, not the
+    current one. A peer that writes the doc answers it (`room_files.go`) with
+    everything it has past that state: the guest's write is in the answer if,
+    and only if, the peer applied it. (An answer to the current state vector
+    leaves the write out either way.)
+  - The write is covered when the answer holds the guest's structs of the
+    write, through its last clock, and its delete set holds what the write
+    deleted (resolving overwrites `resolved`; a reply deletes nothing).
+  - Only the host's answer counts. The Client remembers which sender each
+    awareness state came in, and the host is the editor whose state says
+    `role: host`, as `join.go` finds it. An editor could claim the role, but
+    an edit link can rewrite every comment anyway.
+  - The SyncStep1 is sent again every second until the host's answer covers
+    the write, as the host may not have taken the guest's frames yet
+    (`fresh.go`). After 10 seconds without it the session answers
+    `delivered: false`: the update stays in the session's doc and reaches the
+    room as every unsent update does; it is not an error. A test runs a
+    guest whose host never applies the write and checks that the command
+    gets this answer, not a timeout.
 - **A guest while the host is away** (a kept room): the browser's path, a
   kept entry acknowledged by its echo (`rooms-away.md`), ported to Go. Until
   that lands, the session answers `host away` and writes nothing. A comment
@@ -191,8 +220,11 @@ time and body. `--all` adds resolved threads. `--json` prints
 
 with threads and messages in the order the browser shows them.
 
-`reply` prints the new message's id. Exit codes: 0 done, 1 error, 2 usage,
-3 written but not confirmed as delivered (a guest's `delivered: false`).
+`reply` prints the new message's id. Exit codes: 0 done, 1 error (nothing
+written), 2 usage, 3 written but not confirmed as delivered (a guest's
+`delivered: false`), 4 the outcome is unknown (the session took the request
+but did not answer in time). After 3 or 4, the same command with `--id` is
+safe to run again.
 
 ## Order of work
 
