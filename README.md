@@ -195,8 +195,8 @@ or is gone. A comment goes on up to 1,000 characters of text, or of a cell.
 
 Comments are kept for files inside the project: the directory of
 `.pedit/config.yaml`, or the one you run pedit in when there is none. Commit
-`.pedit/meta/` to keep them with the files. A guest on the command line, or
-an older pedit, does not see them. See
+`.pedit/meta/` to keep them with the files. An older pedit does not see
+them; a guest on the command line reads and answers them as below. See
 [the design](docs/design/comments.md) for how they are anchored and checked.
 
 ### Comments from scripts and agents
@@ -216,7 +216,9 @@ pedit comments resolve <thread>           # or reopen
 The `pedit comments` commands reach the session running on the same
 machine through a directory of its own in your configuration directory; they
 never connect to the room themselves, so the agent is one participant, named
-by `--name`, for as long as it works. With no session running,
+by `--name`, for as long as it works. An agent that is a guest does the same
+with `pedit <share link> --json`, with an edit link or a comment-only one;
+its reply counts as delivered once the host has it. With no session running,
 `pedit comments list --file notes.md` lists the comments as the host saved
 them last. `pedit comments --help` says more, and
 [the design](docs/design/comments-cli.md) how it works.
@@ -242,8 +244,10 @@ send one of these instead:
 People with a comment-only or read-only link are listed among the
 participants as comment only or read only. A comment-only link is offered while
 some file keeps comments. Each link also gives the ones below it, never the
-ones above, and every peer checks what the others may do, not the relay. These
-links open in a browser; the command line joins with an edit link only.
+ones above, and every peer checks what the others may do, not the relay. A
+comment-only link also joins from the command line, to read and answer
+comments (its copies of the files are not sent back); a read-only link opens
+in a browser.
 
 ## Why pedit?
 
