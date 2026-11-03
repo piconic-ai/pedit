@@ -205,6 +205,7 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 		OnKind:       func(kind byte, payload []byte) { s.kept.onKind(kind, payload) },
 		OnKeptUpdate: func(id uint64, update []byte) { s.kept.send(id, update) },
 		After:        func() (uint64, bool) { return s.kept.cursor() },
+		OnLive:       func() { s.kept.settle() },
 		OnFileAnswer: func(id uint64, fromHost bool, update []byte) { s.guest.answered(id, fromHost, update) },
 		OnAccess:     func(uint64) { peopleChanged() },
 	})

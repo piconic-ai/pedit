@@ -123,7 +123,7 @@ func (s *Session) writeComments(file, thread string, make func(*crdt.Doc) ([]byt
 	}
 	if s.guest != nil && s.Client.Status() == protocol.StatusKept {
 		// Kept while the host is away: the relay logs it for the host.
-		return WriteResult{Delivered: s.kept.waitLogged(c.id)}, nil
+		return WriteResult{Delivered: s.kept.waitLogged(c)}, nil
 	}
 	if s.guest != nil {
 		return WriteResult{Delivered: s.guest.waitForHost(c)}, nil

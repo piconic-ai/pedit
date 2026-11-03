@@ -28,6 +28,9 @@ type keptRelay struct {
 
 	mu  sync.Mutex
 	log [][]byte
+	// hold keeps the entries editors send from being logged; live makes the
+	// next connections those of a room whose host is back.
+	hold, live bool
 }
 
 func newKeptRelay(t *testing.T) *keptRelay {
@@ -64,7 +67,12 @@ func newKeptRelay(t *testing.T) *keptRelay {
 func (r *keptRelay) dialed(c *prototest.ScriptConn) {
 	r.mu.Lock()
 	log := append([][]byte{}, r.log...)
+	live := r.live
 	r.mu.Unlock()
+	if live {
+		c.Push(protocol.WithKind(protocol.KindLive, []byte{0}))
+		return
+	}
 	c.Say(fmt.Sprintf("kept %d", time.Now().Add(time.Hour).UnixMilli()))
 	c.Push(protocol.WithKind(protocol.KindReplay, r.bundle))
 	for i, entry := range log {
@@ -73,7 +81,10 @@ func (r *keptRelay) dialed(c *prototest.ScriptConn) {
 	c.Push(protocol.EncodeLogEnd(uint64(len(log))))
 	go func() {
 		for m := range c.Sent {
-			if m[0] == protocol.KindEntry {
+			r.mu.Lock()
+			hold := r.hold
+			r.mu.Unlock()
+			if m[0] == protocol.KindEntry && !hold {
 				r.append(c, m[1:])
 			}
 		}
@@ -242,5 +253,47 @@ func TestAGuestLiveWhenTheRoomIsKeptJoinsAgain(t *testing.T) {
 	}
 	if ids, _ := r.entries(); len(ids) != 2 {
 		t.Fatalf("entries %v", ids)
+	}
+}
+
+func TestTheHostBackBeforeTheRelayLoggedAReplyIsNotDelivery(t *testing.T) {
+	oldWait, oldEvery := deliveryWait, probeEvery
+	deliveryWait, probeEvery = 400*time.Millisecond, 50*time.Millisecond
+	t.Cleanup(func() { deliveryWait, probeEvery = oldWait, oldEvery })
+	r := newKeptRelay(t)
+	g := r.join(t, protocol.AccessEdit, nil)
+	r.mu.Lock()
+	r.hold = true
+	r.mu.Unlock()
+	done := make(chan WriteResult, 1)
+	go func() {
+		res, _ := g.Reply("", "c0", "r1", "Not logged")
+		done <- res
+	}()
+	time.Sleep(100 * time.Millisecond)
+	// The host comes back; nobody here answers for it.
+	r.relay.Conns()[0].Say("host back")
+	if res := <-done; res.Delivered {
+		t.Fatal("a reply the relay never logged, and no host has, counted as delivered")
+	}
+}
+
+func TestALiveReconnectDropsWhatTheGuestHeldOfTheKeptRoom(t *testing.T) {
+	r := newKeptRelay(t)
+	g := r.join(t, protocol.AccessEdit, nil)
+	if _, err := g.Reply("", "c0", "r1", "Logged"); err != nil {
+		t.Fatal(err)
+	}
+	if _, held := g.kept.cursor(); !held {
+		t.Fatal("no cursor after the replay")
+	}
+	r.mu.Lock()
+	r.live = true
+	r.mu.Unlock()
+	// The connection drops; the host is back when the guest reconnects.
+	r.relay.Conns()[0].CloseWith(1006)
+	prototest.WaitFor(t, 5*time.Second, func() bool { _, held := g.kept.cursor(); return !held && len(r.relay.Conns()) == 2 }, "the kept baseline dropped")
+	if has, held, _ := g.kept.relayHas(1024, crdt.New()); has || held {
+		t.Fatal("the relay's copies stayed")
 	}
 }

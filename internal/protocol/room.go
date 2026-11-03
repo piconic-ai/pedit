@@ -123,9 +123,13 @@ type ClientOptions struct {
 	// connection's after parameter.
 	OnKeptUpdate func(id uint64, update []byte)
 	After        func() (uint64, bool)
-	Dial         Dialer
-	MinBackoff   time.Duration
-	MaxBackoff   time.Duration
+	// OnLive is called, for a kept guest, when a connection's first message
+	// is not the relay's kept: the room is not kept on it, and what the
+	// guest holds of a kept room may be stale.
+	OnLive     func()
+	Dial       Dialer
+	MinBackoff time.Duration
+	MaxBackoff time.Duration
 	// BusyBackoff is the least a busy relay is waited out before trying again.
 	BusyBackoff time.Duration
 	// Messages and Bytes are what the relay lets one connection send;
@@ -551,7 +555,13 @@ func (c *Client) read(conn Conn, out *outbox, heard *bool) ([]byte, error) {
 	for {
 		data, err := conn.Read(c.ctx)
 		var sig Signal
-		if !errors.As(err, &sig) {
+		isSignal := errors.As(err, &sig)
+		if !*heard && (err == nil || isSignal) && c.opts.OnLive != nil {
+			if _, kept := ParseKept(string(sig)); !kept {
+				c.opts.OnLive()
+			}
+		}
+		if !isSignal {
 			*heard = true
 			return data, err
 		}

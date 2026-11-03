@@ -35,8 +35,9 @@ type keptGuest struct {
 	// replayed is closed after the first replay ends.
 	replayed chan struct{}
 	once     sync.Once
-	// acked is closed, and made anew, whenever an entry is acknowledged.
-	acked chan struct{}
+	// changed is closed, and made anew, whenever the relay's copies change
+	// or are dropped.
+	changed chan struct{}
 }
 
 type relayCopy struct {
@@ -52,7 +53,7 @@ type keptPending struct {
 }
 
 func newKeptGuest(s *Session, keys *protocol.RoomKeys) *keptGuest {
-	return &keptGuest{s: s, keys: keys, relay: map[uint32]*relayCopy{}, replayed: make(chan struct{}), acked: make(chan struct{})}
+	return &keptGuest{s: s, keys: keys, relay: map[uint32]*relayCopy{}, replayed: make(chan struct{}), changed: make(chan struct{})}
 }
 
 // cursor is the last log entry held, if any, for the after parameter.
@@ -223,10 +224,9 @@ func (k *keptGuest) logged(payload []byte) error {
 	if own >= 0 {
 		mine = k.pending[own]
 		k.pending = append(k.pending[:own], k.pending[own+1:]...)
-		close(k.acked)
-		k.acked = make(chan struct{})
 	}
 	k.mu.Unlock()
+	defer k.notify()
 	if own >= 0 {
 		format, _ := k.formatOf(mine.id)
 		// Our own edit: it is in our doc, whatever the copy makes of it.
@@ -267,7 +267,16 @@ func (k *keptGuest) logEnd(tail uint64) {
 		}
 		k.send(uint64(id), crdt.EncodeStateAsUpdateV1(doc, c.doc.StateVector()))
 	}
+	k.notify()
 	k.once.Do(func() { close(k.replayed) })
+}
+
+// notify wakes whoever waits on the relay's copies.
+func (k *keptGuest) notify() {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	close(k.changed)
+	k.changed = make(chan struct{})
 }
 
 // lacks tells whether relay lacks something doc holds: a struct, or a
@@ -310,36 +319,49 @@ func (k *keptGuest) send(id uint64, update []byte) {
 	k.s.Client.SendMessage(protocol.WithKind(protocol.KindEntry, body))
 }
 
-// settle lets go of what is held: the host is back and takes the state.
+// settle lets go of what is held: the host is back and takes the state, or
+// the room is live on a new connection, and what the guest holds of a kept
+// room may be stale.
 func (k *keptGuest) settle() {
 	k.mu.Lock()
-	defer k.mu.Unlock()
 	k.relay = map[uint32]*relayCopy{}
 	k.files = nil
 	k.pending = nil
 	k.hasAfter = false
-	close(k.acked)
-	k.acked = make(chan struct{})
+	k.mu.Unlock()
+	k.notify()
 }
 
-// waitLogged waits until the relay logged every entry pending for file id,
-// or deliveryWait passes.
-func (k *keptGuest) waitLogged(id uint64) bool {
+// relayHas tells whether the relay logged everything doc holds of file id:
+// its copy lacks nothing of the doc. held is false once the copies are
+// dropped, as when the host is back.
+func (k *keptGuest) relayHas(id uint64, doc *crdt.Doc) (has, held bool, changed <-chan struct{}) {
+	k.mu.Lock()
+	c := k.relay[uint32(id)]
+	changed = k.changed
+	k.mu.Unlock()
+	if c == nil || c.roots == nil {
+		return false, false, changed
+	}
+	return !lacks(c.doc, doc), true, changed
+}
+
+// waitLogged waits until the relay logged everything the doc of c holds,
+// the write just made or one it held already, or deliveryWait passes. If
+// the host comes back meanwhile, only the host's having it counts.
+func (k *keptGuest) waitLogged(c commentDoc) bool {
 	give := time.NewTimer(deliveryWait)
 	defer give.Stop()
 	for {
-		k.mu.Lock()
-		waiting := false
-		for _, p := range k.pending {
-			waiting = waiting || uint64(p.id) == id
-		}
-		acked := k.acked
-		k.mu.Unlock()
-		if !waiting {
+		has, held, changed := k.relayHas(c.id, c.doc)
+		switch {
+		case has:
 			return true
+		case !held && k.s.Client.Status() != protocol.StatusKept:
+			return k.s.guest.waitForHost(c)
 		}
 		select {
-		case <-acked:
+		case <-changed:
 		case <-give.C:
 			return false
 		}
