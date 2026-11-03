@@ -91,12 +91,7 @@ func shownThread(id string, m *crdt.YMap) (Shown, bool) {
 			t.Messages = append(t.Messages, ShownMessage{ID: mid, Author: author, Time: msg.Time, Body: Clean(msg.Body, true)})
 		}
 	}
-	slices.SortStableFunc(t.Messages, func(a, b ShownMessage) int {
-		if c := strings.Compare(a.Time, b.Time); c != 0 {
-			return c
-		}
-		return strings.Compare(a.ID, b.ID)
-	})
+	sortShown(t.Messages)
 	return t, true
 }
 
@@ -199,4 +194,41 @@ func threadChanges(old, t Shown, existed bool) []Change {
 		out = append(out, Change{Kind: kind, Thread: t})
 	}
 	return out
+}
+
+// ShownSaved lists the threads of a saved metadata file as ShownThreads
+// lists a doc's: cleaned, in the order of their first comment, then by id.
+func ShownSaved(f *File) []Shown {
+	var out []Shown
+	for id, t := range f.Comments {
+		s := Shown{ID: id, Kind: t.Anchor.Type, Quote: Clean(t.Quote, true), Resolved: t.Resolved}
+		if t.Anchor.Type == AnchorNode {
+			s.Node = Clean(t.Anchor.ID, false)
+		}
+		for mid, m := range t.Messages {
+			author := Clean(m.Author, false)
+			if author == "" {
+				author = "anonymous"
+			}
+			s.Messages = append(s.Messages, ShownMessage{ID: mid, Author: author, Time: m.Time, Body: Clean(m.Body, true)})
+		}
+		sortShown(s.Messages)
+		out = append(out, s)
+	}
+	slices.SortStableFunc(out, func(a, b Shown) int {
+		if c := strings.Compare(firstTime(a), firstTime(b)); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	return out
+}
+
+func sortShown(messages []ShownMessage) {
+	slices.SortStableFunc(messages, func(a, b ShownMessage) int {
+		if c := strings.Compare(a.Time, b.Time); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
 }

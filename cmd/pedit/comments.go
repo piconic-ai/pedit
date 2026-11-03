@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -178,6 +179,9 @@ func runComments(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return usageError(stderr, commentsUsage, err)
 	}
+	if a.op == sessiondir.OpList && a.room == "" && noSession() {
+		return listSaved(a, stdout, stderr)
+	}
 	live, err := chooseSession(a.room)
 	if err != nil {
 		fmt.Fprintln(stderr, "pedit:", err)
@@ -212,6 +216,59 @@ func runComments(args []string, stdout, stderr io.Writer) int {
 		return 3
 	}
 	return 0
+}
+
+// noSession tells whether no pedit session runs here.
+func noSession() bool {
+	base, err := sessionBase()
+	if err != nil {
+		return false
+	}
+	all, err := sessiondir.List(base)
+	return err == nil && len(all) == 0
+}
+
+// listSaved lists the comments the host saved last for --file, when no
+// session runs: what is on disk, which may be older than the room.
+func listSaved(a commentsArgs, stdout, stderr io.Writer) int {
+	if a.file == "" {
+		fmt.Fprintln(stderr, "pedit: no pedit session runs here: start one with pedit <file> --json, or name a file to list the comments saved for it: pedit comments list --file <path>")
+		return 1
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintln(stderr, "pedit:", err)
+		return 1
+	}
+	file, err := filepath.Abs(a.file)
+	if err != nil {
+		fmt.Fprintln(stderr, "pedit:", err)
+		return 1
+	}
+	saved, err := session.ReadSavedComments(projectDir(cwd), file)
+	if errors.Is(err, session.ErrNoSavedComments) {
+		saved = &meta.File{Path: a.file}
+	} else if err != nil {
+		fmt.Fprintf(stderr, "pedit: %s: %v\n", a.file, err)
+		return 1
+	}
+	fmt.Fprintln(stderr, "No pedit session runs here: these are the comments as the host saved them last.")
+	return printThreads(stdout, threadsOf([]session.FileThreads{{File: saved.Path, Threads: meta.ShownSaved(saved)}}), a.all, a.json)
+}
+
+// projectDir is the directory whose .pedit/meta/ keeps comments, found as
+// findConfig finds it, without making a configuration: the nearest directory
+// up from cwd with .pedit/config.yaml, not past a Git repository's root, or
+// cwd.
+func projectDir(cwd string) string {
+	for dir := cwd; ; dir = filepath.Dir(dir) {
+		if info, err := os.Stat(filepath.Join(dir, ".pedit", "config.yaml")); err == nil && info.Mode().IsRegular() {
+			return dir
+		}
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil || filepath.Dir(dir) == dir {
+			return cwd
+		}
+	}
 }
 
 // chooseSession is the session to ask: the only one running, or the one of

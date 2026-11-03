@@ -481,3 +481,51 @@ func TestLinksOfferCommentOnlyWhileAFileOffersComments(t *testing.T) {
 		}
 	}
 }
+
+func TestSavedCommentsAreReadWithoutASession(t *testing.T) {
+	saved := `{"version":1,"path":"docs/notes.md","comments":{"c1":{"anchor":{"type":"text","exact":"world","prefix":"hello ","suffix":"!","offset":6},"quote":"world","resolved":false,"messages":{"m1":{"author":"Ada","time":"2026-10-21T00:00:00Z","body":"Which world?"}}}}}`
+	project := t.TempDir()
+	file := filepath.Join(project, "docs", "notes.md")
+	path := filepath.Join(project, ".pedit", "meta", "docs", "notes.md.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(saved), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := ReadSavedComments(project, file)
+	if err != nil || f.Path != "docs/notes.md" || f.Comments["c1"].Messages["m1"].Body != "Which world?" {
+		t.Fatalf("%+v %v", f, err)
+	}
+	if _, err := ReadSavedComments(project, filepath.Join(project, "other.md")); !errors.Is(err, ErrNoSavedComments) {
+		t.Fatal(err)
+	}
+	if _, err := ReadSavedComments(project, filepath.Join(t.TempDir(), "x.md")); err == nil || !strings.Contains(err.Error(), "outside the project") {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"version":1,"path":"docs/notes.md","comments":{"c1":{"anchor":{},"quote":1}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadSavedComments(project, file); err == nil {
+		t.Fatal("a broken file was read")
+	}
+	// Through a symlinked directory, as a cloned repository may hold one.
+	if runtime.GOOS != "windows" {
+		elsewhere := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(elsewhere, "docs"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(elsewhere, "docs", "notes.md.json"), []byte(saved), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.RemoveAll(filepath.Join(project, ".pedit", "meta")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(elsewhere, filepath.Join(project, ".pedit", "meta")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ReadSavedComments(project, file); err == nil || errors.Is(err, ErrNoSavedComments) {
+			t.Fatalf("read through a link: %v", err)
+		}
+	}
+}

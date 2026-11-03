@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -143,5 +144,42 @@ func TestParseCommentsArgs(t *testing.T) {
 		if _, err := parseCommentsArgs(args, strings.NewReader("")); err == nil {
 			t.Fatalf("%q was taken", args)
 		}
+	}
+}
+
+func TestWithoutASessionListTheSavedComments(t *testing.T) {
+	withSessions(t)
+	project := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(project, ".pedit", "meta"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, ".pedit", "config.yaml"), []byte("server: https://edit.piconic.ai\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	saved := `{"version":1,"path":"board.canvas","comments":{"t1":{"anchor":{"type":"node","id":"n1"},"quote":"Ideas","resolved":false,"messages":{"m2":{"author":"Bo","time":"2026-10-21T00:00:02Z","body":"Second"},"m1":{"author":"","time":"2026-10-21T00:00:01Z","body":"First\u202e"}}},"t2":{"anchor":{"type":"node","id":"n2"},"quote":"Done","resolved":true,"messages":{}}}}`
+	if err := os.WriteFile(filepath.Join(project, ".pedit", "meta", "board.canvas.json"), []byte(saved), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(project, "sub")
+	if err := os.Mkdir(sub, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(sub)
+	code, out, errOut := runCommentsCmd("list", "--file", "../board.canvas")
+	want := "t1  board.canvas  \"node n1\"\n  anonymous, 2026-10-21T00:00:01Z:\n    First\n  Bo, 2026-10-21T00:00:02Z:\n    Second\n"
+	if code != 0 || out != want || !strings.Contains(errOut, "as the host saved them last") {
+		t.Fatalf("%d %q %q", code, out, errOut)
+	}
+	if code, out, _ := runCommentsCmd("list", "--file", "../board.canvas", "--all", "--json"); code != 0 || !strings.Contains(out, `"thread":"t2"`) {
+		t.Fatalf("%d %s", code, out)
+	}
+	if code, out, _ := runCommentsCmd("list", "--file", "../none.md"); code != 0 || out != "No open threads.\n" {
+		t.Fatalf("%d %q", code, out)
+	}
+	if code, _, errOut := runCommentsCmd("list"); code != 1 || !strings.Contains(errOut, "--file") {
+		t.Fatalf("%d %q", code, errOut)
+	}
+	if code, _, _ := runCommentsCmd("reply", "t1", "x"); code != 1 {
+		t.Fatal("a reply without a session")
 	}
 }

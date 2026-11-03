@@ -500,3 +500,49 @@ func (m *metaFile) close() {
 		_ = m.bound.Close()
 	}
 }
+
+// ErrNoSavedComments means no comments were saved for a file: none were
+// made, or the host never ran on it.
+var ErrNoSavedComments = errors.New("no comments are saved for it")
+
+// ReadSavedComments reads the comments the host saved last for file, in the
+// project at projectDir, as the host reads them: through the project's real
+// directories, with the checks of meta.Parse. It writes nothing
+// (docs/design/comments-cli.md, listing without a session).
+func ReadSavedComments(projectDir, file string) (*meta.File, error) {
+	project, err := os.OpenRoot(projectDir)
+	if err != nil {
+		return nil, fmt.Errorf("cannot open the project: %w", err)
+	}
+	defer project.Close()
+	rel, ok := projectPath(project, file)
+	if !ok {
+		return nil, fmt.Errorf("it is outside the project, whose comments are kept in %s", filepath.Join(projectDir, metaDir))
+	}
+	name := filepath.FromSlash(metaDir + "/" + rel + ".json")
+	bound, err := openMetaFile(project, name, false)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, ErrNoSavedComments
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer bound.Close()
+	size, ok := bound.Size()
+	if !ok {
+		return nil, ErrNoSavedComments
+	}
+	if size > meta.MaxFileBytes {
+		return nil, fmt.Errorf("%s is larger than %d bytes", name, meta.MaxFileBytes)
+	}
+	data, ok := bound.Read()
+	if !ok {
+		return nil, fmt.Errorf("cannot read %s", name)
+	}
+	f, err := meta.Parse([]byte(data))
+	if err != nil {
+		return nil, fmt.Errorf("%s cannot be read: %w", name, err)
+	}
+	f.Path = rel
+	return f, nil
+}
