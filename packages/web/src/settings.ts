@@ -63,6 +63,12 @@ export interface Range {
  * mode that could not load, puts the control back by setting the store again.
  */
 export interface SettingsModel {
+  /** The name others see on this browser's cursor and comments. */
+  name: Readable<string>
+  /** Takes a new name; a blank one is ignored, so the field goes back. */
+  setName(name: string): void
+  /** The account behind Cloudflare Access, which stays visible to others (#213). */
+  account?: string
   themes: readonly ThemeInfo[]
   theme: Readable<string>
   setTheme(id: string): void
@@ -90,4 +96,13 @@ export function galleryTarget(key: string, at: number, count: number): number | 
   if (key === 'Home') return 0
   if (key === 'End') return last
   return null
+}
+
+/** The longest name the join card and the settings take. */
+export const NAME_MAX = 40
+
+/** A name as typed, ready to use, or null for one that is blank. */
+export function cleanName(typed: string): string | null {
+  const name = typed.trim().slice(0, NAME_MAX)
+  return name || null
 }

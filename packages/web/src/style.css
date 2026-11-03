@@ -391,7 +391,8 @@ header {
   display: grid;
   gap: 2px;
 }
-.settings-text small {
+.settings-text small,
+.settings-name small {
   color: var(--muted);
   font-size: 0.75rem;
 }
@@ -473,7 +474,8 @@ header {
   color: var(--muted);
   font-size: 0.8rem;
 }
-.settings-field select {
+.settings-field select,
+.settings-name input {
   font: inherit;
   padding: 4px 6px;
   border: 1px solid var(--line);

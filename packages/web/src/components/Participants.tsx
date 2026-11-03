@@ -17,6 +17,7 @@ function label(p: Participant): string {
   const notes = [
     p.isHost ? 'host' : '',
     (p.access && ACCESS_LABELS[p.access]) ?? '',
+    p.account ? `signed in as ${p.account}` : '',
     p.isSelf ? 'you' : '',
   ].filter(Boolean)
   return notes.length > 0 ? `${p.name} (${notes.join(', ')})` : p.name

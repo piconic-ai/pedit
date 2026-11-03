@@ -120,7 +120,11 @@ AES-GCM rejects a frame made or altered without the key.
   editor. The host never acts on a list or a path
   from the room, and a guest from the command line names its copies itself,
   so a path from the room is only a label there. Frames carry no authenticated sender: the Yjs client ID in an update is
-  one each peer picks for itself.
+  one each peer picks for itself. Behind Cloudflare Access a browser may go
+  by a name of its choice and adds the account it signed in with, which
+  others see beside the name (#213). The browser reads that account itself,
+  so it tells honest actors on one account apart and proves nothing: a
+  modified browser can leave it out or claim another.
 - **No forward secrecy.** A room has one key, never rotated. Whoever records
   the traffic and later gets the link can decrypt all of it. Every run of
   `pedit <file>` makes a new key.

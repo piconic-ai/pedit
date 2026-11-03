@@ -25,6 +25,7 @@ export function lineWrapping(on: boolean): Extension {
 /**
  * The settings panel's model: what it shows, and what each control does to
  * the editor and the page. A change that fails puts the control back.
+ * The name is the room's, so main.ts adds it.
  */
 export function settingsModel(
   editor: EditorView,
@@ -36,7 +37,7 @@ export function settingsModel(
   fontMode: Compartment,
   /** Other editors on the page, which take the same reader theme. */
   fontFollowers: readonly { view: EditorView; compartment: Compartment }[] = [],
-): SettingsModel & { destroy(): void } {
+): Omit<SettingsModel, 'name' | 'setName' | 'account'> & { destroy(): void } {
   const prefersDark = matchMedia(DARK_QUERY)
   let current = initial
   const update = (next: Appearance) => {

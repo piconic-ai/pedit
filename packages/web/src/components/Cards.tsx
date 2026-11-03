@@ -2,6 +2,7 @@
 
 import { createSignal, onCleanup, onMount } from '@barefootjs/client'
 import { prefersStill, TITLE, type TypingFrame, typingScript, WORD_AFTER } from '../landing.ts'
+import { NAME_MAX } from '../settings.ts'
 
 /** The page at `/`, for someone who opened pedit without a room link. */
 export function Landing() {
@@ -120,7 +121,7 @@ export function JoinCard(props: { onJoin: (name: string) => void }) {
             placeholder="Your name"
             autocomplete="name"
             required
-            maxlength={40}
+            maxlength={NAME_MAX}
             ref={(el) => {
               input = el
             }}

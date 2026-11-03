@@ -1,13 +1,19 @@
 import type { ProviderId } from '@pedit/protocol/csp'
-import type { Range, SettingsModel } from '../../src/settings.ts'
+import { cleanName, type Range, type SettingsModel } from '../../src/settings.ts'
 import { Store } from '../../src/store.ts'
 import { THEMES } from '../../src/themes.ts'
 
 /** A settings model backed by plain stores, recording what each control asked for. */
 export function fakeSettings(
-  options: { theme?: string; vimFails?: boolean; alwaysLoad?: readonly ProviderId[] } = {},
+  options: {
+    theme?: string
+    vimFails?: boolean
+    alwaysLoad?: readonly ProviderId[]
+    account?: string
+  } = {},
 ) {
   const calls: [string, unknown][] = []
+  const name = new Store('Ada')
   const theme = new Store(options.theme ?? 'github-light')
   const fontSize = new Store(15)
   const lineHeight = new Store(1.6)
@@ -17,6 +23,13 @@ export function fakeSettings(
   const fontSizeRange: Range = { min: 12, max: 24, step: 1 }
   const lineHeightRange: Range = { min: 1.2, max: 2, step: 0.1 }
   const model: SettingsModel = {
+    name,
+    setName: (v) => {
+      calls.push(['name', v])
+      const clean = cleanName(v)
+      if (clean) name.set(clean)
+    },
+    ...(options.account && { account: options.account }),
     themes: THEMES,
     theme,
     setTheme: (id) => {
@@ -53,5 +66,5 @@ export function fakeSettings(
       alwaysLoad.set(alwaysLoad.get().filter((i) => i !== id))
     },
   }
-  return { model, calls, stores: { theme, fontSize, lineHeight, wrap, vim, alwaysLoad } }
+  return { model, calls, stores: { name, theme, fontSize, lineHeight, wrap, vim, alwaysLoad } }
 }

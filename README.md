@@ -218,7 +218,8 @@ pedit comments resolve <thread>           # or reopen
 The `pedit comments` commands reach the session running on the same
 machine through a directory of its own in your configuration directory; they
 never connect to the room themselves, so the agent is one participant, named
-by `--name`, for as long as it works. An agent that is a guest does the same
+by `--name`, for as long as it works (a browser picks its name in the
+settings). An agent that is a guest does the same
 with `pedit <share link> --json`, with an edit link or a comment-only one;
 its reply counts as delivered once the host has it. While the host is away
 from a kept room, an edit link's reply waits in the relay, and the host takes

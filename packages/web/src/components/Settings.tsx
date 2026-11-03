@@ -7,6 +7,7 @@ import {
   CHEVRON_RIGHT,
   GEAR,
   galleryTarget,
+  NAME_MAX,
   panelBox,
   type SettingsModel,
 } from '../settings.ts'
@@ -22,6 +23,7 @@ import { ThemePreview } from './ThemePreview.tsx'
  */
 export function Settings(props: { model: SettingsModel }) {
   const m = props.model
+  const name = () => m.name.get()
   const theme = () => m.theme.get()
   const fontSize = () => m.fontSize.get()
   const lineHeight = () => m.lineHeight.get()
@@ -134,6 +136,29 @@ export function Settings(props: { model: SettingsModel }) {
         <div className="settings-home" hidden={gallery()}>
           <h2>Settings</h2>
           <div className="settings-list">
+            <h3 className="settings-section">You</h3>
+            <label className="settings-field settings-name">
+              <span>Your name</span>
+              <input
+                type="text"
+                autocomplete="name"
+                maxlength={NAME_MAX}
+                value={name()}
+                // On Enter or leaving the field, not on every key: each change
+                // goes out to everyone in the room.
+                onChange={(e) => {
+                  const input = e.target as HTMLInputElement
+                  m.setName(input.value)
+                  // A blank name is not taken: show the one in use again.
+                  input.value = m.name.get()
+                }}
+              />
+              <small>
+                {m.account
+                  ? `Others also see that you signed in as ${m.account}.`
+                  : 'Others see it on your cursor and comments.'}
+              </small>
+            </label>
             <h3 className="settings-section">Appearance</h3>
             <button
               type="button"
