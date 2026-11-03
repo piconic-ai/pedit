@@ -66,6 +66,13 @@ pedit notes.md
 pedit detects Access and uses cloudflared to open browser sign-in when needed.
 Collaborators only need their browsers. No Cloudflare Tunnel is needed.
 
+A browser behind Access goes by the name of the account it signed in with.
+Someone who works with an agent on one account can pick another name in the
+settings; the others then see the account beside it, such as
+"tate-pm (signed in as Ada Lovelace)". The browser says this itself, so it is
+a label and not proof of who is there (see
+[the security design](security-design.md)).
+
 The CLI reads its token once at startup and does not refresh it during a
 session. If it expires, finish with Ctrl+C, restart pedit and share the new
 session link.

@@ -235,6 +235,15 @@ describe('Header', () => {
     expect(names()).toEqual(['Ada (host)', 'Carol (comment only)', 'Rin (read only, you)'])
   })
 
+  it('shows the account behind a chosen name', () => {
+    const { people, names } = mount()
+    people.set([
+      person(1, 'tate-pm', { account: 'Ada', access: 'comment' }),
+      person(2, 'Ada', { isSelf: true }),
+    ])
+    expect(names()).toEqual(['tate-pm (comment only, signed in as Ada)', 'Ada (you)'])
+  })
+
   it('drops an avatar image that fails to load, keeping the initials', () => {
     const { people, list } = mount()
     people.set([person(1, 'Ada', { avatar: 'https://www.gravatar.com/avatar/x?d=404' })])

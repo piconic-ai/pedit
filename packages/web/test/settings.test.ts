@@ -2,7 +2,7 @@
 import { render } from '@barefootjs/client/runtime'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import '../src/components/Settings.tsx'
-import { galleryTarget, panelBox } from '../src/settings.ts'
+import { cleanName, galleryTarget, panelBox } from '../src/settings.ts'
 import { THEMES, themeInfo } from '../src/themes.ts'
 import { fakeSettings } from './support/settings-model.ts'
 
@@ -52,6 +52,34 @@ function mount(options: Parameters<typeof fakeSettings>[0] = {}) {
 }
 
 describe('Settings', () => {
+  it('takes a new name on change, and puts a blank one back', () => {
+    const { field, input, calls, stores } = mount()
+    const name = input('Your name')
+    expect(name.value).toBe('Ada')
+    expect(field('Your name').querySelector('small')?.textContent).toBe(
+      'Others see it on your cursor and comments.',
+    )
+    name.value = '  tate-pm  '
+    name.dispatchEvent(new Event('change'))
+    expect(stores.name.get()).toBe('tate-pm')
+    expect(name.value).toBe('tate-pm')
+    name.value = '   '
+    name.dispatchEvent(new Event('change'))
+    expect(calls).toEqual([
+      ['name', '  tate-pm  '],
+      ['name', '   '],
+    ])
+    expect(stores.name.get()).toBe('tate-pm')
+    expect(name.value).toBe('tate-pm')
+  })
+
+  it('says the account stays visible behind Access', () => {
+    const { field } = mount({ account: 'Ada Lovelace' })
+    expect(field('Your name').querySelector('small')?.textContent).toBe(
+      'Others also see that you signed in as Ada Lovelace.',
+    )
+  })
+
   it('opens its panel from a labelled gear button', () => {
     const { q } = mount()
     const button = q<HTMLButtonElement>('button.icon')
@@ -66,7 +94,7 @@ describe('Settings', () => {
   it('lists the sections in order', () => {
     const { container } = mount()
     const sections = [...container.querySelectorAll('.settings-section')].map((s) => s.textContent)
-    expect(sections).toEqual(['Appearance', 'Text', 'Editor', 'Preview'])
+    expect(sections).toEqual(['You', 'Appearance', 'Text', 'Editor', 'Preview'])
   })
 
   it('says players load on click while no provider is remembered', () => {
@@ -293,5 +321,13 @@ describe('panelBox', () => {
     q('button.icon').getBoundingClientRect = () => ({ right: 1270, bottom: 40 }) as DOMRect
     openPanel()
     expect(q('.settings').style).toMatchObject({ left: '950px', top: '46px', width: '320px' })
+  })
+})
+
+describe('cleanName', () => {
+  it('trims and caps a name, and refuses a blank one', () => {
+    expect(cleanName('  tate-pm ')).toBe('tate-pm')
+    expect(cleanName('x'.repeat(50))).toBe('x'.repeat(40))
+    expect(cleanName(' \t ')).toBeNull()
   })
 })

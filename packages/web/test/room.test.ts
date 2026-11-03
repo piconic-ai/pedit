@@ -84,6 +84,22 @@ describe('participants', () => {
     expect(a?.avatar).toBe('https://gravatar.com/avatar/x')
     expect(b && 'avatar' in b).toBe(false)
   })
+
+  it('keeps an account only when it differs from the name', () => {
+    const states = new Map<number, Record<string, unknown>>([
+      [1, { user: { name: 'tate-pm', account: 'Ada Lovelace' } }],
+      [2, { user: { name: 'Ada Lovelace', account: 'Ada Lovelace' } }],
+      [3, { user: { name: 'Bob', account: 42 } }],
+      [4, { user: { name: 'Eve', account: `  ${'x'.repeat(60)}  ` } }],
+    ])
+    const list = participants(states, 0)
+    expect(list.map((p) => p.account)).toEqual([
+      'Ada Lovelace',
+      undefined,
+      undefined,
+      'x'.repeat(40),
+    ])
+  })
 })
 
 const HOSTILE = 'red; position: fixed; inset: 0; background: url(https://evil.example/t)'

@@ -32,6 +32,12 @@ export interface Participant {
   isSelf: boolean
   /** What the link they joined with lets them do, when known. */
   access?: Access
+  /**
+   * The account they signed in with, when it differs from the name they go
+   * by (#213). Like the name, the peer says it itself: it tells honest
+   * actors on one account apart, and proves nothing.
+   */
+  account?: string
 }
 
 type State = { [key: string]: unknown }
@@ -75,19 +81,27 @@ export function participants(
 ): Participant[] {
   const list: Participant[] = []
   for (const [clientId, state] of states) {
-    const user = (state.user ?? {}) as { name?: unknown; color?: unknown; avatar?: unknown }
+    const user = (state.user ?? {}) as {
+      name?: unknown
+      color?: unknown
+      avatar?: unknown
+      account?: unknown
+    }
     const name = typeof user.name === 'string' ? user.name : state.name
+    const shown = typeof name === 'string' && name ? name : 'anonymous'
+    const account = typeof user.account === 'string' ? user.account.trim().slice(0, 40) : ''
     const access = accessOf?.(clientId)
     const isHost = state.role === 'host' && (!accessOf || access === 'edit')
     const avatar = safeAvatar(user.avatar)
     list.push({
       clientId,
-      name: typeof name === 'string' && name ? name : 'anonymous',
+      name: shown,
       color: safeColor(user.color) ?? (isHost ? '#1f7a64' : '#7a828d'),
       ...(avatar && { avatar }),
       isHost,
       isSelf: clientId === selfId,
       ...(access && { access }),
+      ...(account && account !== shown && { account }),
     })
   }
   return list.sort(

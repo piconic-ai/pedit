@@ -67,6 +67,7 @@ import {
   sanitizeUser,
   selectionTint,
 } from './room.ts'
+import { cleanName } from './settings.ts'
 import { lineWrapping, settingsModel } from './settings-model.ts'
 import { COPIED, shareLinks } from './share.ts'
 import { Splitter } from './splitter.ts'
@@ -126,6 +127,8 @@ function askName(): Promise<string> {
 interface Me {
   name: string
   avatar?: string
+  /** The Cloudflare Access account, kept visible beside a chosen name (#213). */
+  account?: string
 }
 
 interface LoadedTheme {
@@ -485,16 +488,21 @@ async function joinRoom(
   const vim = new VimToggle(editor, vimMode, () => vimExtension(undoShown))
   themes = new ThemeSwitcher(editor, themeMode, theme.id)
   for (const f of themeFollowers) themes.follow(f.view, f.compartment)
-  const settings = settingsModel(
-    editor,
-    themes,
-    wrap,
-    vim,
-    alwaysLoad,
-    appearance,
-    fontMode,
-    fontFollowers,
-  )
+  const myName = new Store(me.name)
+  const settings = {
+    ...settingsModel(editor, themes, wrap, vim, alwaysLoad, appearance, fontMode, fontFollowers),
+    name: myName,
+    // Cursors, presence and later comments take it from awareness.
+    setName: (typed: string) => {
+      const name = cleanName(typed)
+      if (!name || name === myName.get()) return
+      saveName(name)
+      myName.set(name)
+      const user = awareness.getLocalState()?.user as Record<string, unknown> | undefined
+      awareness.setLocalStateField('user', { ...user, name })
+    },
+    ...(me.account && { account: me.account }),
+  }
   if (loadVimMode()) settings.setVim(true)
   render(header, 'Header', {
     file: fileName,
@@ -918,10 +926,16 @@ async function start(): Promise<void> {
   }
   // Fetch the editor theme meanwhile, so the editor paints in it from the start.
   const theme = loadStartTheme(resolveTheme(appearance, prefersDark))
-  // Behind Cloudflare Access we already know who you are.
+  // Behind Cloudflare Access we already know who you are. A name chosen in
+  // the settings still wins, so several actors on one account can be told
+  // apart; the account stays visible beside it.
   const identity = await fetchIdentity()
   const me: Me = identity
-    ? { name: identity.name, avatar: await avatarFor(identity) }
+    ? {
+        name: loadName() ?? identity.name,
+        account: identity.name,
+        avatar: await avatarFor(identity),
+      }
     : { name: loadName() ?? (await askName()) }
   const loaded = await theme
   // If the theme could not load, the page matches the default theme the editor falls back to.
