@@ -106,7 +106,7 @@ func (c *Client) addFile(f *fileDoc, id uint64) error {
 	// Subscribed outside c.mu: an update in another goroutine holds the
 	// doc's lock while it sends, which takes c.mu.
 	f.unsub = doc.OnUpdate(func(update []byte, origin any) {
-		if origin == c || !mayWrite(c.keys.Access, f.comments) {
+		if origin == c || !mayWrite(c.keys.Access, f.comments) || c.keptUpdate(id, update) {
 			return
 		}
 		c.fresh.wrote()

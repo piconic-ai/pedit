@@ -128,9 +128,7 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	if secrets.Access != protocol.AccessEdit {
-		opts.Watch = false
-	}
+	opts.Watch = watchesCopies(opts.Watch, secrets.Access)
 	dir, temp, root, err := copyRoot(opts.dir, roomID)
 	if err != nil {
 		return nil, err
@@ -169,6 +167,7 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 		}
 		s.reportPeople(opts.OnPeople)
 	}
+	var last atomic.Value // the status before
 	s.Client, err = protocol.NewClient(protocol.ClientOptions{
 		URL:       wsURL,
 		RoomID:    roomID,
@@ -178,6 +177,10 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 		Header:    opts.Header,
 		Dial:      opts.Dial,
 		OnStatus: func(st protocol.Status) {
+			if was, _ := last.Swap(st).(protocol.Status); was == protocol.StatusKept && st == protocol.StatusConnected {
+				// The host is back, and takes the state by sync.
+				s.kept.settle()
+			}
 			if st.HostAway() {
 				waited.Store(true)
 			} else if st == protocol.StatusConnected && waited.Swap(false) {
@@ -198,6 +201,10 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 			s.guest.takeManifest(files)
 		},
 		OnFileSynced: func(id uint64) { s.guest.synced(id) },
+		// A room kept while its host is away (kept_guest.go).
+		OnKind:       func(kind byte, payload []byte) { s.kept.onKind(kind, payload) },
+		OnKeptUpdate: func(id uint64, update []byte) { s.kept.send(id, update) },
+		After:        func() (uint64, bool) { return s.kept.cursor() },
 		OnFileAnswer: func(id uint64, fromHost bool, update []byte) { s.guest.answered(id, fromHost, update) },
 		OnAccess:     func(uint64) { peopleChanged() },
 	})
@@ -208,6 +215,7 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 	}
 	s.client = s.Client
 	s.guest.client = s.Client
+	s.kept = newKeptGuest(s, s.Client.Keys())
 	s.sendCanvas = s.Client.SendCanvas
 	// Until the file is known, remote edits only land in the doc; the first
 	// write below carries them all.
@@ -247,10 +255,11 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 		_ = removeTemp(temp)
 		return nil, err
 	}
-	host, err := room.wait(ctx, aw, s.Client, opts.Timeout)
+	host, err := room.wait(ctx, aw, s.Client, s.kept.replayed, opts.Timeout)
 	if err != nil {
 		return fail(err)
 	}
+	host = s.kept.orFirstFile(host)
 	if format, _ := host["format"].(string); format == formatCanvas {
 		return fail(errors.New("this room shares a canvas as nodes and edges, which pedit cannot join from the command line yet; open the link in a browser"))
 	}
@@ -284,6 +293,15 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 	s.startMirror()
 	s.mirrorMu.Unlock()
 	return s, nil
+}
+
+// watchesCopies tells whether a guest watches its copies for edits: only an
+// edit link edits.
+func watchesCopies(watch bool, access protocol.Access) bool {
+	if access != protocol.AccessEdit {
+		return false
+	}
+	return watch
 }
 
 // listWait bounds how long Join waits for the host's list of files, which
@@ -377,12 +395,18 @@ func (r *roomWait) canceled(ctx context.Context) error {
 
 // wait waits for a host to show up in the room, and then for the room's
 // content, both within timeout. It returns the host's awareness state.
-func (r *roomWait) wait(ctx context.Context, aw *awareness.Awareness, client *protocol.Client, timeout time.Duration) (map[string]any, error) {
+// The replay of a room kept while its host is away ends the wait too, with
+// no host: the relay sent all it keeps.
+func (r *roomWait) wait(ctx context.Context, aw *awareness.Awareness, client *protocol.Client, replayed <-chan struct{}, timeout time.Duration) (map[string]any, error) {
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
 	var host map[string]any
 	for host == nil {
 		select {
+		case <-replayed:
+			if host, _ = hostState(aw, client); host == nil {
+				return nil, nil
+			}
 		case <-r.hostSeen:
 			host, _ = hostState(aw, client)
 		case <-r.closed:

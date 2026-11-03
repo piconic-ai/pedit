@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/piconic-ai/pedit/internal/meta"
+	"github.com/piconic-ai/pedit/internal/protocol"
 	"github.com/reearth/ygo/crdt"
 )
 
@@ -108,7 +109,7 @@ func (s *Session) writeComments(file, thread string, make func(*crdt.Doc) ([]byt
 	if err != nil {
 		return WriteResult{}, err
 	}
-	if s.guest != nil && s.Client.Status().HostAway() {
+	if s.guest != nil && !s.guestMayWrite() {
 		return WriteResult{}, ErrHostAway
 	}
 	s.Client.Do(func() {
@@ -120,10 +121,27 @@ func (s *Session) writeComments(file, thread string, make func(*crdt.Doc) ([]byt
 	if err != nil {
 		return WriteResult{}, fmt.Errorf("%s: %w", c.file, err)
 	}
+	if s.guest != nil && s.Client.Status() == protocol.StatusKept {
+		// Kept while the host is away: the relay logs it for the host.
+		return WriteResult{Delivered: s.kept.waitLogged(c.id)}, nil
+	}
 	if s.guest != nil {
 		return WriteResult{Delivered: s.guest.waitForHost(c)}, nil
 	}
 	return WriteResult{Delivered: true}, nil
+}
+
+// guestMayWrite tells whether a guest's comment can reach the host now: the
+// host is in the room, or the room is kept and the guest is an editor, who
+// alone may send entries.
+func (s *Session) guestMayWrite() bool {
+	switch s.Client.Status() {
+	case protocol.StatusKept:
+		return s.Client.Keys().Access == protocol.AccessEdit
+	case protocol.StatusWaiting:
+		return false
+	}
+	return true
 }
 
 // threadDoc is the comments doc that holds thread: of file, or when file is

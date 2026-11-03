@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"net/http"
+	"net/url"
 	"slices"
+	"strconv"
 	"sync"
 	"time"
 
@@ -110,10 +112,20 @@ type ClientOptions struct {
 	OnText func(text string)
 	// OnKept is called with the time the relay keeps the room until, just
 	// before the status becomes StatusKept.
-	OnKept     func(until time.Time)
-	Dial       Dialer
-	MinBackoff time.Duration
-	MaxBackoff time.Duration
+	OnKept func(until time.Time)
+	// OnKeptUpdate makes the Client a guest of a kept room, as the browser
+	// is (docs/design/comments-cli.md): while the room is kept, what this
+	// Client changes in its docs goes to OnKeptUpdate, by file (0 for Doc),
+	// to be sent as an entry, not as a live update; a connection that was
+	// live when the room became kept is left and made again, to be replayed
+	// what the relay keeps; and on the host's return the Client greets the
+	// room again. After gives the last log entry it holds, for the next
+	// connection's after parameter.
+	OnKeptUpdate func(id uint64, update []byte)
+	After        func() (uint64, bool)
+	Dial         Dialer
+	MinBackoff   time.Duration
+	MaxBackoff   time.Duration
 	// BusyBackoff is the least a busy relay is waited out before trying again.
 	BusyBackoff time.Duration
 	// Messages and Bytes are what the relay lets one connection send;
@@ -430,13 +442,17 @@ func (c *Client) run(done chan struct{}) {
 	attempts := 0
 	for {
 		c.setStatus(StatusConnecting)
-		conn, err := c.opts.Dial(c.ctx, c.opts.URL, c.opts.Header)
+		conn, err := c.opts.Dial(c.ctx, c.dialURL(), c.opts.Header)
 		if err == nil {
 			attempts = 0
 			err = c.serve(conn)
 		}
 		if c.ctx.Err() != nil || errors.Is(err, errDestroyed) || c.isDestroyed() {
 			return
+		}
+		if errors.Is(err, errRejoin) {
+			c.dropRemoteAwareness()
+			continue
 		}
 		c.dropRemoteAwareness()
 		if st, ok := finalOf(err); ok {
@@ -464,6 +480,29 @@ func (c *Client) run(done chan struct{}) {
 	}
 }
 
+// errRejoin ends a connection that was live when the room became kept: a
+// guest connects again to be replayed what the relay keeps.
+var errRejoin = errors.New("joining the kept room again")
+
+// dialURL is the room's URL, with the last log entry a kept guest holds.
+func (c *Client) dialURL() string {
+	if c.opts.After == nil {
+		return c.opts.URL
+	}
+	after, ok := c.opts.After()
+	if !ok {
+		return c.opts.URL
+	}
+	u, err := url.Parse(c.opts.URL)
+	if err != nil {
+		return c.opts.URL
+	}
+	q := u.Query()
+	q.Set("after", strconv.FormatUint(after, 10))
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
 // serve runs one connection until it fails.
 func (c *Client) serve(conn Conn) error {
 	out := newOutbox(conn, newPacer(c.opts.Messages, c.opts.Bytes, time.Now))
@@ -479,13 +518,9 @@ func (c *Client) serve(conn Conn) error {
 	c.mu.Unlock()
 	c.greet(out)
 
+	heard := false
 	for {
-		data, err := conn.Read(c.ctx)
-		var sig Signal
-		if errors.As(err, &sig) {
-			c.relaySignal(sig)
-			continue
-		}
+		data, err := c.read(conn, out, &heard)
 		if err != nil {
 			c.mu.Lock()
 			if c.out == out {
@@ -505,6 +540,25 @@ func (c *Client) serve(conn Conn) error {
 				c.onError(err)
 			}
 		}
+	}
+}
+
+// read returns the next binary message of conn, taking the relay's signals
+// meanwhile. heard tells whether anything came on conn before; a kept
+// guest's connection that was live when the room became kept ends with
+// errRejoin.
+func (c *Client) read(conn Conn, out *outbox, heard *bool) ([]byte, error) {
+	for {
+		data, err := conn.Read(c.ctx)
+		var sig Signal
+		if !errors.As(err, &sig) {
+			*heard = true
+			return data, err
+		}
+		if c.relaySignal(sig, out, *heard) {
+			return nil, errRejoin
+		}
+		*heard = true
 	}
 }
 
@@ -573,8 +627,10 @@ func (c *Client) greet(out *outbox) {
 	c.syncFiles()
 }
 
-// relaySignal takes the relay's own word on the host.
-func (c *Client) relaySignal(sig Signal) {
+// relaySignal takes the relay's own word on the host. It reports a kept
+// guest's connection that was live (heard) when the room became kept: the
+// guest connects again to be replayed what the relay keeps.
+func (c *Client) relaySignal(sig Signal, out *outbox, heard bool) (rejoin bool) {
 	c.mu.Lock()
 	status := c.status
 	c.mu.Unlock()
@@ -585,6 +641,12 @@ func (c *Client) relaySignal(sig Signal) {
 		c.setStatus(StatusWaiting)
 	case sig == HostBack && status.HostAway():
 		c.setStatus(StatusConnected)
+		if status == StatusKept && c.opts.OnKeptUpdate != nil {
+			// Live again: the host reconciles by sync.
+			c.greet(out)
+		}
+	case kept && heard && c.opts.OnKeptUpdate != nil && status != StatusKept:
+		return true
 	case kept && (status == StatusConnected || status.HostAway()):
 		if c.opts.OnKept != nil {
 			c.opts.OnKept(time.UnixMilli(until))
@@ -593,6 +655,18 @@ func (c *Client) relaySignal(sig Signal) {
 	case c.opts.OnText != nil:
 		c.opts.OnText(text)
 	}
+	return false
+}
+
+// keptUpdate hands an update of the file id to OnKeptUpdate, and reports
+// whether it did: while the room is kept, a kept guest sends its changes as
+// entries.
+func (c *Client) keptUpdate(id uint64, update []byte) bool {
+	if c.opts.OnKeptUpdate == nil || c.Status() != StatusKept {
+		return false
+	}
+	c.opts.OnKeptUpdate(id, update)
+	return true
 }
 
 // receive decrypts a frame, checks its signature, takes it once, and
@@ -806,7 +880,7 @@ func syncStep2(doc *crdt.Doc) []byte {
 }
 
 func (c *Client) handleDocUpdate(update []byte, origin any) {
-	if origin == c || !c.edits() {
+	if origin == c || !c.edits() || c.keptUpdate(0, update) {
 		return
 	}
 	c.fresh.wrote()

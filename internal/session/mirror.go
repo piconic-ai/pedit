@@ -193,6 +193,9 @@ func (s *Session) mirrorFile(entry protocol.FileEntry) (string, error) {
 	if err := s.Client.AddFile(entry.ID, doc); err != nil {
 		s.onError(err)
 	}
+	if s.kept != nil {
+		s.kept.adopt(uint32(entry.ID), doc)
+	}
 	f.notices.start()
 	return file, nil
 }

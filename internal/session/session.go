@@ -138,6 +138,9 @@ type Session struct {
 	// guest holds the comments a joined session follows, or is nil for the
 	// host (guest_comments.go).
 	guest *guestComments
+	// kept is a joined session's side of a room kept while its host is
+	// away (kept_guest.go), or nil for the host.
+	kept *keptGuest
 
 	// away keeps the room for the host's return, if it asked for that.
 	away *keepAway

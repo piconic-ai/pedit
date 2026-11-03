@@ -62,3 +62,19 @@ func TestCheckedFilesShareTheirTime(t *testing.T) {
 		t.Fatalf("apply = %v", err)
 	}
 }
+
+func TestAKeptGuestConnectsWithWhatItHolds(t *testing.T) {
+	c := &Client{opts: ClientOptions{URL: "ws://relay.test/api/rooms/R/ws"}}
+	if got := c.dialURL(); got != "ws://relay.test/api/rooms/R/ws" {
+		t.Fatal(got)
+	}
+	held := false
+	c.opts.After = func() (uint64, bool) { return 42, held }
+	if got := c.dialURL(); got != "ws://relay.test/api/rooms/R/ws" {
+		t.Fatalf("before a replay: %s", got)
+	}
+	held = true
+	if got := c.dialURL(); got != "ws://relay.test/api/rooms/R/ws?after=42" {
+		t.Fatal(got)
+	}
+}

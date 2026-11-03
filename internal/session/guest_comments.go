@@ -22,9 +22,10 @@ var (
 	probeEvery   = time.Second
 )
 
-// ErrHostAway means the host is away from a kept room, and a guest's
-// comment cannot reach it from the command line yet.
-var ErrHostAway = errors.New("the host is away: comments from the command line reach a kept room only while the host is in it")
+// ErrHostAway means a guest's comment cannot reach the host now: the room is
+// kept and the guest has a comment link, or the host dropped and the room is
+// not kept (yet).
+var ErrHostAway = errors.New("the host is away: a comment link cannot comment until the host is back, and no room takes comments in the minutes before it is kept")
 
 type guestComments struct {
 	client *protocol.Client
@@ -39,8 +40,9 @@ type guestComments struct {
 }
 
 type joinedComments struct {
-	file string // the path the room shows the file at
-	doc  *crdt.Doc
+	file     string // the path the room shows the file at
+	doc      *crdt.Doc
+	watching bool
 }
 
 // hostWait waits for the host to have every struct of a doc up to target.
@@ -80,11 +82,16 @@ func (g *guestComments) takeManifest(files []protocol.FileEntry) {
 
 // synced starts reporting the changes of a comments doc once it holds what
 // the room had: the threads there when the guest came are not changes.
+// A kept room's replay counts as its sync: the room has no host to answer.
 func (g *guestComments) synced(id uint64) {
 	g.mu.Lock()
 	d := g.docs[id]
+	start := d != nil && !d.watching && g.on != nil
+	if start {
+		d.watching = true
+	}
 	g.mu.Unlock()
-	if d != nil && g.on != nil {
+	if start {
 		watchComments(d.doc, d.file, g.calls, g.on)
 	}
 }

@@ -192,10 +192,46 @@ When the request is answered:
     room as every unsent update does; it is not an error. A test runs a
     guest whose host never applies the write and checks that the command
     gets this answer, not a timeout.
-- **A guest while the host is away** (a kept room): the browser's path, a
-  kept entry acknowledged by its echo (`rooms-away.md`), ported to Go. Until
-  that lands, the session answers `host away` and writes nothing. A comment
-  link cannot write while the host is away, in the browser as here.
+- **A guest while the host is away** (a kept room): the write is a kept
+  entry, as the browser sends one (below), and `delivered` once the relay
+  logged it: it comes back as kind 4, and the host takes it in when it
+  resumes. A comment link cannot write while the host is away, in the
+  browser as here: the session answers `host away` and writes nothing, as it
+  does in the two minutes of grace before a room is kept.
+
+## Guests while the host is away
+
+A command line guest takes part in a kept room as the browser does
+(`packages/protocol/src/kept-away-client.ts`, `rooms-away.md`), so an agent
+can read and answer comments while the host is away, and the host finds them
+when it resumes. The checks and the formats are the host's own
+(`OpenKeptBundle`, `OpenKeptFileUpdate`, `SealKeptFileUpdate`, the kept
+document checks, `meta.CheckUpdate`).
+
+- **Joining.** A guest that joins while the room is kept has no host to
+  answer it: it is in the room once the relay's replay ends (kind 6). The
+  bundle (kind 5) names the files, as the host's manifest does (a file whose
+  path is the metadata path of another holds its comments), and gives each
+  its content; the first file's copy is made from it.
+- **What the relay holds.** For each file the guest keeps a copy of what the
+  relay holds (the snapshot and the log), to check entries against and to
+  tell what the relay lacks.
+- **Entries in.** A kind 4 entry is opened (the editors' signature), checked
+  against the copy as the host checks one (its roots, nothing left waiting,
+  `meta.CheckUpdate` for comments), and applied to the copy and to the
+  guest's doc; one that does not hold is skipped. Its id is the guest's
+  cursor.
+- **Entries out.** While the room is kept, what an editor's session changes
+  in a doc (its copy of a file, or its comments) goes to the relay as a kind
+  1 entry, sealed and signed, not as a live update. It is pending until it
+  comes back as kind 4. After each replay the guest sends, as entries, what
+  its docs hold that the relay lacks: changes made while it was not
+  connected.
+- **Live, then kept.** A guest that was in the room when it became kept has
+  no replay: on `kept` it connects again, with its cursor as the `after`
+  query parameter, as the browser does.
+- **Host back.** On `host back` the guest drops its copies and pending
+  entries and greets the room as on connecting: the host reconciles by sync.
 
 ## Guests from the command line
 
@@ -244,5 +280,6 @@ safe to run again.
 3. The local channel and `pedit comments list|reply|resolve|reopen` for the
    host, with the host saving its own writes.
 4. Guests: comment links, the comments docs, `delivered`.
-5. Guests while the host is away: kept entries from Go.
+5. Guests while the host is away: kept entries from Go (after step 6 in the
+   stack of pull requests).
 6. `pedit comments list` without a session.
