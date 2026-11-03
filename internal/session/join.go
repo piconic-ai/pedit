@@ -144,7 +144,7 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 
 		beforePublishWriter: opts.beforePublishWriter,
 	}
-	s.mirror = &mirror{dir: dir, root: root, opts: opts, done: map[uint64]bool{}}
+	s.mirror = &mirror{dir: dir, root: root, opts: opts, done: map[uint64]bool{}, firstList: make(chan struct{})}
 	room := &roomWait{
 		synced:   make(chan struct{}),
 		closed:   make(chan struct{}),
@@ -245,6 +245,7 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 	if err := s.openCopy(root, dir, hostName, opts, onError); err != nil {
 		return fail(err)
 	}
+	s.awaitFirstList(hostName)
 
 	w := filewriter.New(s.file, "", filewriter.Options{
 		Bound:            s.bound,
@@ -270,6 +271,24 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 	s.startMirror()
 	s.mirrorMu.Unlock()
 	return s, nil
+}
+
+// listWait bounds how long Join waits for the host's list of files, which
+// names the first file as the room shows it; every host sends one.
+const listWait = 2 * time.Second
+
+// awaitFirstList waits for the host's list of files, and names the first
+// file by the name the host goes by meanwhile if it does not come.
+func (s *Session) awaitFirstList(hostName string) {
+	select {
+	case <-s.mirror.firstList:
+	case <-time.After(listWait):
+	}
+	s.filesMu.Lock()
+	defer s.filesMu.Unlock()
+	if s.sharedFile.path == "" {
+		s.sharedFile.path = hostName
+	}
 }
 
 // copyRoot opens the directory the copies go in: dir, or when it is empty a

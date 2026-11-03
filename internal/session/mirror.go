@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 
 	"github.com/piconic-ai/pedit/internal/filewriter"
@@ -37,6 +38,9 @@ type mirror struct {
 	done map[uint64]bool
 	// latest is the last list, kept until the first copy is in place.
 	latest atomic.Pointer[[]protocol.FileEntry]
+	// firstList is closed once the first list came.
+	firstList chan struct{}
+	listed    sync.Once
 }
 
 // takeManifest mirrors the room's files as the host lists them. It is called
@@ -45,7 +49,18 @@ func (s *Session) takeManifest(files []protocol.FileEntry) {
 	if s.mirror == nil {
 		return
 	}
+	for _, f := range files {
+		if f.ID == 0 {
+			// The first file's path as the room shows it, not its copy's.
+			s.filesMu.Lock()
+			s.sharedFile.path = f.Path
+			s.filesMu.Unlock()
+		}
+	}
 	s.mirror.latest.Store(&files)
+	if s.mirror.firstList != nil {
+		s.mirror.listed.Do(func() { close(s.mirror.firstList) })
+	}
 	go func() {
 		s.mirrorMu.Lock()
 		defer s.mirrorMu.Unlock()

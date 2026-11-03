@@ -237,7 +237,9 @@ safe to run again.
 ## Order of work
 
 1. This design.
-2. `--name`, and `--json` events for the host and guest sessions.
+2. `--name`, and `--json` events: the status and lifecycle of host and
+   guest sessions, and the host's comment events. A guest reports comment
+   events once it joins the comments docs, in step 4.
 3. The local channel and `pedit comments list|reply|resolve|reopen` for the
    host, with the host saving its own writes.
 4. Guests: comment links, the comments docs, `delivered`.

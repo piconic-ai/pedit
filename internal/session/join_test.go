@@ -582,3 +582,15 @@ func mustDecodeKey(t *testing.T, key string) []byte {
 	}
 	return raw
 }
+
+func TestAGuestNamesTheFirstFileAsTheRoomDoes(t *testing.T) {
+	f := setup(t, "# notes\n", setupOpts{name: "docs/notes.md", project: true})
+	g, err := joinFromCLI(t, f, joinCLIOpts{JoinOptions: JoinOptions{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := f.session.Files()[0].Path
+	if files := g.Files(); len(files) != 1 || files[0].Path != host || host == "" {
+		t.Fatalf("guest %+v, host %q", files, host)
+	}
+}

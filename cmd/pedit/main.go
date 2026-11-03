@@ -129,21 +129,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 // runShare shares files, takes up a kept room, or joins a link, as opts say.
 func runShare(opts commandArgs, stdout, stderr io.Writer) int {
-	if code := resumeHeld(&opts, stdout, stderr); code != 0 {
-		return code
-	}
-	if err := applyConfigKeep(&opts); err != nil {
-		fmt.Fprintln(stderr, "pedit:", err)
-		return 1
-	}
-	if code, done := routeKept(&opts, stdout, stderr); done {
-		return code
-	}
-	// With --json, stdout carries events only, and people read stderr.
-	var ev *events
-	people := stdout
-	if opts.JSON {
-		ev, people = newEvents(stdout), stderr
+	people, ev, early, done := prepareShare(&opts, stdout, stderr)
+	if done {
+		return early
 	}
 	out := newUI(people, isTerminal(people), os.Getenv("NO_COLOR") != "")
 	latest := startUpdateCheck(getVersion(), out.tty)
@@ -293,6 +281,26 @@ func runShare(opts commandArgs, stdout, stderr io.Writer) int {
 	code = max(code, hostEnded(out, arg, st, s.Client.TimeLimit(), selfUpgradeCommand))
 	notifyUpdate(out, latest)
 	return code
+}
+
+// prepareShare settles where output goes and which kept room, if any, the
+// session takes up. With --json, stdout carries events only, from the first
+// line: what pedit says to people, the kept room it resumes included, goes
+// to stderr. done is set when pedit has nothing more to do, with code.
+func prepareShare(opts *commandArgs, stdout, stderr io.Writer) (people io.Writer, ev *events, code int, done bool) {
+	people = stdout
+	if opts.JSON {
+		ev, people = newEvents(stdout), stderr
+	}
+	if code := resumeHeld(opts, people, stderr); code != 0 {
+		return people, ev, code, true
+	}
+	if err := applyConfigKeep(opts); err != nil {
+		fmt.Fprintln(stderr, "pedit:", err)
+		return people, ev, 1, true
+	}
+	code, done = routeKept(opts, people, stderr)
+	return people, ev, code, done
 }
 
 // runWithoutShare runs what neither shares nor joins: help, the version, or a
