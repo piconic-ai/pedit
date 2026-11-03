@@ -25,7 +25,13 @@ const keys = await protocol.deriveRoomKeys(
   protocol.parseFragment(key),
   new URL(url).pathname.split('/')[3],
 )
-const client = new protocol.RoomClient({ admissionToken: keys.editAdmission, url, keys, doc, awareness })
+const client = new protocol.RoomClient({
+  admissionToken: keys.editAdmission,
+  url,
+  keys,
+  doc,
+  awareness,
+})
 client.connect()
 
 const nodes = doc.getArray('nodes')
