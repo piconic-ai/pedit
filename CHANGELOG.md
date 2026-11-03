@@ -1,5 +1,16 @@
 # Changelog
 
+## [v0.5.1](https://github.com/piconic-ai/pedit/compare/v0.5.0...v0.5.1) - 2026-11-03
+
+- Sample: depend on @pedit/serve 0.5.0 by @kfly8 in https://github.com/piconic-ai/pedit/pull/412
+- Design comments from the command line (#212) by @kfly8 in https://github.com/piconic-ai/pedit/pull/414
+- Report comment events as JSON and take --name (#212, #213) by @kfly8 in https://github.com/piconic-ai/pedit/pull/415
+- Reach a running session with pedit comments (#212) by @kfly8 in https://github.com/piconic-ai/pedit/pull/416
+- Let command line guests answer comments with a comment link (#212) by @kfly8 in https://github.com/piconic-ai/pedit/pull/417
+- List the saved comments when no session runs (#212) by @kfly8 in https://github.com/piconic-ai/pedit/pull/418
+- Let command line guests take part in a kept room (#212) by @kfly8 in https://github.com/piconic-ai/pedit/pull/419
+- Let command line guests join canvas rooms (#212) by @kfly8 in https://github.com/piconic-ai/pedit/pull/420
+
 ## [v0.5.0](https://github.com/piconic-ai/pedit/compare/v0.4.0...v0.5.0) - 2026-11-02
 
 - Sample: depend on the published @pedit/serve by @kfly8 in https://github.com/piconic-ai/pedit/pull/404
