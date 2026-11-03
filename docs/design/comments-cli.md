@@ -62,8 +62,8 @@ this session sees it:
 | `edited` | `file`, `thread`, `message`, `body` |
 | `deleted` | `file`, `thread`, `message` (`message` empty when the thread went) |
 | `resolved`, `reopened` | `file`, `thread` |
-| `status` | `status`, as the status line shows it (`host away`, `connected`, ...) |
-| `ended` | `reason`; the last event |
+| `status` | `status`: `connecting`, `connected`, `waiting` or `kept` (the host is away), `disconnected`, or why the room ended (`closed`, `expired`, ...) |
+| `ended` | `reason`: `stopped`, or the status the room ended with; the last event |
 
 - A change is reported once it is in the session's doc: from the room, from
   the browser on the same machine, or from a short command. The session's own

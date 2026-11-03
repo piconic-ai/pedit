@@ -298,6 +298,9 @@ func (s *Session) addMeta(f *sharedFile) {
 		}
 	} else {
 		f.meta = m
+		if s.opts.OnComments != nil {
+			watchComments(m.doc, f.path, &s.commentCalls, s.opts.OnComments)
+		}
 		if err := s.Client.AddCommentsFile(m.id, m.doc, meta.CheckUpdate); err != nil {
 			s.onError(err)
 		}
