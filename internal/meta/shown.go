@@ -159,37 +159,44 @@ func Diff(before, after []Shown) []Change {
 	for _, t := range after {
 		old, existed := was[t.ID]
 		delete(was, t.ID)
-		oldMessages := map[string]ShownMessage{}
-		for _, m := range old.Messages {
-			oldMessages[m.ID] = m
-		}
-		for i, m := range t.Messages {
-			o, ok := oldMessages[m.ID]
-			delete(oldMessages, m.ID)
-			switch {
-			case !ok:
-				out = append(out, Change{Kind: ChangeComment, Thread: t, Message: m, NewThread: len(old.Messages) == 0 && i == 0})
-			case o.Body != m.Body:
-				out = append(out, Change{Kind: ChangeEdited, Thread: t, Message: m})
-			}
-		}
-		for _, m := range old.Messages {
-			if _, gone := oldMessages[m.ID]; gone {
-				out = append(out, Change{Kind: ChangeDeleted, Thread: t, Message: m})
-			}
-		}
-		if existed && old.Resolved != t.Resolved {
-			kind := ChangeReopened
-			if t.Resolved {
-				kind = ChangeResolved
-			}
-			out = append(out, Change{Kind: kind, Thread: t})
-		}
+		out = append(out, threadChanges(old, t, existed)...)
 	}
 	for _, t := range before {
 		if _, gone := was[t.ID]; gone {
 			out = append(out, Change{Kind: ChangeDeleted, Thread: t})
 		}
+	}
+	return out
+}
+
+// threadChanges tells what changed in one thread: its comments added,
+// edited and deleted, then its resolving or reopening.
+func threadChanges(old, t Shown, existed bool) []Change {
+	oldMessages := map[string]ShownMessage{}
+	for _, m := range old.Messages {
+		oldMessages[m.ID] = m
+	}
+	var out []Change
+	for i, m := range t.Messages {
+		o, ok := oldMessages[m.ID]
+		delete(oldMessages, m.ID)
+		if !ok {
+			out = append(out, Change{Kind: ChangeComment, Thread: t, Message: m, NewThread: len(old.Messages) == 0 && i == 0})
+		} else if o.Body != m.Body {
+			out = append(out, Change{Kind: ChangeEdited, Thread: t, Message: m})
+		}
+	}
+	for _, m := range old.Messages {
+		if _, gone := oldMessages[m.ID]; gone {
+			out = append(out, Change{Kind: ChangeDeleted, Thread: t, Message: m})
+		}
+	}
+	if existed && old.Resolved != t.Resolved {
+		kind := ChangeReopened
+		if t.Resolved {
+			kind = ChangeResolved
+		}
+		out = append(out, Change{Kind: kind, Thread: t})
 	}
 	return out
 }
