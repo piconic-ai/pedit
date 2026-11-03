@@ -262,12 +262,7 @@ func runShare(opts commandArgs, stdout, stderr io.Writer) int {
 	}
 	// An agent's session leaves the user's clipboard alone.
 	out.sharing(files, s.URL, !opts.JSON && clipboard.Copy(s.URL), scratch)
-	stopChannel := func() {}
-	if opts.JSON {
-		var id string
-		id, stopChannel = commentsChannel(s, channelInfo(s, roomOf(s.URL), protocol.AccessEdit, cfg.root, nameOf(opts)), stderr)
-		ev.ready(id, roomOf(s.URL), protocol.AccessEdit, s.Files(), hostLinks(s))
-	}
+	stopChannel := announceSession(opts, ev, s, channelInfo(s, roomOf(s.URL), protocol.AccessEdit, cfg.root, nameOf(opts)), s.Files(), hostLinks(s), stderr)
 	shared = true
 	stopTyping := func() {}
 	if resumable {
@@ -545,13 +540,7 @@ func runJoin(opts commandArgs, out *ui, ev *events, stderr io.Writer) int {
 	}
 	file := displayPath(s.File())
 	out.joined(file, opts.Room, s.Temporary(), !opts.JSON && clipboard.Copy(s.File()))
-	stopChannel := func() {}
-	if opts.JSON {
-		var id string
-		access := s.Client.Keys().Access
-		id, stopChannel = commentsChannel(s, channelInfo(s, roomOf(opts.Room), access, "", nameOf(opts)), stderr)
-		ev.ready(id, roomOf(opts.Room), access, s.Files(), nil)
-	}
+	stopChannel := announceSession(opts, ev, s, channelInfo(s, roomOf(opts.Room), s.Client.Keys().Access, "", nameOf(opts)), s.Files(), nil, stderr)
 
 	<-ctx.Done()
 	stopChannel()

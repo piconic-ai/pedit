@@ -519,7 +519,13 @@ func (l Live) Call(req Request, wait time.Duration) (Answer, error) {
 	if err := writeAtomic(filepath.Join(l.path, reqDir), name, data); err != nil {
 		return Answer{}, ErrGone
 	}
-	answer := filepath.Join(res, name)
+	return l.await(w, name, wait)
+}
+
+// await waits for the answer to the request name, and withdraws the request
+// if none comes in time.
+func (l Live) await(w *fsnotify.Watcher, name string, wait time.Duration) (Answer, error) {
+	answer := filepath.Join(l.path, resDir, name)
 	deadline := time.NewTimer(wait)
 	defer deadline.Stop()
 	for {
@@ -538,17 +544,23 @@ func (l Live) Call(req Request, wait time.Duration) (Answer, error) {
 				_ = os.Remove(answer)
 				return a, nil
 			}
-			withdrawn := filepath.Join(l.path, reqDir, ".withdrawn-"+name)
-			if os.Rename(filepath.Join(l.path, reqDir, name), withdrawn) == nil {
-				_ = os.Remove(withdrawn)
-				return Answer{}, ErrWithdrawn
-			}
-			if _, err := os.Stat(l.path); err != nil {
-				return Answer{}, ErrGone
-			}
-			return Answer{}, ErrUnknown
+			return Answer{}, l.withdraw(name)
 		}
 	}
+}
+
+// withdraw takes back a request the session has not taken: ErrWithdrawn
+// when it could, ErrUnknown when the session had taken it.
+func (l Live) withdraw(name string) error {
+	withdrawn := filepath.Join(l.path, reqDir, ".withdrawn-"+name)
+	if os.Rename(filepath.Join(l.path, reqDir, name), withdrawn) == nil {
+		_ = os.Remove(withdrawn)
+		return ErrWithdrawn
+	}
+	if _, err := os.Stat(l.path); err != nil {
+		return ErrGone
+	}
+	return ErrUnknown
 }
 
 func readAnswer(path string) (Answer, bool) {

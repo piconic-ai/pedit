@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -66,7 +67,6 @@ type commentsArgs struct {
 
 func parseCommentsArgs(args []string, stdin io.Reader) (commentsArgs, error) {
 	a := commentsArgs{op: sessiondir.OpList}
-	var rest []string
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		switch args[0] {
 		case sessiondir.OpList, sessiondir.OpReply, sessiondir.OpResolve, sessiondir.OpReopen:
@@ -75,74 +75,94 @@ func parseCommentsArgs(args []string, stdin io.Reader) (commentsArgs, error) {
 			return a, fmt.Errorf("unknown command %q", args[0])
 		}
 	}
+	rest, err := a.takeOptions(args)
+	if err != nil {
+		return a, err
+	}
+	return a, a.takeArguments(rest, stdin)
+}
+
+// takeOptions takes the options of args, and returns the other arguments.
+func (a *commentsArgs) takeOptions(args []string) ([]string, error) {
+	var rest []string
 	for i := 0; i < len(args); i++ {
 		option, value, hasValue := strings.Cut(args[i], "=")
-		takeValue := func() (string, error) {
-			if !hasValue {
-				i++
-				value = optionValue(args, i)
-			}
-			if value == "" {
-				return "", errors.New(option + " requires a value")
-			}
-			return value, nil
+		if !hasValue && slices.Contains([]string{"--room", "--file", "--id"}, option) {
+			i++
+			value = optionValue(args, i)
 		}
 		var err error
 		switch option {
 		case "--room":
-			a.room, err = takeValue()
+			err = setValue(&a.room, option, value)
 		case "--file":
-			a.file, err = takeValue()
+			err = setValue(&a.file, option, value)
 		case "--id":
-			a.id, err = takeValue()
+			err = setValue(&a.id, option, value)
 		case "--all", "--json":
-			if hasValue {
-				err = errors.New(option + " takes no value")
-			}
-			a.all = a.all || option == "--all"
-			a.json = a.json || option == "--json"
-		case "-":
-			rest = append(rest, "-")
+			err = a.setFlag(option, hasValue)
 		case "--":
-			rest = append(rest, args[i+1:]...)
-			i = len(args)
+			return append(rest, args[i+1:]...), nil
 		default:
-			if strings.HasPrefix(option, "-") {
-				err = fmt.Errorf("unknown option %s", option)
+			if option != "-" && strings.HasPrefix(option, "-") {
+				return nil, fmt.Errorf("unknown option %s", option)
 			}
 			rest = append(rest, args[i])
 		}
 		if err != nil {
-			return a, err
+			return nil, err
 		}
 	}
+	return rest, nil
+}
+
+func setValue(to *string, option, value string) error {
+	if value == "" {
+		return errors.New(option + " requires a value")
+	}
+	*to = value
+	return nil
+}
+
+func (a *commentsArgs) setFlag(option string, hasValue bool) error {
+	if hasValue {
+		return errors.New(option + " takes no value")
+	}
+	a.all = a.all || option == "--all"
+	a.json = a.json || option == "--json"
+	return nil
+}
+
+// takeArguments takes the thread and the text the op needs, reading the
+// text from stdin when it is -.
+func (a *commentsArgs) takeArguments(rest []string, stdin io.Reader) error {
 	want := map[string]int{sessiondir.OpList: 0, sessiondir.OpReply: 2, sessiondir.OpResolve: 1, sessiondir.OpReopen: 1}[a.op]
-	if len(rest) != want {
-		return a, fmt.Errorf("%s takes %d arguments, not %d", a.op, want, len(rest))
+	switch {
+	case len(rest) != want:
+		return fmt.Errorf("%s takes %d arguments, not %d", a.op, want, len(rest))
+	case a.op != sessiondir.OpList && (a.all || a.json):
+		return errors.New("--all and --json are for list")
+	case a.op != sessiondir.OpReply && a.id != "":
+		return errors.New("--id is for reply")
+	case want == 0:
+		return nil
 	}
-	if a.op != sessiondir.OpList && (a.all || a.json) {
-		return a, errors.New("--all and --json are for list")
+	a.thread = rest[0]
+	if a.op != sessiondir.OpReply {
+		return nil
 	}
-	if a.op != sessiondir.OpReply && a.id != "" {
-		return a, errors.New("--id is for reply")
-	}
-	if want > 0 {
-		a.thread = rest[0]
-	}
-	if a.op == sessiondir.OpReply {
-		a.body = rest[1]
-		if a.body == "-" {
-			data, err := io.ReadAll(io.LimitReader(stdin, sessiondir.MaxRequestBytes))
-			if err != nil {
-				return a, err
-			}
-			a.body = strings.TrimSuffix(string(data), "\n")
+	a.body = rest[1]
+	if a.body == "-" {
+		data, err := io.ReadAll(io.LimitReader(stdin, sessiondir.MaxRequestBytes))
+		if err != nil {
+			return err
 		}
-		if a.id == "" {
-			a.id = newCommentID()
-		}
+		a.body = strings.TrimSuffix(string(data), "\n")
 	}
-	return a, nil
+	if a.id == "" {
+		a.id = newCommentID()
+	}
+	return nil
 }
 
 // newCommentID is a comment id as the browser makes one: 16 characters of
@@ -341,4 +361,19 @@ func channelInfo(s *session.Session, room string, access protocol.Access, projec
 		info.Files = append(info.Files, f.Path)
 	}
 	return info
+}
+
+// announceSession lets pedit comments reach s, with --json, and tells the
+// ready event. It returns how to stop the channel.
+func announceSession(opts commandArgs, ev *events, s commentSession, info sessiondir.Info, entries []protocol.FileEntry, links map[string]string, stderr io.Writer) (stop func()) {
+	if !opts.JSON {
+		return func() {}
+	}
+	id, stop := commentsChannel(s, info, stderr)
+	access := protocol.AccessEdit
+	if info.Access == protocol.AccessComment.String() {
+		access = protocol.AccessComment
+	}
+	ev.ready(id, info.Room, access, entries, links)
+	return stop
 }
