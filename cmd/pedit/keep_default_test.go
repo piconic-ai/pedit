@@ -199,3 +199,25 @@ func recordPath(t *testing.T, root, room string) string {
 	digest := sha256.Sum256([]byte(root))
 	return filepath.Join(config, "pedit", "keep", fmt.Sprintf("%x", digest[:])[:16], room+".json")
 }
+
+func TestWithJSONResumingSaysSoOnStderr(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("kept rooms are not supported on Windows")
+	}
+	root := keptProject(t, "")
+	a := filepath.Join(root, "a.md")
+	keptHere(t, root, testRoom, true, time.Now().Add(time.Hour), a)
+	var out, errw bytes.Buffer
+	opts, _ := parseArgs([]string{"a.md", "--json"})
+	people, ev, code, done := prepareShare(&opts, &out, &errw)
+	if done || code != 0 || opts.Resume != testRoom || ev == nil || people != &errw {
+		t.Fatalf("%+v %d %v", opts, code, done)
+	}
+	if out.Len() != 0 || !strings.Contains(errw.String(), "Resuming the kept room "+testRoom) {
+		t.Fatalf("stdout %q, stderr %q", out.String(), errw.String())
+	}
+	ev.status("connected")
+	if out.String() != `{"event":"status","status":"connected"}`+"\n" {
+		t.Fatalf("stdout %q", out.String())
+	}
+}

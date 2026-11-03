@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 
 	"github.com/piconic-ai/pedit/internal/filewriter"
@@ -20,7 +21,7 @@ import (
 
 // Why a file of the room is not mirrored.
 var (
-	errNotText = errors.New("it is a canvas, which only a browser can open; open the link in a browser")
+	errNotText = errors.New("pedit does not know its format; open the link in a browser")
 	errTooMany = fmt.Errorf("a room mirrors up to %d files", MaxFiles)
 	errBadID   = errors.New("its id is out of range")
 )
@@ -37,6 +38,9 @@ type mirror struct {
 	done map[uint64]bool
 	// latest is the last list, kept until the first copy is in place.
 	latest atomic.Pointer[[]protocol.FileEntry]
+	// firstList is closed once the first list came.
+	firstList chan struct{}
+	listed    sync.Once
 }
 
 // takeManifest mirrors the room's files as the host lists them. It is called
@@ -45,7 +49,18 @@ func (s *Session) takeManifest(files []protocol.FileEntry) {
 	if s.mirror == nil {
 		return
 	}
+	for _, f := range files {
+		if f.ID == 0 {
+			// The first file's path as the room shows it, not its copy's.
+			s.filesMu.Lock()
+			s.sharedFile.path = f.Path
+			s.filesMu.Unlock()
+		}
+	}
 	s.mirror.latest.Store(&files)
+	if s.mirror.firstList != nil {
+		s.mirror.listed.Do(func() { close(s.mirror.firstList) })
+	}
 	go func() {
 		s.mirrorMu.Lock()
 		defer s.mirrorMu.Unlock()
@@ -92,7 +107,7 @@ func (s *Session) mirrorFile(entry protocol.FileEntry) (string, error) {
 		// DecodeFiles refuses it; a list made by hand gets the same.
 		return file, errBadID
 	}
-	if entry.Format != protocol.FormatText {
+	if entry.Format != protocol.FormatText && entry.Format != protocol.FormatCanvas {
 		return file, errNotText
 	}
 	s.filesMu.Lock()
@@ -123,13 +138,17 @@ func (s *Session) mirrorFile(entry protocol.FileEntry) (string, error) {
 	}
 
 	doc := crdt.New()
+	var shared content = newTextContent(doc, "")
+	if entry.Format == protocol.FormatCanvas {
+		shared = &canvasContent{doc: doc}
+	}
 	f := &sharedFile{
 		id:         entry.ID,
 		file:       file,
 		path:       entry.Path,
 		doc:        doc,
 		bound:      bound,
-		content:    newTextContent(doc, ""),
+		content:    shared,
 		client:     s.Client,
 		onError:    s.onError,
 		notices:    newNotices(file, m.opts.OnNotice, s.onError),
@@ -177,6 +196,9 @@ func (s *Session) mirrorFile(entry protocol.FileEntry) (string, error) {
 	s.filesMu.Unlock()
 	if err := s.Client.AddFile(entry.ID, doc); err != nil {
 		s.onError(err)
+	}
+	if s.kept != nil {
+		s.kept.adopt(uint32(entry.ID), doc)
 	}
 	f.notices.start()
 	return file, nil

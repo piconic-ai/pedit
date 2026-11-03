@@ -62,6 +62,11 @@ type Options struct {
 	// OnError is called with errors nobody can act on, or that clear by
 	// themselves, such as a dropped connection.
 	OnError func(error)
+	// OnComments is called, one at a time and in order, with each change to
+	// the comments of the room's files once the session holds it, its own
+	// included; not with the comments there when a file was added. It must
+	// not call into the Session.
+	OnComments func(CommentChange)
 
 	// Keep asks the relay to keep the room open for this long after the host
 	// leaves on purpose (docs/design/rooms-away.md), and has Start write the
@@ -127,6 +132,15 @@ type Session struct {
 
 	stopOnce sync.Once
 	stopErr  error
+
+	// commentCalls reports changes to the comments (OnComments).
+	commentCalls callQueue
+	// guest holds the comments a joined session follows, or is nil for the
+	// host (guest_comments.go).
+	guest *guestComments
+	// kept is a joined session's side of a room kept while its host is
+	// away (kept_guest.go), or nil for the host.
+	kept *keptGuest
 
 	// away keeps the room for the host's return, if it asked for that.
 	away *keepAway
@@ -644,6 +658,8 @@ func (s *Session) Stop() error {
 		}
 		s.stopAlive()
 		s.awareness.Destroy()
+		// Every change of the comments is told before Stop returns.
+		s.commentCalls.wait()
 		for _, f := range files {
 			s.stopErr = errors.Join(s.stopErr, f.close())
 		}

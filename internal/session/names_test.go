@@ -28,6 +28,7 @@ func TestCopyName(t *testing.T) {
 		{10, ".envrc", "10-envrc.txt"},
 		{11, ".pedit/config.yaml", "11-pedit-config.yaml"},
 		{12, "data.CSV", "12-data.csv"},
+		{13, "plans/story-map.canvas", "13-plans-story-map.json"},
 		{13, "table.tsv", "13-table.tsv"},
 		{14, "README", "14-README.txt"},
 		{15, "a.", "15-a.txt"},

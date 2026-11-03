@@ -14,9 +14,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/piconic-ai/pedit/internal/canvas"
 	"github.com/piconic-ai/pedit/internal/filewriter"
+	"github.com/piconic-ai/pedit/internal/meta"
 	"github.com/piconic-ai/pedit/internal/protocol"
 	"github.com/piconic-ai/pedit/internal/protocol/prototest"
+	"github.com/reearth/ygo/crdt"
 )
 
 // joinFromCLI joins the room of f as a second pedit would, keeping its copy in
@@ -368,10 +371,13 @@ func TestJoinWithDirectoryKeepsTheCopy(t *testing.T) {
 }
 
 func TestJoinRemovesTheTemporaryDirectoryWhenJoiningFails(t *testing.T) {
-	f := setup(t, `{"nodes":[],"edges":[]}`, setupOpts{name: "board.canvas"})
+	f := setup(t, "# notes\n", setupOpts{})
+	if err := f.session.Stop(); err != nil {
+		t.Fatal(err)
+	}
 	before := tempDirs(t)
-	if _, err := joinFromCLI(t, f, joinCLIOpts{temporary: true}); err == nil {
-		t.Fatal("joined a canvas room")
+	if _, err := joinFromCLI(t, f, joinCLIOpts{temporary: true, JoinOptions: JoinOptions{Timeout: 300 * time.Millisecond}}); err == nil {
+		t.Fatal("joined a room nobody hosts")
 	}
 	if after := tempDirs(t); len(after) != len(before) {
 		t.Fatalf("temporary directories left behind: %v", after)
@@ -404,15 +410,54 @@ func TestJoinRefusesToClobberAFile(t *testing.T) {
 	}
 }
 
-func TestJoinRefusesACanvasRoom(t *testing.T) {
-	f := setup(t, `{"nodes":[],"edges":[]}`, setupOpts{name: "board.canvas"})
-	dir := t.TempDir()
-	_, err := joinFromCLI(t, f, joinCLIOpts{JoinOptions: JoinOptions{dir: dir}})
-	if err == nil || !strings.Contains(err.Error(), "canvas") {
-		t.Fatalf("err = %v", err)
+func TestJoinSharesACanvasAsJSON(t *testing.T) {
+	f := setup(t, board, setupOpts{name: "board.canvas", project: true})
+	var got changesOf
+	g, err := joinFromCLI(t, f, joinCLIOpts{JoinOptions: JoinOptions{Watch: true, Name: "tate-pm", OnComments: got.add}})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
-		t.Fatalf("wrote %v", entries)
+	if filepath.Base(g.File()) != "00-board.json" {
+		t.Fatalf("copy %s", g.File())
+	}
+	parsed, err := canvas.Parse([]byte(readFile(t, g.File())))
+	if err != nil || len(parsed.Canvas.Nodes) != 2 || parsed.Canvas.Nodes[0]["text"] != "Hello" {
+		t.Fatalf("copy %v %v", parsed, err)
+	}
+	if files := g.Files(); len(files) != 1 || files[0].Path != "board.canvas" || files[0].Format != protocol.FormatCanvas {
+		t.Fatalf("files %+v", files)
+	}
+
+	// An edit to the copy reaches the host's file as nodes, not as text.
+	edited := strings.Replace(readFile(t, g.File()), `"Hello"`, `"Hello from the agent"`, 1)
+	if err := os.WriteFile(g.File(), []byte(edited), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prototest.WaitFor(t, wait, func() bool { return strings.Contains(readFile(t, f.file), "Hello from the agent") }, "the guest's edit in the host's file")
+	if _, err := canvas.Parse([]byte(readFile(t, f.file))); err != nil {
+		t.Fatalf("the host's file is no canvas: %v", err)
+	}
+
+	// A comment on a node, answered from the command line.
+	g2 := joinFiles(t, f.relay, f.session.URL)
+	metaDoc := g2.open(t, 1)
+	comments := metaDoc.GetMap(meta.CommentsKey)
+	metaDoc.Transact(func(txn *crdt.Transaction) {
+		thread := crdt.NewMapPrelim()
+		comments.Set(txn, "n1", thread)
+		thread.Set(txn, meta.AnchorKey, map[string]any{"type": meta.AnchorNode, "id": "a1"})
+		thread.Set(txn, meta.QuoteKey, "Hello")
+		thread.Set(txn, meta.ResolvedKey, false)
+		messages := crdt.NewMapPrelim()
+		thread.Set(txn, meta.MessagesKey, messages)
+		messages.Set(txn, "m1", map[string]any{"author": "Ada", "time": "2026-10-21T00:00:00Z", "body": "Which?"})
+	})
+	prototest.WaitFor(t, wait, func() bool {
+		c := g.Comments()
+		return len(c) == 1 && len(c[0].Threads) == 1 && c[0].Threads[0].Node == "a1"
+	}, "the node's thread at the CLI guest")
+	if res, err := g.Reply("", "n1", "r1", "On it."); err != nil || !res.Delivered {
+		t.Fatalf("%+v %v", res, err)
 	}
 }
 
@@ -532,9 +577,9 @@ func TestJoinStopsWaitingForTheHostWhenCanceled(t *testing.T) {
 
 func TestParseShareURL(t *testing.T) {
 	key := protocol.GenerateKey()
-	ws, id, raw, err := parseShareURL("https://edit.piconic.ai/r/AAAAAAAAAAAAAAAAAAAAAA#" + key)
-	if err != nil || ws != "wss://edit.piconic.ai/api/rooms/AAAAAAAAAAAAAAAAAAAAAA/ws" || id != "AAAAAAAAAAAAAAAAAAAAAA" || len(raw) != protocol.KeyBytes {
-		t.Fatalf("= %q, %q, %d bytes, %v", ws, id, len(raw), err)
+	ws, id, secrets, err := parseShareURL("https://edit.piconic.ai/r/AAAAAAAAAAAAAAAAAAAAAA#" + key)
+	if err != nil || ws != "wss://edit.piconic.ai/api/rooms/AAAAAAAAAAAAAAAAAAAAAA/ws" || id != "AAAAAAAAAAAAAAAAAAAAAA" || secrets.Access != protocol.AccessEdit || len(secrets.Edit) != protocol.KeyBytes {
+		t.Fatalf("= %q, %q, %+v, %v", ws, id, secrets.Access, err)
 	}
 	if ws, _, _, err = parseShareURL("http://localhost:8787/r/ROOM_-1#" + key); err != nil || ws != "ws://localhost:8787/api/rooms/ROOM_-1/ws" {
 		t.Fatalf("= %q, %v", ws, err)
@@ -557,20 +602,21 @@ func TestParseShareURL(t *testing.T) {
 	}
 }
 
-func TestParseShareURLSendsLowerLinksToTheBrowser(t *testing.T) {
+func TestParseShareURLTakesCommentLinksAndSendsReadLinksToTheBrowser(t *testing.T) {
 	keys, err := protocol.EditKeys(mustDecodeKey(t, protocol.GenerateKey()), "ROOM")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for access, want := range map[protocol.Access]string{protocol.AccessComment: "comment only", protocol.AccessRead: "read only"} {
-		fragment := keys.Fragments[access]
-		_, _, _, err := parseShareURL("https://edit.piconic.ai/r/ROOM#" + fragment)
-		if err == nil || !strings.Contains(err.Error(), "this link is "+want) || !strings.Contains(err.Error(), "browser") {
-			t.Errorf("%s: %v", want, err)
-		}
-		if err != nil && strings.Contains(err.Error(), fragment) {
-			t.Errorf("%s: secret leaked in %q", want, err)
-		}
+	if _, _, secrets, err := parseShareURL("https://edit.piconic.ai/r/ROOM#" + keys.Fragments[protocol.AccessComment]); err != nil || secrets.Access != protocol.AccessComment {
+		t.Fatalf("a comment link: %v %v", secrets.Access, err)
+	}
+	fragment := keys.Fragments[protocol.AccessRead]
+	_, _, _, err = parseShareURL("https://edit.piconic.ai/r/ROOM#" + fragment)
+	if err == nil || !strings.Contains(err.Error(), "this link is read only") || !strings.Contains(err.Error(), "browser") {
+		t.Errorf("read only: %v", err)
+	}
+	if err != nil && strings.Contains(err.Error(), fragment) {
+		t.Errorf("secret leaked in %q", err)
 	}
 }
 
@@ -581,4 +627,16 @@ func mustDecodeKey(t *testing.T, key string) []byte {
 		t.Fatal(err)
 	}
 	return raw
+}
+
+func TestAGuestNamesTheFirstFileAsTheRoomDoes(t *testing.T) {
+	f := setup(t, "# notes\n", setupOpts{name: "docs/notes.md", project: true})
+	g, err := joinFromCLI(t, f, joinCLIOpts{JoinOptions: JoinOptions{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := f.session.Files()[0].Path
+	if files := g.Files(); len(files) != 1 || files[0].Path != host || host == "" {
+		t.Fatalf("guest %+v, host %q", files, host)
+	}
 }

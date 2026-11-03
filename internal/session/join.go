@@ -29,8 +29,11 @@ type JoinOptions struct {
 	URL        string
 	Name       string
 	WriteDelay time.Duration
-	// Watch streams edits made to the copy outside pedit into the room.
+	// Watch streams edits made to the copy outside pedit into the room. A
+	// comment link edits nothing, so its copies are not watched.
 	Watch bool
+	// OnComments is as in Options.
+	OnComments func(CommentChange)
 	// Timeout bounds how long Join waits for the room's state; 15s by default.
 	Timeout  time.Duration
 	Header   http.Header
@@ -121,10 +124,11 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 	if opts.Timeout == 0 {
 		opts.Timeout = 15 * time.Second
 	}
-	wsURL, roomID, rawKey, err := parseShareURL(opts.URL)
+	wsURL, roomID, secrets, err := parseShareURL(opts.URL)
 	if err != nil {
 		return nil, err
 	}
+	opts.Watch = watchesCopies(opts.Watch, secrets.Access)
 	dir, temp, root, err := copyRoot(opts.dir, roomID)
 	if err != nil {
 		return nil, err
@@ -144,7 +148,8 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 
 		beforePublishWriter: opts.beforePublishWriter,
 	}
-	s.mirror = &mirror{dir: dir, root: root, opts: opts, done: map[uint64]bool{}}
+	s.mirror = &mirror{dir: dir, root: root, opts: opts, done: map[uint64]bool{}, firstList: make(chan struct{})}
+	s.guest = newGuestComments(opts.Name, opts.OnComments, &s.commentCalls)
 	room := &roomWait{
 		synced:   make(chan struct{}),
 		closed:   make(chan struct{}),
@@ -162,15 +167,20 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 		}
 		s.reportPeople(opts.OnPeople)
 	}
+	var last atomic.Value // the status before
 	s.Client, err = protocol.NewClient(protocol.ClientOptions{
 		URL:       wsURL,
 		RoomID:    roomID,
-		Key:       rawKey,
+		Link:      &secrets,
 		Doc:       doc,
 		Awareness: aw,
 		Header:    opts.Header,
 		Dial:      opts.Dial,
 		OnStatus: func(st protocol.Status) {
+			if was, _ := last.Swap(st).(protocol.Status); was == protocol.StatusKept && st == protocol.StatusConnected {
+				// The host is back, and takes the state by sync.
+				s.kept.settle()
+			}
 			if st.HostAway() {
 				waited.Store(true)
 			} else if st == protocol.StatusConnected && waited.Swap(false) {
@@ -183,11 +193,21 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 				opts.OnStatus(st)
 			}
 		},
-		OnKept:     opts.OnKept,
-		OnSynced:   func() { close(room.synced) },
-		OnError:    onError,
-		OnManifest: s.takeManifest,
-		OnAccess:   func(uint64) { peopleChanged() },
+		OnKept:   opts.OnKept,
+		OnSynced: func() { close(room.synced) },
+		OnError:  onError,
+		OnManifest: func(files []protocol.FileEntry) {
+			s.takeManifest(files)
+			s.guest.takeManifest(files)
+		},
+		OnFileSynced: func(id uint64) { s.guest.synced(id) },
+		// A room kept while its host is away (kept_guest.go).
+		OnKind:       func(kind byte, payload []byte) { s.kept.onKind(kind, payload) },
+		OnKeptUpdate: func(id uint64, update []byte) { s.kept.send(id, update) },
+		After:        func() (uint64, bool) { return s.kept.cursor() },
+		OnLive:       func() { s.kept.settle() },
+		OnFileAnswer: func(id uint64, fromHost bool, update []byte) { s.guest.answered(id, fromHost, update) },
+		OnAccess:     func(uint64) { peopleChanged() },
 	})
 	if err != nil {
 		_ = root.Close()
@@ -195,6 +215,8 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 		return nil, err
 	}
 	s.client = s.Client
+	s.guest.client = s.Client
+	s.kept = newKeptGuest(s, s.Client.Keys())
 	s.sendCanvas = s.Client.SendCanvas
 	// Until the file is known, remote edits only land in the doc; the first
 	// write below carries them all.
@@ -234,17 +256,17 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 		_ = removeTemp(temp)
 		return nil, err
 	}
-	host, err := room.wait(ctx, aw, s.Client, opts.Timeout)
+	host, err := room.wait(ctx, aw, s.Client, s.kept.replayed, opts.Timeout)
 	if err != nil {
 		return fail(err)
 	}
-	if format, _ := host["format"].(string); format == formatCanvas {
-		return fail(errors.New("this room shares a canvas as nodes and edges, which pedit cannot join from the command line yet; open the link in a browser"))
-	}
+	host = s.kept.orFirstFile(host)
+	s.takeFormat(host)
 	hostName, _ := host["file"].(string)
 	if err := s.openCopy(root, dir, hostName, opts, onError); err != nil {
 		return fail(err)
 	}
+	s.awaitFirstList(hostName)
 
 	w := filewriter.New(s.file, "", filewriter.Options{
 		Bound:            s.bound,
@@ -270,6 +292,43 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 	s.startMirror()
 	s.mirrorMu.Unlock()
 	return s, nil
+}
+
+// takeFormat shares the first file as the host does: as text, or a canvas
+// as nodes and edges, whose copy is JSON Canvas rendered from them and
+// whose edits are taken in as the host takes in edits to its file.
+func (s *Session) takeFormat(host map[string]any) {
+	if format, _ := host["format"].(string); format == formatCanvas {
+		s.sharedFile.content = &canvasContent{doc: s.Doc}
+		s.Text = nil
+	}
+}
+
+// watchesCopies tells whether a guest watches its copies for edits: only an
+// edit link edits.
+func watchesCopies(watch bool, access protocol.Access) bool {
+	if access != protocol.AccessEdit {
+		return false
+	}
+	return watch
+}
+
+// listWait bounds how long Join waits for the host's list of files, which
+// names the first file as the room shows it; every host sends one.
+const listWait = 2 * time.Second
+
+// awaitFirstList waits for the host's list of files, and names the first
+// file by the name the host goes by meanwhile if it does not come.
+func (s *Session) awaitFirstList(hostName string) {
+	select {
+	case <-s.mirror.firstList:
+	case <-time.After(listWait):
+	}
+	s.filesMu.Lock()
+	defer s.filesMu.Unlock()
+	if s.sharedFile.path == "" {
+		s.sharedFile.path = hostName
+	}
 }
 
 // copyRoot opens the directory the copies go in: dir, or when it is empty a
@@ -345,12 +404,18 @@ func (r *roomWait) canceled(ctx context.Context) error {
 
 // wait waits for a host to show up in the room, and then for the room's
 // content, both within timeout. It returns the host's awareness state.
-func (r *roomWait) wait(ctx context.Context, aw *awareness.Awareness, client *protocol.Client, timeout time.Duration) (map[string]any, error) {
+// The replay of a room kept while its host is away ends the wait too, with
+// no host: the relay sent all it keeps.
+func (r *roomWait) wait(ctx context.Context, aw *awareness.Awareness, client *protocol.Client, replayed <-chan struct{}, timeout time.Duration) (map[string]any, error) {
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
 	var host map[string]any
 	for host == nil {
 		select {
+		case <-replayed:
+			if host, _ = hostState(aw, client); host == nil {
+				return nil, nil
+			}
 		case <-r.hostSeen:
 			host, _ = hostState(aw, client)
 		case <-r.closed:
@@ -475,32 +540,31 @@ func hostState(aw *awareness.Awareness, client *protocol.Client) (map[string]any
 	return nil, false
 }
 
-// parseShareURL returns the room's WebSocket URL, its ID and the key from a
-// share link. The key is in the fragment and never leaves this process. The
-// ID is used in a directory name, so only the characters of a generated room
-// ID are accepted.
-func parseShareURL(link string) (wsURL, roomID string, key []byte, err error) {
+// parseShareURL returns the room's WebSocket URL, its ID and the secrets of
+// a share link: an edit link, or a comment link (#212). The secrets are in
+// the fragment and never leave this process. The ID is used in a directory
+// name, so only the characters of a generated room ID are accepted.
+func parseShareURL(link string) (wsURL, roomID string, secrets protocol.LinkSecrets, err error) {
 	u, err := url.Parse(link)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-		return "", "", nil, fmt.Errorf("%s is not a share link", redactFragment(link))
+		return "", "", secrets, fmt.Errorf("%s is not a share link", redactFragment(link))
 	}
 	id, ok := strings.CutPrefix(u.Path, "/r/")
 	if !ok || !isRoomID(id) {
-		return "", "", nil, fmt.Errorf("%s is not a share link (expected /r/<room>#<key>)", redactFragment(link))
+		return "", "", secrets, fmt.Errorf("%s is not a share link (expected /r/<room>#<key>)", redactFragment(link))
 	}
 	if u.Fragment == "" {
-		return "", "", nil, errors.New("the link has no key after #; copy the whole link, including the part after #")
+		return "", "", secrets, errors.New("the link has no key after #; copy the whole link, including the part after #")
 	}
-	secrets, err := protocol.ParseFragment(u.Fragment)
+	secrets, err = protocol.ParseFragment(u.Fragment)
 	if err != nil {
-		return "", "", nil, errors.New("the link's key after # is not valid")
+		return "", "", protocol.LinkSecrets{}, errors.New("the link's key after # is not valid")
 	}
-	if secrets.Access != protocol.AccessEdit {
-		return "", "", nil, fmt.Errorf("this link is %s only: open it in a browser", secrets.Access)
+	if secrets.Access == protocol.AccessRead {
+		return "", "", protocol.LinkSecrets{}, fmt.Errorf("this link is %s only: open it in a browser", secrets.Access)
 	}
-	key = secrets.Edit
 	wsURL = "ws" + strings.TrimPrefix(u.Scheme, "http") + "://" + u.Host + "/api/rooms/" + id + "/ws"
-	return wsURL, id, key, nil
+	return wsURL, id, secrets, nil
 }
 
 // maxRoomInDir bounds the part of the room ID in the name of the copies'

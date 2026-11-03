@@ -3,6 +3,7 @@ package protocol
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/reearth/ygo/crdt"
@@ -105,7 +106,7 @@ func (c *Client) addFile(f *fileDoc, id uint64) error {
 	// Subscribed outside c.mu: an update in another goroutine holds the
 	// doc's lock while it sends, which takes c.mu.
 	f.unsub = doc.OnUpdate(func(update []byte, origin any) {
-		if origin == c || !mayWrite(c.keys.Access, f.comments) {
+		if origin == c || !mayWrite(c.keys.Access, f.comments) || c.keptUpdate(id, update) {
 			return
 		}
 		c.fresh.wrote()
@@ -289,7 +290,7 @@ func (c *Client) sendFileOnce(id uint64, t MessageType, payload []byte) error {
 	return nil
 }
 
-func (c *Client) receiveFiles(access Access, payload []byte) error {
+func (c *Client) receiveFiles(access Access, from Sender, payload []byte) error {
 	m, err := DecodeFiles(payload)
 	if errors.Is(err, ErrUnknownFilesKind) || errors.Is(err, ErrUnknownMessageType) {
 		return nil
@@ -308,7 +309,7 @@ func (c *Client) receiveFiles(access Access, payload []byte) error {
 	}
 	switch m.Type {
 	case MessageSync:
-		return c.receiveFileSync(m.File, access, m.Payload)
+		return c.receiveFileSync(m.File, access, from, m.Payload)
 	case MessageAttachment:
 		return c.receiveFileAttachment(m.File, access, m.Payload)
 	case MessageCanvas:
@@ -351,7 +352,7 @@ func (c *Client) receiveFileCanvas(id uint64, access Access, payload []byte) err
 	return nil
 }
 
-func (c *Client) receiveFileSync(id uint64, access Access, payload []byte) error {
+func (c *Client) receiveFileSync(id uint64, access Access, from Sender, payload []byte) error {
 	c.mu.Lock()
 	f := c.files[id]
 	c.mu.Unlock()
@@ -381,6 +382,11 @@ func (c *Client) receiveFileSync(id uint64, access Access, payload []byte) error
 		c.mu.Unlock()
 		if first && c.opts.OnFileSynced != nil {
 			c.opts.OnFileSynced(id)
+		}
+		if c.opts.OnFileAnswer != nil {
+			if _, update, err := ysync.ReadSyncMessage(payload); err == nil {
+				c.opts.OnFileAnswer(id, c.isHost(from), update)
+			}
 		}
 	}
 	return nil
@@ -476,4 +482,32 @@ func (c *Client) unsubscribeFiles() {
 			f.resyncTimer = nil
 		}
 	}
+}
+
+// ProbeFile asks the room for what it has of an added file past sv, as a
+// SyncStep1 with that state vector rather than the doc's. Peers that write
+// the file answer it; OnFileAnswer gets their answers. Dropped while
+// disconnected, like every other frame.
+func (c *Client) ProbeFile(id uint64, sv crdt.StateVector) error {
+	c.mu.Lock()
+	_, added := c.files[id]
+	c.mu.Unlock()
+	if !added {
+		return fmt.Errorf("file %d was not added", id)
+	}
+	clients := make([]crdt.ClientID, 0, len(sv))
+	for client := range sv {
+		clients = append(clients, client)
+	}
+	slices.Sort(clients)
+	vector := encoding.NewEncoder()
+	vector.WriteVarUint(uint64(len(clients)))
+	for _, client := range clients {
+		vector.WriteVarUint(uint64(client))
+		vector.WriteVarUint(sv[client])
+	}
+	enc := encoding.NewEncoder()
+	enc.WriteVarUint(ysync.MsgSyncStep1)
+	enc.WriteVarBytes(vector.Bytes())
+	return c.sendFile(id, MessageSync, enc.Bytes())
 }

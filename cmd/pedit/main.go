@@ -79,6 +79,8 @@ Commands:
   pedit resume [room|link]  Take up a kept room again: your files get what was written meanwhile
   pedit close [room|link]   Take in a kept room's edits, then close it for good
   pedit rooms [--json]      List this project's kept rooms
+  pedit comments [list]     List, reply to, resolve or reopen comments through a
+                            session started with --json
   pedit serve <file>        EXPERIMENTAL: hold a file's document for a local app, on a Unix socket
 Run pedit <command> --help for its details. To share a file named like a
 command, write ./close or pedit -- close.
@@ -94,6 +96,11 @@ Options:
   --keep <duration>     Keep the room open after you leave (for example 7d), so guests can
                         go on editing; the default is 1d, and 0 ends the room when you leave.
                         pedit <file> takes up the kept room that holds the file
+  --name <name>         The name you go by in the room and sign comments with
+                        (default: your login name)
+  --json                Print what happens in the room, such as new comments,
+                        as JSON lines on stdout, for a script or an agent;
+                        messages for people go to stderr
   -h, --help             Show this help
   -v, --version          Show the version
 
@@ -124,20 +131,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 // runShare shares files, takes up a kept room, or joins a link, as opts say.
 func runShare(opts commandArgs, stdout, stderr io.Writer) int {
-	if code := resumeHeld(&opts, stdout, stderr); code != 0 {
-		return code
+	people, ev, early, done := prepareShare(&opts, stdout, stderr)
+	if done {
+		return early
 	}
-	if err := applyConfigKeep(&opts); err != nil {
-		fmt.Fprintln(stderr, "pedit:", err)
-		return 1
-	}
-	if code, done := routeKept(&opts, stdout, stderr); done {
-		return code
-	}
-	out := newUI(stdout, isTerminal(stdout), os.Getenv("NO_COLOR") != "")
+	out := newUI(people, isTerminal(people), os.Getenv("NO_COLOR") != "")
 	latest := startUpdateCheck(getVersion(), out.tty)
 	if opts.Room != "" {
-		code := runJoin(opts, out, stderr)
+		code := runJoin(opts, out, ev, stderr)
 		notifyUpdate(out, latest)
 		return code
 	}
@@ -226,10 +227,11 @@ func runShare(opts commandArgs, stdout, stderr io.Writer) int {
 		// Where .pedit/config.yaml is, or cwd: comments live beside it.
 		Project: cfg.root,
 		Server:  server,
-		Name:    username(),
+		Name:    nameOf(opts),
 		Watch:   true,
 		OnStatus: func(st protocol.Status) {
 			out.setStatus(st)
+			ev.status(st)
 			if st.Final() && (st != protocol.StatusMaintenance || !resumable) {
 				ended.Store(st)
 				cancel()
@@ -243,7 +245,8 @@ func runShare(opts commandArgs, stdout, stderr io.Writer) int {
 			debug(n.Err)
 			out.notice(shown(n.File), true, n)
 		},
-		OnError: debug,
+		OnError:    debug,
+		OnComments: ev.commentHook(),
 	})
 	if err != nil {
 		return startFailed(out, stderr, err)
@@ -257,7 +260,9 @@ func runShare(opts commandArgs, stdout, stderr io.Writer) int {
 	for _, f := range s.Files()[1:] {
 		files = append(files, f.Path)
 	}
-	out.sharing(files, s.URL, clipboard.Copy(s.URL), scratch)
+	// An agent's session leaves the user's clipboard alone.
+	out.sharing(files, s.URL, !opts.JSON && clipboard.Copy(s.URL), scratch)
+	stopChannel := announceSession(opts, ev, s, channelInfo(s, roomOf(s.URL), protocol.AccessEdit, cfg.root, nameOf(opts)), s.Files(), hostLinks(s), stderr)
 	shared = true
 	stopTyping := func() {}
 	if resumable {
@@ -266,6 +271,7 @@ func runShare(opts commandArgs, stdout, stderr io.Writer) int {
 	}
 
 	<-ctx.Done()
+	stopChannel()
 	stopTyping()
 	// A second signal gives up on saving.
 	go func() {
@@ -274,9 +280,30 @@ func runShare(opts commandArgs, stdout, stderr io.Writer) int {
 	}()
 	st, _ := ended.Load().(protocol.Status)
 	code := leave(out, stderr, s, arg, scratch, st == "", cfg.root)
+	ev.ended(st)
 	code = max(code, hostEnded(out, arg, st, s.Client.TimeLimit(), selfUpgradeCommand))
 	notifyUpdate(out, latest)
 	return code
+}
+
+// prepareShare settles where output goes and which kept room, if any, the
+// session takes up. With --json, stdout carries events only, from the first
+// line: what pedit says to people, the kept room it resumes included, goes
+// to stderr. done is set when pedit has nothing more to do, with code.
+func prepareShare(opts *commandArgs, stdout, stderr io.Writer) (people io.Writer, ev *events, code int, done bool) {
+	people = stdout
+	if opts.JSON {
+		ev, people = newEvents(stdout), stderr
+	}
+	if code := resumeHeld(opts, people, stderr); code != 0 {
+		return people, ev, code, true
+	}
+	if err := applyConfigKeep(opts); err != nil {
+		fmt.Fprintln(stderr, "pedit:", err)
+		return people, ev, 1, true
+	}
+	code, done = routeKept(opts, people, stderr)
+	return people, ev, code, done
 }
 
 // runWithoutShare runs what neither shares nor joins: help, the version, or a
@@ -458,7 +485,7 @@ func debugLog(stderr io.Writer, enabled bool) func(error) {
 
 // runJoin joins the room at opts.Room and mirrors its file to a local copy
 // until Ctrl+C or the host closes the room.
-func runJoin(opts commandArgs, out *ui, stderr io.Writer) int {
+func runJoin(opts commandArgs, out *ui, ev *events, stderr io.Writer) int {
 	signals := make(chan os.Signal, 2)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -472,10 +499,11 @@ func runJoin(opts commandArgs, out *ui, stderr io.Writer) int {
 	debug := debugLog(stderr, os.Getenv("PEDIT_DEBUG") != "")
 	s, err := session.Join(ctx, session.JoinOptions{
 		URL:   opts.Room,
-		Name:  username(),
+		Name:  nameOf(opts),
 		Watch: true,
 		OnStatus: func(st protocol.Status) {
 			out.setStatus(st)
+			ev.status(st)
 			if st.Final() {
 				ended.Store(st)
 				cancel()
@@ -495,7 +523,8 @@ func runJoin(opts commandArgs, out *ui, stderr io.Writer) int {
 				out.mirrored(hostPath, displayPath(path))
 			}
 		},
-		OnError: debug,
+		OnError:    debug,
+		OnComments: ev.commentHook(),
 	})
 	switch {
 	case errors.Is(err, context.Canceled):
@@ -511,16 +540,23 @@ func runJoin(opts commandArgs, out *ui, stderr io.Writer) int {
 		return 1
 	}
 	file := displayPath(s.File())
-	out.joined(file, opts.Room, s.Temporary(), clipboard.Copy(s.File()))
+	out.joined(file, opts.Room, s.Temporary(), !opts.JSON && clipboard.Copy(s.File()))
+	if s.Client.Keys().Access != protocol.AccessEdit {
+		out.above("This link can comment only: edits to the copies are not sent.")
+	}
+	stopChannel := announceSession(opts, ev, s, channelInfo(s, roomOf(opts.Room), s.Client.Keys().Access, "", nameOf(opts)), s.Files(), nil, stderr)
 
 	<-ctx.Done()
+	stopChannel()
 	// A second signal gives up on saving.
 	go func() {
 		<-signals
 		os.Exit(130)
 	}()
 	st, _ := ended.Load().(protocol.Status)
-	return finishJoin(out, stderr, file, s.Temporary(), st, s.Client.TimeLimit(), s.Stop, s.KeepCopy, selfUpgradeCommand)
+	code := finishJoin(out, stderr, file, s.Temporary(), st, s.Client.TimeLimit(), s.Stop, s.KeepCopy, selfUpgradeCommand)
+	ev.ended(st)
+	return code
 }
 
 // finishJoin leaves the room, saving the copy or removing a temporary one,
@@ -639,6 +675,14 @@ func typedPath(line string) string {
 func isTerminal(w io.Writer) bool {
 	f, ok := w.(*os.File)
 	return ok && term.IsTerminal(int(f.Fd()))
+}
+
+// nameOf is the name the session goes by: --name, or the user's login name.
+func nameOf(opts commandArgs) string {
+	if opts.Name != "" {
+		return opts.Name
+	}
+	return username()
 }
 
 func username() string {

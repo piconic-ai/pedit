@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/piconic-ai/pedit/internal/fileowner"
+	"github.com/piconic-ai/pedit/internal/meta"
 	"gopkg.in/yaml.v3"
 )
 
@@ -350,6 +351,12 @@ type commandArgs struct {
 	Room      string
 	Template  string
 	Directory string
+	// JSON prints what happens in the room as JSON events on stdout, and
+	// everything for people on stderr (docs/design/comments-cli.md).
+	JSON bool
+	// Name is the name the session goes by in the room and signs comments
+	// with; the user's login name when empty.
+	Name string
 }
 
 // isShareLink tells a share link apart from a file name: files that start
@@ -380,6 +387,17 @@ func parseArgs(args []string) (commandArgs, error) {
 				value = optionValue(args, i)
 			}
 			err = opts.setOption(option, value)
+		case "--json":
+			if hasValue {
+				err = errors.New("--json takes no value")
+			}
+			opts.JSON = true
+		case "--name":
+			if !hasValue {
+				i++
+				value = optionValue(args, i)
+			}
+			err = opts.setName(value)
 		case "-h", "--help", "-v", "--version":
 			err = errors.New("help and version must be used alone")
 		case "--":
@@ -412,6 +430,20 @@ func (o *commandArgs) setKeep(value string) error {
 	keep, err := parseKeepDuration(value)
 	o.Keep = keep
 	return err
+}
+
+// setName takes the name the session goes by, cleaned as the browser cleans
+// one and cut to what a comment's author may hold.
+func (o *commandArgs) setName(value string) error {
+	if o.Name != "" {
+		return errors.New("specify --name once")
+	}
+	name := meta.CutUnits(strings.TrimSpace(meta.Clean(value, false)), meta.MaxAuthor)
+	if name == "" {
+		return errors.New("--name requires a name")
+	}
+	o.Name = name
+	return nil
 }
 
 var roomIDArg = regexp.MustCompile(`^[A-Za-z0-9_-]{22}$`)

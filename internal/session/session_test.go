@@ -80,6 +80,8 @@ type setupOpts struct {
 	onNotice func(Notice)
 	onError  func(error)
 	onPeople func([]string)
+	// onComments is Options.OnComments.
+	onComments func(CommentChange)
 	// project makes the directory name is in the project, whose
 	// .pedit/meta/ keeps comments; meta, if set, is its metadata file before
 	// Start.
@@ -147,6 +149,7 @@ func setup(t *testing.T, content string, o setupOpts) *fixture {
 		OnNotice:   o.onNotice,
 		OnError:    o.onError,
 		OnPeople:   o.onPeople,
+		OnComments: o.onComments,
 		Dial: func(ctx context.Context, url string, header http.Header) (protocol.Conn, error) {
 			c, err := f.relay.Dial(ctx, url, header)
 			if err == nil && o.wrap != nil {

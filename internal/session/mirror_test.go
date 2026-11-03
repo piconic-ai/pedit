@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 
@@ -55,8 +56,8 @@ func TestJoinKeepsTheLatestManifestBeforeMirroring(t *testing.T) {
 		done: map[uint64]bool{},
 	}}
 	files := []protocol.FileEntry{
-		{ID: 1, Path: "first.canvas", Format: protocol.FormatCanvas},
-		{ID: 2, Path: "second.canvas", Format: protocol.FormatCanvas},
+		{ID: 1, Path: "first.board", Format: "board"},
+		{ID: 2, Path: "second.board", Format: "board"},
 	}
 	s.mirrorMu.Lock()
 	s.takeManifest(files[:1])
@@ -99,13 +100,11 @@ func TestJoinMirrorsTheRoomsOtherFiles(t *testing.T) {
 	if m, ok := log.get("docs/spec.md"); !ok || m.err != nil || m.path != copySpec {
 		t.Fatalf("OnMirrored(docs/spec.md) = %+v, %v", m, ok)
 	}
-	// A canvas is for the browser.
-	prototest.WaitFor(t, wait, func() bool { _, ok := log.get("board.canvas"); return ok }, "the canvas, reported")
-	if m, _ := log.get("board.canvas"); !errors.Is(m.err, errNotText) {
+	// A canvas is mirrored as JSON Canvas, under .json.
+	copyBoard := filepath.Join(dir, "02-board.json")
+	prototest.WaitFor(t, wait, func() bool { return strings.Contains(readFileOr(copyBoard), `"nodes"`) }, "the canvas, mirrored")
+	if m, _ := log.get("board.canvas"); m.err != nil || m.path != copyBoard {
 		t.Fatalf("canvas: %+v", m)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "02-board.txt")); !os.IsNotExist(err) {
-		t.Fatalf("the canvas was written: %v", err)
 	}
 
 	// Edits go both ways, file by file.

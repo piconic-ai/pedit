@@ -19,10 +19,11 @@ type subcommand struct {
 }
 
 var subcommands = map[string]subcommand{
-	"close":  {closeUsage, runClose},
-	"resume": {resumeUsage, runResume},
-	"serve":  {serveUsage, runServe},
-	"rooms":  {roomsUsage, runRooms},
+	"close":    {closeUsage, runClose},
+	"comments": {commentsUsage, runComments},
+	"resume":   {resumeUsage, runResume},
+	"serve":    {serveUsage, runServe},
+	"rooms":    {roomsUsage, runRooms},
 }
 
 const resumeUsage = `Usage: pedit resume [room|link]

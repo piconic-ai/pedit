@@ -117,7 +117,9 @@ func (s *Session) openMeta(f *sharedFile) (*metaFile, string) {
 		f.doc.OnUpdate(func(_ []byte, _ any) { m.schedule() })
 	}
 	m.doc.OnUpdate(func(_ []byte, origin any) {
-		if origin == s.Client {
+		// The room's comments, and the session's own (comments.go): the
+		// browser on the host's machine is a peer of the room too.
+		if origin == s.Client || origin == localWrite {
 			// Under the client's lock: where a guest's anchor is, before
 			// an edit can delete its character.
 			if m.tracker != nil {
@@ -298,6 +300,9 @@ func (s *Session) addMeta(f *sharedFile) {
 		}
 	} else {
 		f.meta = m
+		if s.opts.OnComments != nil {
+			watchComments(m.doc, f.path, &s.commentCalls, s.opts.OnComments)
+		}
 		if err := s.Client.AddCommentsFile(m.id, m.doc, meta.CheckUpdate); err != nil {
 			s.onError(err)
 		}
@@ -494,4 +499,50 @@ func (m *metaFile) close() {
 	if m.bound != nil {
 		_ = m.bound.Close()
 	}
+}
+
+// ErrNoSavedComments means no comments were saved for a file: none were
+// made, or the host never ran on it.
+var ErrNoSavedComments = errors.New("no comments are saved for it")
+
+// ReadSavedComments reads the comments the host saved last for file, in the
+// project at projectDir, as the host reads them: through the project's real
+// directories, with the checks of meta.Parse. It writes nothing
+// (docs/design/comments-cli.md, listing without a session).
+func ReadSavedComments(projectDir, file string) (*meta.File, error) {
+	project, err := os.OpenRoot(projectDir)
+	if err != nil {
+		return nil, fmt.Errorf("cannot open the project: %w", err)
+	}
+	defer project.Close()
+	rel, ok := projectPath(project, file)
+	if !ok {
+		return nil, fmt.Errorf("it is outside the project, whose comments are kept in %s", filepath.Join(projectDir, metaDir))
+	}
+	name := filepath.FromSlash(metaDir + "/" + rel + ".json")
+	bound, err := openMetaFile(project, name, false)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, ErrNoSavedComments
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer bound.Close()
+	size, ok := bound.Size()
+	if !ok {
+		return nil, ErrNoSavedComments
+	}
+	if size > meta.MaxFileBytes {
+		return nil, fmt.Errorf("%s is larger than %d bytes", name, meta.MaxFileBytes)
+	}
+	data, ok := bound.Read()
+	if !ok {
+		return nil, fmt.Errorf("cannot read %s", name)
+	}
+	f, err := meta.Parse([]byte(data))
+	if err != nil {
+		return nil, fmt.Errorf("%s cannot be read: %w", name, err)
+	}
+	f.Path = rel
+	return f, nil
 }
