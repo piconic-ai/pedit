@@ -199,6 +199,28 @@ Comments are kept for files inside the project: the directory of
 an older pedit, does not see them. See
 [the design](docs/design/comments.md) for how they are anchored and checked.
 
+### Comments from scripts and agents
+
+A script or an AI agent can read and answer comments without a browser. It
+runs the session itself, with `--json`, and reads what happens in the room
+as JSON lines on stdout (messages for people go to stderr):
+
+```sh
+pedit notes.md --json --name tate-pm &   # {"event":"ready",...}, then
+                                          # {"event":"comment","thread":"…","body":"…",...}
+pedit comments list                       # the open threads (--all, --json)
+pedit comments reply <thread> "Done."     # prints the reply's id
+pedit comments resolve <thread>           # or reopen
+```
+
+The `pedit comments` commands reach the session running on the same
+machine through a directory of its own in your configuration directory; they
+never connect to the room themselves, so the agent is one participant, named
+by `--name`, for as long as it works. With no session running,
+`pedit comments list --file notes.md` lists the comments as the host saved
+them last. `pedit comments --help` says more, and
+[the design](docs/design/comments-cli.md) how it works.
+
 ### Comment-only and read-only links
 
 The link pedit prints lets people edit. To let someone only comment, or only
