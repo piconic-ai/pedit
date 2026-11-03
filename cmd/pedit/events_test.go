@@ -15,7 +15,7 @@ func TestEventsAreOneJSONObjectALine(t *testing.T) {
 	ev := newEvents(&out)
 	thread := meta.Shown{ID: "t1", Kind: meta.AnchorNode, Node: "n1", Quote: "Ideas <&>"}
 	msg := meta.ShownMessage{ID: "m1", Author: "Ada", Time: "2026-10-21T00:00:00Z", Body: "Line one\nline two"}
-	ev.ready("ROOM", protocol.AccessComment, []protocol.FileEntry{{Path: "notes.md"}}, nil)
+	ev.ready("S1", "ROOM", protocol.AccessComment, []protocol.FileEntry{{Path: "notes.md"}}, nil)
 	ev.status(protocol.StatusConnected)
 	ev.comment(session.CommentChange{File: "a.canvas", Change: meta.Change{Kind: meta.ChangeComment, Thread: thread, Message: msg, NewThread: true}})
 	ev.comment(session.CommentChange{File: "a.canvas", Change: meta.Change{Kind: meta.ChangeComment, Thread: meta.Shown{ID: "t2", Kind: meta.AnchorText}, Message: msg}})
@@ -25,7 +25,7 @@ func TestEventsAreOneJSONObjectALine(t *testing.T) {
 	ev.ended("")
 	ev.ended(protocol.StatusClosed)
 	want := strings.Join([]string{
-		`{"event":"ready","room":"ROOM","access":"comment","files":["notes.md"]}`,
+		`{"event":"ready","session":"S1","room":"ROOM","access":"comment","files":["notes.md"]}`,
 		`{"event":"status","status":"connected"}`,
 		`{"event":"comment","file":"a.canvas","thread":"t1","message":"m1","author":"Ada","time":"2026-10-21T00:00:00Z","body":"Line one\nline two","quote":"Ideas <&>","anchor":{"type":"node","id":"n1"},"new_thread":true}`,
 		`{"event":"comment","file":"a.canvas","thread":"t2","message":"m1","author":"Ada","time":"2026-10-21T00:00:00Z","body":"Line one\nline two","quote":"","anchor":{"type":"text"},"new_thread":false}`,
@@ -42,7 +42,7 @@ func TestEventsAreOneJSONObjectALine(t *testing.T) {
 
 func TestNoEventsWithoutJSON(t *testing.T) {
 	var ev *events
-	ev.ready("ROOM", protocol.AccessEdit, nil, nil)
+	ev.ready("", "ROOM", protocol.AccessEdit, nil, nil)
 	ev.status(protocol.StatusConnected)
 	ev.ended("")
 	if ev.commentHook() != nil {

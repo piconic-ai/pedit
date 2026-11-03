@@ -117,7 +117,9 @@ func (s *Session) openMeta(f *sharedFile) (*metaFile, string) {
 		f.doc.OnUpdate(func(_ []byte, _ any) { m.schedule() })
 	}
 	m.doc.OnUpdate(func(_ []byte, origin any) {
-		if origin == s.Client {
+		// The room's comments, and the session's own (comments.go): the
+		// browser on the host's machine is a peer of the room too.
+		if origin == s.Client || origin == localWrite {
 			// Under the client's lock: where a guest's anchor is, before
 			// an edit can delete its character.
 			if m.tracker != nil {

@@ -79,6 +79,8 @@ Commands:
   pedit resume [room|link]  Take up a kept room again: your files get what was written meanwhile
   pedit close [room|link]   Take in a kept room's edits, then close it for good
   pedit rooms [--json]      List this project's kept rooms
+  pedit comments [list]     List, reply to, resolve or reopen comments through a
+                            session started with --json
   pedit serve <file>        EXPERIMENTAL: hold a file's document for a local app, on a Unix socket
 Run pedit <command> --help for its details. To share a file named like a
 command, write ./close or pedit -- close.
@@ -260,7 +262,12 @@ func runShare(opts commandArgs, stdout, stderr io.Writer) int {
 	}
 	// An agent's session leaves the user's clipboard alone.
 	out.sharing(files, s.URL, !opts.JSON && clipboard.Copy(s.URL), scratch)
-	ev.ready(roomOf(s.URL), protocol.AccessEdit, s.Files(), hostLinks(s))
+	stopChannel := func() {}
+	if opts.JSON {
+		var id string
+		id, stopChannel = commentsChannel(s, channelInfo(s, roomOf(s.URL), protocol.AccessEdit, cfg.root, nameOf(opts)), stderr)
+		ev.ready(id, roomOf(s.URL), protocol.AccessEdit, s.Files(), hostLinks(s))
+	}
 	shared = true
 	stopTyping := func() {}
 	if resumable {
@@ -269,6 +276,7 @@ func runShare(opts commandArgs, stdout, stderr io.Writer) int {
 	}
 
 	<-ctx.Done()
+	stopChannel()
 	stopTyping()
 	// A second signal gives up on saving.
 	go func() {
@@ -537,9 +545,16 @@ func runJoin(opts commandArgs, out *ui, ev *events, stderr io.Writer) int {
 	}
 	file := displayPath(s.File())
 	out.joined(file, opts.Room, s.Temporary(), !opts.JSON && clipboard.Copy(s.File()))
-	ev.ready(roomOf(opts.Room), s.Client.Keys().Access, s.Files(), nil)
+	stopChannel := func() {}
+	if opts.JSON {
+		var id string
+		access := s.Client.Keys().Access
+		id, stopChannel = commentsChannel(s, channelInfo(s, roomOf(opts.Room), access, "", nameOf(opts)), stderr)
+		ev.ready(id, roomOf(opts.Room), access, s.Files(), nil)
+	}
 
 	<-ctx.Done()
+	stopChannel()
 	// A second signal gives up on saving.
 	go func() {
 		<-signals

@@ -35,21 +35,24 @@ func (e *events) emit(v any) {
 }
 
 type readyEvent struct {
-	Event  string            `json:"event"`
-	Room   string            `json:"room"`
-	Access string            `json:"access"`
-	Files  []string          `json:"files"`
-	Links  map[string]string `json:"links,omitempty"`
+	Event   string            `json:"event"`
+	Session string            `json:"session,omitempty"`
+	Room    string            `json:"room"`
+	Access  string            `json:"access"`
+	Files   []string          `json:"files"`
+	Links   map[string]string `json:"links,omitempty"`
 }
 
 // ready tells that the session is in the room. links are the host's; a
 // guest has none to give.
-func (e *events) ready(room string, access protocol.Access, files []protocol.FileEntry, links map[string]string) {
+// session is the id pedit comments --room takes, or empty when pedit
+// comments cannot reach the session.
+func (e *events) ready(session, room string, access protocol.Access, files []protocol.FileEntry, links map[string]string) {
 	paths := []string{}
 	for _, f := range files {
 		paths = append(paths, f.Path)
 	}
-	e.emit(readyEvent{Event: "ready", Room: room, Access: access.String(), Files: paths, Links: links})
+	e.emit(readyEvent{Event: "ready", Session: session, Room: room, Access: access.String(), Files: paths, Links: links})
 }
 
 // hostLinks are the links the host gives people, by their access.
