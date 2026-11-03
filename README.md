@@ -218,7 +218,9 @@ machine through a directory of its own in your configuration directory; they
 never connect to the room themselves, so the agent is one participant, named
 by `--name`, for as long as it works. An agent that is a guest does the same
 with `pedit <share link> --json`, with an edit link or a comment-only one;
-its reply counts as delivered once the host has it. With no session running,
+its reply counts as delivered once the host has it. While the host is away
+from a kept room, an edit link's reply waits in the relay, and the host takes
+it in when it resumes. With no session running,
 `pedit comments list --file notes.md` lists the comments as the host saved
 them last. `pedit comments --help` says more, and
 [the design](docs/design/comments-cli.md) how it works.
