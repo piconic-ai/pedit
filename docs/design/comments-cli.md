@@ -200,8 +200,9 @@ When the request is answered:
 ## Guests from the command line
 
 `pedit <share link>` takes a comment link as well as an edit link. With a
-comment link the copies of the files are read-only (made `0400`, edits to them
-are not sent), and the comments docs are joined as the browser joins them: a
+comment link the copies of the files are not watched, and pedit says that edits
+to them are not sent (the relay and every peer refuse them anyway). The
+comments docs are joined as the browser joins them: a
 `meta` entry of the manifest paired with its file by `protocol.MetaFiles`, kept
 in sync with `AddCommentsFile` and checked with `meta.CheckUpdate`. A guest
 never writes `.pedit/meta`: the host is the only one that saves comments.

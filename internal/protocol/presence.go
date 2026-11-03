@@ -43,6 +43,28 @@ const (
 type presence struct {
 	mu     sync.Mutex
 	access map[uint64]Access
+	// senders is the sender each editor's state last came from, so that a
+	// frame can be told to be the host's (IsHost).
+	senders map[uint64]Sender
+}
+
+// heardFrom records that an editor's state, of awareness client id, came
+// from sender.
+func (p *presence) heardFrom(id uint64, from Sender) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.senders == nil {
+		p.senders = map[uint64]Sender{}
+	}
+	p.senders[id] = from
+}
+
+// editorSent tells whether from sent the state of editor id.
+func (p *presence) editorSent(id uint64, from Sender) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	s, ok := p.senders[id]
+	return ok && s == from && p.access[id] == AccessEdit
 }
 
 // admit tells whether a state for id, from a peer with this access, may be
@@ -73,6 +95,7 @@ func (p *presence) admit(id uint64, access Access, active bool, unsigned int) bo
 func (p *presence) forget(id uint64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	delete(p.senders, id)
 	if a, ok := p.access[id]; ok && a == AccessRead {
 		delete(p.access, id)
 	}
@@ -145,4 +168,17 @@ func (c *Client) unsignedStates() int {
 		}
 	}
 	return n
+}
+
+// isHost tells whether frames of from are the host's: from sent the state
+// of an editor that says it is the host, as a guest finds the host. An
+// editor could claim the role, but an edit link can rewrite everything
+// anyway.
+func (c *Client) isHost(from Sender) bool {
+	for id, st := range c.aw.GetStates() {
+		if role, _ := st.State["role"].(string); role == "host" && c.presence.editorSent(id, from) {
+			return true
+		}
+	}
+	return false
 }

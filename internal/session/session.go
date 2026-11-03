@@ -135,6 +135,9 @@ type Session struct {
 
 	// commentCalls reports changes to the comments (OnComments).
 	commentCalls callQueue
+	// guest holds the comments a joined session follows, or is nil for the
+	// host (guest_comments.go).
+	guest *guestComments
 
 	// away keeps the room for the host's return, if it asked for that.
 	away *keepAway

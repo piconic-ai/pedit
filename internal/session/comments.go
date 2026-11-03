@@ -39,6 +39,7 @@ type WriteResult struct {
 
 // commentDoc is the comments doc of one of the room's files.
 type commentDoc struct {
+	id   uint64 // its file id in the room
 	file string
 	doc  *crdt.Doc
 }
@@ -46,15 +47,26 @@ type commentDoc struct {
 // commentDocs are the comments docs of the room's files, in the order the
 // files were shared.
 func (s *Session) commentDocs() []commentDoc {
+	if s.guest != nil {
+		return s.guest.list()
+	}
 	s.filesMu.Lock()
 	defer s.filesMu.Unlock()
 	var out []commentDoc
 	for _, f := range s.files() {
 		if f.meta != nil {
-			out = append(out, commentDoc{file: f.path, doc: f.meta.doc})
+			out = append(out, commentDoc{id: f.meta.id, file: f.path, doc: f.meta.doc})
 		}
 	}
 	return out
+}
+
+// authorName is the name the session signs comments with.
+func (s *Session) authorName() string {
+	if s.guest != nil {
+		return s.guest.name
+	}
+	return s.opts.Name
 }
 
 // Comments lists the threads of every file that offers comments, as the
@@ -75,7 +87,7 @@ func (s *Session) Comments() []FileThreads {
 func (s *Session) Reply(file, thread, id, body string) (WriteResult, error) {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
 	return s.writeComments(file, thread, func(doc *crdt.Doc) ([]byte, error) {
-		return meta.ReplyUpdate(doc, thread, id, s.opts.Name, now, body)
+		return meta.ReplyUpdate(doc, thread, id, s.authorName(), now, body)
 	})
 }
 
@@ -88,11 +100,16 @@ func (s *Session) Resolve(file, thread string, resolved bool) (WriteResult, erro
 
 // writeComments makes the update of the thread's doc and applies it, while
 // no remote update is applied, so that it is checked against the doc it
-// applies to. The room gets it as it gets any change of the doc.
+// applies to. The room gets it as it gets any change of the doc. The host
+// has it at once; a guest waits for the host to have it, the write before
+// included when the doc held what was asked already.
 func (s *Session) writeComments(file, thread string, make func(*crdt.Doc) ([]byte, error)) (WriteResult, error) {
 	c, err := s.threadDoc(file, thread)
 	if err != nil {
 		return WriteResult{}, err
+	}
+	if s.guest != nil && s.Client.Status().HostAway() {
+		return WriteResult{}, ErrHostAway
 	}
 	s.Client.Do(func() {
 		var update []byte
@@ -102,6 +119,9 @@ func (s *Session) writeComments(file, thread string, make func(*crdt.Doc) ([]byt
 	})
 	if err != nil {
 		return WriteResult{}, fmt.Errorf("%s: %w", c.file, err)
+	}
+	if s.guest != nil {
+		return WriteResult{Delivered: s.guest.waitForHost(c)}, nil
 	}
 	return WriteResult{Delivered: true}, nil
 }

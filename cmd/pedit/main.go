@@ -523,7 +523,8 @@ func runJoin(opts commandArgs, out *ui, ev *events, stderr io.Writer) int {
 				out.mirrored(hostPath, displayPath(path))
 			}
 		},
-		OnError: debug,
+		OnError:    debug,
+		OnComments: ev.commentHook(),
 	})
 	switch {
 	case errors.Is(err, context.Canceled):
@@ -540,6 +541,9 @@ func runJoin(opts commandArgs, out *ui, ev *events, stderr io.Writer) int {
 	}
 	file := displayPath(s.File())
 	out.joined(file, opts.Room, s.Temporary(), !opts.JSON && clipboard.Copy(s.File()))
+	if s.Client.Keys().Access != protocol.AccessEdit {
+		out.above("This link can comment only: edits to the copies are not sent.")
+	}
 	stopChannel := announceSession(opts, ev, s, channelInfo(s, roomOf(opts.Room), s.Client.Keys().Access, "", nameOf(opts)), s.Files(), nil, stderr)
 
 	<-ctx.Done()

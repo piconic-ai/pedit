@@ -29,8 +29,11 @@ type JoinOptions struct {
 	URL        string
 	Name       string
 	WriteDelay time.Duration
-	// Watch streams edits made to the copy outside pedit into the room.
+	// Watch streams edits made to the copy outside pedit into the room. A
+	// comment link edits nothing, so its copies are not watched.
 	Watch bool
+	// OnComments is as in Options.
+	OnComments func(CommentChange)
 	// Timeout bounds how long Join waits for the room's state; 15s by default.
 	Timeout  time.Duration
 	Header   http.Header
@@ -121,9 +124,12 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 	if opts.Timeout == 0 {
 		opts.Timeout = 15 * time.Second
 	}
-	wsURL, roomID, rawKey, err := parseShareURL(opts.URL)
+	wsURL, roomID, secrets, err := parseShareURL(opts.URL)
 	if err != nil {
 		return nil, err
+	}
+	if secrets.Access != protocol.AccessEdit {
+		opts.Watch = false
 	}
 	dir, temp, root, err := copyRoot(opts.dir, roomID)
 	if err != nil {
@@ -145,6 +151,7 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 		beforePublishWriter: opts.beforePublishWriter,
 	}
 	s.mirror = &mirror{dir: dir, root: root, opts: opts, done: map[uint64]bool{}, firstList: make(chan struct{})}
+	s.guest = newGuestComments(opts.Name, opts.OnComments, &s.commentCalls)
 	room := &roomWait{
 		synced:   make(chan struct{}),
 		closed:   make(chan struct{}),
@@ -165,7 +172,7 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 	s.Client, err = protocol.NewClient(protocol.ClientOptions{
 		URL:       wsURL,
 		RoomID:    roomID,
-		Key:       rawKey,
+		Link:      &secrets,
 		Doc:       doc,
 		Awareness: aw,
 		Header:    opts.Header,
@@ -183,11 +190,16 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 				opts.OnStatus(st)
 			}
 		},
-		OnKept:     opts.OnKept,
-		OnSynced:   func() { close(room.synced) },
-		OnError:    onError,
-		OnManifest: s.takeManifest,
-		OnAccess:   func(uint64) { peopleChanged() },
+		OnKept:   opts.OnKept,
+		OnSynced: func() { close(room.synced) },
+		OnError:  onError,
+		OnManifest: func(files []protocol.FileEntry) {
+			s.takeManifest(files)
+			s.guest.takeManifest(files)
+		},
+		OnFileSynced: func(id uint64) { s.guest.synced(id) },
+		OnFileAnswer: func(id uint64, fromHost bool, update []byte) { s.guest.answered(id, fromHost, update) },
+		OnAccess:     func(uint64) { peopleChanged() },
 	})
 	if err != nil {
 		_ = root.Close()
@@ -195,6 +207,7 @@ func Join(ctx context.Context, opts JoinOptions) (*Session, error) {
 		return nil, err
 	}
 	s.client = s.Client
+	s.guest.client = s.Client
 	s.sendCanvas = s.Client.SendCanvas
 	// Until the file is known, remote edits only land in the doc; the first
 	// write below carries them all.
@@ -494,32 +507,31 @@ func hostState(aw *awareness.Awareness, client *protocol.Client) (map[string]any
 	return nil, false
 }
 
-// parseShareURL returns the room's WebSocket URL, its ID and the key from a
-// share link. The key is in the fragment and never leaves this process. The
-// ID is used in a directory name, so only the characters of a generated room
-// ID are accepted.
-func parseShareURL(link string) (wsURL, roomID string, key []byte, err error) {
+// parseShareURL returns the room's WebSocket URL, its ID and the secrets of
+// a share link: an edit link, or a comment link (#212). The secrets are in
+// the fragment and never leave this process. The ID is used in a directory
+// name, so only the characters of a generated room ID are accepted.
+func parseShareURL(link string) (wsURL, roomID string, secrets protocol.LinkSecrets, err error) {
 	u, err := url.Parse(link)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-		return "", "", nil, fmt.Errorf("%s is not a share link", redactFragment(link))
+		return "", "", secrets, fmt.Errorf("%s is not a share link", redactFragment(link))
 	}
 	id, ok := strings.CutPrefix(u.Path, "/r/")
 	if !ok || !isRoomID(id) {
-		return "", "", nil, fmt.Errorf("%s is not a share link (expected /r/<room>#<key>)", redactFragment(link))
+		return "", "", secrets, fmt.Errorf("%s is not a share link (expected /r/<room>#<key>)", redactFragment(link))
 	}
 	if u.Fragment == "" {
-		return "", "", nil, errors.New("the link has no key after #; copy the whole link, including the part after #")
+		return "", "", secrets, errors.New("the link has no key after #; copy the whole link, including the part after #")
 	}
-	secrets, err := protocol.ParseFragment(u.Fragment)
+	secrets, err = protocol.ParseFragment(u.Fragment)
 	if err != nil {
-		return "", "", nil, errors.New("the link's key after # is not valid")
+		return "", "", protocol.LinkSecrets{}, errors.New("the link's key after # is not valid")
 	}
-	if secrets.Access != protocol.AccessEdit {
-		return "", "", nil, fmt.Errorf("this link is %s only: open it in a browser", secrets.Access)
+	if secrets.Access == protocol.AccessRead {
+		return "", "", protocol.LinkSecrets{}, fmt.Errorf("this link is %s only: open it in a browser", secrets.Access)
 	}
-	key = secrets.Edit
 	wsURL = "ws" + strings.TrimPrefix(u.Scheme, "http") + "://" + u.Host + "/api/rooms/" + id + "/ws"
-	return wsURL, id, key, nil
+	return wsURL, id, secrets, nil
 }
 
 // maxRoomInDir bounds the part of the room ID in the name of the copies'

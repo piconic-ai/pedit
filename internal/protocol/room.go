@@ -146,7 +146,11 @@ type ClientOptions struct {
 	OnManifest       func([]FileEntry)
 	OnFileSynced     func(id uint64)
 	OnFileAttachment func(id uint64, a Attachment)
-	OnFileCanvas     func(id uint64, m CanvasMessage)
+	// OnFileAnswer is called, on the read loop, with the update of each
+	// SyncStep2 received for an added file once it is applied, and whether
+	// it came from the host (IsHost).
+	OnFileAnswer func(id uint64, fromHost bool, update []byte)
+	OnFileCanvas func(id uint64, m CanvasMessage)
 }
 
 // Client keeps a Doc and Awareness in sync with every other peer in a room.
@@ -628,24 +632,24 @@ func (c *Client) receive(data []byte) error {
 		return c.receiveFresh(access, vouched, from, counter, payload)
 	}
 	if vouched {
-		return c.dispatch(access, t, payload)
+		return c.dispatch(access, from, t, payload)
 	}
 	// Meanwhile what it sends counts as a reader's: requests only, which
 	// change nothing when sent again. Its state comes once it is live.
 	if t == MessageAwareness {
 		return nil
 	}
-	if err := c.dispatch(AccessRead, t, payload); !errors.Is(err, ErrNotAllowed) {
+	if err := c.dispatch(AccessRead, from, t, payload); !errors.Is(err, ErrNotAllowed) {
 		return err
 	}
 	return nil
 }
 
 // dispatch applies a message as far as the access it speaks for allows.
-func (c *Client) dispatch(access Access, t MessageType, payload []byte) error {
+func (c *Client) dispatch(access Access, from Sender, t MessageType, payload []byte) error {
 	switch t {
 	case MessageFiles:
-		return c.receiveFiles(access, payload)
+		return c.receiveFiles(access, from, payload)
 	case MessageAttachment:
 		return c.receiveAttachment(access, payload)
 	case MessageCanvas:
@@ -653,7 +657,7 @@ func (c *Client) dispatch(access Access, t MessageType, payload []byte) error {
 	case MessageSync:
 		return c.receiveSync(access, payload)
 	}
-	return c.receiveAwareness(access, payload)
+	return c.receiveAwareness(access, from, payload)
 }
 
 func (c *Client) receiveAttachment(access Access, payload []byte) error {
@@ -726,7 +730,7 @@ func applySync(doc *crdt.Doc, payload []byte, origin any) (reply []byte, err err
 }
 
 // receiveAwareness applies a peer's state by the rules in presence.go.
-func (c *Client) receiveAwareness(access Access, payload []byte) (err error) {
+func (c *Client) receiveAwareness(access Access, from Sender, payload []byte) (err error) {
 	update, err := encoding.NewDecoder(payload).ReadVarBytes()
 	if err != nil {
 		return err
@@ -749,6 +753,9 @@ func (c *Client) receiveAwareness(access Access, payload []byte) (err error) {
 	_, active := c.aw.GetStates()[e.id]
 	if !c.presence.admit(e.id, access, active, unsigned) {
 		return notAllowed("awareness of a client heard from above", access)
+	}
+	if access == AccessEdit {
+		c.presence.heardFrom(e.id, from)
 	}
 	if access != AccessRead {
 		meta, _ := c.aw.Meta(e.id)

@@ -610,6 +610,7 @@ func TestGoHostKeepsCommentsFromJavaScriptGuest(t *testing.T) {
 		File:       file,
 		Project:    project,
 		Server:     server.URL,
+		Name:       "tate-pm",
 		WriteDelay: 20 * time.Millisecond,
 	})
 	if err != nil {
@@ -634,6 +635,17 @@ func TestGoHostKeepsCommentsFromJavaScriptGuest(t *testing.T) {
 		f := read()
 		return f != nil && f.Comments["g1"].Anchor.Text != nil
 	}, "the guest's thread on disk")
+	// Written from the command line, checked by the browser's own check.
+	if _, err := s.Reply("", "c1", "r1", "From the command line <b>"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Resolve("", "c1", true); err != nil {
+		t.Fatal(err)
+	}
+	var reply struct{ Author, Time, Body string }
+	if line := guest.next("the host's reply"); json.Unmarshal([]byte(line), &reply) != nil || reply.Author != "tate-pm" || reply.Body != "From the command line <b>" || !strings.HasSuffix(reply.Time, "Z") {
+		t.Fatalf("guest said %q\n%s", line, guest.stderr.String())
+	}
 	if err := s.Stop(); err != nil {
 		t.Fatal(err)
 	}

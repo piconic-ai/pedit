@@ -53,7 +53,8 @@ await until('the manifest', () => manifest !== null)
 const metaId = protocol.metaFiles(manifest).get(0)
 if (metaId === undefined) throw new Error(`no metadata in ${JSON.stringify(manifest)}`)
 const metaDoc = new Y.Doc()
-client.addFile(metaId, metaDoc)
+// Checked as the browser checks every update to comments.
+client.addFile(metaId, metaDoc, protocol.checkMetaUpdate, { comments: true })
 await until(
   'the text and the comments',
   () => doc.getText('content').toString().includes('world') && synced.has(metaId),
@@ -89,6 +90,12 @@ metaDoc.transact(() => {
   thread.set('messages', messages)
   messages.set('m1', { author: 'JS', time: new Date(0).toISOString(), body: 'Hi from JS' })
 })
+// The host answers c1 from the command line (#212), and resolves it.
+await until("the host's reply", () => {
+  const messages = loaded.get('messages')
+  return loaded.get('resolved') === true && messages?.get('r1') !== undefined
+})
+process.stdout.write(`${JSON.stringify(loaded.get('messages').get('r1'))}\n`)
 // The host stops next; its departure arrives as a null awareness state.
 await until('the host to leave', () =>
   [...awareness.getStates().values()].every((s) => s.role !== 'host'),

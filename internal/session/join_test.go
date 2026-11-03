@@ -532,9 +532,9 @@ func TestJoinStopsWaitingForTheHostWhenCanceled(t *testing.T) {
 
 func TestParseShareURL(t *testing.T) {
 	key := protocol.GenerateKey()
-	ws, id, raw, err := parseShareURL("https://edit.piconic.ai/r/AAAAAAAAAAAAAAAAAAAAAA#" + key)
-	if err != nil || ws != "wss://edit.piconic.ai/api/rooms/AAAAAAAAAAAAAAAAAAAAAA/ws" || id != "AAAAAAAAAAAAAAAAAAAAAA" || len(raw) != protocol.KeyBytes {
-		t.Fatalf("= %q, %q, %d bytes, %v", ws, id, len(raw), err)
+	ws, id, secrets, err := parseShareURL("https://edit.piconic.ai/r/AAAAAAAAAAAAAAAAAAAAAA#" + key)
+	if err != nil || ws != "wss://edit.piconic.ai/api/rooms/AAAAAAAAAAAAAAAAAAAAAA/ws" || id != "AAAAAAAAAAAAAAAAAAAAAA" || secrets.Access != protocol.AccessEdit || len(secrets.Edit) != protocol.KeyBytes {
+		t.Fatalf("= %q, %q, %+v, %v", ws, id, secrets.Access, err)
 	}
 	if ws, _, _, err = parseShareURL("http://localhost:8787/r/ROOM_-1#" + key); err != nil || ws != "ws://localhost:8787/api/rooms/ROOM_-1/ws" {
 		t.Fatalf("= %q, %v", ws, err)
@@ -557,20 +557,21 @@ func TestParseShareURL(t *testing.T) {
 	}
 }
 
-func TestParseShareURLSendsLowerLinksToTheBrowser(t *testing.T) {
+func TestParseShareURLTakesCommentLinksAndSendsReadLinksToTheBrowser(t *testing.T) {
 	keys, err := protocol.EditKeys(mustDecodeKey(t, protocol.GenerateKey()), "ROOM")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for access, want := range map[protocol.Access]string{protocol.AccessComment: "comment only", protocol.AccessRead: "read only"} {
-		fragment := keys.Fragments[access]
-		_, _, _, err := parseShareURL("https://edit.piconic.ai/r/ROOM#" + fragment)
-		if err == nil || !strings.Contains(err.Error(), "this link is "+want) || !strings.Contains(err.Error(), "browser") {
-			t.Errorf("%s: %v", want, err)
-		}
-		if err != nil && strings.Contains(err.Error(), fragment) {
-			t.Errorf("%s: secret leaked in %q", want, err)
-		}
+	if _, _, secrets, err := parseShareURL("https://edit.piconic.ai/r/ROOM#" + keys.Fragments[protocol.AccessComment]); err != nil || secrets.Access != protocol.AccessComment {
+		t.Fatalf("a comment link: %v %v", secrets.Access, err)
+	}
+	fragment := keys.Fragments[protocol.AccessRead]
+	_, _, _, err = parseShareURL("https://edit.piconic.ai/r/ROOM#" + fragment)
+	if err == nil || !strings.Contains(err.Error(), "this link is read only") || !strings.Contains(err.Error(), "browser") {
+		t.Errorf("read only: %v", err)
+	}
+	if err != nil && strings.Contains(err.Error(), fragment) {
+		t.Errorf("secret leaked in %q", err)
 	}
 }
 
