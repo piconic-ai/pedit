@@ -76,8 +76,8 @@ export const HOST_HEADER = 'X-Pedit-Host'
  * seconds. The Worker passes it on only with a host token that checked out.
  */
 export const KEEP_HEADER = 'X-Pedit-Keep'
-/** The last log entry a peer already holds, when it joins a room whose host is away. */
 export { FOREIGN_ORIGIN_HEADER, ORIGINS_HEADER }
+/** The last log entry a peer already holds, when it joins a room whose host is away. */
 export const AFTER_HEADER = 'X-Pedit-After'
 
 /** AES-GCM's IV and tag around an encrypted attachment. */
