@@ -1,10 +1,12 @@
 # Embedding: a review page on the app's own domain
 
-DRAFT for #235. This is the guest side of embedding pedit in another app. The host
-side already exists (`pedit serve`, `@pedit/serve`, docs/design/serve.md). The first
-half of this document is written for the integrator, the author of the app, and
-asks them what they would wire up. The second half is the design behind it.
-Questions still open are marked **Open**.
+The guest side of embedding pedit in another app (#235). The host side already
+exists (`pedit serve`, `@pedit/serve`, docs/design/serve.md). The first half of
+this document is written for the integrator, the author of the app. The second
+half is the design behind it.
+
+The integrator we design with needs its own review page; the answers to the
+questions below set the v1 scope.
 
 ## For integrators
 
@@ -94,9 +96,26 @@ host half of `pedit <file>` to the same process:
 
 - A new command on the control stream: `{"cmd":"share","origins":["https://cms.example.com"],"keep":"1d"}`.
   pedit creates the room, connects as host with the document it already holds,
-  and answers with an event: `{"event":"shared","room":"<id>","links":{"edit":…,"comment":…,"read":…}}`.
+  and answers with an event: `{"event":"shared","room":"<id>","links":{"edit":…,"comment":…,"read":…},"keptUntil":…}`.
   The links are fragments only (see "Links"); the app puts its page URL in front.
-- `{"cmd":"unshare"}` ends the room; stdin closing ends it as today.
+- **Kept rooms are in v1.** `keep` works as `--keep` does (default 1 day, up to
+  the relay's cap; `0` for a live room). When the app stops pedit, or the app
+  quits, a kept room stays on the relay: reviewers keep editing and commenting
+  through their page, and the relay holds their encrypted edits, as in
+  docs/design/rooms-away.md.
+- **Resuming.** pedit keeps the resume record it keeps for `pedit <file>` (under
+  `pedit/keep/` in the user configuration directory, `0600`). When the app starts
+  `pedit serve` on the same file again and sends `share`, pedit finds the record,
+  takes the room up, merges what reviewers wrote meanwhile with the file, and
+  answers `shared` with `"resumed": true` and the same links. The origins of a
+  resumed room are the ones it was opened with; a different list is an error.
+- `{"cmd":"unshare"}` leaves the room as `Ctrl+C` does: a kept room stays until
+  its deadline, a live room ends. `{"cmd":"close"}` ends a kept room for good, as
+  `pedit close` does: it takes the edits in, saves them, and asks the relay to
+  drop everything. Stdin closing is `unshare`.
+- Events while shared: `peers` (who is there, by name and access) and
+  `room_ended` when the relay ends the room (deadline, maintenance, closed
+  elsewhere).
 - Saving, external saves and the lock are unchanged: the room is one more client
   of the document pedit already owns.
 - This needs a control channel from the app to pedit. Today the serve framing
@@ -106,8 +125,9 @@ host half of `pedit <file>` to the same process:
   `https://edit.piconic.ai`), not from `.pedit/config.yaml`: serve does not read
   project configuration.
 
-**Open:** keep (the room stays after the app closes) needs the app to resume a room
-later; v1 may share live rooms only (`keep: 0`).
+Like `pedit resume` and `pedit close` today, kept rooms from `pedit serve` need
+Unix file permissions for the record; on Windows `share` with a keep is refused
+until the record is ported, and live rooms work.
 
 ### Links
 
@@ -174,10 +194,15 @@ is, and a second copy of the room logic would drift.
   `location.hash` and never sends it anywhere.
 - One ES module file with no external requests but the relay. Styles live in the
   shadow root; theming only through the custom properties and slots above.
-- **v1 scope (Open, see the questions):** one text file (Markdown or plain
-  text), editing by access level, comments, comment-only and read-only links,
-  viewing and pasting images, presence, host away. Not in v1: canvas, CSV table,
-  several files, Markdown preview, embeds.
+- **v1 scope:** one text file (Markdown or plain text), editing by access
+  level, comments, comment-only and read-only links, viewing and pasting images,
+  presence, and the host-away state of kept rooms (editing and commenting go on;
+  the header says until when).
+- **Next, soon after v1:** several files (tabs), the CSV table, canvas, and the
+  Markdown preview. The core is cut so that each is a view the component can
+  mount, as packages/web mounts them today: a file's kind picks its view, and an
+  unknown kind shows the text. Adding one is adding a view to the component's
+  bundle, not a change to the core or the wire.
 - Events for the page: `pedit-status` (connecting, live, host away, ended),
   `pedit-error`.
 - `reviewCSP({ relay })` returns the policy: `default-src 'none'`,
@@ -192,9 +217,16 @@ The package is private, exports TypeScript source with no build, and its index
 re-exports nearly everything, test fakes included. The component bundles what it
 needs, so integrators do not depend on it directly.
 
-**Open:** publishing it as a supported, versioned API is only worth doing if an
-integrator wants to build their own UI instead of using the component.
-Proposed: not in v1.
+Not published in v1. It is published once it is stable, which means:
+
+- the component has shipped and been used by an integrator for a release cycle
+  without a breaking change to the room client;
+- the public surface is cut down to what a client needs (link parsing and keys,
+  the room client, attachments, comments), with test fakes and relay-only
+  modules (CSP, kinds used by the Worker) moved out of the index;
+- it builds to JavaScript with types, under the same versioning rule as the
+  serve surface: additive within a major version, checked by the wire version
+  (`pedit --version --json` reports it as `wire`).
 
 ### `pedit doctor <url>`
 
