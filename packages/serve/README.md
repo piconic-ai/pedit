@@ -68,7 +68,7 @@ const extensions = [yCollab(conn.text, conn.awareness)] // plus basicSetup, Edit
 | `peditRoutes(options)` | A Hono app: `POST /:id/session` and the WebSocket `GET /:id/doc`. Has `close()`. |
 | `options.resolve(id, c)` | Maps an id to `{ path, role: 'edit' \| 'read' }`, or `null` for 404. |
 | `options.root`, `origins`, `app` | The served directory, the exact page origins, and a label shown if another process holds the file. |
-| `options.bin`, `idleMs`, `graceMs`, `allowRemote`, `onEvent` | Absolute path to pedit; idle stop (default 60 s); how long a child may take to exit after its input closed (default 5 s; on Windows it is then given up on, never killed); accept non-loopback peers (default false); `started`/`stopped`/`error` events. |
+| `options.bin`, `idleMs`, `graceMs`, `allowRemote`, `onEvent` | Absolute path to pedit; idle stop (default 60 s); how long a child may take to exit after its input closed (default 5 s; on Windows it is then given up on, never killed); accept non-loopback peers (default false); `started`/`stopped`/`error` events, and `update_available` (`{ version, url, security }`, once per version) when pedit finds a newer release. `started` carries pedit's `version` and `serve` (surface version) when it reports them. |
 
 `@pedit/serve/client`
 

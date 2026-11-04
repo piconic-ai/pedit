@@ -141,6 +141,9 @@ export class ServedFiles {
     await Promise.all(entries.map((e) => e.exited))
   }
 
+  /** The last update_available version passed on: every child reports the same release. */
+  #updateSeen: string | undefined
+
   #emit(event: ServeEvent) {
     try {
       this.#options.onEvent?.(event)
@@ -236,9 +239,25 @@ export class ServedFiles {
         }
         entry.listening = true
         entry.generation = ev.generation
-        this.#emit({ type: 'started', path })
+        this.#emit({
+          type: 'started',
+          path,
+          ...(typeof ev.version === 'string' && { version: ev.version }),
+          ...(typeof ev.serve === 'number' && { serve: ev.serve }),
+        })
         this.#armIdle(entry)
         onReady()
+      } else if (ev.event === 'update_available') {
+        const { version, url, security } = ev
+        if (typeof version !== 'string' || typeof url !== 'string' || version === this.#updateSeen)
+          return
+        this.#updateSeen = version
+        this.#emit({
+          type: 'update_available',
+          version: version.slice(0, 64),
+          url: url.slice(0, 512),
+          security: security === true,
+        })
       } else if (ev.event === 'held') {
         held = { pid: Number(ev.pid), ...(typeof ev.app === 'string' ? { app: ev.app } : {}) }
       } else if (ev.event === 'error' && typeof ev.message === 'string') {

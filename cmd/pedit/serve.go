@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,10 +12,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/piconic-ai/pedit/internal/protocol"
 	"github.com/piconic-ai/pedit/internal/serve"
 )
 
-const serveUsage = `Usage: pedit serve --stdio [--root <dir>] [--app <name>] -- <file>
+const serveUsage = `Usage: pedit serve --stdio [--root <dir>] [--app <name>] [--no-update-check] -- <file>
 
 EXPERIMENTAL: the interface may change or go away.
 
@@ -41,17 +43,25 @@ it.
 Options:
   --stdio      Talk over stdin and stdout (required)
   --app <name> Name the app, so a refusal can say who holds the file
+  --no-update-check
+               Do not look for a newer release (at most one request a day)
   --root <dir> Take <file> as a path relative to <dir>, and refuse one that
                leaves it (an absolute path, "..", or a link in a directory)
 
 Events (JSON in event frames):
-  {"event":"listening","generation":"<hex>"}  serving; the first event.
+  {"event":"listening","generation":"<hex>","version":"vX.Y.Z","serve":N}
+                                            serving; the first event.
                                               generation names the document: a
                                               restart that resumed the saved
                                               state keeps it, and a document
-                                              started afresh has a new one
+                                              started afresh has a new one.
+                                              serve is the version of this
+                                              interface (see --version --json)
   {"event":"saved","bytes":N}               pedit wrote the file
   {"event":"external_save"}                 a save by another editor was taken in
+  {"event":"update_available","version":"vX.Y.Z","url":"<release page>","security":false}
+                                            a newer release exists; sent at
+                                            most once, after listening
   {"event":"held","pid":N,"app":"<name>"}   another process serves the file
   {"event":"error","message":"<one line>"}  any other failure
 
@@ -61,6 +71,7 @@ serves the file.`
 type serveArgs struct {
 	file, app, root string
 	stdio           bool
+	noUpdateCheck   bool
 }
 
 func parseServeArgs(args []string) (serveArgs, error) {
@@ -70,6 +81,8 @@ func parseServeArgs(args []string) (serveArgs, error) {
 		switch arg := args[i]; {
 		case arg == "--stdio":
 			opts.stdio = true
+		case arg == "--no-update-check":
+			opts.noUpdateCheck = true
 		case arg == "--app":
 			i++
 			if i == len(args) || args[i] == "" {
@@ -119,6 +132,41 @@ func failure(st *serve.Stdio, err error) int {
 	return 1
 }
 
+// serveVersion is the version of the `pedit serve --stdio` surface: the
+// framing and the events. It changes only additively within a value; an app
+// checks it instead of comparing pedit versions. See docs/design/serve.md.
+const serveVersion = 1
+
+// serveUpdateCheck sends update_available once if a newer release is out. It
+// is silent when the check cannot be made or fails. Development builds and CI
+// are never checked.
+func serveUpdateCheck(ctx context.Context, st *serve.Stdio, current string, newChecker func() (updateChecker, error)) {
+	if current == "dev" || os.Getenv("CI") != "" {
+		return
+	}
+	c, err := newChecker()
+	if err != nil {
+		return
+	}
+	r, err := c.check(ctx, current)
+	if err != nil || r == nil {
+		return
+	}
+	st.Event("update_available", map[string]any{"version": r.Version, "url": r.URL, "security": r.Security})
+}
+
+// versionJSON is what `pedit --version --json` prints: the pedit version and
+// the version of each surface an app may pin.
+func versionJSON() string {
+	data, _ := json.Marshal(map[string]any{
+		"version": getVersion(),
+		"wire":    protocol.ProtocolVersion,
+		"serve":   serveVersion,
+		"state":   serve.StateVersion,
+	})
+	return string(data)
+}
+
 func runServe(args []string, stdout, stderr io.Writer) int {
 	opts, err := parseServeArgs(args)
 	if err != nil {
@@ -153,7 +201,10 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	defer stop()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	st.Event("listening", map[string]any{"generation": s.Generation()})
+	st.Event("listening", map[string]any{"generation": s.Generation(), "version": getVersion(), "serve": serveVersion})
+	if !opts.noUpdateCheck {
+		go serveUpdateCheck(ctx, st, getVersion(), newUpdateChecker)
+	}
 	violation := make(chan error, 1)
 	go func() {
 		violation <- st.Serve(s, serveStdin)

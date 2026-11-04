@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -22,7 +23,19 @@ const updateInterval = 24 * time.Hour
 type release struct {
 	Version string `json:"tag_name"`
 	URL     string `json:"html_url"`
+	// Security is whether the release notes have a Security section. It is
+	// worked out from Body when the release is fetched; a cache written
+	// before it existed reads as false.
+	Security bool `json:"security,omitempty"`
+	// Body is the release notes as GitHub sends them. It is not cached.
+	Body string `json:"body,omitempty"`
 }
+
+// securityHeading matches the heading .github/release.yml gives pull requests
+// labelled security. The word elsewhere in the notes does not match.
+var securityHeading = regexp.MustCompile(`(?m)^#{2,3} Security[ \t]*\r?$`)
+
+func hasSecuritySection(body string) bool { return securityHeading.MatchString(body) }
 
 type updateState struct {
 	CheckedAt time.Time `json:"checked_at"`
@@ -90,6 +103,7 @@ func (c updateChecker) latest(ctx context.Context) (release, error) {
 	if r.Version == "" {
 		return release{}, fmt.Errorf("%s: no tag_name", c.api)
 	}
+	r.Security, r.Body = hasSecuritySection(r.Body), ""
 	// A failed save only means asking again next time.
 	if data, err := json.Marshal(updateState{CheckedAt: c.now(), Latest: r}); err == nil {
 		if os.MkdirAll(filepath.Dir(c.statePath), 0o755) == nil {

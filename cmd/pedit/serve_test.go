@@ -2,18 +2,26 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/piconic-ai/pedit/internal/protocol"
+	"github.com/piconic-ai/pedit/internal/serve"
 )
 
 func TestServeHelpIsExperimental(t *testing.T) {
@@ -397,5 +405,90 @@ func TestServeSurvivesAParentThatStoppedReading(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".a.md.pedit-lock")); !os.IsNotExist(err) {
 		t.Fatalf("lock left behind: %v", err)
+	}
+}
+
+func TestVersionJSON(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--version", "--json"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("code %d, stderr %s", code, stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("%q: %v", stdout.String(), err)
+	}
+	want := map[string]any{"version": getVersion(), "wire": float64(protocol.ProtocolVersion), "serve": float64(serveVersion), "state": float64(serve.StateVersion)}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	if bytes.Count(stdout.Bytes(), []byte("\n")) != 1 {
+		t.Fatalf("want one line, got %q", stdout.String())
+	}
+}
+
+func TestServeListeningReportsVersionAndSurface(t *testing.T) {
+	stdout, _, _, stop := startServe(t, "--no-update-check", "--", writeFile(t, "hi\n"))
+	got := waitFor(t, stdout, 1)[0]
+	stop()
+	if got["event"] != "listening" || got["version"] != getVersion() || got["serve"] != float64(serveVersion) {
+		t.Fatalf("listening = %v", got)
+	}
+}
+
+// fakeRelease serves a newer release and counts the requests.
+func fakeRelease(t *testing.T, body string) (newChecker func() (updateChecker, error), requests *atomic.Int32) {
+	t.Helper()
+	requests = new(atomic.Int32)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		_ = json.NewEncoder(w).Encode(release{Version: "v9.9.9", URL: "https://example.test/v9.9.9", Body: body})
+	}))
+	t.Cleanup(srv.Close)
+	return func() (updateChecker, error) { return testChecker(t, srv.URL, time.Now()), nil }, requests
+}
+
+func TestServeUpdateCheckEmitsUpdateAvailable(t *testing.T) {
+	t.Setenv("CI", "")
+	newChecker, _ := fakeRelease(t, "## Security\n* fix\n")
+	var out lockedBuilder
+	st := serve.NewStdio(&out)
+	serveUpdateCheck(context.Background(), st, "v0.0.1", newChecker)
+	st.Close(time.Second)
+	got := eventFrames(t, out.String())
+	want := map[string]any{"event": "update_available", "version": "v9.9.9", "url": "https://example.test/v9.9.9", "security": true}
+	if len(got) != 1 || !reflect.DeepEqual(got[0], want) {
+		t.Fatalf("events %v", got)
+	}
+}
+
+func TestServeUpdateCheckSkips(t *testing.T) {
+	newChecker, requests := fakeRelease(t, "")
+	t.Setenv("CI", "")
+	for name, current := range map[string]string{"dev": "dev", "up to date": "v9.9.9"} {
+		var out lockedBuilder
+		st := serve.NewStdio(&out)
+		serveUpdateCheck(context.Background(), st, current, newChecker)
+		st.Close(time.Second)
+		if got := eventFrames(t, out.String()); len(got) != 0 {
+			t.Errorf("%s: events %v", name, got)
+		}
+	}
+	if requests.Load() != 1 { // only "up to date" asks
+		t.Errorf("requests = %d, want 1", requests.Load())
+	}
+	t.Setenv("CI", "true")
+	var out lockedBuilder
+	st := serve.NewStdio(&out)
+	serveUpdateCheck(context.Background(), st, "v0.0.1", newChecker)
+	st.Close(time.Second)
+	if got := eventFrames(t, out.String()); len(got) != 0 || requests.Load() != 1 {
+		t.Errorf("CI: events %v, requests %d", got, requests.Load())
+	}
+}
+
+func TestServeFlagNoUpdateCheck(t *testing.T) {
+	opts, err := parseServeArgs([]string{"--stdio", "--no-update-check", "f"})
+	if err != nil || !opts.noUpdateCheck {
+		t.Fatalf("%+v, %v", opts, err)
 	}
 }
