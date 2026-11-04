@@ -337,53 +337,15 @@ func (u updater) verifyProvenance(tag, archive, bundle string, out io.Writer) er
 // extractBinary copies the pedit (pedit.exe) at the root of the archive to w.
 // No other entry is read, and none is written anywhere.
 func extractBinary(archive, goos string, w io.Writer) error {
-	name := "pedit"
+	name, find := "pedit", tarEntry
 	if goos == "windows" {
-		name += ".exe"
+		name, find = "pedit.exe", zipEntry
 	}
-	var r io.Reader
-	if goos == "windows" {
-		zr, err := zip.OpenReader(archive)
-		if err != nil {
-			return err
-		}
-		defer zr.Close()
-		for _, f := range zr.File {
-			if f.Name != name || !f.Mode().IsRegular() {
-				continue
-			}
-			rc, err := f.Open()
-			if err != nil {
-				return err
-			}
-			defer rc.Close()
-			r = rc
-			break
-		}
-	} else {
-		f, err := os.Open(archive)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-		gz, err := gzip.NewReader(f)
-		if err != nil {
-			return err
-		}
-		tr := tar.NewReader(gz)
-		for r == nil {
-			h, err := tr.Next()
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				return err
-			}
-			if h.Name == name && h.Typeflag == tar.TypeReg {
-				r = tr
-			}
-		}
+	r, closeEntry, err := find(archive, name)
+	if err != nil {
+		return err
 	}
+	defer closeEntry()
 	if r == nil {
 		return fmt.Errorf("the archive has no %s at its root", name)
 	}
@@ -392,6 +354,56 @@ func extractBinary(archive, goos string, w io.Writer) error {
 		err = fmt.Errorf("%s is larger than %d bytes", name, maxBinarySize)
 	}
 	return err
+}
+
+// zipEntry opens the regular file called name in the zip archive, or returns
+// a nil reader when there is none.
+func zipEntry(archive, name string) (io.Reader, func(), error) {
+	zr, err := zip.OpenReader(archive)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, f := range zr.File {
+		if f.Name != name || !f.Mode().IsRegular() {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			zr.Close()
+			return nil, nil, err
+		}
+		return rc, func() { rc.Close(); zr.Close() }, nil
+	}
+	return nil, func() { zr.Close() }, nil
+}
+
+// tarEntry opens the regular file called name in the tar.gz archive, or
+// returns a nil reader when there is none.
+func tarEntry(archive, name string) (io.Reader, func(), error) {
+	f, err := os.Open(archive)
+	if err != nil {
+		return nil, nil, err
+	}
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		f.Close()
+		return nil, nil, err
+	}
+	closeAll := func() { gz.Close(); f.Close() }
+	tr := tar.NewReader(gz)
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			return nil, closeAll, nil
+		}
+		if err != nil {
+			closeAll()
+			return nil, nil, err
+		}
+		if h.Name == name && h.Typeflag == tar.TypeReg {
+			return tr, closeAll, nil
+		}
+	}
 }
 
 // replaceFile moves staged over dest. On Windows a running .exe cannot be
