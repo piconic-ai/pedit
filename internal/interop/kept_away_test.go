@@ -14,12 +14,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/piconic-ai/pedit/internal/meta"
 	"github.com/piconic-ai/pedit/internal/protocol"
 	"github.com/piconic-ai/pedit/internal/protocol/prototest"
 	"github.com/reearth/ygo/crdt"
 )
 
-// awayGuest is a guest built from internal/protocol, speaking version 7 on a
+// awayGuest is a guest built from internal/protocol, speaking version 8 on a
 // socket of its own to the real Worker.
 type awayGuest struct {
 	t    *testing.T
@@ -56,7 +57,7 @@ func dialAwayGuest(t *testing.T, relay, link, after string) *awayGuest {
 		t.Fatal(err)
 	}
 	if protocol.ConnVersion(conn) != protocol.ProtocolVersion {
-		t.Fatal("the relay did not speak version 7")
+		t.Fatal("the relay did not speak version 8")
 	}
 	t.Cleanup(func() { _ = conn.Close() })
 	return &awayGuest{t: t, conn: conn, keys: keys}
@@ -111,6 +112,46 @@ func (g *awayGuest) waitFor(text string) {
 			return
 		}
 	}
+}
+
+// dialAwayCommenter joins from the comment link of link's room, offering the
+// comment admission token beside the reader's, as a browser does.
+func dialAwayCommenter(t *testing.T, relay, link string) *awayGuest {
+	t.Helper()
+	u, err := url.Parse(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := strings.TrimPrefix(u.Path, "/r/")
+	secrets, err := protocol.ParseFragment(u.Fragment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edit, err := protocol.DeriveRoomKeys(secrets, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commentLink, err := protocol.ParseFragment(edit.Fragments[protocol.AccessComment])
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, err := protocol.DeriveRoomKeys(commentLink, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	header := http.Header{}
+	header.Set("Sec-WebSocket-Protocol", strings.Join(protocol.OfferProtocols(keys.ReadAdmission, keys.CommentAdmission), ", "))
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	conn, err := protocol.DialWebSocket(ctx, "ws"+strings.TrimPrefix(relay, "http")+"/api/rooms/"+id+"/ws", header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if protocol.ConnVersion(conn) != 8 {
+		t.Fatal("the relay did not speak version 8")
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	return &awayGuest{t: t, conn: conn, keys: keys}
 }
 
 func (g *awayGuest) send(kind byte, payload []byte) {
@@ -229,6 +270,33 @@ func TestGoHostKeepsAWebSocketRoomWhileAway(t *testing.T) {
 	if len(ids) != 2 || ids[0] != 1 || ids[1] != 2 || tail != 2 {
 		t.Fatalf("replay with after=0: entries %v, tail %d", ids, tail)
 	}
+	// A comment link adds a thread while the host is away: a comment-signed
+	// entry for the comments doc, which the relay logs as entry 3.
+	commenter := dialAwayCommenter(t, relay, link)
+	commenter.waitFor("kept comments")
+	commentsDoc := crdt.New()
+	if err := crdt.ApplyUpdateV1(commentsDoc, files[1].Update, nil); err != nil {
+		t.Fatal(err)
+	}
+	vector := commentsDoc.StateVector()
+	tracker := meta.NewTracker(doc)
+	meta.Load(commentsDoc, &meta.File{Path: "notes.md", Comments: map[string]meta.Thread{"t9": {
+		Anchor:   meta.Anchor{Type: meta.AnchorText, Text: &meta.Selector{Exact: "notes", Offset: 6}},
+		Quote:    "notes",
+		Messages: map[string]meta.Message{"m1": {Author: "Reviewer", Time: "2026-10-21T00:00:00Z", Body: "Which notes?"}},
+	}}}, tracker)
+	tracker.Close()
+	commentEntry, err := protocol.SealKeptCommentUpdate(commenter.keys, files[1].ID, crdt.EncodeStateAsUpdateV1(commentsDoc, vector))
+	if err != nil {
+		t.Fatal(err)
+	}
+	commenter.send(protocol.KindEntry, commentEntry)
+	for done := false; !done; {
+		if kind, payload := commenter.next(); kind == protocol.KindLogged {
+			id, _, _ := protocol.DecodeLogged(payload)
+			done = id == 3
+		}
+	}
 	// And the host edited its file in its own editor meanwhile.
 	if err := os.WriteFile(file, []byte("notes\nlocal\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -250,6 +318,10 @@ func TestGoHostKeepsAWebSocketRoomWhileAway(t *testing.T) {
 		var state struct{ Entries int }
 		return json.NewDecoder(response.Body).Decode(&state) == nil && state.Entries == 0
 	}, "the relay's log to be cut after the host's checkpoint")
+	commentsFile, err := os.ReadFile(filepath.Join(project, ".pedit", "meta", "notes.md.json"))
+	if err != nil || !strings.Contains(string(commentsFile), "Which notes?") {
+		t.Fatalf("the commenter's thread was not taken in: %s (%v)", commentsFile, err)
+	}
 	// The host is live again: the guests are told, and a newcomer is not replayed a log.
 	guest.waitFor(protocol.HostBack)
 	early.waitFor(protocol.HostBack)

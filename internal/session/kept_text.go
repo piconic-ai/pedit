@@ -53,6 +53,10 @@ type keptTextState struct {
 	// resumed. After is the last entry of the relay's log this host took in.
 	Socket bool   `json:",omitempty"`
 	After  uint64 `json:",omitempty"`
+	// CommentEntries marks a room whose log may hold comment-signed entries
+	// (protocol version 8). An older pedit would skip and lose them, so it
+	// refuses the record: it fails the strict decode of the unknown field.
+	CommentEntries bool `json:",omitempty"`
 }
 type keptTextFileState struct {
 	ID         uint32
@@ -332,7 +336,9 @@ func (h *keptTextHost) applyEntries(read keptTextRead, previous uint64) error {
 			return errors.New("invalid kept log order")
 		}
 		previous = entry.ID
-		id, update, e := protocol.OpenKeptFileUpdate(h.keys, entry.Body)
+		id, update, e := h.openEntry(entry.Body, func(id uint32, update []byte) error {
+			return meta.CheckUpdate(h.files[id].doc, update)
+		})
 		file := h.files[id]
 		if e != nil || file == nil {
 			h.skipped++
@@ -356,6 +362,39 @@ func (h *keptTextHost) applyEntries(read keptTextRead, previous uint64) error {
 	}
 	return nil
 }
+
+// manifest lists the room's files as the record has them, so that comments
+// docs pair with their files by path as in the live manifest.
+func (h *keptTextHost) manifest() []protocol.FileEntry {
+	var out []protocol.FileEntry
+	for _, entry := range h.entries() {
+		format := protocol.FormatText
+		if d := h.files[entry.ID]; d != nil && d.root == protocol.KeptCommentsRoot {
+			format = protocol.FormatMeta
+		}
+		out = append(out, protocol.FileEntry{ID: uint64(entry.ID), Path: entry.Path, Format: format})
+	}
+	return out
+}
+
+// openEntry opens a kept entry. An edit-signed one goes on as it is; a
+// comment-signed one only if it targets a paired comments doc and check, run
+// on that doc as the replay holds it, passes the update.
+func (h *keptTextHost) openEntry(entry []byte, check func(id uint32, update []byte) error) (uint32, []byte, error) {
+	tier, id, update, err := protocol.OpenKeptEntry(h.keys, entry)
+	if err != nil || tier != protocol.AccessComment {
+		return id, update, err
+	}
+	d := h.files[id]
+	err = protocol.CheckKeptCommentEntry(h.manifest(), id, update, func(u []byte) error {
+		if d == nil || d.root != protocol.KeptCommentsRoot {
+			return errors.New("not a comments doc")
+		}
+		return check(id, u)
+	})
+	return id, update, err
+}
+
 func (h *keptTextHost) applySnapshot(frame []byte) error {
 	files, e := protocol.OpenKeptBundle(h.keys, frame)
 	if e != nil {
