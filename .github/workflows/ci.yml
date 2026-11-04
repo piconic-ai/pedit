@@ -81,6 +81,13 @@ jobs:
       - name: Go vet
         run: go vet ./...
 
+      - name: Go vulnerabilities
+        # A vulnerability the code can reach fails the build. JS dependencies are
+        # watched by Dependabot alerts and security updates instead of pnpm audit,
+        # which queries importer names and reports vercel/serve advisories against
+        # our workspace package "serve".
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
       - name: Go test
         # PEDIT_INTEROP makes the interop test fail rather than skip without Node.js deps.
         run: PEDIT_INTEROP=1 go test -race ./...

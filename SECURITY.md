@@ -29,6 +29,18 @@ release and is in scope.
 | `main`              | Yes       |
 | Older releases      | No        |
 
+## Verifying what you install
+
+Release archives carry Sigstore build provenance from this repository's release
+workflow. The install scripts check it when `gh` is installed (no sign-in
+needed, pinned to the release tag's commit), and only the checksum otherwise.
+The scripts themselves are served by the relay, so to rely on the release
+workflow alone, use Homebrew or `go install`, or download an archive and check
+it with `gh attestation verify`. See [verifying releases](docs/verifying-releases.md).
+
+Dependencies are watched by Dependabot (version updates, alerts and security
+updates) for Go, npm and GitHub Actions, plus govulncheck in CI.
+
 ## Scope
 
 pedit's trust model is described in
