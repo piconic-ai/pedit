@@ -7,6 +7,30 @@
 
 https://github.com/user-attachments/assets/14bec9ab-8c14-495c-8faf-9cdd98d8fd5b
 
+`pedit` is a CLI that lets people edit your local files together in their
+browsers. Edits are saved back to your file:
+
+```text
+❯ pedit notes.md
+
+  notes.md is ready to write together.
+
+  Send this link to the people you want to invite:
+    https://edit.piconic.ai/r/<room-id>#<key>
+
+  Press Ctrl+C when you are done. Everything is saved to notes.md.
+  To share another file in this room, type its path and press Enter.
+  Press Ctrl+L for links that can only comment or read.
+
+  ● Alice and Bob are here
+```
+
+No install or account needed for collaborators on the public server.
+
+People in the room can also comment on text, table cells and canvas nodes;
+comments never go into the file. The printed link lets people edit; Ctrl+L
+shows links that let them only comment or only read.
+
 **What it looks like.** Carol shares a file with `pedit`; Alice and Bob edit
 it in their browsers. The first three are Alice's view; the last is Bob's,
 opened from a comment-only link:
@@ -41,218 +65,6 @@ opened from a comment-only link:
     <td>Comments, from a comment-only link</td>
   </tr>
 </table>
-
-`pedit` is a CLI that lets people edit your local files together in their
-browsers. Edits are saved back to your file:
-
-```text
-❯ pedit notes.md
-
-  notes.md is ready to write together.
-
-  Send this link to the people you want to invite:
-    https://edit.piconic.ai/r/<room-id>#<key>
-
-  Press Ctrl+C when you are done. Everything is saved to notes.md.
-  To share another file in this room, type its path and press Enter.
-  Press Ctrl+L for links that can only comment or read.
-
-  ● Alice and Bob are here
-```
-
-No install or account needed for collaborators on the public server.
-
-Besides editing, people in the room can comment on text, table cells and
-canvas nodes; comments never go into the file ([Comments](#comments)). What
-each person can do depends on the link you send them: the printed link lets
-them edit, and Ctrl+L shows links that let them only comment or only read
-([Comment-only and read-only links](#comment-only-and-read-only-links)).
-
-If the connection drops, keep `pedit` running. It reconnects with the same
-link and merges edits made while disconnected. The terminal keeps an offline
-notice and confirms when syncing resumes. While the host is away, the browser
-pauses editing; edits already made or still in transit merge when the host
-returns. The public relay keeps guests waiting for up to two minutes. In a kept
-room (the default, see below), the browser does not pause: the
-header says the host is away and until when, text files and their comments stay
-editable and images can be pasted, and the relay keeps each edit, which shows as
-sending until the relay has it. The host takes the edits in on its return, and
-everyone is live again. Closing the page with edits still sending asks first.
-Canvas board edits are kept too; its JSON pane is read-only while the host is away.
-Do not edit the local `.canvas` file while away: resume refuses external changes instead of merging them.
-
-Text, canvas changes, and comments save during the session, including while
-edits continue. Saves normally start about a second after the first pending
-change. A crash can lose changes still in memory, in transit, or waiting for a
-save; failed or slow disk writes can extend that window. Ctrl+C flushes pending
-changes and closes the room (a kept room stays open for you to come back to). Without
-a keep (`--keep 0`), running `pedit` again creates a new link.
-
-A room opened from existing text files is kept for a day by default. When you press Ctrl+C,
-pedit saves the files and leaves the room open on the relay, and prints its deadline. Guests stay
-connected, the link keeps working, and what they write while you are away waits on the relay,
-encrypted, until you are back. In the same project, run `pedit notes.md` again (or `pedit resume`)
-to take the room up: pedit connects as the host, merges what you changed in your files meanwhile
-with the guests' edits, saves the files, tells the relay it can drop what it held, and carries on as
-a live room (Ctrl+C keeps it again). `pedit resume` alone picks the one kept room, or lists them
-and asks which (or pass the room ID, `pedit resume <room>`; the room's link works too).
-`pedit rooms` lists the project's kept rooms (`--json` for programs), and `pedit close` takes in
-the edits and closes the room for good. pedit prints the room's ID as `Room: <id>` under the link, and
-when you leave a kept room, so you can name it without picking it out of the link.
-
-`--keep 7d` keeps the room for that long instead (up to the relay's cap, 7 days on the public
-relay; pedit reports the effective value). `--keep 0` opens a room that stores nothing and ends
-when you leave. To change the default for a project, set `keep: 7d` in `.pedit/config.yaml`
-(same syntax as `--keep`; `keep: 0` turns keep off). The command line wins over the config, and
-the config over the default. Keep applies to `pedit <file>` and `pedit <file> <file>...` for existing
-text and canvas files; a scratch room (`pedit` with no file, `--template`, `--directory`) and
-joining a link (`pedit <link>`) are not kept. If a kept room already holds the file, `pedit <file>`
-resumes it; its set of files is fixed, so a file it does not hold is an error: run `pedit close`
-first, or `pedit --keep 0` for a separate room. A relay that cannot keep rooms (a self-hosted
-one that is not updated) ends the room when you leave, and pedit says so. Resume information stays in a
-private 0600 record under `pedit/keep/` in your user configuration directory, outside the
-project. pedit removes that record when `pedit close` ends the room, when a resume finds the room gone, and at the
-next run in the same project for rooms past their deadline (as for rooms kept by an older version of pedit,
-which can no longer be resumed), never while a write is pending.
-A kept room shares the fixed set of text files it started with (up to 64; no file can be added later), with their comments and pasted images:
-guests can paste images (PNG, JPEG, GIF or WebP, within the public relay's image limits) as in a live room, and the relay keeps them,
-encrypted, until the room's deadline. On `pedit resume` pedit saves each image the merged text refers to under `assets/`
-beside its file, as a live room does, and reports any it cannot find. Guests can comment while you are away, and `pedit resume` writes the threads to
-`.pedit/meta/<path>.json` as a live room does, never into the shared file.
-The browser uses the same file tabs as a live room. The encrypted snapshot for
-all files together, comments included, must fit within 1 MiB; log updates have a separate byte budget. Changes made directly to a local
-file while away are merged with the guests' edits on resume, the way a live room
-merges a save from another editor. A file that cannot be read or is not valid
-UTF-8 is preserved and stops automatic recovery. These two host
-commands currently require Unix file permissions and are unavailable on Windows.
-
-To end a kept room before its deadline, run `pedit close` (it takes the same room ID or link as `pedit resume`,
-and picks or asks the same way; `pedit close --help` says more). It first does what `pedit resume` does once: takes in the guests' edits, comments and
-images and saves them to your files. Only then does it ask the relay to delete everything it holds for the room
-(text, log and images) and make the link stop working for good, and remove the resume record. If any
-file cannot be saved, the room stays open and the record stays, so you can fix that and run it again. Guests who
-have the page open are told that the host closed the room; edits they had not yet sent are lost.
-
-Collaborators who would rather stay in their own editor join from the command
-line instead. Given the link, `pedit` mirrors the shared file to a temporary
-copy and keeps it in sync both ways until they leave or the host closes the
-room; the copy is removed then, like closing a browser tab. `pedit` names the
-copy itself, from a number and the letters and digits of the host's name for
-it, never as the room names it:
-
-```text
-❯ pedit 'https://edit.piconic.ai/r/<room-id>#<key>'
-
-  Joined. Your copy of the shared file:
-    /tmp/pedit-<room-id>-2271/00-notes.md
-    Copied to your clipboard.
-
-  Edit it with any editor; changes sync both ways while you are in the room.
-  Press Ctrl+C to leave. The copies are temporary and removed then.
-```
-
-Quote the link in the shell: `#` starts a comment otherwise. Copy out what you
-want to keep before you leave. A canvas comes as its JSON Canvas, under
-`.json` (`00-board.json`): edit it as JSON and pedit sends the changed nodes
-and edges, as it takes in edits to the host's file. While the host is away
-from a kept room, edits to a copy wait until it is back.
-
-### Several files in one room
-
-Name several files to share them in one room, under one link. Guests switch
-between them with the tabs above the editor:
-
-```text
-❯ pedit agenda.md docs/spec.md board.canvas
-```
-
-While sharing, type the path of another file and press Enter to add it to the
-room, without a new link: a meeting can start with the agenda and bring in the
-spec when it comes up. Only the host adds files; nobody in the room can ask for
-one. A room shares up to 20 files, each a regular UTF-8 file, as when sharing
-one. Paths are shown relative to the directory `pedit` runs in.
-
-A guest who joins from the command line gets a copy of each text file in the
-same temporary directory, including files the host adds later, named after
-the host's path: `docs/spec.md` is copied to `01-docs-spec.md`. Canvases are
-for the browser. The copies end their lines with LF, whatever the host's file
-uses: a file whose lines all end in CRLF is shared with LF (the browser editor
-counts positions in LF) and saved by the host with CRLF again. A file with mixed endings is shared as it is, and editing it in
-the browser may misplace edits.
-
-### Comments
-
-In the browser, select some text, a cell of a table (or a whole row or
-column), or a node of a canvas, and write a comment in the panel beside it.
-Everyone in the room sees it at once, marked where it points, and can reply
-or resolve it; resolved threads stay under Resolved, to read again or reopen.
-You can edit or delete your own comments from their ⋮ menu (deleting asks
-first). Each file's tab (or its name, in a room of one file) shows how
-many of its comments are still open, and the speech bubble in the header,
-or Ctrl/⌘+Alt+M, shows or hides the comments. A comment never goes into the file: the host keeps the
-comments of each file in `.pedit/meta/<path>.json`, and the next session
-shows them again, found by the text, cells or node they pointed at. A
-comment follows its place as people edit, and says so when that text changed
-or is gone. A comment goes on up to 1,000 characters of text, or of a cell.
-
-Comments are kept for files inside the project: the directory of
-`.pedit/config.yaml`, or the one you run pedit in when there is none. Commit
-`.pedit/meta/` to keep them with the files. An older pedit does not see
-them; a guest on the command line reads and answers them as below. See
-[the design](docs/design/comments.md) for how they are anchored and checked.
-
-### Comments from scripts and agents
-
-A script or an AI agent can read and answer comments without a browser. It
-runs the session itself, with `--json`, and reads what happens in the room
-as JSON lines on stdout (messages for people go to stderr):
-
-```sh
-pedit notes.md --json --name tate-pm &   # {"event":"ready",...}, then
-                                          # {"event":"comment","thread":"…","body":"…",...}
-pedit comments list                       # the open threads (--all, --json)
-pedit comments reply <thread> "Done."     # prints the reply's id
-pedit comments resolve <thread>           # or reopen
-```
-
-The `pedit comments` commands reach the session running on the same
-machine through a directory of its own in your configuration directory; they
-never connect to the room themselves, so the agent is one participant, named
-by `--name`, for as long as it works (a browser picks its name in the
-settings). An agent that is a guest does the same
-with `pedit <share link> --json`, with an edit link or a comment-only one;
-its reply counts as delivered once the host has it. While the host is away
-from a kept room, an edit link's reply waits in the relay, and the host takes
-it in when it resumes. With no session running,
-`pedit comments list --file notes.md` lists the comments as the host saved
-them last. `pedit comments --help` says more, and
-[the design](docs/design/comments-cli.md) how it works.
-
-### Comment-only and read-only links
-
-The link pedit prints lets people edit. To let someone only comment, or only
-read, press Ctrl+L while sharing, or choose Share in the browser's header, and
-send one of these instead:
-
-```text
-  Links with less access:
-    Comment only  https://edit.piconic.ai/r/<room-id>#c.<key>
-    Read only     https://edit.piconic.ai/r/<room-id>#r.<key>
-```
-
-| Link | Read the files and comments | Write comments | Edit the files |
-| --- | --- | --- | --- |
-| Edit | ✓ | ✓ | ✓ |
-| Comment only | ✓ | ✓ | |
-| Read only | ✓ | | |
-
-People with a comment-only or read-only link are listed among the
-participants as comment only or read only. A comment-only link is offered while
-some file keeps comments. Each link also gives the ones below it, never the
-ones above, and every peer checks what the others may do, not the relay. A
-comment-only link also joins from the command line, to read and answer
-comments (its copies of the files are not sent back); a read-only link opens
-in a browser.
 
 ## Why pedit?
 
@@ -308,6 +120,132 @@ Binaries: [GitHub Releases](https://github.com/piconic-ai/pedit/releases) (macOS
 Every archive carries a build provenance attestation, which the install
 scripts check when the GitHub CLI is installed; see
 [verifying releases](docs/verifying-releases.md) to check one yourself.
+
+## Usage
+
+### Sharing a file
+
+Run `pedit <file>` and send the printed link. Edits are saved to your file
+as they come in, and if the connection drops, keep `pedit` running: it
+reconnects with the same link and merges what was written meanwhile. Ctrl+C
+saves and leaves.
+
+A room opened from existing files is kept for a day after you leave: the
+link keeps working, and what guests write while you are away waits on the
+relay, encrypted. Run `pedit notes.md` again (or `pedit resume`) to take
+their edits in and carry on, `pedit rooms` to list kept rooms, and
+`pedit close` to end one for good (resume and close are not available on
+Windows yet). `--keep 7d` keeps it longer (7 days at
+most on the public relay); `--keep 0` opens a room that ends when you leave.
+See [sessions](docs/sessions.md) for how reconnecting, saving and kept rooms
+work.
+
+### Joining from the command line
+
+Collaborators who would rather stay in their own editor join from the command
+line instead. Given the link, `pedit` mirrors the shared file to a temporary
+copy and keeps it in sync both ways until they leave or the host closes the
+room; the copy is removed then, like closing a browser tab:
+
+```text
+❯ pedit 'https://edit.piconic.ai/r/<room-id>#<key>'
+
+  Joined. Your copy of the shared file:
+    /tmp/pedit-<room-id>-2271/00-notes.md
+    Copied to your clipboard.
+
+  Edit it with any editor; changes sync both ways while you are in the room.
+  Press Ctrl+C to leave. The copies are temporary and removed then.
+```
+
+Quote the link in the shell: `#` starts a comment otherwise. Copy out what you
+want to keep before you leave. A canvas comes as its JSON Canvas, under
+`.json` (`00-board.json`). See [sessions](docs/sessions.md#joining-from-the-command-line)
+for how copies are named and synced.
+
+### Several files in one room
+
+Name several files to share them in one room, under one link. Guests switch
+between them with the tabs above the editor:
+
+```text
+❯ pedit agenda.md docs/spec.md board.canvas
+```
+
+While sharing, type the path of another file and press Enter to add it to the
+room, without a new link: a meeting can start with the agenda and bring in the
+spec when it comes up. Only the host adds files; nobody in the room can ask for
+one. A room shares up to 20 files, each a regular UTF-8 file, as when sharing
+one. Paths are shown relative to the directory `pedit` runs in.
+
+A guest who joins from the command line gets a copy of each text file in the
+same temporary directory, including files the host adds later:
+`docs/spec.md` is copied to `01-docs-spec.md`. Canvases are for the browser.
+
+### Comments
+
+In the browser, select some text, a cell of a table (or a whole row or
+column), or a node of a canvas, and write a comment in the panel beside it.
+Everyone in the room sees it at once, marked where it points, and can reply
+or resolve it; resolved threads stay under Resolved, to read again or reopen.
+You can edit or delete your own comments from their ⋮ menu (deleting asks
+first). Each file's tab (or its name, in a room of one file) shows how
+many of its comments are still open, and the speech bubble in the header,
+or Ctrl/⌘+Alt+M, shows or hides the comments. A comment never goes into the file: the host keeps the
+comments of each file in `.pedit/meta/<path>.json`, and the next session
+shows them again, found by the text, cells or node they pointed at. A
+comment follows its place as people edit, and says so when that text changed
+or is gone. A comment goes on up to 1,000 characters of text, or of a cell.
+
+Comments are kept for files inside the project: the directory of
+`.pedit/config.yaml`, or the one you run pedit in when there is none. Commit
+`.pedit/meta/` to keep them with the files. See
+[the design](docs/design/comments.md) for how they are anchored.
+
+### Comments from scripts and agents
+
+A script or an AI agent can read and answer comments without a browser. It
+runs the session itself, with `--json`, and reads what happens in the room
+as JSON lines on stdout (messages for people go to stderr):
+
+```sh
+pedit notes.md --json --name tate-pm &   # {"event":"ready",...}, then
+                                          # {"event":"comment","thread":"…","body":"…",...}
+pedit comments list                       # the open threads (--all, --json)
+pedit comments reply <thread> "Done."     # prints the reply's id
+pedit comments resolve <thread>           # or reopen
+```
+
+The `pedit comments` commands talk to the session running on the same
+machine, so the agent is one participant, named by `--name`. An agent that is
+a guest does the same with `pedit <share link> --json`. With no session
+running, `pedit comments list --file notes.md` lists the comments as the host
+saved them last. `pedit comments --help` says more, and
+[the design](docs/design/comments-cli.md) how it works.
+
+### Comment-only and read-only links
+
+The link pedit prints lets people edit. To let someone only comment, or only
+read, press Ctrl+L while sharing, or choose Share in the browser's header, and
+send one of these instead:
+
+```text
+  Links with less access:
+    Comment only  https://edit.piconic.ai/r/<room-id>#c.<key>
+    Read only     https://edit.piconic.ai/r/<room-id>#r.<key>
+```
+
+| Link | Read the files and comments | Write comments | Edit the files |
+| --- | --- | --- | --- |
+| Edit | ✓ | ✓ | ✓ |
+| Comment only | ✓ | ✓ | |
+| Read only | ✓ | | |
+
+A comment-only link is offered while some file keeps comments. Each link
+also gives the ones below it, never the ones above, and every peer checks what
+the others may do, not the relay. A comment-only link also joins from the
+command line, to read and answer comments (its copies of the files are not
+sent back); a read-only link opens in a browser.
 
 ## Configuration and templates
 
@@ -399,17 +337,13 @@ IP addresses, room IDs, request timing and ciphertext sizes; infrastructure and
 Access logs have separate retention settings and are not erased when a room
 closes.
 
-Markdown previews can embed YouTube, Vimeo, Loom, Figma, CodePen, StackBlitz,
-Observable, Spotify, SoundCloud and Miro players and public source files on
-GitHub, and show external images and videos where the relay allows them (the
-public relay does not). An embed loads only when someone clicks "Load from" on
-it, or ticked "Always load" for its provider, so nobody in the room contacts a
+
+Markdown previews can embed players such as YouTube, Figma or Miro, and
+public source files on GitHub. An embed loads only when someone clicks "Load
+from" on it (or chose "Always load" for its provider), so nobody contacts a
 third party just because a URL was written in the file. See
-[embeds](docs/embeds.md) for the list, sizes such as
-`https://youtu.be/dQw4w9WgXcQ#width=560&height=315`, GitHub line ranges, privacy,
-and how a self-hosted relay adds or drops providers. With Access,
-avatars may load from an identity provider or Gravatar using an email hash.
-Those providers can see the requests.
+[embeds](docs/embeds.md) for the list and options. With Access, avatars may
+load from an identity provider or Gravatar using an email hash.
 
 Besides the relay, the CLI itself connects only to `api.github.com`, to check
 for a newer release, and keeps the answer for a day; it never downloads or
