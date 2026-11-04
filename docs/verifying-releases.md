@@ -48,6 +48,14 @@ there or that came from a release archive; Homebrew, mise and `go install`
 copies are left to their own tools. It refuses downgrades and releases before
 v0.1.6, which have no bundle.
 
+## What `@pedit/serve` checks when an app installs pedit
+
+An app that opts in with `resolvePedit({ install: true })` may download pedit when none is usable. It
+puts the binary in a per-user directory (`~/.local/share/pedit/bin` or `%LOCALAPPDATA%\pedit\bin`)
+and makes the same checks as `pedit self-update`: the checksum always, and the provenance check pinned
+to the tag's commit when `gh` is installed. It reports which of the two it did, and writes nothing if a
+check fails. `pedit self-update` updates that copy later.
+
 ## Rebuilding a release
 
 The archives are reproducible: GoReleaser v2.18.3

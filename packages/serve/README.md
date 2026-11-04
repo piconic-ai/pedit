@@ -10,7 +10,7 @@ carries the same version number; the pedit it needs is listed below.
 
 ## Requirements
 
-- pedit 0.5.0 or later on the PATH (or pass `bin`). Older ones are refused with a message on how to update.
+- pedit 0.5.0 or later on the PATH (or pass `bin`). Older ones are refused with a message on how to update. Or let your app [download it](#installing-pedit-for-the-user) once, if you opt in.
 - Node 22 or later, on macOS, Linux or Windows. On Windows, pedit stops a child by closing its input and never kills it: a child that does not exit in time is reported as an error event.
 
 ## Install
@@ -83,8 +83,38 @@ const extensions = [yCollab(conn.text, conn.awareness)] // plus basicSetup, Edit
 | Export | |
 | --- | --- |
 | `ServedFiles` | The layer below the routes: `acquire(path)` starts or reuses a child, `close()` ends all. |
-| `resolvePedit({ bin })`, `MIN_PEDIT_VERSION` | Finds pedit, checks the binary and its version. |
+| `resolvePedit({ bin, install })`, `MIN_PEDIT_VERSION` | Finds pedit, checks the binary and its version. With `install: true`, downloads it when none is usable (see above) and returns `installed`. |
 | `HeldError`, `LimitError`, `NoPeditError` | Another process serves the file; 32 files or 8 clients; pedit missing or too old. |
+
+## Installing pedit for the user
+
+Nothing is ever downloaded unless your app asks for it. Without the opt-in, a missing or old pedit
+is a `NoPeditError`, as before. To let the app install pedit when needed:
+
+```js
+const { bin, version, installed } = await resolvePedit({ install: true })
+if (installed) log(`installed pedit ${installed.tag}, verified: ${installed.verified}`)
+const routes = peditRoutes({ /* ... */ bin })
+```
+
+`resolvePedit({ install: true })` looks, in order, at an explicit `bin` (used as it is, never replaced),
+`pedit` on the PATH, and the per-user copy. Only if none is usable, or the per-user copy is older than
+`MIN_PEDIT_VERSION`, it downloads the latest release. A pedit anywhere else (Homebrew, `install.sh`) is
+never touched.
+
+- The per-user copy is shared by every app: `$XDG_DATA_HOME/pedit/bin/pedit` (default
+  `~/.local/share/pedit/bin/pedit`), or `%LOCALAPPDATA%\pedit\bin\pedit.exe` on Windows. The directories
+  are `0700`; the binary is written to a temporary file next to it and renamed, so two apps installing at
+  once leave a whole file.
+- It downloads the archive, `checksums.txt` and the Sigstore bundle from GitHub Releases, over HTTPS, with
+  size limits, and reads only the root `pedit` (`pedit.exe`) from the archive.
+- The archive must match its line in `checksums.txt`. If `gh` (GitHub CLI) is on the PATH, it also runs
+  `gh attestation verify` against the release workflow, pinned to the tag's commit when GitHub
+  answers the lookup; no GitHub sign-in is needed. `installed.verified` is `'provenance'` then, and
+  `'checksum'` without `gh`: that proves the file is the one listed beside it, not that this repository's
+  workflow built it. If any check fails, nothing is written and `resolvePedit` throws `NoPeditError`.
+- Updates are not automatic. Watch the `update_available` event; the per-user copy is an
+  install-script-style copy, so `pedit self-update` (run as that user) updates it in place.
 
 ## Security model
 
