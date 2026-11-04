@@ -1,5 +1,14 @@
 # Changelog
 
+## [v0.5.3](https://github.com/piconic-ai/pedit/compare/v0.5.2...v0.5.3) - 2026-11-04
+
+### Changes
+- Run govulncheck in CI and say in SECURITY.md what users can verify by @kfly8 in https://github.com/piconic-ai/pedit/pull/426
+- Wait for the edit to reach the server before testing shutdown by @kfly8 in https://github.com/piconic-ai/pedit/pull/429
+- Report versions with --version --json and tell apps about updates by @kfly8 in https://github.com/piconic-ai/pedit/pull/427
+- Add pedit self-update, checking releases as the install scripts do by @kfly8 in https://github.com/piconic-ai/pedit/pull/430
+- Let an app opt in to installing pedit for the user from @pedit/serve by @kfly8 in https://github.com/piconic-ai/pedit/pull/431
+
 ## [v0.5.2](https://github.com/piconic-ai/pedit/compare/v0.5.1...v0.5.2) - 2026-11-04
 
 - Let a browser choose its display name (#213) by @kfly8 in https://github.com/piconic-ai/pedit/pull/422
