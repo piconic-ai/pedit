@@ -2,7 +2,7 @@ import * as decoding from 'lib0/decoding'
 import * as Y from 'yjs'
 import type { RoomKeys } from './access.ts'
 import { decrypt, encrypt } from './cipher.ts'
-import { type FileEntry, metaTarget } from './files.ts'
+import { type FileEntry, metaFiles, metaTarget } from './files.ts'
 import { MAX_FRAME_BYTES } from './frame.ts'
 import { checkMetaUpdate } from './meta.ts'
 import { checkPath, MAX_PATH_BYTES } from './path.ts'
@@ -11,6 +11,7 @@ const DOMAIN = new TextEncoder().encode('pedit kept text v1\0')
 const SNAPSHOT_DOMAIN = new TextEncoder().encode('pedit kept snapshot v1\0')
 const BUNDLE_DOMAIN = new TextEncoder().encode('pedit kept files snapshot v1\0')
 const FILE_DOMAIN = new TextEncoder().encode('pedit kept file update v1\0')
+const COMMENT_DOMAIN = new TextEncoder().encode('pedit kept comment update v1\0')
 /** Text files in a kept room; the comments docs paired with them do not count. */
 const MAX_KEPT_FILES = 64
 /** Signs and encrypts one update of a doc as a kept entry; with `file`, it names the doc by its id. */
@@ -35,21 +36,89 @@ export async function sealKeptUpdate(
   return encrypt(keys.frameKey, join(message, signature))
 }
 
-/** Decrypts a kept entry or bundle and checks an editor signed it; returns the signed message. */
-export async function openKeptFrame(keys: RoomKeys, ciphertext: Uint8Array): Promise<Uint8Array> {
+/**
+ * Signs and encrypts one update of a comments doc as a kept comment entry,
+ * over the comment domain, with the commenters' key: a comment signature never
+ * passes as an edit one. An edit link or a comment link can; a read link cannot.
+ */
+export async function sealKeptCommentUpdate(
+  keys: RoomKeys,
+  fileId: number,
+  update: Uint8Array,
+): Promise<Uint8Array> {
+  if (!keys.commentSigner) throw new Error('comment link required')
+  const payload = new Uint8Array(4 + update.length)
+  new DataView(payload.buffer).setUint32(0, fileId)
+  payload.set(update, 4)
+  const message = join(COMMENT_DOMAIN, payload)
+  const signature = new Uint8Array(
+    await crypto.subtle.sign('Ed25519', keys.commentSigner, Uint8Array.from(message)),
+  )
+  return encrypt(keys.frameKey, join(message, signature))
+}
+
+export type KeptTier = 'edit' | 'comment'
+
+/**
+ * Decrypts a kept entry or bundle, reads its domain, and verifies the signature
+ * with the editors' key (edit domains) or the commenters' key (comment domain).
+ * Returns the signed message and the tier that signed it. A caller that
+ * accepts a comment-tier message must pass it to decodeCommentUpdate.
+ */
+export async function openKeptFrameTier(
+  keys: RoomKeys,
+  ciphertext: Uint8Array,
+): Promise<{ tier: KeptTier; message: Uint8Array }> {
   const plain = await decrypt(keys.frameKey, ciphertext)
   const message = plain.subarray(0, plain.length - 64)
+  const tier = payloadFor(message, COMMENT_DOMAIN) ? 'comment' : 'edit'
   if (
     plain.length <= 64 ||
     !(await crypto.subtle.verify(
       'Ed25519',
-      keys.editKey,
+      tier === 'comment' ? keys.commentKey : keys.editKey,
       Uint8Array.from(plain.subarray(plain.length - 64)),
       Uint8Array.from(message),
     ))
   )
     throw new Error('invalid kept signature')
+  return { tier, message }
+}
+
+/**
+ * Decrypts a kept entry or bundle and checks an editor signed it; returns the
+ * signed message. A comment-tier entry is refused here, so callers that do not
+ * take comment entries (bundles, probes) stay as they were.
+ */
+export async function openKeptFrame(keys: RoomKeys, ciphertext: Uint8Array): Promise<Uint8Array> {
+  const { tier, message } = await openKeptFrameTier(keys, ciphertext)
+  if (tier !== 'edit') throw new Error('invalid kept signature')
   return message
+}
+
+/**
+ * Reads a comment-tier message (openKeptFrameTier) and accepts it only for a
+ * paired comments doc: its file id must be the meta entry that the manifest
+ * `files` pairs with another file (metaFiles), and the update must pass the live room's comment
+ * checks against `held`, what the relay has of that doc so far (none if empty).
+ * Throws for a text or canvas file, an unknown id, or a failing update.
+ */
+export function decodeCommentUpdate(
+  message: Uint8Array,
+  files: readonly FileEntry[] | undefined,
+  held?: Y.Doc,
+): FileUpdate {
+  const payload = payloadFor(message, COMMENT_DOMAIN)
+  if (!payload || payload.length <= 4) throw new Error('invalid kept comment update')
+  const id = new DataView(payload.buffer, payload.byteOffset, 4).getUint32(0)
+  const update = payload.slice(4)
+  if (!files || ![...metaFiles([...files]).values()].includes(id))
+    throw new Error('kept comment entry for a file without comments')
+  const doc = held ?? declare(new Y.Doc(), 'comments')
+  const refusal = checkMetaUpdate(doc, update)
+  if (held === undefined) doc.destroy()
+  if (refusal) throw new Error('invalid kept comments')
+  return { id, update }
 }
 export type FileUpdate = { id: number; update: Uint8Array }
 export type BundleFile = FileUpdate & { path: string }

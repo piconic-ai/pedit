@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"strconv"
+	"strings"
 )
 
 // AdmissionHeader carries a room capability, never the encryption key.
@@ -51,6 +53,41 @@ func socketVersion(subprotocol string) int {
 }
 
 const AdmissionProtocolPrefix = "pedit-admission."
+
+// ClientProtocolVersions are the versions a version 8 client offers, newest
+// first, so a version 7 relay still accepts it. Nothing offers them yet:
+// ProtocolVersion stays 7 until the clients speak 8. Keep in sync with
+// CLIENT_PROTOCOL_VERSIONS in packages/protocol.
+var ClientProtocolVersions = []int{8, 7}
+
+// OfferProtocols is what a client offers as subprotocols: the versions
+// (newest first), the reader or editor admission token and, if it holds one,
+// the comment admission token.
+func OfferProtocols(token, commentToken string) []string {
+	out := make([]string, 0, len(ClientProtocolVersions)+2)
+	for _, v := range ClientProtocolVersions {
+		out = append(out, fmt.Sprintf("pedit-v%d", v))
+	}
+	out = append(out, AdmissionProtocolPrefix+token)
+	if commentToken != "" {
+		out = append(out, CommentAdmissionPrefix+commentToken)
+	}
+	return out
+}
+
+// AcceptedVersion is the version a socket's accepted subprotocol names
+// ("pedit-v8" is 8), or 0.
+func AcceptedVersion(subprotocol string) int {
+	digits, ok := strings.CutPrefix(subprotocol, "pedit-v")
+	if !ok || digits == "" || len(digits) > 9 || (len(digits) > 1 && digits[0] == '0') {
+		return 0
+	}
+	n, err := strconv.Atoi(digits)
+	if err != nil {
+		return 0
+	}
+	return n
+}
 
 // AdmissionToken derives the relay capability of everyone in a room from its
 // frame key (access.go), domain-separated from all encryption keys. Knowing

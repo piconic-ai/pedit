@@ -62,6 +62,11 @@ export interface RoomKeys {
   commentKey: CryptoKey
   /** Signs this client's frames; none for a read link. */
   signer: Signer | null
+  /**
+   * Signs kept comment entries (docs/design/kept-comments.md): the commenters'
+   * key, which an edit link derives too. Null for a read link.
+   */
+  commentSigner: CryptoKey | null
   /** Relay capability of everyone in the room; cannot decrypt anything. */
   readAdmission: string
   /** Relay capability of editors only. */
@@ -169,6 +174,7 @@ export async function deriveRoomKeys(link: LinkSecrets, roomId: string): Promise
   let editAdmission: string | null = null
   let editKey: Uint8Array
   let comment: Uint8Array | null = null
+  let commentSigner: CryptoKey | null = null
   const fragments: Partial<Record<Access, string>> = {}
   if (link.access === 'edit') {
     const edit = await signingPair(await hkdf(link.edit, LABEL.editSign))
@@ -186,6 +192,7 @@ export async function deriveRoomKeys(link: LinkSecrets, roomId: string): Promise
   if (comment) {
     const pair = await signingPair(await hkdf(comment, LABEL.commentSign))
     signer ??= { access: 'comment', key: pair.sign }
+    commentSigner = pair.sign
     commentKey = pair.publicKey
     read = await hkdf(comment, LABEL.read)
     fragments.comment = COMMENT_PREFIX + toBase64Url(concat(comment, editKey))
@@ -209,6 +216,7 @@ export async function deriveRoomKeys(link: LinkSecrets, roomId: string): Promise
     editKey: edit,
     commentKey: commentVerify,
     signer,
+    commentSigner,
     readAdmission: await deriveAdmissionToken(frame),
     editAdmission,
     commentAdmission: comment ? toBase64Url(await hkdf(comment, LABEL.commentAdmission)) : null,

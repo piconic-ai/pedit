@@ -36,3 +36,10 @@ token of the same 32 bytes, which no value of the chain may repeat.
 `internal/protocol/access_test.go` writes it (`PEDIT_UPDATE_VECTORS=1 go test
 ./internal/protocol/`), and `packages/protocol/test/access.test.ts` checks the
 TypeScript side derives the same.
+
+`kept-comment-vectors.json` pins a comment-signed kept entry (docs/design/kept-comments.md):
+the message under the comment domain and the commenters' Ed25519 signature over it
+(deterministic), beside the same payload under the edit file-update domain.
+`internal/protocol/kept_comment_test.go` writes it (`PEDIT_UPDATE_VECTORS=1 go test
+./internal/protocol/`), and `packages/protocol/test/kept-comments.test.ts` checks the
+TypeScript side seals and opens the same bytes.

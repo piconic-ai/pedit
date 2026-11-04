@@ -87,6 +87,9 @@ type RoomKeys struct {
 	CommentKey ed25519.PublicKey
 	// Signer signs this client's frames; nil for a read link.
 	Signer ed25519.PrivateKey
+	// CommentSigner signs kept comment entries (docs/design/kept-comments.md):
+	// the commenters' key, which an edit link derives too. Nil for a read link.
+	CommentSigner ed25519.PrivateKey
 	// ReadAdmission is the relay capability of everyone in the room;
 	// EditAdmission that of editors only, empty below an edit link.
 	ReadAdmission string
@@ -169,6 +172,7 @@ func DeriveRoomKeys(link LinkSecrets, roomID string) (*RoomKeys, error) {
 	read, commentKey := link.Read, link.CommentKey
 	if comment != nil {
 		sk := ed25519.NewKeyFromSeed(derive(comment, labelCommentSign))
+		k.CommentSigner = sk
 		if k.Signer == nil {
 			k.Signer = sk
 		}

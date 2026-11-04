@@ -72,6 +72,37 @@ export function admissionProtocols(token: string, version = PROTOCOL_VERSION): s
   return [socketProtocol(version), ADMISSION_PROTOCOL_PREFIX + token]
 }
 
+/**
+ * The versions a version 8 client offers, newest first, so a version 7 relay
+ * still accepts it (docs/design/kept-comments.md, "Version negotiation").
+ * Nothing offers them yet: PROTOCOL_VERSION stays 7 until the clients speak 8.
+ */
+export const CLIENT_PROTOCOL_VERSIONS = [8, 7] as const
+
+/**
+ * What a client offers as subprotocols: `versions` (newest first), the reader
+ * or editor admission token and, if it holds one, the comment admission token.
+ */
+export function offerProtocols(
+  token: string,
+  commentToken: string | null = null,
+  versions: readonly number[] = CLIENT_PROTOCOL_VERSIONS,
+): string[] {
+  if (!ADMISSION_PATTERN.test(token) || (commentToken && !ADMISSION_PATTERN.test(commentToken)))
+    throw new Error('invalid admission token')
+  return [
+    ...versions.map(socketProtocol),
+    ADMISSION_PROTOCOL_PREFIX + token,
+    ...(commentToken ? [COMMENT_ADMISSION_PROTOCOL_PREFIX + commentToken] : []),
+  ]
+}
+
+/** The version a socket's accepted subprotocol names (`pedit-v8` is 8), or undefined. */
+export function acceptedVersion(protocol: string | null | undefined): number | undefined {
+  const m = protocol ? VERSION_PROTOCOL.exec(protocol) : null
+  return m ? Number(m[1]) : undefined
+}
+
 /** Require one capability and negotiate only the public protocol name. */
 export function readAdmissionProtocol(header: string | null): string | null {
   const protocols = header?.split(',').map((p) => p.trim()) ?? []

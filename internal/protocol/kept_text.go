@@ -17,7 +17,16 @@ func SealKeptText(keys *RoomKeys, update []byte) ([]byte, error) {
 }
 
 func sealKeptPayload(keys *RoomKeys, domain, update []byte) ([]byte, error) {
-	if keys == nil || keys.Access != AccessEdit || len(keys.Signer) != ed25519.PrivateKeySize || !bytes.Equal(keys.Signer.Public().(ed25519.PublicKey), keys.EditKey) || len(update) == 0 || len(update)+len(domain)+ed25519.SignatureSize+ivBytes+tagBytes > MaxFrameBytes {
+	if keys == nil || keys.Access != AccessEdit {
+		return nil, errors.New("invalid kept text update")
+	}
+	return sealKeptWith(keys, keys.Signer, keys.EditKey, domain, update)
+}
+
+// sealKeptWith signs domain || update with signer, which must be the private
+// half of public, and encrypts the result under the frame key.
+func sealKeptWith(keys *RoomKeys, signer ed25519.PrivateKey, public ed25519.PublicKey, domain, update []byte) ([]byte, error) {
+	if keys == nil || len(signer) != ed25519.PrivateKeySize || !bytes.Equal(signer.Public().(ed25519.PublicKey), public) || len(update) == 0 || len(update)+len(domain)+ed25519.SignatureSize+ivBytes+tagBytes > MaxFrameBytes {
 		return nil, errors.New("invalid kept text update")
 	}
 	c, err := NewCipher(keys.FrameKey)
@@ -25,7 +34,7 @@ func sealKeptPayload(keys *RoomKeys, domain, update []byte) ([]byte, error) {
 		return nil, errors.New("invalid kept text key")
 	}
 	body := append(bytes.Clone(domain), update...)
-	return c.Encrypt(append(body, ed25519.Sign(keys.Signer, body)...)), nil
+	return c.Encrypt(append(body, ed25519.Sign(signer, body)...)), nil
 }
 
 func OpenKeptText(keys *RoomKeys, ciphertext []byte) ([]byte, error) {
@@ -33,7 +42,15 @@ func OpenKeptText(keys *RoomKeys, ciphertext []byte) ([]byte, error) {
 }
 
 func openKeptPayload(keys *RoomKeys, domain, ciphertext []byte) ([]byte, error) {
-	if keys == nil || len(keys.EditKey) != ed25519.PublicKeySize || len(ciphertext) > MaxFrameBytes {
+	if keys == nil {
+		return nil, errors.New("invalid kept text frame")
+	}
+	return openKeptWith(keys, keys.EditKey, domain, ciphertext)
+}
+
+// openKeptWith decrypts a kept frame and checks that domain starts it and key signed it.
+func openKeptWith(keys *RoomKeys, key ed25519.PublicKey, domain, ciphertext []byte) ([]byte, error) {
+	if keys == nil || len(key) != ed25519.PublicKeySize || len(ciphertext) > MaxFrameBytes {
 		return nil, errors.New("invalid kept text frame")
 	}
 	c, err := NewCipher(keys.FrameKey)
@@ -45,7 +62,7 @@ func openKeptPayload(keys *RoomKeys, domain, ciphertext []byte) ([]byte, error) 
 		return nil, errors.New("invalid kept text frame")
 	}
 	message, sig := body[:len(body)-ed25519.SignatureSize], body[len(body)-ed25519.SignatureSize:]
-	if !bytes.HasPrefix(message, domain) || !ed25519.Verify(keys.EditKey, message, sig) {
+	if !bytes.HasPrefix(message, domain) || !ed25519.Verify(key, message, sig) {
 		return nil, errors.New("invalid kept text signature")
 	}
 	return bytes.Clone(message[len(domain):]), nil
