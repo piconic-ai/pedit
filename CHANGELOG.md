@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.5.2](https://github.com/piconic-ai/pedit/compare/v0.5.1...v0.5.2) - 2026-11-04
+
+- Let a browser choose its display name (#213) by @kfly8 in https://github.com/piconic-ai/pedit/pull/422
+- Verify releases from the Sigstore bundle in the installers, pinning the tag's commit by @kfly8 in https://github.com/piconic-ai/pedit/pull/424
+- Reorder the README for a first run and move session details to docs by @kfly8 in https://github.com/piconic-ai/pedit/pull/425
+
 ## [v0.5.1](https://github.com/piconic-ai/pedit/compare/v0.5.0...v0.5.1) - 2026-11-03
 
 - Sample: depend on @pedit/serve 0.5.0 by @kfly8 in https://github.com/piconic-ai/pedit/pull/412
