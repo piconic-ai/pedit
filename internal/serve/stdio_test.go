@@ -189,6 +189,9 @@ func TestShutdownDoesNotWaitForAParentThatStoppedReading(t *testing.T) {
 	other := dial(t, s)
 	eventually(t, "the document", func() bool { return len(other.get()) == len(big) })
 	other.insert(0, "edit:")
+	// The edit must have reached the server: the test is about Close writing
+	// what it holds, not about an edit still on its way.
+	eventually(t, "the edit in the server", func() bool { return strings.HasPrefix(s.render(), "edit:") })
 	done := make(chan error, 1)
 	go func() { done <- s.Close() }()
 	select {
