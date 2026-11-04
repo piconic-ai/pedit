@@ -370,6 +370,19 @@ describe('the child environment and binary lookup', () => {
     expect(candidateNames(true, undefined)).toEqual(['pedit.com', 'pedit.exe'])
   })
 
+  it('passes CI on, so a child in CI skips the update check', () => {
+    const saved = process.env.CI
+    try {
+      process.env.CI = 'true'
+      expect(peditEnv().CI).toBe('true')
+      delete process.env.CI
+      expect(peditEnv()).not.toHaveProperty('CI')
+    } finally {
+      if (saved === undefined) delete process.env.CI
+      else process.env.CI = saved
+    }
+  })
+
   it('passes what Go needs on Windows, and nothing else', () => {
     const env = peditEnv()
     if (process.platform === 'win32') {
@@ -382,6 +395,7 @@ describe('the child environment and binary lookup', () => {
         'HOME',
         'XDG_CONFIG_HOME',
         'TMPDIR',
+        'CI',
         'USERPROFILE',
         'APPDATA',
         'LOCALAPPDATA',

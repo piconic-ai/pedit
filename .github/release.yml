@@ -6,3 +6,8 @@ changelog:
     - title: Security
       labels:
         - security
+    # Once categories are set, a PR matching none of them is left out of the
+    # notes; this catch-all keeps every other change listed.
+    - title: Changes
+      labels:
+        - "*"

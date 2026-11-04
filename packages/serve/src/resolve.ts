@@ -48,10 +48,13 @@ const WINDOWS_VARS = [
   'HOMEPATH',
 ]
 
-/** The only environment a pedit child gets. */
+/**
+ * The only environment a pedit child gets. CI is passed on so that a child started in CI skips the
+ * update check, as pedit does there on its own.
+ */
 export function peditEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {}
-  const names = ['PATH', 'HOME', 'XDG_CONFIG_HOME', 'TMPDIR', ...(WIN ? WINDOWS_VARS : [])]
+  const names = ['PATH', 'HOME', 'XDG_CONFIG_HOME', 'TMPDIR', 'CI', ...(WIN ? WINDOWS_VARS : [])]
   for (const k of names) {
     const v = process.env[k]
     if (v !== undefined) env[k] = v
