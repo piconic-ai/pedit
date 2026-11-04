@@ -1,4 +1,6 @@
+import * as encoding from 'lib0/encoding'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import * as awarenessProtocol from 'y-protocols/awareness'
 import { Awareness } from 'y-protocols/awareness'
 import * as Y from 'yjs'
 import {
@@ -501,6 +503,82 @@ describe('RoomClient', () => {
     expect(relay.frames.every((f) => f.length <= MAX_FRAME_BYTES)).toBe(true)
     expect(relay.urls).toHaveLength(2)
   })
+
+  it.each(['too-large', 'closed'] as const)(
+    'drops in-flight and queued frames when it stops with %s',
+    async (status) => {
+      const relay = new Relay()
+      const key = await editKeys()
+      const got: string[] = []
+      const doc = new Y.Doc()
+      const client = new RoomClient({
+        admissionToken: 'A'.repeat(43),
+        url: 'ws://test',
+        keys: key,
+        doc,
+        awareness: new Awareness(doc),
+        createSocket: relay.create,
+        onCanvas: (message) => got.push(message.id),
+      })
+      clients.push(client)
+      client.connect()
+      await vi.waitFor(() => expect(client.status).toBe('connected'))
+      const socket = [...relay.sockets][0]!
+      const sender = new Uint8Array(SENDER_BYTES).fill(7)
+      const canvas = (id: string) =>
+        encodeMessage(
+          MessageType.Canvas,
+          encodeCanvas({ kind: 'edit', id, base: '{}', next: '{}' }),
+        )
+      socket.onmessage?.({ data: await wireFrame(key, sender, 1, answer(client)) })
+      socket.onmessage?.({ data: await wireFrame(key, sender, 2, canvas('before')) })
+      await vi.waitFor(() => expect(got).toEqual(['before']))
+      const remoteDoc = new Y.Doc()
+      const remote = new Awareness(remoteDoc)
+      remote.setLocalState({ name: 'peer' })
+      const payload = encoding.createEncoder()
+      encoding.writeVarUint8Array(
+        payload,
+        awarenessProtocol.encodeAwarenessUpdate(remote, [remoteDoc.clientID]),
+      )
+      const awareness = await wireFrame(
+        key,
+        sender,
+        3,
+        encodeMessage(MessageType.Awareness, encoding.toUint8Array(payload)),
+      )
+      const queued = await wireFrame(key, sender, 4, canvas('after'))
+      const decrypt = crypto.subtle.decrypt.bind(crypto.subtle)
+      let release = () => {}
+      const blocked = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      let started = false
+      const spy = vi.spyOn(crypto.subtle, 'decrypt').mockImplementation(async (...args) => {
+        started = true
+        await blocked
+        return decrypt(...args)
+      })
+      try {
+        socket.onmessage?.({ data: awareness })
+        socket.onmessage?.({ data: queued })
+        await vi.waitFor(() => expect(started).toBe(true))
+        if (status === 'too-large') doc.getText('content').insert(0, 'x'.repeat(MAX_FRAME_BYTES))
+        else socket.close(ROOM_CLOSED)
+        await vi.waitFor(() => expect(client.status).toBe(status))
+        release()
+        await client['receiveChain']
+        expect([...client.awareness.getStates().keys()]).toEqual([doc.clientID])
+        expect(got).toEqual(['before'])
+        expect(client.status).toBe(status)
+      } finally {
+        release()
+        spy.mockRestore()
+        remote.destroy()
+        remoteDoc.destroy()
+      }
+    },
+  )
 
   it('stops for good when the relay says a frame is too big', async () => {
     const relay = new Relay({ maxFrame: 100 })
