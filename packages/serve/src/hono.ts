@@ -34,9 +34,10 @@ export interface PeditOptions<E extends Env = Env> {
 }
 
 export type PeditEvent =
-  | { type: 'started'; id: string; path: string }
+  | { type: 'started'; id: string; path: string; version?: string; serve?: number }
   | { type: 'stopped'; id: string; path: string; reason: 'idle' | 'exited' | 'shutdown' }
   | { type: 'error'; id: string | null; message: string }
+  | { type: 'update_available'; version: string; url: string; security: boolean }
 
 const ID = /^[A-Za-z0-9_-]{1,128}$/
 const TOKEN_TTL_MS = 60_000
@@ -133,12 +134,19 @@ export function peditRoutes<E extends Env = Env>(
           idleMs: options.idleMs,
           graceMs: options.graceMs,
           onEvent(e) {
+            if (e.type === 'update_available') return emit(e)
             const id = (e.path !== null && idByPath.get(e.path)) || null
             if (e.type === 'error') emit({ type: 'error', id, message: e.message })
             else if (id !== null) {
               emit(
                 e.type === 'started'
-                  ? { type: 'started', id, path: e.path }
+                  ? {
+                      type: 'started',
+                      id,
+                      path: e.path,
+                      ...(e.version !== undefined && { version: e.version }),
+                      ...(e.serve !== undefined && { serve: e.serve }),
+                    }
                   : { type: 'stopped', id, path: e.path, reason: e.reason },
               )
             }

@@ -102,7 +102,7 @@ Options:
                         as JSON lines on stdout, for a script or an agent;
                         messages for people go to stderr
   -h, --help             Show this help
-  -v, --version          Show the version
+  -v, --version          Show the version (with --json: the surface versions too)
 
 Configuration:
   .pedit/config.yaml  Server, output and keep. Templates live in .pedit/templates/.
@@ -318,6 +318,10 @@ func runWithoutShare(args []string, stdout, stderr io.Writer) (code int, ok bool
 			fmt.Fprintln(stdout, getVersion())
 			return 0, true
 		}
+	}
+	if len(args) == 2 && (args[0] == "-v" || args[0] == "--version") && args[1] == "--json" {
+		fmt.Fprintln(stdout, versionJSON())
+		return 0, true
 	}
 	return runSubcommand(args, stdout, stderr)
 }

@@ -101,6 +101,43 @@ process.stdin.resume()
     await expect(other.acquire(write(dir, 'b.md'))).rejects.toThrow(/generation/)
   })
 
+  it.skipIf(!FAKE)(
+    'reports the version, and passes on update_available once per version',
+    async () => {
+      const { dir, cleanup } = tmpRoot()
+      cleanups.push(cleanup)
+      const fake = fakePedit(
+        dir,
+        'pedit',
+        `${printEvent({ event: 'listening', generation: 'g', version: 'v1.2.3', serve: 1 })}
+${printEvent({ event: 'update_available', version: 'v9.9.9', url: 'https://example.test/r', security: true })}
+${printEvent({ event: 'update_available', version: 'v9.9.9', url: 'https://example.test/r', security: true })}
+${printEvent({ event: 'update_available', version: 7, url: 'x' })}
+process.stdin.resume()
+`,
+      )
+      const events: ServeEvent[] = []
+      const files = new ServedFiles({ bin: fake, app: 'test-app', onEvent: (e) => events.push(e) })
+      cleanups.push(() => files.close())
+      await files.acquire(write(dir, 'a.md'))
+      await vi.waitFor(() => expect(events.some((e) => e.type === 'update_available')).toBe(true))
+      expect(events).toContainEqual({
+        type: 'started',
+        path: expect.any(String),
+        version: 'v1.2.3',
+        serve: 1,
+      })
+      expect(events.filter((e) => e.type === 'update_available')).toEqual([
+        {
+          type: 'update_available',
+          version: 'v9.9.9',
+          url: 'https://example.test/r',
+          security: true,
+        },
+      ])
+    },
+  )
+
   it('shares one child between a hard link, a symlink and a case variant', async () => {
     const { dir, files, events } = setup()
     const a = write(dir, 'a.md')
@@ -333,6 +370,19 @@ describe('the child environment and binary lookup', () => {
     expect(candidateNames(true, undefined)).toEqual(['pedit.com', 'pedit.exe'])
   })
 
+  it('passes CI on, so a child in CI skips the update check', () => {
+    const saved = process.env.CI
+    try {
+      process.env.CI = 'true'
+      expect(peditEnv().CI).toBe('true')
+      delete process.env.CI
+      expect(peditEnv()).not.toHaveProperty('CI')
+    } finally {
+      if (saved === undefined) delete process.env.CI
+      else process.env.CI = saved
+    }
+  })
+
   it('passes what Go needs on Windows, and nothing else', () => {
     const env = peditEnv()
     if (process.platform === 'win32') {
@@ -345,6 +395,7 @@ describe('the child environment and binary lookup', () => {
         'HOME',
         'XDG_CONFIG_HOME',
         'TMPDIR',
+        'CI',
         'USERPROFILE',
         'APPDATA',
         'LOCALAPPDATA',

@@ -25,10 +25,14 @@ import (
 // is trusted only against the file: text that pedit did not itself write last
 // is merged as an external edit, never written back.
 const (
-	stateVersion  = 1
+	stateVersion  = StateVersion
 	stateMaxAge   = 7 * 24 * time.Hour
 	stateMaxBytes = 64 << 20
 )
+
+// StateVersion is the version of the state file's format, reported by
+// `pedit --version --json`.
+const StateVersion = 1
 
 type stateRecord struct {
 	Version    int

@@ -238,3 +238,52 @@ func TestOutdated(t *testing.T) {
 		t.Fatalf("server outdated, got:\n%q\nwant:\n%q", out.String(), want)
 	}
 }
+
+func TestHasSecuritySection(t *testing.T) {
+	tests := []struct {
+		name, body string
+		want       bool
+	}{
+		{"h2", "## Security\n* fix #1\n", true},
+		{"h3", "x\n### Security\n* fix #1\n", true},
+		{"crlf and trailing space", "## Security \r\n* fix", true},
+		{"absent", "## Other Changes\n* a\n", false},
+		{"mid-sentence", "## Other Changes\n* Security hardening of the relay\n", false},
+		{"in a heading", "## Security fixes\n", false},
+		{"h1", "# Security\n", false},
+		{"h4", "#### Security\n", false},
+		{"empty", "", false},
+	}
+	for _, tt := range tests {
+		if got := hasSecuritySection(tt.body); got != tt.want {
+			t.Errorf("%s: hasSecuritySection = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestUpdateCheckKeepsSecurityInTheCache(t *testing.T) {
+	var requests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		_ = json.NewEncoder(w).Encode(release{Version: "v0.0.12", URL: "u", Body: "## Security\n* fix\n"})
+	}))
+	t.Cleanup(srv.Close)
+	c := testChecker(t, srv.URL, time.Now())
+	for range 2 {
+		r, err := c.check(context.Background(), "v0.0.11")
+		if err != nil || r == nil || !r.Security || r.Body != "" {
+			t.Fatalf("check = %+v, %v", r, err)
+		}
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1 (the second read comes from the cache)", requests)
+	}
+	// A cache written before security existed reads as false.
+	old := `{"checked_at":"` + time.Now().Format(time.RFC3339) + `","latest":{"tag_name":"v0.0.12","html_url":"u"}}`
+	if err := os.WriteFile(c.statePath, []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := c.check(context.Background(), "v0.0.11"); err != nil || r == nil || r.Security {
+		t.Fatalf("old cache: %+v, %v", r, err)
+	}
+}

@@ -100,7 +100,7 @@ Each direction is a sequence of frames, nothing else:
 | `1` open | app | one byte: `0` edit, `1` read |
 | `2` data | both | one y-websocket message, as a WebSocket binary frame carried it |
 | `3` close | both | from the app, empty; from pedit, a uint16 close code and a UTF-8 reason of at most 123 bytes |
-| `4` event | pedit | stream 0; one JSON event as `--json` printed it (`listening`, `saved`, `external_save`, `held`, `error`) |
+| `4` event | pedit | stream 0; one JSON event as `--json` printed it (`listening`, `saved`, `external_save`, `update_available`, `held`, `error`) |
 
 - Stream ids are chosen by the app, start at 1 and only increase; an id is
   never reused within a child. At most 8 streams are open at once.
@@ -124,6 +124,45 @@ Each direction is a sequence of frames, nothing else:
   stream that fills it is closed (1013) instead of holding the others back.
 - The app reads stdout without pause and never waits on a browser; a page
   whose socket buffers more than 16 MiB is closed (1013), as today.
+
+## The serve version and `--version --json`
+
+`pedit --version --json` prints one line, for an app that has to know what it
+is talking to:
+
+    {"version":"v0.5.2","wire":7,"serve":1,"state":1}
+
+- `version`: what `pedit --version` prints.
+- `wire`: the relay protocol version (`internal/protocol`).
+- `serve`: the version of the `pedit serve --stdio` surface, meaning the frames
+  and the events. It starts at 1 and changes only additively within a value:
+  new events and new fields may appear, and nothing that exists changes
+  meaning. Anything that breaks an app raises the value. An app checks `serve`
+  instead of comparing pedit versions, and ignores events and fields it does
+  not know.
+- `state`: the version of the state file above.
+
+The `listening` event carries `version` and `serve` too, so an app that already
+runs a child need not start a second process to learn them.
+
+## Update events
+
+After `listening`, the child checks for a newer release in the background, with
+the same cache as the interactive check (`<UserCacheDir>/pedit/update.json`, so
+at most one request a day across all children). If one exists it sends, once:
+
+    {"event":"update_available","version":"v0.6.0","url":"https://github.com/piconic-ai/pedit/releases/tag/v0.6.0","security":false}
+
+- Only the tag and the release page URL come from GitHub; nothing else is
+  passed on.
+- `security` is true when the release notes have a `## Security` or
+  `### Security` heading. `.github/release.yml` files pull requests labelled
+  `security` under that heading. The flag is kept in the cache beside the
+  version; a cache written before it existed reads as false.
+- Not checked: development builds (`dev`), when `CI` is set, or with
+  `--no-update-check`. A failed request is silent and tried again next time.
+- `@pedit/serve` passes it to the app as an `update_available` event once per
+  version, however many children saw it.
 
 ## Windows
 
