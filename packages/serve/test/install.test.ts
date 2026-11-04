@@ -56,7 +56,14 @@ function publish(
   rel.routes.set(`/dl/${TAG}/pedit_${TAG}.sigstore.json`, '{}')
   rel.routes.set(`/repos/piconic-ai/pedit/commits/${TAG}`, opts.commit ?? SHA)
 }
-const test = () => ({ downloadUrl: `${rel.url}/dl`, apiUrl: rel.url })
+// The fixture's platform (darwin or linux, a tar.gz), not the host's, so these run the same on
+// Windows; the zip case passes platform: 'win32' itself.
+const test = () => ({
+  downloadUrl: `${rel.url}/dl`,
+  apiUrl: rel.url,
+  platform: OS,
+  arch: ARCH === 'arm64' ? 'arm64' : 'x64',
+})
 const good = () =>
   tarGz([
     { name: 'LICENSE', data: 'x' },

@@ -100,6 +100,92 @@ function ghVerify(gh: string, args: string[]): Promise<boolean> {
   })
 }
 
+interface Release {
+  tag: string
+  name: string
+  archive: Buffer
+  bundle: Buffer
+}
+
+/** The latest release's archive for this platform, checked against checksums.txt, and its bundle. */
+async function fetchRelease(apiUrl: string, downloadUrl: string, asset: string): Promise<Release> {
+  const latest = JSON.parse(
+    (
+      await get(`${apiUrl}/repos/${REPO}/releases/latest`, MAX_SMALL, {
+        Accept: 'application/vnd.github+json',
+      })
+    ).toString(),
+  ) as { tag_name?: unknown }
+  const tag = latest.tag_name
+  if (typeof tag !== 'string' || !TAG.test(tag)) {
+    throw new Error(`unexpected release tag ${JSON.stringify(tag)}`)
+  }
+  const name = `pedit_${tag}_${asset}`
+  const base = `${downloadUrl}/${tag}/`
+  const archive = await get(base + name, MAX_ARCHIVE)
+  const sums = (await get(`${base}checksums.txt`, MAX_SMALL)).toString()
+  const bundle = await get(`${base}pedit_${tag}.sigstore.json`, MAX_SMALL)
+  checkChecksum(archive, sums, name)
+  return { tag, name, archive, bundle }
+}
+
+/** The commit the tag points to, as GitHub reports it, or undefined. Only the tag is sent. */
+async function tagCommit(apiUrl: string, tag: string): Promise<string | undefined> {
+  try {
+    const sha = (
+      await get(`${apiUrl}/repos/${REPO}/commits/${tag}`, 256, {
+        Accept: 'application/vnd.github.sha',
+      })
+    )
+      .toString()
+      .trim()
+    return /^[0-9a-f]{40}$/.test(sha) ? sha : undefined
+  } catch {
+    return undefined // not pinned to the commit; the check still runs
+  }
+}
+
+/** Checks the build provenance with gh when it is installed; says which check was made. */
+async function verifyRelease(
+  rel: Release,
+  scratch: string,
+  apiUrl: string,
+  gh: string,
+): Promise<Verified> {
+  const archivePath = join(scratch, rel.name)
+  const bundlePath = join(scratch, 'bundle.json')
+  await writeFile(archivePath, rel.archive, { mode: 0o600 })
+  await writeFile(bundlePath, rel.bundle, { mode: 0o600 })
+  const args = [
+    'attestation',
+    'verify',
+    archivePath,
+    '--bundle',
+    bundlePath,
+    '--repo',
+    REPO,
+    '--signer-workflow',
+    `${REPO}/.github/workflows/release-build.yml`,
+    '--deny-self-hosted-runners',
+  ]
+  const sha = await tagCommit(apiUrl, rel.tag)
+  if (sha) args.push('--source-digest', sha, '--signer-digest', sha)
+  return (await ghVerify(gh, args)) ? 'provenance' : 'checksum'
+}
+
+/** Writes the binary beside `bin` and renames it into place, so `bin` is always whole. */
+async function writeBinary(bin: string, binary: Buffer): Promise<void> {
+  await mkdir(dirname(bin), { recursive: true, mode: 0o700 })
+  const stage = join(dirname(bin), `.pedit-install-${randomBytes(6).toString('hex')}`)
+  try {
+    await writeFile(stage, binary, { mode: 0o755, flag: 'wx' })
+    await chmod(stage, 0o755)
+    await rename(stage, bin)
+  } finally {
+    await rm(stage, { force: true })
+  }
+}
+
 /**
  * Downloads the latest pedit release, verifies it as install.sh and `pedit self-update` do
  * (checksum, plus build provenance when gh is installed) and puts the binary at `bin`, atomically.
@@ -117,67 +203,13 @@ export async function downloadPedit(bin: string, t: InstallTestOptions = {}): Pr
   const downloadUrl = t.downloadUrl ?? `https://github.com/${REPO}/releases/download`
   const scratch = await mkdtemp(join(tmpdir(), 'pedit-install-')) // 0700
   try {
-    const latest = JSON.parse(
-      (
-        await get(`${apiUrl}/repos/${REPO}/releases/latest`, MAX_SMALL, {
-          Accept: 'application/vnd.github+json',
-        })
-      ).toString(),
-    ) as { tag_name?: unknown }
-    const tag = latest.tag_name
-    if (typeof tag !== 'string' || !TAG.test(tag)) {
-      throw new Error(`unexpected release tag ${JSON.stringify(tag)}`)
-    }
-
-    const name = `pedit_${tag}_${os}_${arch}${win ? '.zip' : '.tar.gz'}`
-    const base = `${downloadUrl}/${tag}/`
-    const archive = await get(base + name, MAX_ARCHIVE)
-    const sums = (await get(`${base}checksums.txt`, MAX_SMALL)).toString()
-    const bundle = await get(`${base}pedit_${tag}.sigstore.json`, MAX_SMALL)
-    checkChecksum(archive, sums, name)
-
-    const archivePath = join(scratch, name)
-    const bundlePath = join(scratch, 'bundle.json')
-    await writeFile(archivePath, archive, { mode: 0o600 })
-    await writeFile(bundlePath, bundle, { mode: 0o600 })
-    const args = [
-      'attestation',
-      'verify',
-      archivePath,
-      '--bundle',
-      bundlePath,
-      '--repo',
-      REPO,
-      '--signer-workflow',
-      `${REPO}/.github/workflows/release-build.yml`,
-      '--deny-self-hosted-runners',
-    ]
-    try {
-      const sha = (
-        await get(`${apiUrl}/repos/${REPO}/commits/${tag}`, 256, {
-          Accept: 'application/vnd.github.sha',
-        })
-      )
-        .toString()
-        .trim()
-      if (/^[0-9a-f]{40}$/.test(sha)) args.push('--source-digest', sha, '--signer-digest', sha)
-    } catch {} // not pinned to the commit; the check still runs
-    const verified: Verified = (await ghVerify(t.gh ?? 'gh', args)) ? 'provenance' : 'checksum'
-
+    const rel = await fetchRelease(apiUrl, downloadUrl, `${os}_${arch}${win ? '.zip' : '.tar.gz'}`)
+    const verified = await verifyRelease(rel, scratch, apiUrl, t.gh ?? 'gh')
     const entry = win ? 'pedit.exe' : 'pedit'
-    const binary = (win ? zipEntry : tarGzEntry)(archive, entry, MAX_BINARY_SIZE)
+    const binary = (win ? zipEntry : tarGzEntry)(rel.archive, entry, MAX_BINARY_SIZE)
     if (!binary) throw new Error(`the archive has no ${entry} at its root`)
-
-    await mkdir(dirname(bin), { recursive: true, mode: 0o700 })
-    const stage = join(dirname(bin), `.pedit-install-${randomBytes(6).toString('hex')}`)
-    try {
-      await writeFile(stage, binary, { mode: 0o755, flag: 'wx' })
-      await chmod(stage, 0o755)
-      await rename(stage, bin)
-    } finally {
-      await rm(stage, { force: true })
-    }
-    return { tag, verified }
+    await writeBinary(bin, binary)
+    return { tag: rel.tag, verified }
   } catch (e) {
     if (e instanceof NoPeditError) throw e
     throw new NoPeditError(`could not install pedit: ${e instanceof Error ? e.message : String(e)}`)
