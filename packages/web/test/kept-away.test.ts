@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import '../src/components/EndedBanner.tsx'
 import '../src/components/RoomStatusIndicator.tsx'
 import { whyNoImages } from '../src/attachments.ts'
-import { AwayView, commentsLockedFor, isHostAway, isLocked } from '../src/keptaway.ts'
+import { AwayView, commentsLockedFor, isHostAway, isLocked, keptKindFor } from '../src/keptaway.ts'
 import { Store } from '../src/store.ts'
 
 const UNTIL = Date.UTC(2030, 0, 2, 3, 4, 5)
@@ -20,6 +20,7 @@ function mount() {
     status,
     text: () => '',
     keptUntil: away.until,
+    keeps: away.keeps,
     skipped: away.skipped,
     hostClosed: away.hostClosed,
     onReconnect: () => {},
@@ -66,6 +67,7 @@ describe('editing while the host is away', () => {
 
   it('says in the header that the host is away and the edits are kept, and until when', () => {
     const x = mount()
+    x.away.keeps.set('edits')
     x.set('kept')
     expect(x.button.dataset.host).toBe('away')
     expect(x.button.getAttribute('aria-label')).toMatch(/host is away.*Edits kept/)
@@ -76,6 +78,20 @@ describe('editing while the host is away', () => {
     x.set('connected')
     expect(x.button.dataset.host).toBe('online')
     expect(x.banner.hidden).toBe(true)
+  })
+
+  it('says only what the relay keeps from this link while the host is away', () => {
+    const x = mount()
+    x.set('kept')
+    x.away.keeps.set(keptKindFor(true, true, false))
+    expect(x.banner.textContent).toContain('and your edits are kept for the host to take in.')
+    x.away.keeps.set(keptKindFor(false, true, false))
+    expect(x.banner.textContent).not.toMatch(/kept for the host/)
+    expect(x.banner.textContent).toContain(`until ${new Date(UNTIL).toLocaleString()}.`)
+    x.away.keeps.set(keptKindFor(false, true, true))
+    expect(x.banner.textContent).toContain('and your comments are kept for the host to take in.')
+    x.away.keeps.set(keptKindFor(false, false, true))
+    expect(x.banner.textContent).not.toMatch(/kept for the host/)
   })
 
   it('shows edits the relay has not logged yet as sending, and kept once it has', () => {
