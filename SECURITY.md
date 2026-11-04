@@ -32,8 +32,10 @@ release and is in scope.
 ## Verifying what you install
 
 Release archives carry Sigstore build provenance from this repository's release
-workflow. The install scripts check it when `gh` is installed (no sign-in
-needed, pinned to the release tag's commit), and only the checksum otherwise.
+workflow. The install scripts check it when `gh` is installed: for releases
+from v0.1.6 without a sign-in, pinned to the release tag's commit when GitHub
+answers that lookup; older releases need `gh auth login`. Otherwise they check
+only the checksum, and say so.
 The scripts themselves are served by the relay, so to rely on the release
 workflow alone, use Homebrew or `go install`, or download an archive and check
 it with `gh attestation verify`. See [verifying releases](docs/verifying-releases.md).
