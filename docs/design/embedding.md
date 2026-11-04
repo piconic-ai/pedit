@@ -100,8 +100,8 @@ host half of `pedit <file>` to the same process:
   The links are fragments only (see "Links"); the app puts its page URL in front.
 - **Kept rooms are in v1.** `keep` works as `--keep` does (default 1 day, up to
   the relay's cap; `0` for a live room). When the app stops pedit, or the app
-  quits, a kept room stays on the relay: reviewers keep editing and commenting
-  through their page, and the relay holds their encrypted edits, as in
+  quits, a kept room stays on the relay: reviewers with an edit link keep editing and commenting
+  through their page (comment-only links are read-only until the app is back; see v1 scope), and the relay holds their encrypted edits, as in
   docs/design/rooms-away.md.
 - **Resuming.** pedit keeps the resume record it keeps for `pedit <file>` (under
   `pedit/keep/` in the user configuration directory, `0600`). When the app starts
@@ -196,8 +196,13 @@ is, and a second copy of the room logic would drift.
   shadow root; theming only through the custom properties and slots above.
 - **v1 scope:** one text file (Markdown or plain text), editing by access
   level, comments, comment-only and read-only links, viewing and pasting images,
-  presence, and the host-away state of kept rooms (editing and commenting go on;
-  the header says until when).
+  presence, and the host-away state of kept rooms. While the host is away, an
+  edit link keeps editing and commenting and the header says until when. A
+  comment-only link becomes read-only then, as in the relay's editor today: the
+  relay keeps only updates signed with the edit key (docs/design/rooms-away.md).
+  Letting comment-only links comment while the host is away needs the relay to
+  keep comment-tier updates to the comments documents too; that is a protocol
+  change of its own, decided separately.
 - **Next, soon after v1:** several files (tabs), the CSV table, canvas, and the
   Markdown preview. The core is cut so that each is a view the component can
   mount, as packages/web mounts them today: a file's kind picks its view, and an
