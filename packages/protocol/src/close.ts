@@ -12,6 +12,14 @@ export const ROOM_CLOSED = 4001
 export const HOST_LEFT = 4008
 
 /**
+ * WebSocket close code for a page whose origin the room does not admit
+ * (docs/design/embedding.md, "Per-room origins"); the reason is "this page is
+ * not allowed for this room". Clients must not reconnect on it: the host has
+ * to list the page's origin first.
+ */
+export const ORIGIN_NOT_ALLOWED = 4009
+
+/**
  * Text frames the relay itself sends guests, the only frames not from a peer
  * and not encrypted: the host dropped and the relay waits for it to come back
  * (HOST_AWAY), or it came back (HOST_BACK). Guests do not edit while the host

@@ -35,6 +35,7 @@ const RELAY_BUSY = 4005
 const RELAY_MAINTENANCE = 4006
 const ROOM_EXPIRED = 4007
 const HOST_LEFT = 4008
+const ORIGIN_NOT_ALLOWED = 4009
 const MESSAGE_TOO_BIG = 1009
 // The tests run with small limits (vitest.config.ts).
 const { guests: GUESTS, readers: READERS, blobBytes: BLOB_BYTES, roomSeconds } = limits(env)
@@ -163,15 +164,16 @@ describe('rooms', () => {
     valid.webSocket?.close()
   })
 
-  it('lets in browsers of its own origin and clients without one, and no other', async () => {
+  it('lets in browsers of its own origin and clients without one, and closes other pages', async () => {
     const room = await createRoom()
     await host(room, { Origin: 'https://pedit.test' })
     const guest = await connect(room.id, { Origin: 'https://pedit.test' })
     guest.ws.close()
     for (const origin of ['https://evil.example', 'http://pedit.test', 'null']) {
-      const res = await upgrade(room.id, { Origin: origin })
-      expect(res.status).toBe(403)
-      expect(await res.text()).toBe('cross-origin WebSocket not allowed')
+      const page = await connect(room.id, { Origin: origin })
+      const closed = await page.closed
+      expect(closed.code).toBe(ORIGIN_NOT_ALLOWED)
+      expect(closed.reason).toBe('this page is not allowed for this room')
     }
   })
 
@@ -1490,5 +1492,200 @@ describe('a host that drops', () => {
     } finally {
       spy.mockRestore()
     }
+  })
+})
+
+describe('per-room origins', () => {
+  const PAGE = 'https://review.example.com'
+  const withOrigins = (list: string) => ({ 'X-Pedit-Origins': list })
+  const originsOf = (room: Room) =>
+    runInDurableObject(env.ROOM.get(env.ROOM.idFromName(room.id)), (_i, st) =>
+      st.storage.kv.get<string[]>('origins'),
+    )
+
+  it('admits a listed origin and closes an unlisted one', async () => {
+    const room = await createRoom()
+    await host(room, withOrigins(`${PAGE}, http://localhost:5173`))
+    const page = await connect(room.id, { Origin: PAGE })
+    const local = await connect(room.id, { Origin: 'http://localhost:5173' })
+    // Still open after the room had time to refuse them.
+    await new Promise((r) => setTimeout(r, 20))
+    expect(page.ws.readyState).toBe(WebSocket.OPEN)
+    expect(local.ws.readyState).toBe(WebSocket.OPEN)
+    const other = await connect(room.id, { Origin: 'https://other.example.com' })
+    expect((await other.closed).code).toBe(ORIGIN_NOT_ALLOWED)
+    // The same host, with another scheme or port, is another origin.
+    for (const origin of ['http://review.example.com', `${PAGE}:8443`]) {
+      expect((await (await connect(room.id, { Origin: origin })).closed).code).toBe(
+        ORIGIN_NOT_ALLOWED,
+      )
+    }
+  })
+
+  it('refuses every foreign origin in a room with no list', async () => {
+    const room = await createRoom()
+    await host(room)
+    const page = await connect(room.id, { Origin: PAGE })
+    const closed = await page.closed
+    expect(closed.code).toBe(ORIGIN_NOT_ALLOWED)
+    expect(await originsOf(room)).toBeUndefined()
+  })
+
+  it('refuses a host whose list is not allowed, before it registers anything', async () => {
+    const room = await createRoom()
+    const lists = [
+      Array.from({ length: 5 }, (_, i) => `https://p${i}.example.com`).join(','),
+      'https://review.example.com/path',
+      'https://review.example.com/',
+      'https://*.example.com',
+      'http://review.example.com',
+      'http://localhost',
+      'ftp://review.example.com',
+      'review.example.com',
+    ]
+    for (const list of lists) {
+      const res = await upgrade(room.id, {
+        Authorization: `Bearer ${room.hostToken}`,
+        [READ_ADMISSION_HEADER]: room.read,
+        ...withOrigins(list),
+      })
+      expect(res.status, list).toBe(403)
+      expect(await res.text()).toBe('invalid origins')
+    }
+    expect(await originsOf(room)).toBeUndefined()
+    // A valid host still gets in: nothing was registered.
+    await host(room, withOrigins(PAGE))
+    expect(await originsOf(room)).toEqual([PAGE])
+  })
+
+  it('takes the list on the first connection only', async () => {
+    const room = await createRoom()
+    const first = await host(room, withOrigins(PAGE))
+    first.ws.close()
+    await host(room, withOrigins('https://other.example.com'))
+    expect(await originsOf(room)).toEqual([PAGE])
+  })
+
+  it('ignores the header from a guest or from outside', async () => {
+    const room = await createRoom()
+    await host(room)
+    const guest = await connect(room.id, withOrigins(PAGE))
+    guest.ws.close()
+    expect(await originsOf(room)).toBeUndefined()
+    // A header naming a foreign origin does not make a page one.
+    const page = await connect(room.id, {
+      Origin: PAGE,
+      'X-Pedit-Foreign-Origin': 'https://pedit.test',
+    })
+    expect((await page.closed).code).toBe(ORIGIN_NOT_ALLOWED)
+    // Nor does a spoofed marker on a same-origin request turn it foreign.
+    const same = await connect(room.id, { 'X-Pedit-Foreign-Origin': PAGE })
+    expect(same.ws.readyState).toBe(WebSocket.OPEN)
+  })
+
+  it('never lets a page act as the host', async () => {
+    const room = await createRoom()
+    const res = await upgrade(room.id, {
+      Origin: PAGE,
+      Authorization: `Bearer ${room.hostToken}`,
+      ...withOrigins(PAGE),
+    })
+    expect(res.status).toBe(403)
+    expect(await originsOf(room)).toBeUndefined()
+  })
+
+  it('forgets the list when the session ends', async () => {
+    const room = await createRoom()
+    const h = await host(room, withOrigins(PAGE))
+    expect(await originsOf(room)).toEqual([PAGE])
+    h.ws.close(HOST_LEFT, 'bye')
+    await h.closed
+    await vi.waitFor(async () => expect(await originsOf(room)).toBeUndefined())
+  })
+
+  describe('attachments', () => {
+    const blobRequest = (room: Room, id: string, init: RequestInit & { origin?: string }) =>
+      exports.default.fetch(blobUrl(room, id), {
+        ...init,
+        headers: {
+          ...(init.origin ? { Origin: init.origin } : {}),
+          ...(init.method === 'OPTIONS' ? {} : { [ADMISSION_HEADER]: room.admission }),
+          ...(init.headers as Record<string, string>),
+        },
+      })
+
+    it('answers a preflight from a listed origin only', async () => {
+      const room = await createRoom()
+      await host(room, withOrigins(PAGE))
+      const ok = await blobRequest(room, blobId(1), { method: 'OPTIONS', origin: PAGE })
+      expect(ok.status).toBe(204)
+      expect(ok.headers.get('Access-Control-Allow-Origin')).toBe(PAGE)
+      expect(ok.headers.get('Access-Control-Allow-Headers')).toBe('X-Pedit-Admission')
+      expect(ok.headers.get('Access-Control-Allow-Methods')).toBe('GET, PUT')
+      expect(ok.headers.get('Access-Control-Max-Age')).toBe('600')
+      expect(ok.headers.get('Vary')).toBe('Origin')
+      const no = await blobRequest(room, blobId(1), {
+        method: 'OPTIONS',
+        origin: 'https://other.example.com',
+      })
+      expect(no.status).toBe(403)
+      expect(no.headers.get('Access-Control-Allow-Origin')).toBeNull()
+    })
+
+    it('carries CORS headers on every answer to a listed origin', async () => {
+      const room = await createRoom()
+      await host(room, withOrigins(PAGE))
+      const put = await blobRequest(room, blobId(1), {
+        method: 'PUT',
+        body: new Uint8Array([1, 2, 3]),
+        origin: PAGE,
+      })
+      expect(put.status).toBe(201)
+      expect(put.headers.get('Access-Control-Allow-Origin')).toBe(PAGE)
+      expect(put.headers.get('Vary')).toBe('Origin')
+      const get = await blobRequest(room, blobId(1), { method: 'GET', origin: PAGE })
+      expect(get.status).toBe(200)
+      expect(get.headers.get('Access-Control-Allow-Origin')).toBe(PAGE)
+      expect(new Uint8Array(await get.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]))
+      // Errors too, so the page can read why.
+      const missing = await blobRequest(room, blobId(2), { method: 'GET', origin: PAGE })
+      expect(missing.status).toBe(404)
+      expect(missing.headers.get('Access-Control-Allow-Origin')).toBe(PAGE)
+      const unauthorised = await exports.default.fetch(blobUrl(room, blobId(1)), {
+        headers: { Origin: PAGE },
+      })
+      expect(unauthorised.status).toBe(403)
+      expect(unauthorised.headers.get('Access-Control-Allow-Origin')).toBe(PAGE)
+    })
+
+    it('gives an unlisted origin nothing, still behind the admission token', async () => {
+      const room = await createRoom()
+      await host(room, withOrigins(PAGE))
+      expect((await putBlob(room, blobId(1), new Uint8Array([1]))).status).toBe(201)
+      for (const origin of ['https://other.example.com', 'null']) {
+        const res = await blobRequest(room, blobId(1), { method: 'GET', origin })
+        expect(res.status).toBe(403)
+        expect(res.headers.get('Access-Control-Allow-Origin')).toBeNull()
+      }
+      const noToken = await exports.default.fetch(blobUrl(room, blobId(1)), {
+        headers: { Origin: 'https://other.example.com' },
+      })
+      expect(noToken.headers.get('Access-Control-Allow-Origin')).toBeNull()
+    })
+
+    it('leaves same-origin requests as they were', async () => {
+      const room = await createRoom()
+      await host(room, withOrigins(PAGE))
+      expect((await putBlob(room, blobId(1), new Uint8Array([1]))).status).toBe(201)
+      const get = await blobRequest(room, blobId(1), {
+        method: 'GET',
+        origin: 'https://pedit.test',
+      })
+      expect(get.status).toBe(200)
+      expect(get.headers.get('Access-Control-Allow-Origin')).toBeNull()
+      expect(get.headers.get('Vary')).toBeNull()
+      const options = await blobRequest(room, blobId(1), { method: 'OPTIONS' })
+      expect(options.status).toBe(403)
+    })
   })
 })

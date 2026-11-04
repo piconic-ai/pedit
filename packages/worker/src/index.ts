@@ -1,6 +1,7 @@
 import { checkProtocolVersion } from '@pedit/protocol/admission'
 import { RELAY_BUSY, RELAY_MAINTENANCE } from '@pedit/protocol/close'
 import { Hono } from 'hono'
+import { FOREIGN_ORIGIN_HEADER, ORIGINS_HEADER } from './origins.ts'
 import { embedSourcesFor, mediaSourcesFrom, scriptHashes, servePage } from './page.ts'
 import { HOST_HEADER, KEEP_HEADER, maintenance, refuse } from './room.ts'
 
@@ -38,6 +39,15 @@ export async function roomIdFor(hostToken: string): Promise<string> {
 export function allowedOrigin(request: Request): boolean {
   const origin = request.headers.get('Origin')
   return origin === null || origin === new URL(request.url).origin
+}
+
+/**
+ * The Origin of a browser request that is not from the relay's own pages, or
+ * null. The Durable Object decides whether its room admits it.
+ */
+export function foreignOrigin(request: Request): string | null {
+  const origin = request.headers.get('Origin')
+  return origin === null || origin === new URL(request.url).origin ? null : origin
 }
 
 /**
@@ -154,6 +164,7 @@ app.post('/api/rooms/:id/keep/close', async (c) => {
 
   const headers = new Headers(c.req.raw.headers)
   headers.delete(HOST_HEADER)
+  headers.delete(FOREIGN_ORIGIN_HEADER)
   const auth = c.req.header('Authorization')
   if (auth) {
     const token = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(auth)?.[1]
@@ -169,7 +180,11 @@ app.get('/api/rooms/:id/ws', async (c) => {
   if (c.req.header('Upgrade')?.toLowerCase() !== 'websocket') {
     return c.text('expected a WebSocket upgrade', 426)
   }
-  if (!allowedOrigin(c.req.raw)) return c.text('cross-origin WebSocket not allowed', 403)
+  const foreign = foreignOrigin(c.req.raw)
+  // The host is the CLI, never a page.
+  if (foreign !== null && c.req.header('Authorization')) {
+    return c.text('cross-origin WebSocket not allowed', 403)
+  }
   if (maintenance(c.env) === 'closed') {
     return refuse(RELAY_MAINTENANCE, 'closed for maintenance', offeredProtocol(c.req.raw))
   }
@@ -182,6 +197,9 @@ app.get('/api/rooms/:id/ws', async (c) => {
   const headers = new Headers(c.req.raw.headers)
   headers.delete(HOST_HEADER)
   headers.delete(KEEP_HEADER)
+  headers.delete(ORIGINS_HEADER)
+  headers.delete(FOREIGN_ORIGIN_HEADER)
+  if (foreign !== null) headers.set(FOREIGN_ORIGIN_HEADER, foreign)
   const auth = c.req.header('Authorization')
   if (auth) {
     const token = /^Bearer (\S+)$/.exec(auth)?.[1]
@@ -189,6 +207,8 @@ app.get('/api/rooms/:id/ws', async (c) => {
     headers.set(HOST_HEADER, '1')
     const keep = c.req.header(KEEP_HEADER)
     if (keep !== undefined) headers.set(KEEP_HEADER, keep)
+    const origins = c.req.header(ORIGINS_HEADER)
+    if (origins !== undefined) headers.set(ORIGINS_HEADER, origins)
   }
 
   const room = c.env.ROOM.get(c.env.ROOM.idFromName(id))
@@ -210,6 +230,10 @@ app.all('/api/rooms/:id/blobs/:blobId', async (c) => {
   // header from outside is never passed on.
   const headers = new Headers(c.req.raw.headers)
   headers.delete(HOST_HEADER)
+  headers.delete(ORIGINS_HEADER)
+  headers.delete(FOREIGN_ORIGIN_HEADER)
+  const foreign = foreignOrigin(c.req.raw)
+  if (foreign !== null) headers.set(FOREIGN_ORIGIN_HEADER, foreign)
   const url = new URL(`/api/rooms/${id}/blobs/${blobId}`, c.req.url)
   const room = c.env.ROOM.get(c.env.ROOM.idFromName(id))
   return room.fetch(new Request(url, { method: c.req.method, headers, body: c.req.raw.body }))

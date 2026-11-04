@@ -59,6 +59,12 @@ const RoomExpired = 4007
 // to come back.
 const HostLeft = 4008
 
+// OriginNotAllowed is the WebSocket close code for a page whose origin the
+// room does not admit (the reason is "this page is not allowed for this
+// room"). Clients must not reconnect on it: the host has to list the page's
+// origin first.
+const OriginNotAllowed = 4009
+
 // HostAway and HostBack are the text frames the relay itself sends guests,
 // the only frames not from a peer and not encrypted: the host dropped and the
 // relay waits for it to come back, or it came back. Guests do not edit while
