@@ -59,8 +59,8 @@ Two things stop it, one at the relay and one in the entries:
   as an edit-signed entry, snapshot or bundle, and an edit signature never passes
   as a comment one.
 - **What a comment entry may target:** only a paired comments doc. The target
-  must be the ID a manifest pairs with a text file (`metaTarget`, 1024 plus the
-  file's ID), and the update must pass the live room's comment checks
+  must be the ID of a comments doc that the manifest pairs with a file
+  (`metaFiles`, by path), and the update must pass the live room's comment checks
   (`checkMetaUpdate`, `meta.CheckUpdate`). An entry for a text or canvas file, an
   unknown ID, or an update that fails the checks is skipped and counted, by
   browsers and by the host on resume, as other bad entries are.

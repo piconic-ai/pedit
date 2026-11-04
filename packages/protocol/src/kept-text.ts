@@ -98,8 +98,8 @@ export async function openKeptFrame(keys: RoomKeys, ciphertext: Uint8Array): Pro
 
 /**
  * Reads a comment-tier message (openKeptFrameTier) and accepts it only for a
- * paired comments doc: its file id must be the meta entry of a manifest `files`
- * that pairs with a text file, and the update must pass the live room's comment
+ * paired comments doc: its file id must be the meta entry that the manifest
+ * `files` pairs with another file (metaFiles), and the update must pass the live room's comment
  * checks against `held`, what the relay has of that doc so far (none if empty).
  * Throws for a text or canvas file, an unknown id, or a failing update.
  */
