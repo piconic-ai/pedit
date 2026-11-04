@@ -297,7 +297,7 @@ describe('RoomClient', () => {
     const relay = new Relay()
     await join(relay, await editKeys(), '', undefined, { Authorization: 'Bearer t' })
     expect(relay.headers).toEqual([{ Authorization: 'Bearer t' }])
-    expect(relay.protocols).toEqual([['pedit-v7', `pedit-admission.${'A'.repeat(43)}`]])
+    expect(relay.protocols).toEqual([['pedit-v8', 'pedit-v7', `pedit-admission.${'A'.repeat(43)}`]])
     expect(relay.urls).toEqual(['ws://test'])
   })
 

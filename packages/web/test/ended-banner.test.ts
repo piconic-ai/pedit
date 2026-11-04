@@ -101,6 +101,13 @@ describe('EndedBanner', () => {
     expect(reconnect.textContent).toBe('Reconnect')
   })
 
+  it('says a page the room does not admit is not allowed', () => {
+    const { status, banner } = mount()
+    status.set('origin-refused')
+    expect(banner.hidden).toBe(false)
+    expect(banner.textContent).toMatch(/This page is not allowed for this room\./)
+  })
+
   it('says the document grew too large to share, with the text to copy', () => {
     const { status, banner, copy, reconnect } = mount()
     status.set('too-large')
