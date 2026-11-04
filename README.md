@@ -95,6 +95,9 @@ irm https://edit.piconic.ai/install.ps1 | iex
 `install.ps1` adds the install directory to your user PATH; set
 `PEDIT_NO_MODIFY_PATH=1` to skip that.
 
+To update a pedit installed this way, run `pedit self-update`; it checks the
+release as the install scripts do before replacing anything.
+
 `install.sh` and `install.ps1` are served by the relay. To install from
 GitHub instead, use one of the methods below.
 
@@ -328,7 +331,7 @@ Edits in the opposite direction follow the same process.
   or [self-host](#self-host) to require sign-in with Cloudflare Access.
 - **Only the files you share.** The CLI reads and writes the files you name,
   images in `assets/` beside each, its own `.pedit/` configuration and a cache, and runs
-  only a clipboard tool and, for Access, `cloudflared`. See
+  only a clipboard tool, for Access `cloudflared`, and `gh` during `pedit self-update`. See
   [what pedit does on your computer](docs/local-files.md) for every file and
   what you accept.
 
@@ -346,8 +349,8 @@ third party just because a URL was written in the file. See
 load from an identity provider or Gravatar using an email hash.
 
 Besides the relay, the CLI itself connects only to `api.github.com`, to check
-for a newer release, and keeps the answer for a day; it never downloads or
-installs one.
+for a newer release, and keeps the answer for a day. Only `pedit self-update`
+downloads a release, from `github.com`, and installs it after checking it.
 
 To report a vulnerability, see [SECURITY.md](SECURITY.md).
 

@@ -309,4 +309,5 @@ for a newer release (`cmd/pedit/update.go`). It keeps an answer for a day in
 then. Development builds, output that is not a terminal and runs with `CI` set
 skip it. The request is a plain `GET` of the latest release: it carries no file
 name, room or key, and GitHub sees your IP address. When a newer release is
-out, pedit prints the command to upgrade. It never downloads or runs anything.
+out, pedit prints the command to upgrade. The check never downloads or runs anything; only `pedit self-update`
+does, and only when you run it (see [verifying releases](verifying-releases.md)).

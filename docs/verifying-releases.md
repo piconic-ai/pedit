@@ -35,6 +35,19 @@ are only as trustworthy as the relay. To rely on the release workflow alone,
 download an archive from GitHub and check it as above, or install with
 Homebrew or `go install`.
 
+## What `pedit self-update` checks
+
+`pedit self-update` does what the install scripts do, without a script: it
+downloads the archive, `checksums.txt` and the bundle of the release from
+GitHub, compares the archive with `checksums.txt`, and, when `gh` is installed,
+runs the check above with the bundle, pinned to the tag's commit when GitHub
+answers the lookup. Without `gh` it says that only the checksum was checked.
+If any check fails, nothing is replaced. It reads only `pedit` (`pedit.exe`) at
+the root of the archive, and only updates a pedit that an install script put
+there or that came from a release archive; Homebrew, mise and `go install`
+copies are left to their own tools. It refuses downgrades and releases before
+v0.1.6, which have no bundle.
+
 ## Rebuilding a release
 
 The archives are reproducible: GoReleaser v2.18.3
