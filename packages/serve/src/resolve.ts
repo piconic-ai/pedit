@@ -4,6 +4,7 @@ import { access, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, isAbsolute, join } from 'node:path'
 import { NoPeditError } from './errors.ts'
+import { downloadPedit, type Installed, type InstallTestOptions, stateBin } from './install.ts'
 import { nativeRealpath } from './paths.ts'
 
 /** The first pedit release with `pedit serve --stdio`: framed streams on the child's stdin and stdout. */
@@ -88,14 +89,8 @@ async function findOnPath(): Promise<string | undefined> {
   return undefined
 }
 
-/**
- * Which pedit binary: `options.bin` (absolute) or `pedit` on the PATH. Config only, never request data.
- * The file must be a regular file owned by this user or root, and not writable by group or others.
- */
-export async function resolvePedit(
-  options: { bin?: string } = {},
-): Promise<{ bin: string; version: string }> {
-  const given = options.bin ?? (await findOnPath())
+/** Checks one candidate: a regular file we may trust that prints a new enough `--version`. */
+async function inspect(given: string | undefined): Promise<{ bin: string; version: string }> {
   if (given === undefined) throw new NoPeditError('pedit was not found on the PATH')
   if (!isAbsolute(given)) throw new NoPeditError('the pedit binary must be an absolute path')
   let bin: string
@@ -129,4 +124,43 @@ export async function resolvePedit(
     )
   }
   return { bin, version }
+}
+
+/**
+ * Which pedit binary: `options.bin` (absolute) or `pedit` on the PATH. Config only, never request data.
+ * The file must be a regular file owned by this user or root, and not writable by group or others.
+ *
+ * With `install: true` the app opts in to a download. An explicit `bin` is still used as it is.
+ * Otherwise, if the PATH has no usable pedit (missing, untrusted or older than MIN_PEDIT_VERSION),
+ * the per-user copy is used (`$XDG_DATA_HOME/pedit/bin/pedit`, `%LOCALAPPDATA%\\pedit\\bin\\pedit.exe`),
+ * and only if that is missing or too old is the latest release downloaded there, after the checks
+ * install.sh makes. A pedit outside that directory is never touched. `installed` says what was
+ * downloaded, and whether the build provenance was checked (`verified`) or only the checksum.
+ */
+export async function resolvePedit(
+  options: { bin?: string; install?: boolean; installTest?: InstallTestOptions } = {},
+): Promise<{ bin: string; version: string; installed?: Installed }> {
+  if (!options.install || options.bin !== undefined)
+    return inspect(options.bin ?? (await findOnPath()))
+  try {
+    return await inspect(await findOnPath())
+  } catch (e) {
+    if (!(e instanceof NoPeditError)) throw e
+  }
+  const own = stateBin()
+  try {
+    return await inspect(own)
+  } catch (e) {
+    if (!(e instanceof NoPeditError)) throw e
+  }
+  let installed: Installed
+  try {
+    installed = await downloadPedit(own, options.installTest)
+  } catch (e) {
+    // Another app may have installed it meanwhile (on Windows a running .exe cannot be replaced).
+    const other = await inspect(own).catch(() => undefined)
+    if (other) return other
+    throw e
+  }
+  return { ...(await inspect(own)), installed }
 }
