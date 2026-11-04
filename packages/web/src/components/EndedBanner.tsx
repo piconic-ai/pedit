@@ -17,6 +17,8 @@ export interface EndedBannerProps {
   onReconnect: () => void
   /** While the host is away and the relay keeps the room: until when, as the person reads it. */
   keptUntil?: Readable<string | null>
+  /** What the relay keeps from this link while the host is away: edits, comments, or nothing. */
+  keeps?: Readable<'edits' | 'comments' | null>
   /** How many kept edits did not hold, and were left out. */
   skipped?: Readable<number>
   /** Whether the host closed the room on purpose (`pedit close`). */
@@ -65,7 +67,9 @@ export function EndedBanner(props: EndedBannerProps) {
   const why = () => {
     if (status() === 'kept') {
       const left = props.skipped?.get() ?? 0
-      return `The host is away. This room stays open until ${props.keptUntil?.get() ?? 'then'}, and your edits are kept for the host to take in.${left ? ` Skipped invalid updates: ${left}.` : ''}`
+      const keeps = props.keeps ? props.keeps.get() : 'edits'
+      const kept = keeps ? `, and your ${keeps} are kept for the host to take in` : ''
+      return `The host is away. This room stays open until ${props.keptUntil?.get() ?? 'then'}${kept}.${left ? ` Skipped invalid updates: ${left}.` : ''}`
     }
     if (status() === 'log-full')
       return 'The host is away and the relay cannot keep more edits. Copy the text to save what you wrote since.'

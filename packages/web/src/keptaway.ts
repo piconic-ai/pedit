@@ -32,6 +32,19 @@ export const commentsLockedFor = (
 export const isHostAway = (status: RoomStatus): boolean =>
   status === 'waiting' || status === 'kept' || status === 'log-full'
 
+/**
+ * What the relay keeps from this link while the host is away: its edits (an
+ * edit link), its comments (a comment link when the relay takes them), or
+ * nothing (a read link, or a comment link the relay does not take them from).
+ */
+export type KeptKind = 'edits' | 'comments' | null
+
+export const keptKindFor = (
+  writesFile: boolean,
+  writesComments: boolean,
+  keptComments: boolean,
+): KeptKind => (writesFile ? 'edits' : writesComments && keptComments ? 'comments' : null)
+
 /** Applies the room's write permissions to the board and its host-validated JSON pane. */
 export function setCanvasStatus(
   board: BoardView,
@@ -57,6 +70,8 @@ export class AwayView {
   readonly hostAway = new Store(false)
   readonly until = new Store<string | null>(null)
   readonly skipped = new Store(0)
+  /** What the relay keeps from this link while the host is away. */
+  readonly keeps = new Store<KeptKind>(null)
   /** Whether the room ended because the host closed it on purpose. */
   readonly hostClosed = new Store(false)
   /** Whether the relay has not logged all of this page's edits. */

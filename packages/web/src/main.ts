@@ -85,7 +85,7 @@ import './components/Header.tsx'
 import './components/Layout.tsx'
 import './components/Notice.tsx'
 import type { LayoutParts } from './components/Layout.tsx'
-import { AwayView, commentsLockedFor, isLocked, setCanvasStatus } from './keptaway.ts'
+import { AwayView, commentsLockedFor, isLocked, keptKindFor, setCanvasStatus } from './keptaway.ts'
 import { lockedUndo } from './lockedundo.ts'
 import './style.css'
 
@@ -253,6 +253,7 @@ async function joinRoom(
     timeLimit,
     text: () => (shown.canvas ? toJSON(readCanvas(shown.doc)) : shown.text.toString()),
     keptUntil: away.until,
+    keeps: away.keeps,
     skipped: away.skipped,
     hostClosed: away.hostClosed,
     onReconnect: () => location.reload(),
@@ -308,6 +309,9 @@ async function joinRoom(
   // comment entries (`kept comments`); a read link never does.
   const commentsLocked = () =>
     commentsLockedFor(roomStatus.get(), writesComments, writesFile, client?.keptComments ?? false)
+  // What the banner says the relay keeps from this link while the host is away.
+  const setKeeps = () =>
+    away.keeps.set(keptKindFor(writesFile, writesComments, client?.keptComments ?? false))
   // Nor does anyone whose link is below edit, ever.
   const fileLocked = () => editLocked() || !writesFile
   const noImages = () =>
@@ -546,6 +550,7 @@ async function joinRoom(
     roomStatus.set(s)
     away.show(s, client?.closedByHost)
     locked.set(commentsLocked())
+    setKeeps()
     for (const f of opened.values()) setCanvasStatus(f.board, f.json, s, writesFile)
     if (isFinalStatus(s)) {
       editor.dispatch({ effects: editable.reconfigure(readOnly) })
@@ -771,7 +776,10 @@ async function joinRoom(
       away.setPending(state === 'pending')
     },
     onKeptSkipped: (count) => away.skipped.set(count),
-    onKeptComments: () => locked.set(commentsLocked()),
+    onKeptComments: () => {
+      locked.set(commentsLocked())
+      setKeeps()
+    },
     onStatus: (s) => {
       if (s === 'expired') timeLimit.set(client?.timeLimitSeconds)
       setStatus(s)
