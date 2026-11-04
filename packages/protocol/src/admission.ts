@@ -17,16 +17,11 @@ export const COMMENT_ADMISSION_HEADER = 'X-Pedit-Comment-Admission'
 /**
  * The wire format version. Bump it only for changes older peers cannot skip;
  * adding a message type or kind does not need a bump. Version 6 starts every
- * binary message with a kind byte (kinds.ts). This is the version this
- * client speaks and offers; the relay serves up to RELAY_PROTOCOL_VERSION.
+ * binary message with a kind byte (kinds.ts). Version 8 adds the commenter
+ * role (docs/design/kept-comments.md). The relay serves MIN_PROTOCOL_VERSION
+ * to this; clients offer CLIENT_PROTOCOL_VERSIONS.
  */
-export const PROTOCOL_VERSION = 7
-/**
- * The newest version the relay serves. Version 8 adds the commenter role
- * (docs/design/kept-comments.md); clients keep offering version 7 until they
- * speak it, so the relay can ship first.
- */
-export const RELAY_PROTOCOL_VERSION = 8
+export const PROTOCOL_VERSION = 8
 /** Older peers cannot replay kept canvas documents. */
 export const MIN_PROTOCOL_VERSION = 7
 export const SOCKET_PROTOCOL = `pedit-v${PROTOCOL_VERSION}`
@@ -75,7 +70,6 @@ export function admissionProtocols(token: string, version = PROTOCOL_VERSION): s
 /**
  * The versions a version 8 client offers, newest first, so a version 7 relay
  * still accepts it (docs/design/kept-comments.md, "Version negotiation").
- * Nothing offers them yet: PROTOCOL_VERSION stays 7 until the clients speak 8.
  */
 export const CLIENT_PROTOCOL_VERSIONS = [8, 7] as const
 
@@ -123,12 +117,12 @@ export function commentAdmissionProtocol(header: string | null): string | null {
 function servedVersion(protocol: string): number | undefined {
   const m = VERSION_PROTOCOL.exec(protocol)
   const version = m ? Number(m[1]) : 0
-  return version >= MIN_PROTOCOL_VERSION && version <= RELAY_PROTOCOL_VERSION ? version : undefined
+  return version >= MIN_PROTOCOL_VERSION && version <= PROTOCOL_VERSION ? version : undefined
 }
 
 /**
  * Compares the protocol versions a client offers with those the relay serves
- * (MIN_PROTOCOL_VERSION to RELAY_PROTOCOL_VERSION): `current` when it speaks one,
+ * (MIN_PROTOCOL_VERSION to PROTOCOL_VERSION): `current` when it speaks one,
  * with the newest of those as `version`, `client-outdated` or
  * `server-outdated` when it only speaks others, and `none` when it offers no
  * version at all. `offered` is the subprotocol to echo when accepting just to
@@ -152,7 +146,7 @@ export function checkProtocolVersion(
   }
   const newest = versions.reduce((a, b) => (b.version > a.version ? b : a))
   return {
-    result: newest.version > RELAY_PROTOCOL_VERSION ? 'server-outdated' : 'client-outdated',
+    result: newest.version > PROTOCOL_VERSION ? 'server-outdated' : 'client-outdated',
     offered: newest.protocol,
   }
 }

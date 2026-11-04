@@ -155,7 +155,7 @@ describe('version negotiation helpers', () => {
     const token = 'A'.repeat(43)
     const comment = 'B'.repeat(43)
     expect([...CLIENT_PROTOCOL_VERSIONS]).toEqual([8, 7])
-    expect(PROTOCOL_VERSION).toBe(7)
+    expect(PROTOCOL_VERSION).toBe(8)
     expect(offerProtocols(token)).toEqual(['pedit-v8', 'pedit-v7', `pedit-admission.${token}`])
     expect(offerProtocols(token, comment)).toEqual([
       'pedit-v8',
