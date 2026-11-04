@@ -14,8 +14,9 @@ pedit touches the files you name, and those you add while sharing, an
 it keeps in `.pedit/meta/`, and a small cache; when you join a room, only the copies it keeps. If what you name is a directory or does not exist, it also looks
 through that directory to suggest a file, and shares none of what it reads
 there. It runs a clipboard tool and, only
-for servers behind Cloudflare Access, `cloudflared`. It never runs anything
-that comes from a document, a guest or the relay, and never updates itself.
+for servers behind Cloudflare Access, `cloudflared`, and `gh` while you run
+`pedit self-update`. It never runs anything that comes from a document, a guest
+or the relay, and updates itself only when you run `pedit self-update`.
 
 By using it you accept that:
 
@@ -169,17 +170,19 @@ How the recovery state and the generation work: [design/serve.md](design/serve.m
 | --- | --- | --- |
 | `pbcopy` (macOS), `clip` (Windows), `wl-copy`, `xclip` or `xsel` (Linux) | Once, to copy the link when sharing, or the copy's path when joining | The text on standard input, not in arguments |
 | `cloudflared` | Only when the server answers room creation with a Cloudflare Access sign-in | `access token -app=<server>`, then `access login --quiet <server>` if there is no valid token |
+| `gh` | Only during `pedit self-update`, and only if installed | `attestation verify <archive> --bundle <bundle> --repo piconic-ai/pedit --signer-workflow … --deny-self-hosted-runners`, plus `--source-digest` and `--signer-digest` when the tag's commit is known. Fixed arguments, no shell |
 
-Both are looked up in your `PATH`. A program in the current directory is not
+They are looked up in your `PATH`. A program in the current directory is not
 run even when `PATH` contains `.`. When a newer release is out, pedit prints
-the command that upgrades it; it never downloads or runs one.
+the command that upgrades it. Only `pedit self-update` downloads one: it checks the archive, then replaces the pedit that runs it (see [verifying releases](verifying-releases.md)).
 
 ## Network
 
 | Host | What |
 | --- | --- |
 | The configured server (`https://edit.piconic.ai` by default), or the one in the link you join | Creates the room, relays encrypted updates over a WebSocket, stores encrypted images. The key stays in the link's fragment and is never sent. The server sees the room ID, your IP address and the sizes and timing of what is sent. |
-| `api.github.com` | The latest release of pedit, at most once a day, for release builds on a terminal. |
+| `api.github.com` | The latest release of pedit, at most once a day, for release builds on a terminal. During `pedit self-update`: the latest release, and the commit of the release tag (only the tag name is sent). |
+| `github.com` (release downloads) | Only during `pedit self-update`: the archive for your platform, `checksums.txt` and the Sigstore bundle of the release. |
 
 With Cloudflare Access, the browsers of the others in the room load your
 picture from Gravatar, which receives a hash of your email address.

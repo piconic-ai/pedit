@@ -266,5 +266,9 @@ func selfUpgradeCommand() string {
 	}
 	home, _ := os.UserHomeDir()
 	// version is set on release builds; go install leaves it empty.
-	return upgradeCommand(exe, runtime.GOOS, home, version == "")
+	cmd := upgradeCommand(exe, runtime.GOOS, home, version == "")
+	if viaInstallScript(cmd) {
+		return "pedit self-update"
+	}
+	return cmd
 }
