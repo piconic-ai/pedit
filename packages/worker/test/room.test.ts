@@ -159,7 +159,7 @@ describe('rooms', () => {
     ).toBe(403)
     const valid = await upgrade(room.id)
     expect(valid.status).toBe(101)
-    expect(valid.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v7')
+    expect(valid.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v8')
     valid.webSocket?.accept()
     valid.webSocket?.close()
   })
@@ -884,7 +884,7 @@ describe('rate limits', () => {
     expect(turnedAway.map((r) => r.status)).toEqual(Array(60).fill(403))
     const res = await upgrade(room.id, { 'CF-Connecting-IP': ip })
     expect(res.status).toBe(101)
-    expect(res.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v7')
+    expect(res.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v8')
     const ws = res.webSocket as WebSocket
     const closed = new Promise<CloseEvent>((resolve) => ws.addEventListener('close', resolve))
     ws.accept()
@@ -966,7 +966,7 @@ describe('maintenance', () => {
       }),
     )
     expect(upgraded.status).toBe(101)
-    expect(upgraded.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v7')
+    expect(upgraded.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v8')
     const ws = upgraded.webSocket as WebSocket
     const closed = new Promise<CloseEvent>((resolve) => ws.addEventListener('close', resolve))
     ws.accept()

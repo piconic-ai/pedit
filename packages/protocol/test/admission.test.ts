@@ -6,7 +6,6 @@ import {
   deriveAdmissionToken,
   MIN_PROTOCOL_VERSION,
   PROTOCOL_VERSION,
-  RELAY_PROTOCOL_VERSION,
   readAdmissionProtocol,
   SOCKET_PROTOCOL,
 } from '../src/admission.ts'
@@ -52,9 +51,9 @@ describe('room admission', () => {
     // apply anyone's.
     // Version 6: every binary message starts with a kind byte (kinds.ts), so
     // a room can keep a text while its host is away. Version 7 also keeps canvas.
-    expect(PROTOCOL_VERSION).toBe(7)
-    expect(SOCKET_PROTOCOL).toBe('pedit-v7')
-    expect(RELAY_PROTOCOL_VERSION).toBe(8)
+    // Version 8 adds commenters, who write entries while the host is away.
+    expect(PROTOCOL_VERSION).toBe(8)
+    expect(SOCKET_PROTOCOL).toBe('pedit-v8')
     expect(MIN_PROTOCOL_VERSION).toBe(7)
     const token = `pedit-admission.${'A'.repeat(43)}`
     for (const version of [5, 6]) {
