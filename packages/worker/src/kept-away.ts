@@ -58,23 +58,62 @@ export function storeSnapshot(storage: DurableObjectStorage, bundle: Uint8Array)
   storage.sql.exec('INSERT OR REPLACE INTO kept_away_snapshot (id, body) VALUES (1, ?)', bundle)
 }
 
-/** Adds an entry to the log with the next id, or returns undefined if the log has no room for it. */
-export function appendEntry(storage: DurableObjectStorage, entry: Uint8Array): number | undefined {
+/** The `sender` column of an entry a commenter socket wrote; '' for every other. */
+const COMMENTER_SENDER = 'c'
+/** The part of the log's budget (bytes and entries) that commenters share. */
+const COMMENTER_SHARE = 4
+
+type LogUsage = {
+  bytes: number
+  count: number
+  commenterBytes: number
+  commenterCount: number
+}
+
+function logUsage(storage: DurableObjectStorage): LogUsage {
+  return storage.sql
+    .exec<LogUsage>(
+      `SELECT coalesce(sum(length(body)), 0) AS bytes, count(*) AS count,
+        coalesce(sum(CASE WHEN sender = ? THEN length(body) END), 0) AS commenterBytes,
+        coalesce(sum(sender = ?), 0) AS commenterCount
+        FROM kept_text_log`,
+      COMMENTER_SENDER,
+      COMMENTER_SENDER,
+    )
+    .one()
+}
+
+function hasRoom(usage: LogUsage, size: number, commenter: boolean): boolean {
+  if (usage.bytes + size > KEPT_LOG_BYTES || usage.count >= KEPT_LOG_ENTRIES) return false
+  if (!commenter) return true
+  return (
+    usage.commenterBytes + size <= KEPT_LOG_BYTES / COMMENTER_SHARE &&
+    usage.commenterCount < KEPT_LOG_ENTRIES / COMMENTER_SHARE
+  )
+}
+
+/**
+ * Adds an entry to the log with the next id, or returns undefined if the log
+ * has no room for it. Entries from commenter sockets may fill a quarter of
+ * the log only, so they cannot keep editors from being kept. The relay marks
+ * them (not who wrote them: the entry carries its own sender, signed and
+ * encrypted), and a checkpoint drops marked rows with the others, so the
+ * share is counted from what the log holds.
+ */
+export function appendEntry(
+  storage: DurableObjectStorage,
+  entry: Uint8Array,
+  commenter = false,
+): number | undefined {
   ensure(storage)
   return storage.transactionSync(() => {
-    const usage = storage.sql
-      .exec<{ bytes: number; count: number }>(
-        'SELECT coalesce(sum(length(body)), 0) AS bytes, count(*) AS count FROM kept_text_log',
-      )
-      .one()
-    if (usage.bytes + entry.length > KEPT_LOG_BYTES || usage.count >= KEPT_LOG_ENTRIES)
-      return undefined
+    if (!hasRoom(logUsage(storage), entry.length, commenter)) return undefined
     const log = awayLog(storage)
-    // The relay learns no sender: the entry carries its own, signed and encrypted.
     storage.sql.exec(
-      "INSERT INTO kept_text_log (id, body, sender) VALUES (?, ?, '')",
+      'INSERT INTO kept_text_log (id, body, sender) VALUES (?, ?, ?)',
       log.tail + 1,
       entry,
+      commenter ? COMMENTER_SENDER : '',
     )
     storage.kv.put(LOG_KEY, { ...log, tail: log.tail + 1 })
     return log.tail + 1

@@ -2,7 +2,9 @@ import { DurableObject } from 'cloudflare:workers'
 import {
   ADMISSION_HEADER,
   ADMISSION_PATTERN,
+  COMMENT_ADMISSION_HEADER,
   checkProtocolVersion,
+  commentAdmissionProtocol,
   READ_ADMISSION_HEADER,
   readAdmissionProtocol,
   SOCKET_PROTOCOL,
@@ -18,6 +20,7 @@ import {
   HOST_LEFT,
   KEEP,
   KEPT,
+  KEPT_COMMENTS,
   LOG_FULL,
   MESSAGE_TOO_BIG,
   ORIGIN_NOT_ALLOWED,
@@ -204,6 +207,12 @@ export function maintenance(env: { MAINTENANCE?: string }): Maintenance {
 const HOST_TAG = 'host'
 // A guest admitted with the reader token: a comment-only or read-only link.
 const READER_TAG = 'reader'
+// A reader that also offered the comment token, in version 8: it counts as a
+// reader and may also write kind 1 entries.
+const COMMENTER_TAG = 'commenter'
+// A socket accepted in version 8. SOCKET_PROTOCOL tags every socket this
+// deployment accepted, whatever version it negotiated; this one tells version 8.
+const V8_TAG = 'v8'
 const BLOB_PATH = /\/blobs\/([A-Za-z0-9_-]{22})$/
 const USAGE_KEY = 'blobUsage'
 // The digests of the editor and reader admission tokens (access.ts).
@@ -212,6 +221,8 @@ const READ_ADMISSION_KEY = 'readAdmissionHash'
 // The page origins the host admitted (a JSON array), with the admission hashes.
 const ORIGINS_KEY = 'origins'
 const ORIGIN_REFUSED_REASON = 'this page is not allowed for this room'
+// The digest of the comment admission token (version 8), if the host sent one.
+const COMMENT_ADMISSION_KEY = 'commentAdmissionHash'
 // When the host first connected, in ms since the epoch. Never deleted: once
 // the room is over it is the tombstone that stops its ID being used again.
 const OPENED_KEY = 'openedAt'
@@ -250,7 +261,37 @@ interface Join {
   origins: string[]
 }
 
-type Role = 'editor' | 'reader'
+type Role = 'editor' | 'commenter' | 'reader'
+
+/** What a connection presents: its subprotocol token, and the host's registrations. */
+interface Credentials {
+  token: string
+  /** The host's reader and comment tokens, from its headers. */
+  read: string | null
+  comment: string | null
+  /** The comment token a guest offered beside its reader token (version 8). */
+  offered: string | null
+}
+
+/** The credentials after hashing; the tokens themselves are not kept. */
+interface Digests {
+  token: ArrayBuffer
+  read: ArrayBuffer | null
+  comment: ArrayBuffer | null
+  offered: ArrayBuffer | null
+}
+
+const digestOf = (value: string | null) => (value === null ? null : sha256(value))
+
+async function hashed(c: Credentials): Promise<Digests> {
+  const [token, read, comment, offered] = await Promise.all([
+    sha256(c.token),
+    digestOf(c.read),
+    digestOf(c.comment),
+    digestOf(c.offered),
+  ])
+  return { token, read, comment, offered }
+}
 
 interface Usage {
   bytes: number
@@ -342,8 +383,17 @@ export class Room extends DurableObject<Env> {
     const turnedAway = this.originGate(request, isHost, version.version)
     if (turnedAway) return turnedAway
     const join = this.joinFrom(request, version.version, isHost)
-    const read = (isHost && request.headers.get(READ_ADMISSION_HEADER)) || null
-    if (read !== null && !ADMISSION_PATTERN.test(read)) {
+    // Only the host's headers count; the Worker does not vouch for them.
+    const hostHeader = (name: string) => (isHost && request.headers.get(name)) || null
+    const credentials: Credentials = {
+      token,
+      read: hostHeader(READ_ADMISSION_HEADER),
+      comment: hostHeader(COMMENT_ADMISSION_HEADER),
+      offered: version.version >= 8 ? commentAdmissionProtocol(protocols) : null,
+    }
+    if (
+      [credentials.read, credentials.comment].some((t) => t !== null && !ADMISSION_PATTERN.test(t))
+    ) {
       return new Response('invalid reader admission', { status: 403 })
     }
     // The hash below is an await during which an alarm may run. Counting the
@@ -351,7 +401,7 @@ export class Room extends DurableObject<Env> {
     // whose host is just reconnecting.
     if (isHost) this.hostHandshakes++
     try {
-      return await this.admit(token, isHost, read, join)
+      return await this.admit(credentials, isHost, join)
     } finally {
       if (isHost) this.hostHandshakes--
     }
@@ -395,14 +445,9 @@ export class Room extends DurableObject<Env> {
     }
   }
 
-  private async admit(
-    token: string,
-    isHost: boolean,
-    read: string | null,
-    join: Join,
-  ): Promise<Response> {
-    const digest = await sha256(token)
-    const readDigest = read === null ? null : await sha256(read)
+  private async admit(credentials: Credentials, isHost: boolean, join: Join): Promise<Response> {
+    const digests = await hashed(credentials)
+    const digest = digests.token
     // A peer that joins after the host closed the room, or that was joining
     // again when it did, learns the reason the others got.
     if (this.ctx.storage.kv.get(CLOSED_KEY) === true)
@@ -446,7 +491,9 @@ export class Room extends DurableObject<Env> {
     }
     // Authenticate before taking a peer slot. Only the authenticated host may
     // register the verifiers; a guest cannot claim an unopened room's tokens.
-    const role = isHost ? this.registerHost(digest, readDigest, join.origins) : this.role(digest)
+    const role = isHost
+      ? this.registerHost(digests, join.origins)
+      : this.role(digest, join.version >= 8 ? digests.offered : null)
     if (!role) return new Response('invalid room admission', { status: 403 })
     this.closeOutdatedPeers()
     if (this.full(isHost, role)) return this.refuse(ROOM_FULL, 'room is full', join.protocol)
@@ -485,10 +532,7 @@ export class Room extends DurableObject<Env> {
     const first = isHost && this.openedAt() === undefined
     if (first) kv.put(OPENED_KEY, Date.now())
     const { 0: client, 1: server } = new WebSocketPair()
-    const tags = [V6_TAG, SOCKET_PROTOCOL]
-    if (isHost) tags.push(HOST_TAG)
-    else if (role === 'reader') tags.push(READER_TAG)
-    this.ctx.acceptWebSocket(server, tags)
+    this.ctx.acceptWebSocket(server, socketTags(isHost, role, join.version))
     const v6 = join.version >= 6
     if (isHost) {
       this.log('host connected')
@@ -506,12 +550,8 @@ export class Room extends DurableObject<Env> {
       if (this.awayUntil() !== undefined || kept) this.hostReturned()
       await this.ctx.storage.setAlarm(this.nextAlarm())
     } else if (this.keptAway()) {
-      if (v6) {
-        safeSend(server, `${KEPT} ${kv.get<number>(KEPT_AWAY_KEY)}`)
-        this.sendReplay(server, join.after, false)
-      } else {
-        safeSend(server, HOST_AWAY)
-      }
+      this.sendKept(server, kv.get<number>(KEPT_AWAY_KEY) ?? 0)
+      if (v6) this.sendReplay(server, join.after, false)
     } else if (this.hostAway()) {
       safeSend(server, HOST_AWAY)
     }
@@ -520,6 +560,20 @@ export class Room extends DurableObject<Env> {
       webSocket: client,
       headers: { 'Sec-WebSocket-Protocol': join.protocol },
     })
+  }
+
+  // Tells a peer the room is kept until then: a version 5 peer reads it as a
+  // host that is away. A version 8 peer is also told the relay takes comment
+  // entries, if the host registered the comment token.
+  private sendKept(peer: WebSocket, until: number): void {
+    const tags = this.ctx.getTags(peer)
+    if (!tags.includes(V6_TAG)) {
+      safeSend(peer, HOST_AWAY)
+      return
+    }
+    safeSend(peer, `${KEPT} ${until}`)
+    if (tags.includes(V8_TAG) && this.ctx.storage.kv.get(COMMENT_ADMISSION_KEY) !== undefined)
+      safeSend(peer, KEPT_COMMENTS)
   }
 
   // The snapshot, the entries and the tail of a room kept without its host.
@@ -583,13 +637,17 @@ export class Room extends DurableObject<Env> {
    * only to keep places and uploads for editors; what anyone may change in
    * the room, every peer checks by signatures it cannot see.
    */
-  private role(digest: ArrayBuffer): Role | null {
+  private role(digest: ArrayBuffer, offeredComment: ArrayBuffer | null = null): Role | null {
     const kv = this.ctx.storage.kv
     const editor = kv.get<ArrayBuffer>(ADMISSION_KEY)
     if (editor && crypto.subtle.timingSafeEqual(editor, digest)) return 'editor'
     const reader = kv.get<ArrayBuffer>(READ_ADMISSION_KEY)
-    if (reader && crypto.subtle.timingSafeEqual(reader, digest)) return 'reader'
-    return null
+    if (!reader || !crypto.subtle.timingSafeEqual(reader, digest)) return null
+    // A comment token that does not match, or a room without one, leaves a reader.
+    const comment = kv.get<ArrayBuffer>(COMMENT_ADMISSION_KEY)
+    const commenter =
+      offeredComment && comment && crypto.subtle.timingSafeEqual(comment, offeredComment)
+    return commenter ? 'commenter' : 'reader'
   }
 
   /**
@@ -597,16 +655,13 @@ export class Room extends DurableObject<Env> {
    * tokens when it has none. Persisted across hibernation, and read after
    * hashing so concurrent host handshakes cannot each install other tokens.
    */
-  private registerHost(
-    digest: ArrayBuffer,
-    readDigest: ArrayBuffer | null,
-    origins: string[],
-  ): Role | null {
+  private registerHost(digests: Digests, origins: string[]): Role | null {
     const kv = this.ctx.storage.kv
     const expected = kv.get<ArrayBuffer>(ADMISSION_KEY)
-    if (expected) return crypto.subtle.timingSafeEqual(expected, digest) ? 'editor' : null
-    kv.put(ADMISSION_KEY, digest)
-    if (readDigest) kv.put(READ_ADMISSION_KEY, readDigest)
+    if (expected) return crypto.subtle.timingSafeEqual(expected, digests.token) ? 'editor' : null
+    kv.put(ADMISSION_KEY, digests.token)
+    if (digests.read) kv.put(READ_ADMISSION_KEY, digests.read)
+    if (digests.comment) kv.put(COMMENT_ADMISSION_KEY, digests.comment)
     if (origins.length > 0) kv.put(ORIGINS_KEY, origins)
     return 'editor'
   }
@@ -620,7 +675,7 @@ export class Room extends DurableObject<Env> {
     const { guests, readers } = limits(this.env)
     const peers = this.peers().filter((peer) => this.ctx.getTags(peer).includes(SOCKET_PROTOCOL))
     const reading = peers.filter((peer) => this.ctx.getTags(peer).includes(READER_TAG)).length
-    if (role === 'reader') return reading >= readers
+    if (role !== 'editor') return reading >= readers
     const editing = peers.length - reading
     if (editing >= MAX_PEERS) return true
     if (isHost) return false
@@ -794,18 +849,7 @@ export class Room extends DurableObject<Env> {
         this.fan(ws, wire, payload)
         return
       case Kind.Entry:
-        // Entries are an editor's: a reader's link cannot write.
-        if (this.ctx.getTags(ws).includes(READER_TAG) || payload.length === 0) {
-          this.closePeer(ws, RATE_LIMITED, 'readers write no entries')
-        } else if (!this.keptAway()) {
-          // The host is here, and takes the entry in like a live update.
-          this.fan(ws, wire)
-        } else {
-          const id = appendEntry(this.ctx.storage, payload)
-          if (id === undefined) safeSend(ws, LOG_FULL)
-          // To the writer too: the entry coming back with its id is its acknowledgement.
-          else this.fan(null, encodeLogged(id, payload))
-        }
+        this.entry(ws, wire, payload)
         return
       case Kind.Snapshot:
       case Kind.Checkpoint:
@@ -819,6 +863,23 @@ export class Room extends DurableObject<Env> {
         return
       default:
       // A kind of a later version: ignored, as a peer ignores it.
+    }
+  }
+
+  // A kind 1 entry: an editor's or a commenter's; a reader's link cannot write.
+  private entry(ws: WebSocket, wire: Uint8Array, payload: Uint8Array): void {
+    const tags = this.ctx.getTags(ws)
+    const commenter = tags.includes(COMMENTER_TAG)
+    if ((tags.includes(READER_TAG) && !commenter) || payload.length === 0) {
+      this.closePeer(ws, RATE_LIMITED, 'readers write no entries')
+    } else if (!this.keptAway()) {
+      // The host is here, and takes the entry in like a live update.
+      this.fan(ws, wire)
+    } else {
+      const id = appendEntry(this.ctx.storage, payload, commenter)
+      if (id === undefined) safeSend(ws, LOG_FULL)
+      // To the writer too: the entry coming back with its id is its acknowledgement.
+      else this.fan(null, encodeLogged(id, payload))
     }
   }
 
@@ -989,12 +1050,10 @@ export class Room extends DurableObject<Env> {
     kv.put(KEPT_AWAY_KEY, until)
     kv.delete(AWAY_KEY)
     this.log('kept away', { untilSeconds: Math.round((until - Date.now()) / 1000) })
-    const v6 = new Set(this.ctx.getWebSockets(V6_TAG))
     for (const peer of this.ctx.getWebSockets()) {
       if (peer === except) continue
       if (this.isHost(peer)) safeClose(peer, ROOM_CLOSED, 'the host left')
-      // A version 5 peer reads the host away and waits for it, as for a grace period.
-      else safeSend(peer, v6.has(peer) ? `${KEPT} ${until}` : HOST_AWAY)
+      else this.sendKept(peer, until)
     }
     await this.ctx.storage.setAlarm(this.nextAlarm())
   }
@@ -1057,6 +1116,7 @@ export class Room extends DurableObject<Env> {
     this.ctx.storage.kv.delete(ADMISSION_KEY)
     this.ctx.storage.kv.delete(READ_ADMISSION_KEY)
     this.ctx.storage.kv.delete(ORIGINS_KEY)
+    this.ctx.storage.kv.delete(COMMENT_ADMISSION_KEY)
     this.ctx.storage.kv.delete(AWAY_KEY)
     this.ctx.storage.kv.delete(KEPT_AWAY_KEY)
     clearAway(this.ctx.storage)
@@ -1256,6 +1316,17 @@ function safeClose(ws: WebSocket, code: number, reason: string): void {
   } catch {
     // Already closed.
   }
+}
+
+// The tags of an accepted socket. SOCKET_PROTOCOL marks every socket this
+// deployment accepted, whatever version it negotiated.
+function socketTags(isHost: boolean, role: Role, version: number): string[] {
+  const tags = [V6_TAG, SOCKET_PROTOCOL]
+  if (version >= 8) tags.push(V8_TAG)
+  if (isHost) tags.push(HOST_TAG)
+  else if (role !== 'editor') tags.push(READER_TAG)
+  if (role === 'commenter') tags.push(COMMENTER_TAG)
+  return tags
 }
 
 /**

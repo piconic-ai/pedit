@@ -20,15 +20,16 @@ import (
 const accessVectorsFile = "../../packages/testdata/access-vectors.json"
 
 type accessVectors struct {
-	RoomID        string `json:"roomId"`
-	Edit          string `json:"edit"`
-	Comment       string `json:"comment"`
-	Read          string `json:"read"`
-	EditKey       string `json:"editKey"`
-	CommentKey    string `json:"commentKey"`
-	FrameKey      string `json:"frameKey"`
-	EditAdmission string `json:"editAdmission"`
-	ReadAdmission string `json:"readAdmission"`
+	RoomID           string `json:"roomId"`
+	Edit             string `json:"edit"`
+	Comment          string `json:"comment"`
+	Read             string `json:"read"`
+	EditKey          string `json:"editKey"`
+	CommentKey       string `json:"commentKey"`
+	FrameKey         string `json:"frameKey"`
+	EditAdmission    string `json:"editAdmission"`
+	ReadAdmission    string `json:"readAdmission"`
+	CommentAdmission string `json:"commentAdmission"`
 	// V1Admission is the admission token protocol versions 1 to 4 derived
 	// from the same 32 bytes, which no value of the chain may equal.
 	V1Admission string `json:"v1Admission"`
@@ -61,16 +62,17 @@ func makeAccessVectors(t *testing.T) accessVectors {
 		t.Fatal(err)
 	}
 	return accessVectors{
-		RoomID:        vectorRoomID,
-		Edit:          k.Fragments[protocol.AccessEdit],
-		Comment:       k.Fragments[protocol.AccessComment],
-		Read:          k.Fragments[protocol.AccessRead],
-		EditKey:       b64(k.EditKey),
-		CommentKey:    b64(k.CommentKey),
-		FrameKey:      b64(k.FrameKey),
-		EditAdmission: k.EditAdmission,
-		ReadAdmission: k.ReadAdmission,
-		V1Admission:   b64(v1),
+		RoomID:           vectorRoomID,
+		Edit:             k.Fragments[protocol.AccessEdit],
+		Comment:          k.Fragments[protocol.AccessComment],
+		Read:             k.Fragments[protocol.AccessRead],
+		EditKey:          b64(k.EditKey),
+		CommentKey:       b64(k.CommentKey),
+		FrameKey:         b64(k.FrameKey),
+		EditAdmission:    k.EditAdmission,
+		ReadAdmission:    k.ReadAdmission,
+		CommentAdmission: k.CommentAdmission,
+		V1Admission:      b64(v1),
 	}
 }
 
@@ -125,6 +127,11 @@ func TestLinksDeriveTheSameRoom(t *testing.T) {
 			}[a] {
 				t.Fatalf("%s link hands out another %s link", c.access, a)
 			}
+		}
+		if wantComment := map[protocol.Access]string{
+			protocol.AccessEdit: v.CommentAdmission, protocol.AccessComment: v.CommentAdmission,
+		}[c.access]; k.CommentAdmission != wantComment {
+			t.Fatalf("%s link derives comment admission %q, want %q", c.access, k.CommentAdmission, wantComment)
 		}
 		if (k.EditAdmission != "") != (c.access == protocol.AccessEdit) {
 			t.Fatalf("%s link has the editor admission: %q", c.access, k.EditAdmission)
@@ -183,7 +190,7 @@ func withKeys(l protocol.LinkSecrets, edit, comment ed25519.PublicKey) protocol.
 // and writes nothing.
 func TestChainIsSeparateFromVersion1(t *testing.T) {
 	v := makeAccessVectors(t)
-	values := []string{v.Comment, v.Read, v.EditKey, v.CommentKey, v.FrameKey, v.EditAdmission, v.ReadAdmission}
+	values := []string{v.Comment, v.Read, v.EditKey, v.CommentKey, v.FrameKey, v.EditAdmission, v.ReadAdmission, v.CommentAdmission}
 	for _, value := range values {
 		if strings.Contains(value, v.V1Admission) || strings.Contains(value, v.Edit) {
 			t.Fatalf("%q repeats a version 1 value", value)

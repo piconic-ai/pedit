@@ -30,9 +30,10 @@ Two things stop it, one at the relay and one in the entries:
   link has C. A read link has only V and cannot derive it. Like the other tokens,
   it is a relay capability and decrypts nothing.
 - **Registered by the host.** On its first connection the host sends
-  `X-Pedit-Comment-Admission: <base64url SHA-256 of the token>`, beside the read
-  admission header. The Durable Object stores it with the other admission hashes,
-  and deletes it when the session ends.
+  `X-Pedit-Comment-Admission: <the comment admission token>`, beside the read
+  admission header, which also carries the token itself. The Durable Object hashes
+  it and stores the hash with the other admission hashes, and deletes it when the
+  session ends. Only the host's header counts.
 - **Offered by comment links next to the reader token.** A comment link offers
   `pedit-admission.<reader token>` as today and also
   `pedit-comment-admission.<comment token>`.

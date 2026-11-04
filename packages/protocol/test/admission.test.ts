@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
   admissionProtocols,
   checkProtocolVersion,
+  commentAdmissionProtocol,
   deriveAdmissionToken,
   MIN_PROTOCOL_VERSION,
   PROTOCOL_VERSION,
+  RELAY_PROTOCOL_VERSION,
   readAdmissionProtocol,
   SOCKET_PROTOCOL,
 } from '../src/admission.ts'
@@ -36,7 +38,8 @@ describe('room admission', () => {
     expect(() => admissionProtocols('bad')).toThrow()
     expect(admissionProtocols(token, 5)[0]).toBe('pedit-v5')
     expect(readAdmissionProtocol(admissionProtocols(token, 5).join(', '))).toBeNull()
-    expect(readAdmissionProtocol(`pedit-v8, pedit-admission.${token}`)).toBeNull()
+    expect(readAdmissionProtocol(`pedit-v9, pedit-admission.${token}`)).toBeNull()
+    expect(readAdmissionProtocol(`pedit-v8, pedit-admission.${token}`)).toBe(token)
   })
 
   it('compares the offered protocol versions with its own', () => {
@@ -51,6 +54,7 @@ describe('room admission', () => {
     // a room can keep a text while its host is away. Version 7 also keeps canvas.
     expect(PROTOCOL_VERSION).toBe(7)
     expect(SOCKET_PROTOCOL).toBe('pedit-v7')
+    expect(RELAY_PROTOCOL_VERSION).toBe(8)
     expect(MIN_PROTOCOL_VERSION).toBe(7)
     const token = `pedit-admission.${'A'.repeat(43)}`
     for (const version of [5, 6]) {
@@ -61,9 +65,14 @@ describe('room admission', () => {
     }
     expect(checkProtocolVersion('pedit-v7, pedit-v6')).toEqual({ result: 'current', version: 7 })
     expect(checkProtocolVersion(`pedit-v7, ${token}`)).toEqual({ result: 'current', version: 7 })
-    expect(checkProtocolVersion('pedit-v8, pedit-v9')).toEqual({
+    expect(checkProtocolVersion(`pedit-v7, pedit-v8, ${token}`)).toEqual({
+      result: 'current',
+      version: 8,
+    })
+    expect(checkProtocolVersion('pedit-v8, pedit-v9')).toEqual({ result: 'current', version: 8 })
+    expect(checkProtocolVersion('pedit-v9, pedit-v10')).toEqual({
       result: 'server-outdated',
-      offered: 'pedit-v9',
+      offered: 'pedit-v10',
     })
     expect(checkProtocolVersion(`pedit-v4, ${token}`)).toEqual({
       result: 'client-outdated',
@@ -71,6 +80,24 @@ describe('room admission', () => {
     })
     for (const value of [null, '', token, 'pedit-v', 'pedit-v01', 'pedit-vx', 'pedit-v1.0']) {
       expect(checkProtocolVersion(value)).toEqual({ result: 'none' })
+    }
+  })
+
+  it('reads the comment token beside the reader token without confusing the two', () => {
+    const reader = 'A'.repeat(43)
+    const comment = 'B'.repeat(43)
+    const offer = `pedit-v8, pedit-v7, pedit-admission.${reader}, pedit-comment-admission.${comment}`
+    expect(commentAdmissionProtocol(offer)).toBe(comment)
+    // A relay that does not know the comment protocol still sees exactly one reader token.
+    expect(readAdmissionProtocol(offer)).toBe(reader)
+    for (const value of [
+      null,
+      '',
+      `pedit-admission.${reader}`,
+      'pedit-comment-admission.bad',
+      `pedit-comment-admission.${comment}, pedit-comment-admission.${comment}`,
+    ]) {
+      expect(commentAdmissionProtocol(value)).toBeNull()
     }
   })
 })

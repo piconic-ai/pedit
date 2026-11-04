@@ -8,11 +8,25 @@ export const ADMISSION_HEADER = 'X-Pedit-Admission'
  */
 export const READ_ADMISSION_HEADER = 'X-Pedit-Read-Admission'
 /**
+ * Carries the comment admission token (access.ts) on the host's upgrade
+ * request, beside READ_ADMISSION_HEADER, so the relay can tell a comment link
+ * from a read link (docs/design/kept-comments.md). Like the read token, the
+ * relay hashes it before keeping it. Honoured from the host only.
+ */
+export const COMMENT_ADMISSION_HEADER = 'X-Pedit-Comment-Admission'
+/**
  * The wire format version. Bump it only for changes older peers cannot skip;
  * adding a message type or kind does not need a bump. Version 6 starts every
- * binary message with a kind byte (kinds.ts).
+ * binary message with a kind byte (kinds.ts). This is the version this
+ * client speaks and offers; the relay serves up to RELAY_PROTOCOL_VERSION.
  */
 export const PROTOCOL_VERSION = 7
+/**
+ * The newest version the relay serves. Version 8 adds the commenter role
+ * (docs/design/kept-comments.md); clients keep offering version 7 until they
+ * speak it, so the relay can ship first.
+ */
+export const RELAY_PROTOCOL_VERSION = 8
 /** Older peers cannot replay kept canvas documents. */
 export const MIN_PROTOCOL_VERSION = 7
 export const SOCKET_PROTOCOL = `pedit-v${PROTOCOL_VERSION}`
@@ -20,6 +34,12 @@ export const SOCKET_PROTOCOL = `pedit-v${PROTOCOL_VERSION}`
 export const socketProtocol = (version: number) => `pedit-v${version}`
 const VERSION_PROTOCOL = /^pedit-v(0|[1-9][0-9]{0,8})$/
 export const ADMISSION_PROTOCOL_PREFIX = 'pedit-admission.'
+/**
+ * Offered beside the reader token by a link that can derive the comment
+ * token. It does not start with ADMISSION_PROTOCOL_PREFIX, so a relay that
+ * does not know it never counts it as a second reader token.
+ */
+export const COMMENT_ADMISSION_PROTOCOL_PREFIX = 'pedit-comment-admission.'
 export const ADMISSION_PATTERN = /^[A-Za-z0-9_-]{43}$/
 
 /**
@@ -61,15 +81,23 @@ export function readAdmissionProtocol(header: string | null): string | null {
   return tokens.length === 1 && token && ADMISSION_PATTERN.test(token) ? token : null
 }
 
+/** The comment token a client offered beside its reader token, or null. */
+export function commentAdmissionProtocol(header: string | null): string | null {
+  const protocols = header?.split(',').map((p) => p.trim()) ?? []
+  const tokens = protocols.filter((p) => p.startsWith(COMMENT_ADMISSION_PROTOCOL_PREFIX))
+  const token = tokens[0]?.slice(COMMENT_ADMISSION_PROTOCOL_PREFIX.length)
+  return tokens.length === 1 && token && ADMISSION_PATTERN.test(token) ? token : null
+}
+
 function servedVersion(protocol: string): number | undefined {
   const m = VERSION_PROTOCOL.exec(protocol)
   const version = m ? Number(m[1]) : 0
-  return version >= MIN_PROTOCOL_VERSION && version <= PROTOCOL_VERSION ? version : undefined
+  return version >= MIN_PROTOCOL_VERSION && version <= RELAY_PROTOCOL_VERSION ? version : undefined
 }
 
 /**
  * Compares the protocol versions a client offers with those the relay serves
- * (MIN_PROTOCOL_VERSION to PROTOCOL_VERSION): `current` when it speaks one,
+ * (MIN_PROTOCOL_VERSION to RELAY_PROTOCOL_VERSION): `current` when it speaks one,
  * with the newest of those as `version`, `client-outdated` or
  * `server-outdated` when it only speaks others, and `none` when it offers no
  * version at all. `offered` is the subprotocol to echo when accepting just to
@@ -93,7 +121,7 @@ export function checkProtocolVersion(
   }
   const newest = versions.reduce((a, b) => (b.version > a.version ? b : a))
   return {
-    result: newest.version > PROTOCOL_VERSION ? 'server-outdated' : 'client-outdated',
+    result: newest.version > RELAY_PROTOCOL_VERSION ? 'server-outdated' : 'client-outdated',
     offered: newest.protocol,
   }
 }

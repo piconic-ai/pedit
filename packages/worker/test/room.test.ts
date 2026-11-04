@@ -187,7 +187,7 @@ describe('rooms', () => {
     expect(old.headers.get('Sec-WebSocket-Protocol')).toBe('pedit-v4')
     // A wrong admission makes no difference: the version is checked first.
     const newer = await connect(room.id, {
-      'Sec-WebSocket-Protocol': `pedit-v8, pedit-admission.${'B'.repeat(43)}`,
+      'Sec-WebSocket-Protocol': `pedit-v9, pedit-admission.${'B'.repeat(43)}`,
     })
     expect((await newer.closed).code).toBe(SERVER_OUTDATED)
     const ws = old.webSocket!

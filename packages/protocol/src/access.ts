@@ -36,6 +36,7 @@ const LABEL = {
   comment: 'pedit v5 comment',
   commentSign: 'pedit v5 comment sign',
   read: 'pedit v5 read',
+  commentAdmission: 'pedit v8 comment admission',
   frame: 'pedit v5 frame',
 } as const
 
@@ -65,6 +66,8 @@ export interface RoomKeys {
   readAdmission: string
   /** Relay capability of editors only. */
   editAdmission: string | null
+  /** Relay capability of commenters (v8); null for a read link, which cannot derive it. */
+  commentAdmission: string | null
   /** The fragments of the links this client can hand out: its own and the ones below it. */
   fragments: Partial<Record<Access, string>>
   /** The frame key's bytes, from which the attachment keys are derived. */
@@ -208,6 +211,7 @@ export async function deriveRoomKeys(link: LinkSecrets, roomId: string): Promise
     signer,
     readAdmission: await deriveAdmissionToken(frame),
     editAdmission,
+    commentAdmission: comment ? toBase64Url(await hkdf(comment, LABEL.commentAdmission)) : null,
     fragments,
     frameSecret: frame,
   }
