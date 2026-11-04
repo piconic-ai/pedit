@@ -51,7 +51,7 @@ func zipOf(t *testing.T, files ...string) []byte {
 	return buf.Bytes()
 }
 
-// fakeGitHub serves v0.9.0 of pedit for the running platform.
+// fakeGitHub serves v0.9.0 of pedit for linux (or windows with a .zip).
 type fakeGitHub struct {
 	archive    []byte
 	sumOf      []byte // what checksums.txt is computed from; archive when nil
@@ -81,7 +81,7 @@ func newFakeGitHub(t *testing.T) (*fakeGitHub, *httptest.Server) {
 				sum = f.archive
 			}
 			h := sha256.Sum256(sum)
-			goos := runtime.GOOS
+			goos := "linux"
 			if f.archiveExt == ".zip" {
 				goos = "windows"
 			}
@@ -112,7 +112,9 @@ func testUpdater(t *testing.T, srv *httptest.Server, gh *ghCall) (updater, strin
 		t.Fatal(err)
 	}
 	return updater{
-		exe: exe, goos: runtime.GOOS, goarch: runtime.GOARCH, home: dir, current: "v0.5.1",
+		// The platform is the fixture's (linux, a tar.gz), not the host's, so
+		// these tests run the same on Windows; the Windows tests set goos.
+		exe: exe, goos: "linux", goarch: runtime.GOARCH, home: dir, current: "v0.5.1",
 		releasesAPI: srv.URL + "/latest", downloadURL: srv.URL + "/dl", apiURL: srv.URL + "/api",
 		client: srv.Client(),
 		hasGh:  func() bool { return gh.has },
