@@ -104,7 +104,7 @@ func (s *Session) startAway(hostToken, fragment string, res *resumed) error {
 
 // newRecord lists the files a new kept room starts with.
 func (a *keepAway) newRecord(project, fragment, hostToken string) (keptTextState, error) {
-	state := keptTextState{Project: project, Origin: a.s.server, Fragment: fragment, HostToken: hostToken, Socket: true, Keep: int64(a.s.opts.Keep / time.Second)}
+	state := keptTextState{Project: project, Origin: a.s.server, Fragment: fragment, HostToken: hostToken, Socket: true, CommentEntries: true, Keep: int64(a.s.opts.Keep / time.Second)}
 	for i, f := range a.files {
 		path, err := keptPath(project, f.file, len(a.files) > 1)
 		if err != nil {
@@ -314,7 +314,11 @@ func (a *keepAway) onKind(kind byte, payload []byte) {
 // takeIn applies an entry to the live doc it names, like a live update, if it
 // passes the checks a kept room makes; any other is skipped and counted.
 func (a *keepAway) takeIn(entry []byte) {
-	id, update, err := protocol.OpenKeptFileUpdate(a.h.keys, entry)
+	id, update, err := a.h.openEntry(entry, func(id uint32, update []byte) error {
+		var err error
+		a.s.Client.Do(func() { err = meta.CheckUpdate(a.h.files[id].doc, update) })
+		return err
+	})
 	if err == nil {
 		err = a.apply(id, update)
 	}

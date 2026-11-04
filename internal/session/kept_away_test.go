@@ -221,7 +221,7 @@ func TestKeepAsksTheRelayAndSnapshotsRightAfterConnecting(t *testing.T) {
 	// The record, which pedit resume reads.
 	prototest.WaitFor(t, wait, func() bool { _, err := os.Stat(keptTestStatePath(t, a.project, a.id)); return err == nil }, "the record")
 	rec := a.record()
-	if !rec.Socket || !rec.Initialized || rec.Keep != 60 || rec.Origin != a.server.URL || rec.HostToken != a.token ||
+	if !rec.Socket || !rec.CommentEntries || !rec.Initialized || rec.Keep != 60 || rec.Origin != a.server.URL || rec.HostToken != a.token ||
 		rec.Fragment == "" || len(rec.Files) != 1 || rec.Files[0].File != a.file || rec.Files[0].Path != "notes.md" || rec.Files[0].Text != "notes\n" {
 		t.Fatalf("record = %+v", rec)
 	}

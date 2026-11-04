@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -293,9 +294,14 @@ func HandshakeHeader(h http.Header, keys *RoomKeys, host bool) http.Header {
 	if keys.Access == AccessEdit {
 		token = keys.EditAdmission
 	}
-	h.Set("Sec-WebSocket-Protocol", SocketProtocols+", "+AdmissionProtocolPrefix+token)
+	// Only the host registers the comment token; no Go client offers it as a
+	// commenter (the CLI guest does not comment while the host is away).
+	h.Set("Sec-WebSocket-Protocol", strings.Join(OfferProtocols(token, ""), ", "))
 	if host {
 		h.Set(ReadAdmissionHeader, keys.ReadAdmission)
+		if keys.CommentAdmission != "" {
+			h.Set(CommentAdmissionHeader, keys.CommentAdmission)
+		}
 	}
 	return h
 }

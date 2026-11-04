@@ -21,7 +21,7 @@ const ReadAdmissionHeader = "X-Pedit-Read-Admission"
 // CommentAdmissionHeader carries the comment admission token (access.go) on
 // the host's upgrade request, beside ReadAdmissionHeader (version 8, see
 // docs/design/kept-comments.md). CommentAdmissionPrefix is the subprotocol
-// prefix a comment link offers it under. The client behaviour is a later step.
+// prefix a comment link offers it under.
 const (
 	CommentAdmissionHeader = "X-Pedit-Comment-Admission"
 	CommentAdmissionPrefix = "pedit-comment-admission."
@@ -31,32 +31,26 @@ const (
 // Bump it only for changes older peers cannot skip; adding a message type or
 // kind does not need a bump. Version 6 starts every binary message with a kind
 // byte (kinds.go). Keep it in sync with packages/protocol.
-const ProtocolVersion = 7
+const ProtocolVersion = 8
 
 // MinProtocolVersion excludes peers that cannot replay kept canvas documents.
 const MinProtocolVersion = 7
 
 // SocketProtocol is "pedit-v" followed by ProtocolVersion.
-const SocketProtocol = "pedit-v7"
+const SocketProtocol = "pedit-v8"
 
 // SocketProtocols is what a Client offers: its newest version first, then the
-// older ones it still speaks.
-const SocketProtocols = SocketProtocol
+// older one it still speaks, so a version 7 relay still accepts it. Keep it
+// equal to OfferProtocols' versions.
+const SocketProtocols = SocketProtocol + ", pedit-v7"
 
 // socketVersion is the version a negotiated subprotocol names, or 0.
-func socketVersion(subprotocol string) int {
-	switch subprotocol {
-	case "pedit-v7":
-		return 7
-	}
-	return 0
-}
+func socketVersion(subprotocol string) int { return AcceptedVersion(subprotocol) }
 
 const AdmissionProtocolPrefix = "pedit-admission."
 
 // ClientProtocolVersions are the versions a version 8 client offers, newest
-// first, so a version 7 relay still accepts it. Nothing offers them yet:
-// ProtocolVersion stays 7 until the clients speak 8. Keep in sync with
+// first, so a version 7 relay still accepts it. Keep in sync with
 // CLIENT_PROTOCOL_VERSIONS in packages/protocol.
 var ClientProtocolVersions = []int{8, 7}
 
