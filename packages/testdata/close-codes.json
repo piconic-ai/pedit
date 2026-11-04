@@ -24,6 +24,9 @@
     "CHECKPOINT_REFUSED": "checkpoint refused",
     "LOG_FULL": "log full"
   },
+  "relayTextsV8": {
+    "KEPT_COMMENTS": "kept comments"
+  },
   "expiredReasons": [
     { "seconds": 86400, "reason": "the room reached its time limit of 86400 seconds" },
     { "seconds": 90, "reason": "the room reached its time limit of 90 seconds" }

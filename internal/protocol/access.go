@@ -52,13 +52,14 @@ const (
 	commentPrefix = "c."
 	readPrefix    = "r."
 
-	labelEditSign      = "pedit v5 edit sign"
-	labelEditAdmission = "pedit v5 edit admission"
-	labelComment       = "pedit v5 comment"
-	labelCommentSign   = "pedit v5 comment sign"
-	labelRead          = "pedit v5 read"
-	labelFrame         = "pedit v5 frame"
-	labelReadAdmission = "pedit v5 read admission"
+	labelEditSign         = "pedit v5 edit sign"
+	labelEditAdmission    = "pedit v5 edit admission"
+	labelComment          = "pedit v5 comment"
+	labelCommentSign      = "pedit v5 comment sign"
+	labelRead             = "pedit v5 read"
+	labelFrame            = "pedit v5 frame"
+	labelReadAdmission    = "pedit v5 read admission"
+	labelCommentAdmission = "pedit v8 comment admission"
 )
 
 // fragmentPattern matches the fragment of a room link: an edit secret, or a
@@ -90,6 +91,9 @@ type RoomKeys struct {
 	// EditAdmission that of editors only, empty below an edit link.
 	ReadAdmission string
 	EditAdmission string
+	// CommentAdmission is the relay capability of commenters (version 8);
+	// empty for a read link, which cannot derive it.
+	CommentAdmission string
 	// Fragments are the fragments of the links this client can hand out:
 	// its own and the ones below it.
 	Fragments map[Access]string
@@ -170,6 +174,7 @@ func DeriveRoomKeys(link LinkSecrets, roomID string) (*RoomKeys, error) {
 		}
 		commentKey = sk.Public().(ed25519.PublicKey)
 		read = derive(comment, labelRead)
+		k.CommentAdmission = enc(derive(comment, labelCommentAdmission))
 		k.Fragments[AccessComment] = commentPrefix + enc(append(append([]byte{}, comment...), k.EditKey...))
 	}
 	k.CommentKey = commentKey

@@ -39,6 +39,12 @@ export const HOST_BACK = 'host back'
  * entry the log has no room for, which is then not relayed.
  */
 export const KEPT = 'kept'
+/**
+ * Sent right after `kept <until-ms>`, to sockets accepted in version 8, by a
+ * relay that holds a comment admission hash: a comment link may then write
+ * comment entries while the host is away (docs/design/kept-comments.md).
+ */
+export const KEPT_COMMENTS = 'kept comments'
 export const KEEP = 'keep'
 export const CHECKPOINT = 'checkpoint'
 export const CHECKPOINT_REFUSED = 'checkpoint refused'

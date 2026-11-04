@@ -16,6 +16,15 @@ const AdmissionHeader = "X-Pedit-Admission"
 // editor does. Keep it equal to READ_ADMISSION_HEADER in packages/protocol.
 const ReadAdmissionHeader = "X-Pedit-Read-Admission"
 
+// CommentAdmissionHeader carries the comment admission token (access.go) on
+// the host's upgrade request, beside ReadAdmissionHeader (version 8, see
+// docs/design/kept-comments.md). CommentAdmissionPrefix is the subprotocol
+// prefix a comment link offers it under. The client behaviour is a later step.
+const (
+	CommentAdmissionHeader = "X-Pedit-Comment-Admission"
+	CommentAdmissionPrefix = "pedit-comment-admission."
+)
+
 // ProtocolVersion is the wire format version, offered as SocketProtocol.
 // Bump it only for changes older peers cannot skip; adding a message type or
 // kind does not need a bump. Version 6 starts every binary message with a kind

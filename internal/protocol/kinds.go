@@ -42,6 +42,11 @@ const (
 	LogFull = "log full"
 )
 
+// KeptComments is the text the relay sends after "kept <until-ms>", in version
+// 8, when it holds a comment admission hash. Keep it equal to relayTextsV8 in
+// packages/testdata/close-codes.json.
+const KeptComments = "kept comments"
+
 // KeepHeader and AfterHeader are the host's request headers: the keep it asks
 // for in seconds, and the last log entry it holds.
 const (

@@ -42,6 +42,7 @@ describe('room links', () => {
       expect(toBase64Url(k.frameSecret)).toBe(v.frameKey)
       expect(k.readAdmission).toBe(v.readAdmission)
       expect(k.editAdmission).toBe(access === 'edit' ? v.editAdmission : null)
+      expect(k.commentAdmission).toBe(access === 'read' ? null : v.commentAdmission)
       expect(k.fragments).toEqual(Object.fromEntries(below[access].map((a) => [a, all[a]])))
       // Frames one link encrypts, every other link decrypts.
       const sealed = await encrypt(k.frameKey, bytes(access))
@@ -93,6 +94,7 @@ describe('room links', () => {
       v.frameKey,
       v.editAdmission,
       v.readAdmission,
+      v.commentAdmission,
     ]) {
       expect(value).not.toContain(v.v1Admission)
       expect(value).not.toContain(v.edit)
