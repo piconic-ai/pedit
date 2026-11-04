@@ -123,13 +123,13 @@ export class KeptAway {
   }
 
   /** Takes a message of kind 4, 5 or 6 from the relay. */
-  async receive(kind: number, payload: Uint8Array): Promise<void> {
+  async receive(kind: number, payload: Uint8Array, current: () => boolean): Promise<void> {
     try {
-      if (kind === Kind.Replay) await this.snapshot(payload)
+      if (kind === Kind.Replay) await this.snapshot(payload, current)
       else if (kind === Kind.LogEnd) this.logEnd(decodeUint64(payload))
-      else if (kind === Kind.Logged) await this.logged(payload)
+      else if (kind === Kind.Logged) await this.logged(payload, current)
     } catch {
-      this.skip(1)
+      if (current()) this.skip(1)
     }
   }
 
@@ -157,12 +157,12 @@ export class KeptAway {
     }
   }
 
-  private async logged(payload: Uint8Array): Promise<void> {
+  private async logged(payload: Uint8Array, current: () => boolean): Promise<void> {
     const logged = decodeLogged(payload)
     if (!logged) throw new Error('invalid logged entry')
-    this.after = Math.max(this.after ?? 0, logged.id)
     const mine = this.pending.findIndex((p) => same(p.body, logged.entry))
     if (mine >= 0) {
+      this.after = Math.max(this.after ?? 0, logged.id)
       const [own] = this.pending.splice(mine, 1)
       try {
         if (own) integrate(this.copyOf(own.id), own.update)
@@ -172,7 +172,14 @@ export class KeptAway {
       if (this.pending.length === 0) this.hooks.sync('kept')
       return
     }
-    const { id, update } = decodeUpdate(await openKeptFrame(this.keys, logged.entry))
+    let opened: Uint8Array
+    try {
+      opened = await openKeptFrame(this.keys, logged.entry)
+    } finally {
+      if (current()) this.after = Math.max(this.after ?? 0, logged.id)
+    }
+    if (!current()) return
+    const { id, update } = decodeUpdate(opened)
     if (this.files && !this.files.some((file) => file.id === id)) throw new Error('unknown file')
     integrate(this.copyOf(id), update)
     for (const [target, { doc }] of this.hooks.docs()) {
@@ -204,8 +211,9 @@ export class KeptAway {
   }
 
   // The host's snapshot of every file: the start of the docs, and the files they are.
-  private async snapshot(bundle: Uint8Array): Promise<void> {
+  private async snapshot(bundle: Uint8Array, current: () => boolean): Promise<void> {
     const opened = decodeSnapshot(await openKeptFrame(this.keys, bundle))
+    if (!current()) return
     const files =
       opened.kind === 'bundle'
         ? opened.files

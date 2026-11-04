@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Awareness } from 'y-protocols/awareness'
 import * as Y from 'yjs'
 import {
@@ -11,6 +11,7 @@ import {
   type KeptSync,
   MessageType,
   openMessage,
+  ROOM_CLOSED,
   RoomClient,
   type RoomKeys,
   type RoomStatus,
@@ -104,6 +105,54 @@ async function live(keys: RoomKeys, relay: Relay, from = 0) {
 const UNTIL = 1_900_000_000_000
 
 describe('a room kept while its host is away', () => {
+  it.each(['snapshot', 'entry'] as const)(
+    'drops an in-flight kept %s and queued replay after a final close',
+    async (kind) => {
+      const keys = await editKeys()
+      const m = await member(keys)
+      const { doc, update } = textUpdate((text) => text.insert(0, 'remote'))
+      const replay = withKind(
+        Kind.Replay,
+        await sealBundle(keys, [{ id: 0, path: 'a.md', update }]),
+      )
+      const incoming =
+        kind === 'snapshot' ? replay : encodeLogged(1, await sealKeptUpdate(keys, 0, update))
+      const decrypt = crypto.subtle.decrypt.bind(crypto.subtle)
+      let release = () => {}
+      const blocked = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      let started = false
+      const spy = vi.spyOn(crypto.subtle, 'decrypt').mockImplementation(async (...args) => {
+        started = true
+        await blocked
+        return decrypt(...args)
+      })
+      try {
+        m.socket().onmessage?.({ data: incoming })
+        m.socket().onmessage?.({ data: replay })
+        await vi.waitFor(() => expect(started).toBe(true))
+        m.socket().close(ROOM_CLOSED)
+        await vi.waitFor(() => expect(m.client.status).toBe('closed'))
+        release()
+        await m.client['receiveChain']
+        expect(m.doc.getText('content').toString()).toBe('')
+        expect(m.manifests).toEqual([])
+        expect(m.skipped).toEqual([])
+        spy.mockRestore()
+        m.client.connect()
+        await vi.waitFor(() => expect(m.client.status).toBe('connected'))
+        expect(m.relay.urls.at(-1)).toBe('ws://test/room')
+        await m.say(incoming)
+        expect(m.doc.getText('content').toString()).toBe('remote')
+      } finally {
+        release()
+        spy.mockRestore()
+        doc.destroy()
+      }
+    },
+  )
+
   it('enters the kept status and says until when; the words of a version 5 relay still wait', async () => {
     const keys = await editKeys()
     const m = await member(keys)

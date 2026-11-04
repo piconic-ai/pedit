@@ -360,6 +360,7 @@ export class RoomClient {
     }
     socket.onmessage = (ev) => {
       if (this.socket !== socket) return
+      const current = () => this.socket === socket
       const heard = this.heard
       this.heard = true
       if (typeof ev.data === 'string') {
@@ -374,12 +375,14 @@ export class RoomClient {
       const { kind, payload: data } = split
       if (kind !== Kind.Live) {
         this.receiveChain = this.receiveChain
-          .then(() => this.kept.receive(kind, data))
+          .then(() => {
+            if (current()) return this.kept.receive(kind, data, current)
+          })
           .catch((error) => this.opts.onError?.(error))
         return
       }
       this.receiveChain = this.receiveChain
-        .then(() => this.receive(data))
+        .then(() => this.receive(data, current))
         .catch((error) => this.opts.onError?.(error))
     }
     socket.onclose = (ev) => {
@@ -632,9 +635,10 @@ export class RoomClient {
     this.sendOnce(MessageType.Files, encodeFileDoc(file, MessageType.Canvas, encodeCanvas(message)))
   }
 
-  private async receive(data: Uint8Array): Promise<void> {
-    const frame = await this.readFrame(data)
-    if (!frame) return
+  private async receive(data: Uint8Array, current: () => boolean): Promise<void> {
+    if (!current()) return
+    const frame = await this.readFrame(data, current)
+    if (!frame || !current()) return
     const { access, message, vouched } = frame
     // An editor live in a room we hold edits for: the host is here, and takes them.
     if (vouched && access === 'edit' && !this.kept.active && this.kept.held > 0) this.kept.settle()
@@ -724,8 +728,9 @@ export class RoomClient {
    * Decrypts a frame, checks its signature, takes it once, and decodes its
    * message with the access it speaks for; null for an unknown type.
    */
-  private async readFrame(data: Uint8Array): Promise<ReadFrame | null> {
+  private async readFrame(data: Uint8Array, current: () => boolean): Promise<ReadFrame | null> {
     const plaintext = await decrypt(this.opts.keys.frameKey, data)
+    if (!current()) return null
     const frame = decodeFrame(plaintext)
     if (!this.guard.foreign(frame.sender)) throw new ReplayedFrameError()
     const opened = await openMessage(
@@ -733,6 +738,7 @@ export class RoomClient {
       plaintext.subarray(0, HEADER_BYTES),
       frame.message,
     )
+    if (!current()) return null
     const { access } = opened
     // A signer that has not shown it is live yet (fresh.ts) may be one the
     // relay kept from before: its counters prove nothing yet.
