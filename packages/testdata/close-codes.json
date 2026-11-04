@@ -8,6 +8,7 @@
     "RELAY_MAINTENANCE": 4006,
     "ROOM_EXPIRED": 4007,
     "HOST_LEFT": 4008,
+    "ORIGIN_NOT_ALLOWED": 4009,
     "MESSAGE_TOO_BIG": 1009
   },
   "signals": {

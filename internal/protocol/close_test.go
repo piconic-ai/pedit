@@ -35,15 +35,16 @@ func TestCloseCodesMatchTheSharedVectors(t *testing.T) {
 	v := loadCloseVectors(t)
 	// Every name in the vectors, with the constant this package has for it.
 	have := map[string]int{
-		"ROOM_CLOSED":       RoomClosed,
-		"CLIENT_OUTDATED":   ClientOutdated,
-		"SERVER_OUTDATED":   ServerOutdated,
-		"ROOM_FULL":         RoomFull,
-		"RELAY_BUSY":        RelayBusy,
-		"RELAY_MAINTENANCE": RelayMaintenance,
-		"ROOM_EXPIRED":      RoomExpired,
-		"HOST_LEFT":         HostLeft,
-		"MESSAGE_TOO_BIG":   MessageTooBig,
+		"ROOM_CLOSED":        RoomClosed,
+		"CLIENT_OUTDATED":    ClientOutdated,
+		"SERVER_OUTDATED":    ServerOutdated,
+		"ROOM_FULL":          RoomFull,
+		"RELAY_BUSY":         RelayBusy,
+		"RELAY_MAINTENANCE":  RelayMaintenance,
+		"ROOM_EXPIRED":       RoomExpired,
+		"HOST_LEFT":          HostLeft,
+		"ORIGIN_NOT_ALLOWED": OriginNotAllowed,
+		"MESSAGE_TOO_BIG":    MessageTooBig,
 	}
 	for name, code := range v.Codes {
 		got, ok := have[name]

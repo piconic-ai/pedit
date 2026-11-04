@@ -20,6 +20,7 @@ import {
   KEPT,
   LOG_FULL,
   MESSAGE_TOO_BIG,
+  ORIGIN_NOT_ALLOWED,
   RELAY_MAINTENANCE,
   RELAY_PING,
   RELAY_PONG,
@@ -47,6 +48,13 @@ import {
   replay,
   storeSnapshot,
 } from './kept-away.ts'
+import {
+  corsHeaders,
+  FOREIGN_ORIGIN_HEADER,
+  ORIGINS_HEADER,
+  parseOrigins,
+  preflight,
+} from './origins.ts'
 
 // Shared browser code brings DOM's SubtleCrypto into this program. Augment it
 // with the documented Workers extension also present in our generated types.
@@ -69,6 +77,7 @@ export const HOST_HEADER = 'X-Pedit-Host'
  */
 export const KEEP_HEADER = 'X-Pedit-Keep'
 /** The last log entry a peer already holds, when it joins a room whose host is away. */
+export { FOREIGN_ORIGIN_HEADER, ORIGINS_HEADER }
 export const AFTER_HEADER = 'X-Pedit-After'
 
 /** AES-GCM's IV and tag around an encrypted attachment. */
@@ -200,6 +209,9 @@ const USAGE_KEY = 'blobUsage'
 // The digests of the editor and reader admission tokens (access.ts).
 const ADMISSION_KEY = 'admissionHash'
 const READ_ADMISSION_KEY = 'readAdmissionHash'
+// The page origins the host admitted (a JSON array), with the admission hashes.
+const ORIGINS_KEY = 'origins'
+const ORIGIN_REFUSED_REASON = 'this page is not allowed for this room'
 // When the host first connected, in ms since the epoch. Never deleted: once
 // the room is over it is the tombstone that stops its ID being used again.
 const OPENED_KEY = 'openedAt'
@@ -234,6 +246,8 @@ interface Join {
   keep?: number
   /** The last log entry the peer holds. */
   after?: number
+  /** The page origins a host declares; used on its first connection only. */
+  origins: string[]
 }
 
 type Role = 'editor' | 'reader'
@@ -324,6 +338,9 @@ export class Room extends DurableObject<Env> {
     if (!token || version.result !== 'current')
       return new Response('room admission required; update your client', { status: 403 })
     const isHost = request.headers.get(HOST_HEADER) === '1'
+    // Before anything that touches the room's state.
+    const turnedAway = this.originGate(request, isHost, version.version)
+    if (turnedAway) return turnedAway
     const join = this.joinFrom(request, version.version, isHost)
     const read = (isHost && request.headers.get(READ_ADMISSION_HEADER)) || null
     if (read !== null && !ADMISSION_PATTERN.test(read)) {
@@ -340,6 +357,22 @@ export class Room extends DurableObject<Env> {
     }
   }
 
+  // Refuses a host that declares origins the relay does not allow, and a page
+  // whose origin the room has not admitted (the Worker sets the foreign header).
+  private originGate(request: Request, isHost: boolean, version: number): Response | undefined {
+    if (isHost && parseOrigins(request.headers.get(ORIGINS_HEADER)) === undefined) {
+      return new Response('invalid origins', { status: 403 })
+    }
+    const foreign = request.headers.get(FOREIGN_ORIGIN_HEADER)
+    if (foreign === null || (!isHost && this.origins().includes(foreign))) return undefined
+    return this.refuse(ORIGIN_NOT_ALLOWED, ORIGIN_REFUSED_REASON, socketProtocol(version))
+  }
+
+  // The page origins the host admitted for this session.
+  private origins(): string[] {
+    return this.ctx.storage.kv.get<string[]>(ORIGINS_KEY) ?? []
+  }
+
   // A request under /keep: only the host's close of a room kept without it.
   private keepRequest(request: Request, path: string): Promise<Response> | Response {
     if (path.endsWith('/keep/close') && request.method === 'POST' && this.awayRoom())
@@ -354,6 +387,7 @@ export class Room extends DurableObject<Env> {
       version,
       protocol: socketProtocol(version),
       keep: keeps ? this.keepFrom(request.headers.get(KEEP_HEADER)) : undefined,
+      origins: (isHost && parseOrigins(request.headers.get(ORIGINS_HEADER))) || [],
       // A browser cannot set a header on a WebSocket: it sends `?after=` instead.
       after: afterFrom(
         request.headers.get(AFTER_HEADER) ?? new URL(request.url).searchParams.get('after'),
@@ -412,7 +446,7 @@ export class Room extends DurableObject<Env> {
     }
     // Authenticate before taking a peer slot. Only the authenticated host may
     // register the verifiers; a guest cannot claim an unopened room's tokens.
-    const role = isHost ? this.registerHost(digest, readDigest) : this.role(digest)
+    const role = isHost ? this.registerHost(digest, readDigest, join.origins) : this.role(digest)
     if (!role) return new Response('invalid room admission', { status: 403 })
     this.closeOutdatedPeers()
     if (this.full(isHost, role)) return this.refuse(ROOM_FULL, 'room is full', join.protocol)
@@ -563,12 +597,17 @@ export class Room extends DurableObject<Env> {
    * tokens when it has none. Persisted across hibernation, and read after
    * hashing so concurrent host handshakes cannot each install other tokens.
    */
-  private registerHost(digest: ArrayBuffer, readDigest: ArrayBuffer | null): Role | null {
+  private registerHost(
+    digest: ArrayBuffer,
+    readDigest: ArrayBuffer | null,
+    origins: string[],
+  ): Role | null {
     const kv = this.ctx.storage.kv
     const expected = kv.get<ArrayBuffer>(ADMISSION_KEY)
     if (expected) return crypto.subtle.timingSafeEqual(expected, digest) ? 'editor' : null
     kv.put(ADMISSION_KEY, digest)
     if (readDigest) kv.put(READ_ADMISSION_KEY, readDigest)
+    if (origins.length > 0) kv.put(ORIGINS_KEY, origins)
     return 'editor'
   }
 
@@ -1017,6 +1056,7 @@ export class Room extends DurableObject<Env> {
     this.ctx.storage.kv.delete(USAGE_KEY)
     this.ctx.storage.kv.delete(ADMISSION_KEY)
     this.ctx.storage.kv.delete(READ_ADMISSION_KEY)
+    this.ctx.storage.kv.delete(ORIGINS_KEY)
     this.ctx.storage.kv.delete(AWAY_KEY)
     this.ctx.storage.kv.delete(KEPT_AWAY_KEY)
     clearAway(this.ctx.storage)
@@ -1024,7 +1064,21 @@ export class Room extends DurableObject<Env> {
     await this.cleaning
   }
 
+  // A blob request from a page on another origin gets CORS headers if the
+  // room admits it, and none (so the browser blocks the answer) if not.
   private async blob(request: Request, id: string): Promise<Response> {
+    const foreign = request.headers.get(FOREIGN_ORIGIN_HEADER)
+    if (foreign === null) return this.blobResponse(request, id)
+    if (!this.origins().includes(foreign))
+      return new Response('origin not allowed', { status: 403 })
+    if (request.method === 'OPTIONS') return preflight(foreign)
+    const answer = await this.blobResponse(request, id)
+    const res = new Response(answer.body, answer)
+    for (const [name, value] of Object.entries(corsHeaders(foreign))) res.headers.set(name, value)
+    return res
+  }
+
+  private async blobResponse(request: Request, id: string): Promise<Response> {
     const token = request.headers.get(ADMISSION_HEADER)
     if (!token || !ADMISSION_PATTERN.test(token))
       return new Response('room admission required', { status: 403 })
