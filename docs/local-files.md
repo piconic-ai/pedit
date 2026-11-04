@@ -172,7 +172,7 @@ How the recovery state and the generation work: [design/serve.md](design/serve.m
 | `cloudflared` | Only when the server answers room creation with a Cloudflare Access sign-in | `access token -app=<server>`, then `access login --quiet <server>` if there is no valid token |
 | `gh` | Only during `pedit self-update`, and only if installed | `attestation verify <archive> --bundle <bundle> --repo piconic-ai/pedit --signer-workflow … --deny-self-hosted-runners`, plus `--source-digest` and `--signer-digest` when the tag's commit is known. Fixed arguments, no shell |
 
-Both are looked up in your `PATH`. A program in the current directory is not
+They are looked up in your `PATH`. A program in the current directory is not
 run even when `PATH` contains `.`. When a newer release is out, pedit prints
 the command that upgrades it. Only `pedit self-update` downloads one: it checks the archive, then replaces the pedit that runs it (see [verifying releases](verifying-releases.md)).
 
