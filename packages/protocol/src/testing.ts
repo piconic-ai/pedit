@@ -95,6 +95,8 @@ export interface RelayOptions {
   byteRate?: Rate
   /** Close a socket that sends a larger frame with MESSAGE_TOO_BIG, as the Room does at MAX_FRAME_BYTES. */
   maxFrame?: number
+  /** The subprotocol the relay accepts, such as `pedit-v8`; none by default. */
+  protocol?: string
 }
 
 /** An in-memory stand-in for the Worker: relays every frame to all other sockets. */
@@ -173,6 +175,7 @@ export class Relay {
 export class FakeSocket implements SocketLike {
   binaryType = 'blob'
   readyState = 0
+  readonly protocol: string
   onopen: SocketLike['onopen'] = null
   onmessage: SocketLike['onmessage'] = null
   onclose: SocketLike['onclose'] = null
@@ -183,7 +186,9 @@ export class FakeSocket implements SocketLike {
   constructor(
     private relay: Relay,
     readonly isHost: boolean,
-  ) {}
+  ) {
+    this.protocol = relay.opts.protocol ?? ''
+  }
   send(data: Uint8Array) {
     // The kind byte is not part of the frame.
     if (this.relay.opts.maxFrame !== undefined && data.length - 1 > this.relay.opts.maxFrame) {

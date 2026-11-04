@@ -39,6 +39,7 @@ const STATIC_MESSAGES: Partial<Record<RoomStatus, string>> = {
     'This page is out of date: reload it to keep editing. You can still copy the text.',
   'server-outdated':
     'The server is older than this page and cannot connect it. You can still copy the text.',
+  'origin-refused': 'This page is not allowed for this room.',
   'too-large': `This document grew too large to share: pedit shares files up to about ${MAX_FRAME_BYTES / (1024 * 1024)} MiB for now. Your latest changes may not have reached the others. You can still copy the text.`,
 }
 

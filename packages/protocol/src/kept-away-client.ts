@@ -2,12 +2,17 @@ import * as Y from 'yjs'
 import type { RoomKeys } from './access.ts'
 import { type FileEntry, metaTarget } from './files.ts'
 import {
+  commentFileId,
   declare,
+  decodeCommentUpdate,
   decodeSnapshot,
   decodeUpdate,
+  type FileUpdate,
   incomplete,
   kindOf,
   openKeptFrame,
+  openKeptFrameTier,
+  sealKeptCommentUpdate,
   sealKeptUpdate,
   trial,
 } from './kept-text.ts'
@@ -89,10 +94,19 @@ export class KeptAway {
   /**
    * Seals an update of a doc as an entry, held until the relay logs it. It is
    * held only if `sendable` still says it can go out when it is sealed: what
-   * is not sent is found missing after the next replay.
+   * is not sent is found missing after the next replay. With `comment`, it
+   * is sealed with the comment domain, as a comment link's entries are; the
+   * rest of the path (pending, acknowledgement, resending) is the same.
    */
-  async entry(id: number, update: Uint8Array, sendable: () => boolean): Promise<Uint8Array | null> {
-    const body = await sealKeptUpdate(this.keys, id, update)
+  async entry(
+    id: number,
+    update: Uint8Array,
+    sendable: () => boolean,
+    comment = false,
+  ): Promise<Uint8Array | null> {
+    const body = comment
+      ? await sealKeptCommentUpdate(this.keys, id, update)
+      : await sealKeptUpdate(this.keys, id, update)
     if (!sendable()) return null
     this.pending.push({ body, id, update })
     this.hooks.sync('pending')
@@ -172,19 +186,26 @@ export class KeptAway {
       if (this.pending.length === 0) this.hooks.sync('kept')
       return
     }
-    let opened: Uint8Array
+    let opened: { tier: 'edit' | 'comment'; message: Uint8Array }
     try {
-      opened = await openKeptFrame(this.keys, logged.entry)
+      opened = await openKeptFrameTier(this.keys, logged.entry)
     } finally {
       if (current()) this.after = Math.max(this.after ?? 0, logged.id)
     }
     if (!current()) return
-    const { id, update } = decodeUpdate(opened)
+    const { id, update } =
+      opened.tier === 'comment' ? this.commentUpdate(opened.message) : decodeUpdate(opened.message)
     if (this.files && !this.files.some((file) => file.id === id)) throw new Error('unknown file')
     integrate(this.copyOf(id), update)
     for (const [target, { doc }] of this.hooks.docs()) {
       if (target === id) Y.applyUpdate(doc, update, this.origin)
     }
+  }
+
+  // A comment-tier entry, checked against what the relay holds of that doc.
+  private commentUpdate(message: Uint8Array): FileUpdate {
+    const id = commentFileId(message)
+    return decodeCommentUpdate(message, this.files, this.relay.get(id))
   }
 
   // The copy of what the relay holds of a file, made when first needed.

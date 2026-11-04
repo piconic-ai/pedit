@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import '../src/components/EndedBanner.tsx'
 import '../src/components/RoomStatusIndicator.tsx'
 import { whyNoImages } from '../src/attachments.ts'
-import { AwayView, isHostAway, isLocked } from '../src/keptaway.ts'
+import { AwayView, commentsLockedFor, isHostAway, isLocked } from '../src/keptaway.ts'
 import { Store } from '../src/store.ts'
 
 const UNTIL = Date.UTC(2030, 0, 2, 3, 4, 5)
@@ -51,6 +51,17 @@ describe('editing while the host is away', () => {
     expect(whyNoImages('kept', false, null)).toBeNull()
     expect(whyNoImages('log-full', false, null)).toMatch(/cannot keep more/)
     expect(whyNoImages('waiting', true, null)).toMatch(/host is away/)
+  })
+
+  it('unlocks comments, not the text, for a comment link only when the relay takes them', () => {
+    // writesComments, writesFile, keptComments
+    expect(commentsLockedFor('kept', true, false, false)).toBe(true)
+    expect(commentsLockedFor('kept', true, false, true)).toBe(false)
+    expect(commentsLockedFor('kept', false, false, true)).toBe(true)
+    expect(commentsLockedFor('kept', true, true, false)).toBe(false)
+    expect(commentsLockedFor('waiting', true, false, true)).toBe(true)
+    expect(commentsLockedFor('log-full', true, false, true)).toBe(true)
+    expect(commentsLockedFor('connected', true, false, false)).toBe(false)
   })
 
   it('says in the header that the host is away and the edits are kept, and until when', () => {

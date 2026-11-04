@@ -14,6 +14,20 @@ import { Store } from './store.ts'
 export const isLocked = (status: RoomStatus): boolean =>
   status === 'waiting' || status === 'log-full' || isFinalStatus(status)
 
+/**
+ * Whether comments are locked in this status. Beyond the locked statuses, a
+ * link that cannot comment never comments; and while the room is kept, only
+ * an edit link does, or a comment link when the relay takes comment entries
+ * (`kept comments`, protocol version 8). A read link never does.
+ */
+export const commentsLockedFor = (
+  status: RoomStatus,
+  writesComments: boolean,
+  writesFile: boolean,
+  keptComments: boolean,
+): boolean =>
+  isLocked(status) || !writesComments || (status === 'kept' && !writesFile && !keptComments)
+
 /** Whether the host is away in this status, kept or not. */
 export const isHostAway = (status: RoomStatus): boolean =>
   status === 'waiting' || status === 'kept' || status === 'log-full'

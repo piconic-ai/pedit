@@ -120,6 +120,12 @@ export function decodeCommentUpdate(
   if (refusal) throw new Error('invalid kept comments')
   return { id, update }
 }
+/** The file id a comment-tier message names; throws if it is not one. */
+export function commentFileId(message: Uint8Array): number {
+  const payload = payloadFor(message, COMMENT_DOMAIN)
+  if (!payload || payload.length <= 4) throw new Error('invalid kept comment update')
+  return new DataView(payload.buffer, payload.byteOffset, 4).getUint32(0)
+}
 export type FileUpdate = { id: number; update: Uint8Array }
 export type BundleFile = FileUpdate & { path: string }
 export type OpenedSnapshot =

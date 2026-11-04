@@ -61,6 +61,7 @@ export function whyNoImages(
   if (status === 'client-outdated') return 'This page is out of date. Reload it first.'
   if (status === 'server-outdated') return 'The server is older than this page.'
   if (status === 'expired') return 'This room reached its time limit.'
+  if (status === 'origin-refused') return 'This page is not allowed for this room.'
   if (status === 'too-large') return 'The document is too large to share.'
   if (status === 'waiting') return 'The host is away. Try again once they are back.'
   // The relay keeps the images of a kept room, and the host takes them in when it is back.

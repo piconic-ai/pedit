@@ -85,7 +85,7 @@ import './components/Header.tsx'
 import './components/Layout.tsx'
 import './components/Notice.tsx'
 import type { LayoutParts } from './components/Layout.tsx'
-import { AwayView, isLocked, setCanvasStatus } from './keptaway.ts'
+import { AwayView, commentsLockedFor, isLocked, setCanvasStatus } from './keptaway.ts'
 import { lockedUndo } from './lockedundo.ts'
 import './style.css'
 
@@ -304,9 +304,10 @@ async function joinRoom(
   // two minutes it waits for a host that dropped), nor once the room has
   // ended, nor when the relay has no more room to keep edits.
   const editLocked = () => isLocked(roomStatus.get())
-  // Only edit links write what the relay keeps while the host is away.
+  // While the host is away, a comment link comments only if the relay takes
+  // comment entries (`kept comments`); a read link never does.
   const commentsLocked = () =>
-    editLocked() || !writesComments || (roomStatus.get() === 'kept' && !writesFile)
+    commentsLockedFor(roomStatus.get(), writesComments, writesFile, client?.keptComments ?? false)
   // Nor does anyone whose link is below edit, ever.
   const fileLocked = () => editLocked() || !writesFile
   const noImages = () =>
@@ -770,6 +771,7 @@ async function joinRoom(
       away.setPending(state === 'pending')
     },
     onKeptSkipped: (count) => away.skipped.set(count),
+    onKeptComments: () => locked.set(commentsLocked()),
     onStatus: (s) => {
       if (s === 'expired') timeLimit.set(client?.timeLimitSeconds)
       setStatus(s)

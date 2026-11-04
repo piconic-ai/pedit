@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Awareness } from 'y-protocols/awareness'
 import * as Y from 'yjs'
+import { ORIGIN_NOT_ALLOWED } from '../src/close.ts'
 import {
   decodeFrame,
   decodeMessage,
@@ -8,6 +9,7 @@ import {
   HEADER_BYTES,
   HOST_AWAY,
   HOST_BACK,
+  isFinalStatus,
   type KeptSync,
   MessageType,
   openMessage,
@@ -16,7 +18,7 @@ import {
   type RoomKeys,
   type RoomStatus,
 } from '../src/index.ts'
-import { sealKeptUpdate } from '../src/kept-text.ts'
+import { openKeptFrameTier, sealKeptCommentUpdate, sealKeptUpdate } from '../src/kept-text.ts'
 import { decodeUint64, encodeLogEnd, encodeLogged, Kind, withKind } from '../src/kinds.ts'
 import { editKeys, type FakeSocket, lowerKeys, Relay, sealBundle } from '../src/testing.ts'
 
@@ -412,4 +414,164 @@ it('replays a canvas bundle, keeps edits and acknowledges them without duplicati
   expect(m.syncs.at(-1)).toBe('kept')
   expect(m.skipped).toEqual([])
   board.destroy()
+})
+
+describe('a comment link while the host is away (protocol version 8)', () => {
+  const FILES = [
+    { id: 0, path: 'a.md' },
+    { id: 1, path: '.pedit/meta/a.md.json' },
+  ]
+  const commentOf = (text: string) => {
+    const doc = new Y.Doc()
+    let update: Uint8Array = new Uint8Array()
+    doc.on('update', (u: Uint8Array) => {
+      update = u
+    })
+    doc.getMap('comments').set('t1', text)
+    return update
+  }
+  const replay = async (m: Member, host: RoomKeys, tail = 0, kept = true) => {
+    if (kept) await m.say(`kept ${UNTIL}`)
+    await m.say('kept comments')
+    await m.say(
+      withKind(
+        Kind.Replay,
+        await sealBundle(
+          host,
+          FILES.map((f) => ({
+            ...f,
+            update:
+              f.id === 0
+                ? textUpdate((t) => t.insert(0, 'hi')).update
+                : Y.encodeStateAsUpdate(new Y.Doc()),
+          })),
+        ),
+      ),
+    )
+    await m.say(encodeLogEnd(tail))
+  }
+  async function setup(protocol = 'pedit-v8') {
+    const edit = await editKeys()
+    const keys = await lowerKeys(edit, 'comment')
+    const m = await member(keys, new Relay({ protocol }))
+    const comments = new Y.Doc()
+    m.client.addFile(1, comments, undefined, { comments: true })
+    return { edit, keys, m, comments }
+  }
+
+  it('offers versions 8 and 7 with the comment token, for a comment link only', async () => {
+    const { keys, m } = await setup()
+    const offered = m.relay.protocols[0]!
+    expect(offered.slice(0, 2)).toEqual(['pedit-v8', 'pedit-v7'])
+    expect(offered).toContain(`pedit-comment-admission.${keys.commentAdmission}`)
+    const edit = await member(await editKeys())
+    expect(edit.relay.protocols[0]!.some((p) => p.includes('comment-admission'))).toBe(false)
+    const read = await member(await lowerKeys(await editKeys(), 'read'))
+    expect(read.relay.protocols[0]!.some((p) => p.includes('comment-admission'))).toBe(false)
+  })
+
+  it('tracks kept comments, and clears them when the host is back or the room is rejoined', async () => {
+    const { m } = await setup()
+    expect(m.client.protocolVersion).toBe(8)
+    await m.say(`kept ${UNTIL}`)
+    expect(m.client.keptComments).toBe(false)
+    await m.say('kept comments')
+    expect(m.client.keptComments).toBe(true)
+    await m.say(`kept ${UNTIL + 1}`)
+    expect(m.client.keptComments).toBe(false)
+    await m.say('kept comments')
+    await m.say(HOST_BACK)
+    expect(m.client.keptComments).toBe(false)
+    await m.say(`kept ${UNTIL}`)
+    await m.say('kept comments')
+    m.socket().close(1006)
+    expect(m.client.keptComments).toBe(false)
+  })
+
+  it('ignores kept comments on a version 7 connection', async () => {
+    const { m } = await setup('pedit-v7')
+    expect(m.client.protocolVersion).toBe(7)
+    await m.say(`kept ${UNTIL}`)
+    await m.say('kept comments')
+    expect(m.client.keptComments).toBe(false)
+  })
+
+  it('seals comment edits with the comment domain, gets them acknowledged and resends after a reconnect', async () => {
+    const { edit, keys, m, comments } = await setup()
+    // Before `kept comments`, nothing is sent.
+    await m.say(`kept ${UNTIL}`)
+    comments.getMap('comments').set('early', 'x')
+    await settle()
+    expect(entries(m.relay)).toHaveLength(0)
+    await replay(m, edit, 0, false)
+    // The comment made before is found missing by the replay and goes out.
+    expect(entries(m.relay)).toHaveLength(1)
+    const first = entries(m.relay)[0]!
+    expect((await openKeptFrameTier(edit, first)).tier).toBe('comment')
+    await m.say(encodeLogged(1, first))
+    expect(m.syncs).toEqual(['pending', 'kept'])
+    // The text stays read-only: an edit to it is never sent.
+    m.doc.getText('content').insert(0, 'no')
+    comments.getMap('comments').set('t2', 'y')
+    await settle()
+    expect(entries(m.relay)).toHaveLength(2)
+    expect((await openKeptFrameTier(edit, entries(m.relay)[1]!)).tier).toBe('comment')
+    // Dropped before acknowledgement: the next replay lacks it, and it is sent again.
+    m.socket().close(1006)
+    await new Promise((r) => setTimeout(r, 30))
+    await replay(m, edit, 1)
+    expect(entries(m.relay)).toHaveLength(3)
+    await m.say(encodeLogged(2, entries(m.relay)[2]!))
+    expect(m.syncs.at(-1)).toBe('kept')
+  })
+
+  it('applies comment-tier entries for a comments doc, and skips and counts the rest', async () => {
+    const { edit, keys, m, comments } = await setup()
+    await replay(m, edit)
+    const other = await lowerKeys(edit, 'comment')
+    await m.say(encodeLogged(1, await sealKeptCommentUpdate(other, 1, commentOf('hello'))))
+    expect(comments.getMap('comments').get('t1')).toBe('hello')
+    expect(m.skipped).toEqual([])
+    // A text file, an unknown file, and an update that fails the comment checks.
+    await m.say(encodeLogged(2, await sealKeptCommentUpdate(other, 0, commentOf('x'))))
+    await m.say(encodeLogged(3, await sealKeptCommentUpdate(other, 9, commentOf('x'))))
+    const stray = new Y.Doc()
+    let bad: Uint8Array = new Uint8Array()
+    stray.on('update', (u: Uint8Array) => {
+      bad = u
+    })
+    stray.getArray('nodes').push([1])
+    await m.say(encodeLogged(4, await sealKeptCommentUpdate(other, 1, bad)))
+    expect(m.skipped.at(-1)).toBe(3)
+    expect(m.doc.getText('content').toString()).toBe('hi')
+  })
+
+  it('leaves an edit link as it was: it seals comments docs with the edit domain', async () => {
+    const edit = await editKeys()
+    const m = await member(edit, new Relay({ protocol: 'pedit-v8' }))
+    const comments = new Y.Doc()
+    m.client.addFile(1, comments, undefined, { comments: true })
+    await replay(m, edit)
+    comments.getMap('comments').set('t', 'x')
+    await settle()
+    expect(entries(m.relay)).toHaveLength(1)
+    expect((await openKeptFrameTier(edit, entries(m.relay)[0]!)).tier).toBe('edit')
+  })
+
+  it('does not send comments on a read link', async () => {
+    const edit = await editKeys()
+    const keys = await lowerKeys(edit, 'read')
+    const m = await member(keys, new Relay({ protocol: 'pedit-v8' }))
+    await m.say(`kept ${UNTIL}`)
+    await m.say('kept comments')
+    expect(entries(m.relay)).toHaveLength(0)
+  })
+
+  it('ends for good when the relay refuses the page origin', async () => {
+    const m = await member(await editKeys(), new Relay({ refuse: ORIGIN_NOT_ALLOWED }))
+    expect(m.client.status).toBe('origin-refused')
+    expect(isFinalStatus(m.client.status)).toBe(true)
+    await new Promise((r) => setTimeout(r, 30))
+    expect(m.relay.urls).toHaveLength(1)
+  })
 })

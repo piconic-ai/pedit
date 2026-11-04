@@ -4,7 +4,7 @@ import * as awarenessProtocol from 'y-protocols/awareness'
 import * as syncProtocol from 'y-protocols/sync'
 import type * as Y from 'yjs'
 import type { Access, RoomKeys } from './access.ts'
-import { admissionProtocols } from './admission.ts'
+import { acceptedVersion, offerProtocols } from './admission.ts'
 import {
   type Attachment,
   decodeAttachment,
@@ -17,7 +17,9 @@ import {
   CLIENT_OUTDATED,
   HOST_AWAY,
   HOST_BACK,
+  KEPT_COMMENTS,
   MESSAGE_TOO_BIG,
+  ORIGIN_NOT_ALLOWED,
   parseExpiredReason,
   RELAY_BUSY,
   RELAY_MAINTENANCE,
@@ -78,6 +80,7 @@ import { openMessage, signMessage } from './signed.ts'
  * the server speaks an older or newer protocol version. So is `too-large`: a
  * frame we had to send was over MAX_FRAME_BYTES, the most the relay takes.
  * So is `expired`: the room reached the relay's time limit.
+ * So is `origin-refused`: the room does not admit this page's origin.
  * `busy` is not: the relay turned us away for now, and the client tries again
  * later than after a drop. Nor is `waiting`: we are connected, but the host
  * dropped and the relay waits for it to come back; nobody edits meanwhile.
@@ -100,6 +103,7 @@ export type RoomStatus =
   | 'server-outdated'
   | 'too-large'
   | 'expired'
+  | 'origin-refused'
 
 /** Whether a client stays in this status for good and no longer reconnects. */
 export function isFinalStatus(status: RoomStatus): boolean {
@@ -110,7 +114,8 @@ export function isFinalStatus(status: RoomStatus): boolean {
     status === 'client-outdated' ||
     status === 'server-outdated' ||
     status === 'too-large' ||
-    status === 'expired'
+    status === 'expired' ||
+    status === 'origin-refused'
   )
 }
 
@@ -123,12 +128,15 @@ const FINAL_CLOSE: ReadonlyMap<number, RoomStatus> = new Map([
   [SERVER_OUTDATED, 'server-outdated'],
   [MESSAGE_TOO_BIG, 'too-large'],
   [ROOM_EXPIRED, 'expired'],
+  [ORIGIN_NOT_ALLOWED, 'origin-refused'],
 ])
 
 /** The subset of the WebSocket API used by RoomClient (browser and Node.js 22+ globals both fit). */
 export interface SocketLike {
   binaryType: string
   readonly readyState: number
+  /** The subprotocol the server accepted, if the socket says. */
+  readonly protocol?: string
   onopen: ((ev: unknown) => void) | null
   onmessage: ((ev: { data: unknown }) => void) | null
   onclose: ((ev: { code?: number; reason?: string }) => void) | null
@@ -157,6 +165,8 @@ export interface RoomClientOptions {
   onKeptSync?: (state: KeptSync) => void
   /** How many entries of the kept room did not hold, and were left out, in all. */
   onKeptSkipped?: (count: number) => void
+  /** Whether a comment link may comment while the host is away (the relay said `kept comments`). */
+  onKeptComments?: (on: boolean) => void
   onError?: (error: unknown) => void
   onAttachment?: (attachment: Attachment) => void
   onCanvas?: (message: CanvasMessage) => void
@@ -272,6 +282,8 @@ export class RoomClient {
 
   private readonly opts: RoomClientOptions
   private readonly kept: KeptAway
+  private acceptedVersion = 7
+  private commentsKept = false
   // Whether the relay has sent anything on this connection yet.
   private heard = false
   private socket: SocketLike | null = null
@@ -336,6 +348,22 @@ export class RoomClient {
     return this.kept.until
   }
 
+  /** The protocol version the relay accepted on the current or last connection. */
+  get protocolVersion(): number {
+    return this.acceptedVersion
+  }
+
+  /** Whether the room is kept and the relay takes comment entries (version 8 only). */
+  get keptComments(): boolean {
+    return this.commentsKept
+  }
+
+  private setKeptComments(on: boolean): void {
+    if (this.commentsKept === on) return
+    this.commentsKept = on
+    this.opts.onKeptComments?.(on)
+  }
+
   connect(): void {
     if (this.destroyed || this.socket) return
     this.setStatus('connecting')
@@ -343,7 +371,10 @@ export class RoomClient {
     const socket = createSocket(
       this.socketUrl(),
       this.opts.headers,
-      admissionProtocols(this.opts.admissionToken),
+      offerProtocols(
+        this.opts.admissionToken,
+        this.opts.keys.access === 'comment' ? this.opts.keys.commentAdmission : null,
+      ),
     )
     socket.binaryType = 'arraybuffer'
     this.socket = socket
@@ -355,6 +386,8 @@ export class RoomClient {
       this.attempts = 0
       // Told again by the relay, if the room is kept.
       this.kept.active = false
+      this.setKeptComments(false)
+      this.acceptedVersion = acceptedVersion(socket.protocol) ?? 7
       this.heard = false
       this.greet(socket)
     }
@@ -391,6 +424,7 @@ export class RoomClient {
       // Its frames are dropped: the next connection need not wait them out.
       this.wake?.()
       this.dropRemoteAwareness()
+      this.setKeptComments(false)
       const final = ev.code === undefined ? undefined : FINAL_CLOSE.get(ev.code)
       if (final && !this.destroyed) {
         this.closedByHost = final === 'closed' && ev.reason === HOST_CLOSED_REASON
@@ -420,8 +454,11 @@ export class RoomClient {
       if (was === 'kept' || was === 'log-full') {
         // Live again: the host reconciles by sync, so what is held goes.
         this.kept.settle()
+        this.setKeptComments(false)
         this.greet(socket)
       } else if (was === 'waiting') this.setStatus('connected')
+    } else if (text === KEPT_COMMENTS) {
+      if (this.kept.active && this.acceptedVersion >= 8) this.setKeptComments(true)
     } else if (text === LOG_FULL) {
       this.setStatus('log-full')
     } else {
@@ -429,6 +466,8 @@ export class RoomClient {
       if (until === undefined) return
       this.kept.active = true
       this.kept.until = until
+      // Said again after this, if the relay takes comment entries.
+      this.setKeptComments(false)
       // The relay sends a peer that joins the snapshot and the log. One that
       // was live in the room has neither: it joins again to get them.
       if (heard) {
@@ -448,14 +487,20 @@ export class RoomClient {
     return url.toString()
   }
 
-  /** Sends an update of a doc as an entry, while the room is kept. Only editors do. */
+  /**
+   * Sends an update of a doc as an entry, while the room is kept. Editors seal
+   * every doc with the edit domain; a comment link seals only the comments
+   * docs, with the comment domain, and only when the relay takes them.
+   */
   private sendEntry(id: number, update: Uint8Array): void {
-    if (this.opts.keys.access !== 'edit') return
+    const access = this.opts.keys.access
+    const comment = access === 'comment'
+    if (access !== 'edit' && !(comment && this.commentsKept && this.files.get(id)?.comments)) return
     const socket = this.socket
     this.sendChain = this.sendChain
       .then(async () => {
         const open = () => socket !== null && socket.readyState === OPEN
-        const body = await this.kept.entry(id, update, open)
+        const body = await this.kept.entry(id, update, open, comment)
         if (body && socket) await this.putEntry(socket, body)
       })
       .catch((error) => this.opts.onError?.(error))

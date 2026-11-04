@@ -97,6 +97,12 @@ const STATUS: Record<HeaderStatus, Description> = {
     icon: CLOCK,
     tone: 'ended',
   },
+  'origin-refused': {
+    label: 'Page not allowed',
+    detail: 'This page is not allowed for this room.',
+    icon: WARNING,
+    tone: 'ended',
+  },
   'log-full': {
     label: 'Room full of edits',
     detail:
