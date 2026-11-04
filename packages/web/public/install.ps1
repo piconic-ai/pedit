@@ -7,7 +7,10 @@
 # PEDIT_NO_MODIFY_PATH set to 1 to leave your PATH alone and only print a hint
 #
 # The archive is checked against checksums.txt, and against its build
-# provenance too when the GitHub CLI is installed and signed in.
+# provenance too when the GitHub CLI is installed: gh verifies the Sigstore
+# bundle published with the release (no GitHub sign-in needed) and the commit
+# the tag points to. Releases before v0.1.6 have no bundle, so there gh must be
+# signed in to fetch the attestation.
 # It never needs administrator rights. The install directory is added to your
 # user PATH (not the machine PATH) unless PEDIT_NO_MODIFY_PATH=1.
 # Everything runs from Install-Pedit, called on the last line, so a truncated
@@ -130,26 +133,69 @@ function Install-Pedit {
     }
   }
 
+  # Whether that release publishes pedit_<version>.sigstore.json beside its
+  # archives. v0.1.6 is the first that does.
+  function Test-HasBundle([string]$Version) {
+    return -not ($Version -match '^v0\.0\.' -or $Version -match '^v0\.1\.[0-5]$')
+  }
+
+  # The 40-hex SHA that the release tag points to, as GitHub reports it, or
+  # $null. Only the tag name is sent. PEDIT_API_URL replaces the API in tests
+  # (scripts/test-install.ps1).
+  function Get-TagCommit([string]$Version) {
+    $api = $env:PEDIT_API_URL
+    if ([string]::IsNullOrEmpty($api)) { $api = 'https://api.github.com' }
+    $client = New-Object System.Net.WebClient
+    try {
+      $client.Headers.Add('Accept', 'application/vnd.github.sha')
+      $client.Headers.Add('User-Agent', 'pedit-install')
+      $text = $client.DownloadString("$($api.TrimEnd('/'))/repos/$repo/commits/$Version").Trim()
+      if ($text -cmatch '^[0-9a-f]{40}$') { return $text }
+    } catch {
+    } finally {
+      $client.Dispose()
+    }
+    return $null
+  }
+
   function Test-Provenance([string]$Archive, [string]$Version) {
-    # Optional: gh fetches attestations from the GitHub API, which needs a sign-in.
-    # --active: without it, any other stored account with an expired token fails.
-    if (-not (Get-Command gh -ErrorAction SilentlyContinue) -or
-        (Invoke-Gh @('auth', 'status', '--active', '--hostname', 'github.com')).Code -ne 0) {
-      Write-Host 'Skipped the build provenance check (needs the GitHub CLI, signed in)'
+    # Optional: needs the GitHub CLI.
+    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+      Write-Host 'Skipped the build provenance check (needs the GitHub CLI)'
       return
     }
     $signedBy = Get-Signer $Version
-    Write-Host -NoNewline 'Verifying build provenance... '
-    $result = Invoke-Gh @('attestation', 'verify', $Archive,
+    $ghArgs = @('attestation', 'verify', $Archive,
       '--repo', $signedBy,
       '--signer-workflow', "$signedBy/.github/workflows/$(Get-SignerWorkflow $Version)",
       '--deny-self-hosted-runners')
-    if ($result.Code -ne 0) {
-      Write-Host 'FAILED'
-      [Console]::Error.WriteLine($result.Text)
-      Fail 'release provenance verification failed; no files were installed'
+    $bundle = $null
+    if (Test-HasBundle $Version) {
+      # Verified offline against the release's bundle, so no sign-in is needed.
+      # Pinning the tag's commit is best effort: the API may be rate limited.
+      $commit = Get-TagCommit $Version
+      if ($commit) {
+        $ghArgs += @('--source-digest', $commit, '--signer-digest', $commit)
+      } else {
+        Write-Host "Could not look up the commit of $Version, so the build is not pinned to it"
+      }
+      $bundle = Join-Path $tmp 'bundle.json'
+      $ghArgs += @('--bundle', $bundle)
+    } elseif ((Invoke-Gh @('auth', 'status', '--active', '--hostname', 'github.com')).Code -ne 0) {
+      # Without a bundle, gh fetches the attestation from the GitHub API, which
+      # needs a sign-in. --active: without it, any other stored account with an
+      # expired token fails.
+      Write-Host 'Skipped the build provenance check (needs the GitHub CLI, signed in)'
+      return
     }
-    Write-Host 'DONE'
+    Invoke-Step 'Verifying build provenance' {
+      if ($bundle) { Get-File "$base/pedit_$Version.sigstore.json" $bundle }
+      $result = Invoke-Gh $ghArgs
+      if ($result.Code -ne 0) {
+        [Console]::Error.WriteLine($result.Text)
+        Fail 'release provenance verification failed; no files were installed'
+      }
+    }
   }
 
   # Remove what earlier upgrades left beside pedit.exe. A copy that is still

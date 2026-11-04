@@ -40,7 +40,8 @@ function Fail([string]$Message) {
 # CI archives have no published attestation, so gh is mocked at the process
 # boundary: INSTALL_TEST_GH_AUTH_EXIT is the `gh auth status` result and
 # INSTALL_TEST_GH_EXIT the `gh attestation verify` result. The arguments gh was
-# called with go to INSTALL_TEST_GH_LOG, which the cases check.
+# called with go to INSTALL_TEST_GH_LOG, which the cases check (the bundle
+# file, the digest flags). The commit lookup is answered from $work\api.
 function Initialize-Mocks {
   $mocks = Join-Path $work 'mocks'
   New-Item -ItemType Directory -Path $mocks | Out-Null
@@ -84,6 +85,7 @@ function Try-Install([string]$Name, [hashtable]$Env = @{}, [string]$Source = $re
     INSTALL_TEST_GH_EXIT = '0'
     PEDIT_VERSION = $Version
     PEDIT_DOWNLOAD_URL = ([Uri]$Source).AbsoluteUri
+    PEDIT_API_URL = ([Uri](Join-Path $work 'api')).AbsoluteUri
     PEDIT_NO_MODIFY_PATH = $null
   }
   if ($SetDir) { $vars.PEDIT_INSTALL_DIR = Join-Path $dir 'bin' } else { $vars.PEDIT_INSTALL_DIR = $null }
@@ -167,7 +169,7 @@ function Get-UserPathCount([string]$Dir) {
 
 # New-Release NAME TAG: the release directory re-labelled as TAG, so a test can
 # present the same archives as an older release.
-function New-Release([string]$Name, [string]$Tag) {
+function New-Release([string]$Name, [string]$Tag, [bool]$Bundle = $false) {
   $dir = Join-Path $work $Name
   New-Item -ItemType Directory -Path $dir | Out-Null
   foreach ($file in Get-ChildItem -LiteralPath $release -Filter 'pedit_*') {
@@ -175,8 +177,19 @@ function New-Release([string]$Name, [string]$Tag) {
   }
   $sums = (Get-Content -Raw -LiteralPath (Join-Path $release 'checksums.txt')).Replace($Version, $Tag)
   [IO.File]::WriteAllText((Join-Path $dir 'checksums.txt'), $sums)
+  # A stand-in bundle: the mock gh does not read it.
+  if ($Bundle) { Set-Content -LiteralPath (Join-Path $dir "pedit_$Tag.sigstore.json") -Value '{}' -Encoding ASCII }
   return $dir
 }
+
+# Set-TagCommit TAG TEXT: what the fake GitHub API answers for that tag.
+function Set-TagCommit([string]$Tag, [string]$Text) {
+  $dir = Join-Path $work 'api\repos\piconic-ai\pedit\commits'
+  New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  Set-Content -LiteralPath (Join-Path $dir $Tag) -Value $Text -Encoding ASCII
+}
+
+$sha = '0123456789abcdef0123456789abcdef01234567'
 
 # --- Cases -----------------------------------------------------------------
 
@@ -362,6 +375,8 @@ function Verify-Provenance-When-Gh-Is-Signed-In {
   Assert-Contains signed out 'Verifying build provenance\.\.\. DONE'
   Assert-Contains signed gh.log 'auth status --active --hostname github\.com'
   Assert-Contains signed gh.log 'attestation verify .*pedit_.*_windows_.*\.zip --repo piconic-ai/pedit --signer-workflow piconic-ai/pedit/\.github/workflows/release-build\.yml --deny-self-hosted-runners'
+  # A release without a bundle needs the sign-in and is not pinned to a commit.
+  Assert-Lacks signed gh.log 'bundle|digest'
 }
 
 function Verify-Releases-Signed-Under-Older-Names {
@@ -373,10 +388,46 @@ function Verify-Releases-Signed-Under-Older-Names {
   Assert-Contains tagpr gh.log ' --repo piconic-ai/pedit --signer-workflow piconic-ai/pedit/\.github/workflows/tagpr\.yml '
 }
 
+function Verify-The-Bundle-When-Gh-Is-Signed-Out {
+  $dir = New-Release 'bundle-release' 'v0.5.1' $true
+  Set-TagCommit 'v0.5.1' $sha
+  Invoke-Install bundle @{ PEDIT_VERSION = 'v0.5.1'; INSTALL_TEST_GH_AUTH_EXIT = '1'; PEDIT_NO_MODIFY_PATH = '1' } $dir
+  Assert-Contains bundle out 'Verifying build provenance\.\.\. DONE'
+  Assert-Contains bundle out 'Installed pedit v0\.5\.1'
+  Assert-Lacks bundle out 'not pinned'
+  Assert-Lacks bundle gh.log 'auth'
+  Assert-Contains bundle gh.log " --source-digest $sha --signer-digest $sha "
+  Assert-Contains bundle gh.log ' --bundle .*bundle\.json'
+}
+
+function Refuse-A-Bundle-Release-Without-Its-Bundle {
+  $dir = New-Release 'unbundled-release' 'v0.5.1'
+  Set-TagCommit 'v0.5.1' $sha
+  Assert-Failure unbundled @{ PEDIT_VERSION = 'v0.5.1'; PEDIT_NO_MODIFY_PATH = '1' } $dir
+  Assert-Contains unbundled err 'could not download .*sigstore\.json'
+  Assert-Contains unbundled out 'Verifying build provenance\.\.\. FAILED'
+  Assert-Lacks unbundled out 'Installed'
+  if (Test-Path -LiteralPath (Join-Path $work 'unbundled\bin\pedit.exe')) { Fail 'unbundled: pedit was installed' }
+}
+
+function Verify-Without-A-Pin-When-The-Commit-Lookup-Fails {
+  # No answer for v0.5.2 (a 404 or a rate limit), then answers that are not a SHA.
+  $dir = New-Release 'unpinned-release' 'v0.5.2' $true
+  $n = 0
+  foreach ($answer in $null, 'not-a-sha', "${sha}0", ($sha.Substring(0, 39) + 'F')) {
+    $n++
+    if ($null -ne $answer) { Set-TagCommit 'v0.5.2' $answer }
+    Invoke-Install "unpinned$n" @{ PEDIT_VERSION = 'v0.5.2'; PEDIT_NO_MODIFY_PATH = '1' } $dir
+    Assert-Contains "unpinned$n" out 'Could not look up the commit of v0\.5\.2, so the build is not pinned'
+    Assert-Contains "unpinned$n" out 'Verifying build provenance\.\.\. DONE'
+    Assert-Lacks "unpinned$n" gh.log 'digest'
+  }
+}
+
 function Skip-Provenance-When-Gh-Is-Signed-Out {
   Invoke-Install signedout @{ INSTALL_TEST_GH_AUTH_EXIT = '1'; PEDIT_NO_MODIFY_PATH = '1' }
   Assert-Installed signedout
-  Assert-Contains signedout out 'Skipped the build provenance check'
+  Assert-Contains signedout out 'Skipped the build provenance check \(needs the GitHub CLI, signed in\)'
   Assert-Lacks signedout gh.log 'attestation'
 }
 
@@ -408,7 +459,9 @@ try {
       'Install-To-The-Default-Directory', 'Upgrade-Over-A-Running-Pedit', 'Upgrade-Over-An-Existing-Pedit',
       'Refuse-A-Checksum-Mismatch', 'Refuse-A-Missing-Entry', 'Warn-About-A-Shadowing-Pedit',
       'Refuse-A-Directory-Destination', 'Verify-Provenance-When-Gh-Is-Signed-In',
-      'Verify-Releases-Signed-Under-Older-Names', 'Skip-Provenance-When-Gh-Is-Signed-Out',
+      'Verify-Releases-Signed-Under-Older-Names', 'Verify-The-Bundle-When-Gh-Is-Signed-Out',
+      'Refuse-A-Bundle-Release-Without-Its-Bundle', 'Verify-Without-A-Pin-When-The-Commit-Lookup-Fails',
+      'Skip-Provenance-When-Gh-Is-Signed-Out',
       'Refuse-Failed-Provenance') {
     Write-Host "--- $($case.Replace('-', ' ').ToLower())"
     & $case

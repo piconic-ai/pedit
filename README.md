@@ -305,22 +305,9 @@ go install github.com/piconic-ai/pedit/cmd/pedit@latest
 ```
 
 Binaries: [GitHub Releases](https://github.com/piconic-ai/pedit/releases) (macOS / Linux / Windows · amd64 / arm64).
-Each archive carries a build provenance attestation; check that it was built
-by this repository's release workflow with
-
-```sh
-gh attestation verify <archive> --repo piconic-ai/pedit \
-  --signer-workflow piconic-ai/pedit/.github/workflows/release-build.yml
-```
-
-(releases up to v0.1.2 were signed by `tagpr.yml` instead). Releases after
-v0.1.5 also carry the attestation as a file, `pedit_<version>.sigstore.json`,
-for `gh attestation verify <archive> --bundle <file> ...`. The archives are
-reproducible: GoReleaser v2.18.3 (`goreleaser release --clean --skip=publish`
-with `.goreleaser.yaml`) run on the same tag with the Go version from `go.mod`
-on `ubuntu-24.04` gives the same `checksums.txt`. Releases made before the
-switch to GoReleaser were built by `scripts/build-cli-release.sh`; their tags
-still carry it, so rebuild those with that script instead.
+Every archive carries a build provenance attestation, which the install
+scripts check when the GitHub CLI is installed; see
+[verifying releases](docs/verifying-releases.md) to check one yourself.
 
 ## Configuration and templates
 
@@ -361,7 +348,7 @@ In a browser, the editor's code comes from the relay, so you trust whoever
 runs it and Cloudflare, which hosts it: a modified editor could read the key
 and plaintext. The command line runs no code from the relay: guests can join
 with `pedit '<link>'` instead of a browser, using a pedit installed from
-Homebrew, `go install` or a release archive you verify, not from `install.sh`
+Homebrew, `go install` or a [release archive you verify](docs/verifying-releases.md), not from `install.sh`
 or `install.ps1`, which the relay serves. Or [self-host](#self-host) the relay and editor. See
 [security design](docs/security-design.md) for the encryption and what it does
 not protect against, and [the public relay](docs/public-relay.md) for what

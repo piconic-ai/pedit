@@ -27,8 +27,11 @@ fail() {
 # token expired, and INSTALL_TEST_GH_EXIT is the `gh attestation verify` result,
 # which arrives after INSTALL_TEST_GH_DELAY seconds. Like the real gh, the
 # mock rejects any identity but the release's signer: the repository
-# INSTALL_TEST_GH_SIGNER and its workflow INSTALL_TEST_GH_WORKFLOW. tar is
-# wrapped only to record whether install.sh extracted anything.
+# INSTALL_TEST_GH_SIGNER and its workflow INSTALL_TEST_GH_WORKFLOW. It wants
+# --bundle with an existing file only if INSTALL_TEST_GH_WANT_BUNDLE is set, and
+# --source-digest and --signer-digest both equal to INSTALL_TEST_GH_DIGEST, or
+# neither if that is unset. tar is wrapped only to record whether install.sh
+# extracted anything.
 setup_mocks() {
   mkdir "$work/mocks"
   cat >"$work/mocks/gh" <<'SH'
@@ -43,13 +46,27 @@ if [ "$1" = auth ]; then
   esac
   exit "${INSTALL_TEST_GH_AUTH_EXIT:-0}"
 fi
-[ "$#" -eq 8 ]
 [ "$1" = attestation ] && [ "$2" = verify ] && [ -f "$3" ] || exit 99
+shift 3
+bundle='' repo='' workflow='' deny='' source='' signer_digest=''
+while [ "$#" -gt 0 ]; do
+  case $1 in
+    --bundle) bundle=$2; shift ;;
+    --repo) repo=$2; shift ;;
+    --signer-workflow) workflow=$2; shift ;;
+    --source-digest) source=$2; shift ;;
+    --signer-digest) signer_digest=$2; shift ;;
+    --deny-self-hosted-runners) deny=1 ;;
+    *) exit 99 ;;
+  esac
+  shift
+done
 signer=${INSTALL_TEST_GH_SIGNER:-piconic-ai/pedit}
-[ "$4" = --repo ] && [ "$5" = "$signer" ] || exit 99
-workflow=${INSTALL_TEST_GH_WORKFLOW:-release-build.yml}
-[ "$6" = --signer-workflow ] && [ "$7" = "$signer/.github/workflows/$workflow" ] || exit 99
-[ "$8" = --deny-self-hosted-runners ]
+[ "$repo" = "$signer" ] || exit 99
+[ "$workflow" = "$signer/.github/workflows/${INSTALL_TEST_GH_WORKFLOW:-release-build.yml}" ] || exit 99
+[ -n "$deny" ] || exit 99
+if [ -n "${INSTALL_TEST_GH_WANT_BUNDLE:-}" ]; then [ -f "$bundle" ] || exit 99; else [ -z "$bundle" ] || exit 99; fi
+[ "$source" = "${INSTALL_TEST_GH_DIGEST:-}" ] && [ "$signer_digest" = "${INSTALL_TEST_GH_DIGEST:-}" ] || exit 99
 sleep "${INSTALL_TEST_GH_DELAY:-0}"
 exit "${INSTALL_TEST_GH_EXIT:-0}"
 SH
@@ -71,6 +88,7 @@ try_install() {
   mkdir -p "$work/$name"
   INSTALL_TEST_GH_LOG="$work/$name/gh.log" INSTALL_TEST_TAR_LOG="$work/$name/tar.log" \
     PEDIT_VERSION="${PEDIT_VERSION:-$version}" PEDIT_DOWNLOAD_URL="${PEDIT_DOWNLOAD_URL:-file://$release}" \
+    PEDIT_API_URL="${PEDIT_API_URL:-file://$work/api}" \
     PEDIT_INSTALL_DIR="$work/$name/bin" \
     "${@:-/bin/sh}" "$script" >"$work/$name/out" 2>"$work/$name/err"
 }
@@ -110,6 +128,27 @@ assert_no_staging_left() {
   [ -z "$(find "$work/$1/bin" -name '.pedit.*')" ] || fail "$1: a staging directory was left behind"
 }
 
+# bundle_release NAME TAG: the release directory re-labelled as TAG (a version
+# with a Sigstore bundle), plus a stand-in bundle. The mock gh does not read it.
+# tag_commit TAG SHA: what the fake GitHub API answers for that tag.
+bundle_release() {
+  local dir="$work/$1" f
+  mkdir "$dir"
+  for f in "$release"/pedit_*; do
+    f=${f##*/}
+    cp "$release/$f" "$dir/${f/"$version"/$2}"
+  done
+  sed "s/$version/$2/" "$release/checksums.txt" >"$dir/checksums.txt"
+  echo '{}' >"$dir/pedit_$2.sigstore.json"
+}
+
+tag_commit() {
+  mkdir -p "$work/api/repos/piconic-ai/pedit/commits"
+  printf '%s\n' "$2" >"$work/api/repos/piconic-ai/pedit/commits/$1"
+}
+
+sha=0123456789abcdef0123456789abcdef01234567
+
 # --- Cases -----------------------------------------------------------------
 
 verifies_provenance_when_gh_is_signed_in() {
@@ -119,6 +158,8 @@ verifies_provenance_when_gh_is_signed_in() {
   assert_contains signed-in out 'Verifying build provenance\.\.\. DONE'
   assert_contains signed-in gh.log '^attestation verify '
   assert_contains signed-in gh.log ' --signer-workflow piconic-ai/pedit/\.github/workflows/release-build\.yml '
+  # A release without a bundle needs the sign-in and is not pinned to a commit.
+  refute_contains signed-in gh.log 'bundle\|digest'
 }
 
 verifies_provenance_despite_an_expired_inactive_account() {
@@ -160,10 +201,57 @@ verifies_a_release_signed_by_tagpr_yml() {
   assert_contains tagpr-signed gh.log ' --signer-workflow piconic-ai/pedit/\.github/workflows/tagpr\.yml '
 }
 
+verifies_the_bundle_when_gh_is_signed_out() {
+  bundle_release bundle-release v0.5.1
+  tag_commit v0.5.1 "$sha"
+  PEDIT_VERSION=v0.5.1 PEDIT_DOWNLOAD_URL="file://$work/bundle-release" INSTALL_TEST_GH_AUTH_EXIT=1 \
+    INSTALL_TEST_GH_WANT_BUNDLE=1 INSTALL_TEST_GH_DIGEST=$sha run_install bundle
+  assert_contains bundle out 'Verifying build provenance\.\.\. DONE'
+  assert_contains bundle out 'Installed pedit v0\.5\.1'
+  refute_contains bundle out 'not pinned'
+  refute_contains bundle gh.log '^auth'
+  assert_contains bundle gh.log " --source-digest $sha --signer-digest $sha "
+  assert_contains bundle gh.log ' --bundle .*bundle\.json'
+}
+
+refuses_a_bundle_release_without_its_bundle() {
+  bundle_release unbundled-release v0.5.1
+  rm "$work/unbundled-release/pedit_v0.5.1.sigstore.json"
+  tag_commit v0.5.1 "$sha"
+  PEDIT_VERSION=v0.5.1 PEDIT_DOWNLOAD_URL="file://$work/unbundled-release" expect_failure unbundled
+  assert_contains unbundled err 'could not download .*sigstore\.json'
+  refute_contains unbundled out Installed
+  refute_contains unbundled tar.log invoked
+  [ ! -e "$work/unbundled/bin/pedit" ] || fail "unbundled: pedit was installed"
+}
+
+refuses_a_failed_bundle_verification() {
+  PEDIT_VERSION=v0.5.1 PEDIT_DOWNLOAD_URL="file://$work/bundle-release" INSTALL_TEST_GH_EXIT=1 \
+    INSTALL_TEST_GH_WANT_BUNDLE=1 INSTALL_TEST_GH_DIGEST=$sha expect_failure bundle-rejected
+  assert_contains bundle-rejected err 'release provenance verification failed'
+  refute_contains bundle-rejected tar.log invoked
+  [ ! -e "$work/bundle-rejected/bin/pedit" ] || fail "bundle-rejected: pedit was installed"
+}
+
+verifies_without_a_pin_when_the_commit_lookup_fails() {
+  # No answer for v0.5.2 (a 404 or a rate limit), then answers that are not a SHA.
+  local answer name=unpinned
+  bundle_release unpinned-release v0.5.2
+  for answer in MISSING not-a-sha "${sha}0" "${sha%?}F" ''; do
+    [ "$answer" = MISSING ] || tag_commit v0.5.2 "$answer"
+    PEDIT_VERSION=v0.5.2 PEDIT_DOWNLOAD_URL="file://$work/unpinned-release" INSTALL_TEST_GH_WANT_BUNDLE=1 \
+      run_install "$name"
+    assert_contains "$name" out 'Could not look up the commit of v0\.5\.2, so the build is not pinned'
+    assert_contains "$name" out 'Verifying build provenance\.\.\. DONE'
+    refute_contains "$name" gh.log 'digest'
+    name=$name-again
+  done
+}
+
 skips_provenance_when_gh_is_signed_out() {
   INSTALL_TEST_GH_AUTH_EXIT=1 run_install signed-out
   assert_installed signed-out
-  assert_contains signed-out out 'Skipped the build provenance check'
+  assert_contains signed-out out 'Skipped the build provenance check (needs the GitHub CLI, signed in)'
   refute_contains signed-out gh.log '^attestation'
 }
 
@@ -176,7 +264,8 @@ skips_provenance_without_gh() {
   done
   PATH="$path" run_install no-gh
   assert_installed no-gh
-  assert_contains no-gh out 'Skipped the build provenance check'
+  assert_contains no-gh out 'Skipped the build provenance check (needs the GitHub CLI)'
+  refute_contains no-gh out 'signed in'
 }
 
 refuses_failed_provenance() {
@@ -259,6 +348,10 @@ for case in \
   verifies_provenance_despite_an_expired_inactive_account \
   verifies_a_release_signed_before_the_rename \
   verifies_a_release_signed_by_tagpr_yml \
+  verifies_the_bundle_when_gh_is_signed_out \
+  refuses_a_bundle_release_without_its_bundle \
+  refuses_a_failed_bundle_verification \
+  verifies_without_a_pin_when_the_commit_lookup_fails \
   skips_provenance_when_gh_is_signed_out \
   skips_provenance_without_gh \
   refuses_failed_provenance \
