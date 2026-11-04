@@ -47,8 +47,8 @@ Two things stop it, one at the relay and one in the entries:
   comments for a comment link only after that message. Without it (an older
   relay, or a room opened by an older host), the comment link stays read-only as
   today. Older clients ignore the text message they do not know.
-  **Check in implementation:** that every released client ignores unknown text
-  control messages.
+  The relay sends it only to sockets accepted in version 8, so older clients
+  never receive it.
 
 ### Comment-signed entries
 
@@ -103,6 +103,18 @@ log itself still stores no sender.
 | older | v8 | read-only (no comment hash is registered) |
 | any | any | edit links unchanged |
 
+- **Version negotiation.** Today a client offers only its own version
+  (`admissionProtocols` puts one `pedit-v<N>` in the list), so a v8-only offer
+  would make a v7 relay answer `server-outdated`. Version 8 clients, browser and
+  Go, therefore offer `pedit-v8` and `pedit-v7`. The relay already accepts in the
+  newest version it serves among those offered (`checkProtocolVersion`), and the
+  client reads the accepted one from the socket's protocol. On `pedit-v7` it
+  behaves as a version 7 client: it sends no comment admission hash and no
+  comment entries, and expects no `kept comments`. Everything version 8 adds is
+  optional on the wire, so this fallback needs no other change.
+- The comment token's protocol name does not start with `pedit-admission.`, so a
+  v7 relay's `readAdmissionProtocol`, which takes exactly one such entry, does
+  not see it.
 - A version 7 browser in a v8 room skips comment-signed entries while the host
   is away, and counts them. Once the host is back, it sees those comments
   through live sync, since the host has taken them in.
