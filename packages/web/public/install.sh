@@ -7,7 +7,10 @@
 # PEDIT_INSTALL_DIR where to put the binary (default: ~/.local/bin)
 #
 # The archive is checked against checksums.txt, and against its build
-# provenance too when the GitHub CLI is installed and signed in.
+# provenance too when the GitHub CLI is installed: gh verifies the Sigstore
+# bundle published with the release (no GitHub sign-in needed) and the commit
+# the tag points to. Releases before v0.1.6 have no bundle, so there gh must be
+# signed in to fetch the attestation.
 # It never uses sudo and never edits shell profiles. Everything runs from
 # main(), called on the last line, so a truncated download does nothing.
 set -eu
@@ -116,19 +119,58 @@ signer_workflow() {
   esac
 }
 
+# has_bundle VERSION: whether that release publishes pedit_<VERSION>.sigstore.json
+# beside its archives. v0.1.6 is the first that does.
+has_bundle() {
+  case $1 in
+    v0.0.* | v0.1.[0-5]) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+# tag_commit: set $commit to the 40-hex SHA that the release tag points to, as
+# GitHub reports it. Only the tag name is sent. PEDIT_API_URL replaces the API
+# in tests (scripts/test-install.sh).
+tag_commit() {
+  commit=$(curl -fsSL -H 'Accept: application/vnd.github.sha' \
+    "${PEDIT_API_URL:-https://api.github.com}/repos/$repo/commits/$version" 2>/dev/null) || return 1
+  case $commit in *[!0-9a-f]*) return 1 ;; esac
+  [ ${#commit} -eq 40 ]
+}
+
 verify_provenance() {
-  # Optional: gh fetches attestations from the GitHub API, which needs a sign-in.
-  # --active: without it, any other stored account with an expired token fails.
-  if ! command -v gh >/dev/null 2>&1 || ! gh auth status --active --hostname github.com >/dev/null 2>&1; then
-    echo "Skipped the build provenance check (needs the GitHub CLI, signed in)"
+  # Optional: needs the GitHub CLI.
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "Skipped the build provenance check (needs the GitHub CLI)"
     return
   fi
-  step_start "Verifying build provenance"
   signed_by=$(signer "$version")
-  if ! gh attestation verify "$1" \
-    --repo "$signed_by" \
+  # $@ becomes the arguments of gh attestation verify.
+  set -- "$1" --repo "$signed_by" \
     --signer-workflow "$signed_by/.github/workflows/$(signer_workflow "$version")" \
-    --deny-self-hosted-runners >/dev/null 2>"$tmp/gh.err"; then
+    --deny-self-hosted-runners
+  if has_bundle "$version"; then
+    # Verified offline against the release's bundle, so no sign-in is needed.
+    # Pinning the tag's commit is best effort: the API may be rate limited.
+    if tag_commit; then
+      set -- "$@" --source-digest "$commit" --signer-digest "$commit"
+    else
+      echo "Could not look up the commit of $version, so the build is not pinned to it"
+    fi
+    step_start "Verifying build provenance"
+    download "$base/pedit_$version.sigstore.json" "$tmp/bundle.json"
+    set -- "$@" --bundle "$tmp/bundle.json"
+  else
+    # Without a bundle, gh fetches the attestation from the GitHub API, which
+    # needs a sign-in. --active: without it, any other stored account with an
+    # expired token fails.
+    if ! gh auth status --active --hostname github.com >/dev/null 2>&1; then
+      echo "Skipped the build provenance check (needs the GitHub CLI, signed in)"
+      return
+    fi
+    step_start "Verifying build provenance"
+  fi
+  if ! gh attestation verify "$@" >/dev/null 2>"$tmp/gh.err"; then
     step_end FAILED
     cat "$tmp/gh.err" >&2
     fail "release provenance verification failed; no files were installed"

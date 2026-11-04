@@ -315,7 +315,13 @@ gh attestation verify <archive> --repo piconic-ai/pedit \
 
 (releases up to v0.1.2 were signed by `tagpr.yml` instead). Releases after
 v0.1.5 also carry the attestation as a file, `pedit_<version>.sigstore.json`,
-for `gh attestation verify <archive> --bundle <file> ...`. The archives are
+for `gh attestation verify <archive> --bundle <file> ...`, which needs no
+GitHub sign-in. `install.sh` and `install.ps1` do exactly that when `gh` is
+installed, pinning the tag's commit with `--source-digest` and
+`--signer-digest` (the commit is looked up from the GitHub API; if that fails
+they say so and verify without the pin). Without `gh` they check only
+`checksums.txt`, and say so. Older releases are verified through the API, which
+needs `gh auth login`. The archives are
 reproducible: GoReleaser v2.18.3 (`goreleaser release --clean --skip=publish`
 with `.goreleaser.yaml`) run on the same tag with the Go version from `go.mod`
 on `ubuntu-24.04` gives the same `checksums.txt`. Releases made before the
