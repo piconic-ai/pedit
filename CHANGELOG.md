@@ -1,5 +1,23 @@
 # Changelog
 
+## [v0.5.4](https://github.com/piconic-ai/pedit/compare/v0.5.3...v0.5.4) - 2026-11-05
+
+### Changes
+- Design the guest side of embedding: a review page on the app's domain by @kfly8 in https://github.com/piconic-ai/pedit/pull/432
+- Design comments from comment links while the host is away by @kfly8 in https://github.com/piconic-ai/pedit/pull/434
+- fix(protocol): discard frames from stopped connections by @kfly8 in https://github.com/piconic-ai/pedit/pull/436
+- Admit per-room page origins on the relay by @kfly8 in https://github.com/piconic-ai/pedit/pull/437
+- Serve protocol version 8 and admit commenters at the relay by @kfly8 in https://github.com/piconic-ai/pedit/pull/438
+- Seal and open comment-signed kept entries (protocol v8) by @kfly8 in https://github.com/piconic-ai/pedit/pull/439
+- Let comment links comment while the host is away (browser, protocol v8) by @kfly8 in https://github.com/piconic-ai/pedit/pull/440
+- Host takes in comment-signed entries (Go, protocol v8) by @kfly8 in https://github.com/piconic-ai/pedit/pull/441
+- Make protocol version 8 the TypeScript version too by @kfly8 in https://github.com/piconic-ai/pedit/pull/442
+- Say only what the relay keeps from this link while the host is away by @kfly8 in https://github.com/piconic-ai/pedit/pull/443
+- Bump the npm-minor-and-patch group in /packages with 9 updates by @dependabot[bot] in https://github.com/piconic-ai/pedit/pull/445
+- Bump github.com/reearth/ygo from 1.54.0 to 1.55.0 in the go-minor-and-patch group by @dependabot[bot] in https://github.com/piconic-ai/pedit/pull/444
+- Bump pullfrog/pullfrog from 0.1.102 to 0.1.111 in the actions group by @dependabot[bot] in https://github.com/piconic-ai/pedit/pull/447
+- Bump @types/node from 22.20.4 to 26.6.6 in /packages by @dependabot[bot] in https://github.com/piconic-ai/pedit/pull/448
+
 ## [v0.5.3](https://github.com/piconic-ai/pedit/compare/v0.5.2...v0.5.3) - 2026-11-04
 
 ### Changes
