@@ -61,7 +61,7 @@
   "devDependencies": {
     "@hono/node-server": "^1.19.5",
     "@hono/node-ws": "^1.2.0",
-    "@types/node": "^22.0.0",
+    "@types/node": "^26.6.6",
     "@types/ws": "^8.18.1",
     "hono": "^4.13.16",
     "ws": "^8.22.1",
