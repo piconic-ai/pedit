@@ -36,9 +36,10 @@ async function mount(access: 'edit' | 'read' = 'edit', relay = new Relay()) {
     root.append(el)
     return el
   }
-  const [bannerEl, noticeEl, editorEl, commentsEl] = ['banner', 'notice', 'editor', 'comments'].map(
-    slot,
-  ) as HTMLElement[]
+  const bannerEl = slot('banner')
+  const noticeEl = slot('notice')
+  const editorEl = slot('editor')
+  const commentsEl = slot('comments')
   const room = await openRoom({
     relay: new URL('https://relay.test'),
     roomId: TEST_ROOM,
