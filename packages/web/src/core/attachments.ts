@@ -11,6 +11,7 @@ import {
   type RoomStatus,
 } from '@pedit/protocol'
 import { ImageError, type ImageType, prepareImage, type Shrink, sniff } from './image.ts'
+import { blobUrl } from './relay.ts'
 import { Store } from './store.ts'
 
 /** What the host's pedit says about saving images, from its awareness state. */
@@ -100,6 +101,8 @@ const REJECTED: Record<string, keyof typeof MESSAGES> = {
 }
 
 export interface AttachmentsOptions {
+  /** The relay that holds the room's blobs (see relay.ts). */
+  relay: URL
   roomId: string
   keys: BlobKeys
   /**
@@ -355,7 +358,11 @@ export class Attachments implements ImageResolver {
   async #fetchImage(hash: string): Promise<void> {
     let data: Uint8Array
     try {
-      const url = `/api/rooms/${this.#opts.roomId}/blobs/${await blobIdFor(this.#opts.keys, hash)}`
+      const url = blobUrl(
+        this.#opts.relay,
+        this.#opts.roomId,
+        await blobIdFor(this.#opts.keys, hash),
+      )
       const init: RequestInit = {
         headers: { [ADMISSION_HEADER]: this.#opts.keys.admission },
         redirect: 'error',
@@ -430,7 +437,7 @@ export class Attachments implements ImageResolver {
   }
 
   async #put(hash: string, body: Uint8Array): Promise<void> {
-    const url = `/api/rooms/${this.#opts.roomId}/blobs/${await blobIdFor(this.#opts.keys, hash)}`
+    const url = blobUrl(this.#opts.relay, this.#opts.roomId, await blobIdFor(this.#opts.keys, hash))
     for (let attempt = 0; ; attempt++) {
       let res: Response
       try {

@@ -60,8 +60,9 @@ export class ContextMenu {
   #mac: boolean
   #actions: ((() => void) | null)[] = []
   #returnFocus: HTMLElement | null = null
+  // Inside a shadow root the target is retargeted to the host, so ask the path.
   #onOutside = (ev: Event) => {
-    if (!this.element.contains(ev.target as Node)) this.close()
+    if (!ev.composedPath().includes(this.element)) this.close()
   }
 
   constructor(mac = isMac()) {
@@ -76,7 +77,7 @@ export class ContextMenu {
   }
 
   show(items: readonly (MenuItem | null)[], x: number, y: number): void {
-    this.#returnFocus = document.activeElement as HTMLElement | null
+    this.#returnFocus = this.#active() as HTMLElement | null
     this.#actions = items.map((item) => item?.action ?? null)
     const entries: MenuEntry[] = items.map((item) =>
       item
@@ -93,19 +94,20 @@ export class ContextMenu {
     // Keep it on screen: flip left or up when it would overflow.
     const menu = this.element.querySelector<HTMLElement>('.context-menu')
     const { width, height } = menu?.getBoundingClientRect() ?? { width: 0, height: 0 }
-    const vw = document.documentElement.clientWidth
-    const vh = document.documentElement.clientHeight
+    const root = this.element.ownerDocument.documentElement
+    const vw = root.clientWidth
+    const vh = root.clientHeight
     const left = x + width + EDGE > vw ? Math.max(EDGE, x - width) : x
     const top = y + height + EDGE > vh ? Math.max(EDGE, y - height) : y
     this.state.set({ open: true, entries, left, top })
-    document.addEventListener('pointerdown', this.#onOutside, true)
+    this.element.ownerDocument.addEventListener('pointerdown', this.#onOutside, true)
     this.#items()[0]?.focus()
   }
 
   close(): void {
     if (!this.open) return
     this.state.set({ ...this.state.get(), open: false })
-    document.removeEventListener('pointerdown', this.#onOutside, true)
+    this.element.ownerDocument.removeEventListener('pointerdown', this.#onOutside, true)
     const back = this.#returnFocus
     this.#returnFocus = null
     if (back?.isConnected) back.focus()
@@ -118,6 +120,12 @@ export class ContextMenu {
     action?.()
   }
 
+  /** The focused element in the document or shadow root the menu is in. */
+  #active(): Element | null {
+    const root = this.element.getRootNode() as Document | ShadowRoot
+    return (root.activeElement ?? this.element.ownerDocument.activeElement) as Element | null
+  }
+
   #items(): HTMLButtonElement[] {
     return [...this.element.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].filter(
       (b) => !b.disabled,
@@ -126,7 +134,7 @@ export class ContextMenu {
 
   onKey(ev: KeyboardEvent): void {
     const items = this.#items()
-    const at = items.indexOf(document.activeElement as HTMLButtonElement)
+    const at = items.indexOf(this.#active() as HTMLButtonElement)
     const target =
       ev.key === 'ArrowDown'
         ? items[(at + 1) % items.length]

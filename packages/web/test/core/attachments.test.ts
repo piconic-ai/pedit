@@ -20,6 +20,7 @@ import {
 } from '../../src/core/attachments.ts'
 
 const ROOM = 'AAAAAAAAAAAAAAAAAAAAAA'
+const RELAY = new URL('https://relay.test')
 // A PNG with a text chunk that must not reach the room.
 const PNG = new Uint8Array([
   0x89,
@@ -52,6 +53,7 @@ async function setup(statuses: number[] = [201], opts: Partial<AttachmentsOption
     return new Response(null, { status: statuses.shift() ?? 201 })
   })
   const attachments = new Attachments({
+    relay: RELAY,
     roomId: ROOM,
     keys,
     send: (a) => sent.push(a),
@@ -78,13 +80,36 @@ const PNG3 = new Uint8Array([...PNG2.subarray(0, 8), 0, 0, 0, 0, ...PNG2.subarra
 const file = (bytes: Uint8Array = PNG) => new Blob([bytes as Uint8Array<ArrayBuffer>])
 
 describe('Attachments', () => {
+  it('fetches blobs from the relay it is given, path prefix included', async () => {
+    const urls: string[] = []
+    const keys = await deriveBlobKeys(fromBase64Url(generateKey()))
+    const attachments = new Attachments({
+      relay: new URL('https://relay.test/pedit'),
+      roomId: ROOM,
+      keys,
+      send: () => {},
+      fetch: (async (url: RequestInfo | URL) => {
+        urls.push(String(url))
+        return new Response(null, { status: 500 })
+      }) as typeof globalThis.fetch,
+    })
+    const hash = 'a'.repeat(32)
+    attachments.lookup(`assets/${hash}.png`)
+    await vi.waitFor(() => expect(urls).toHaveLength(1))
+    expect(urls[0]).toBe(
+      `https://relay.test/pedit/api/rooms/${ROOM}/blobs/${await blobIdFor(keys, hash)}`,
+    )
+  })
+
   it('uploads the stripped image encrypted, announces it, and waits for the host', async () => {
     const { keys, sent, requests, attachments } = await setup()
     const upload = attachments.upload(file())
     await vi.waitFor(() => expect(sent).toHaveLength(1))
     const hash = await contentHash(STRIPPED)
     expect(sent[0]).toEqual({ kind: 'announce', hash, mime: 'image/png' })
-    expect(requests[0]?.url).toBe(`/api/rooms/${ROOM}/blobs/${await blobIdFor(keys, hash)}`)
+    expect(requests[0]?.url).toBe(
+      `${RELAY.origin}/api/rooms/${ROOM}/blobs/${await blobIdFor(keys, hash)}`,
+    )
     expect(await decryptBlob(keys, requests[0]?.body as Uint8Array, hash)).toEqual(STRIPPED)
     expect(attachments.uploading.get()).toBe(1)
 
@@ -294,6 +319,7 @@ describe('Attachments as the preview sees them', () => {
         : new Response(null, { status: 404 })
     })
     const attachments = new Attachments({
+      relay: RELAY,
       roomId: ROOM,
       keys,
       send: (a) => sent.push(a),
@@ -304,7 +330,7 @@ describe('Attachments as the preview sees them', () => {
     attachments.host = { dir: 'assets', maxBytes: 1000 }
     const put = async (bytes: Uint8Array) => {
       const hash = await contentHash(bytes)
-      const url = `/api/rooms/${ROOM}/blobs/${await blobIdFor(keys, hash)}`
+      const url = `${RELAY.origin}/api/rooms/${ROOM}/blobs/${await blobIdFor(keys, hash)}`
       blobs.set(url, await encryptBlob(keys, bytes))
       return hash
     }
@@ -355,7 +381,7 @@ describe('Attachments as the preview sees them', () => {
     const { keys, blobs, attachments } = await viewer()
     // Someone stored other content under this name's blob id.
     const name = '2'.repeat(32)
-    const url = `/api/rooms/${ROOM}/blobs/${await blobIdFor(keys, name)}`
+    const url = `${RELAY.origin}/api/rooms/${ROOM}/blobs/${await blobIdFor(keys, name)}`
     blobs.set(url, await encryptBlob(keys, STRIPPED))
     const src = `assets/${name}.png`
     expect(attachments.lookup(src)).toBe('loading')
