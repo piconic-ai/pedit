@@ -87,6 +87,15 @@ type Options struct {
 	// could not be saved.
 	OnSkipped    func(int)
 	OnImageError func(path string, err error)
+
+	// Source, when set, is the document the room shares, which the session
+	// does not own: it never reads File for content, nor writes, watches or
+	// saves it. File still names the file, for the room's path, its images
+	// and its comments. Keep, Resume and More are refused with it.
+	Source Source
+	// Origins are the page origins the relay lets embed the room, sent with
+	// every connection of the host as X-Pedit-Origins.
+	Origins []string
 }
 
 type Session struct {
@@ -184,6 +193,9 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 		return nil, err
 	}
 	opts.Root = root
+	if err := checkSource(&opts); err != nil {
+		return nil, err
+	}
 	res, err := beginKeep(ctx, &opts)
 	if err != nil {
 		return nil, err
@@ -199,7 +211,9 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 	if keepsComments(project, opts.File) {
 		return nil, errKeepsComments
 	}
-	bound, initial, err := openShared(opts.File)
+	// Before creating a room, so a canvas that is not valid fails right away.
+	doc := crdt.New()
+	bound, initial, shared, err := openContent(opts, res, doc)
 	if err != nil {
 		return nil, err
 	}
@@ -208,12 +222,6 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 			_ = bound.Close()
 		}
 	}()
-	// Before creating a room, so a canvas that is not valid fails right away.
-	doc := crdt.New()
-	shared, err := newContent(doc, opts.File, initial, res.stateOf(opts.File))
-	if err != nil {
-		return nil, err
-	}
 	var text *crdt.YText
 	if c, ok := shared.(*textContent); ok {
 		text = c.text
@@ -270,13 +278,6 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 		resumed:   res,
 	}
 	s.opts.OnError = onError
-	s.Writer = filewriter.New(opts.File, initial, filewriter.Options{
-		Bound:            bound,
-		Delay:            opts.WriteDelay,
-		OnError:          s.notices.saveError,
-		OnWritten:        s.notices.written,
-		OnExternalChange: s.scheduleSyncFromDisk,
-	})
 	header, dial := hostHeader(opts, room.HostToken, res)
 	s.Client, err = protocol.NewClient(protocol.ClientOptions{
 		URL:       wsURL,
@@ -305,7 +306,7 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 	s.sendCanvas = s.Client.SendCanvas
 	s.attachments = attach.New(attach.Options{
 		File:            opts.File,
-		Root:            bound.Dir(),
+		Root:            boundDir(bound),
 		InitialDocument: initial,
 		Server:          server,
 		Room:            room.ID,
@@ -324,12 +325,7 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 		OnError:     onError,
 	})
 
-	doc.OnUpdate(func(_ []byte, origin any) {
-		// Both come in under the client's lock, so the doc can be read here.
-		if origin == s.Client || origin == editOrigin {
-			s.Writer.Schedule(s.content.render())
-		}
-	})
+	s.hookContent(bound, initial)
 	aw.OnChange(func(awareness.ChangeEvent) { s.reportPeople(opts.OnPeople) })
 	s.stopAlive = keepAlive(aw)
 	s.notices.start()
@@ -619,9 +615,7 @@ func (s *Session) Stop() error {
 		// and save right away: leaving can take a while, and a second Ctrl+C
 		// exits.
 		for _, f := range files {
-			f.syncFromDisk()
-			f.Writer.Schedule(f.render())
-			_ = f.Writer.Flush()
+			s.flushFile(f)
 			if f.meta != nil {
 				// Before leaving, as the file is.
 				f.meta.stop()
@@ -679,6 +673,9 @@ func (s *Session) Stop() error {
 // finalSave writes f once the room is left, merging in saves made outside
 // pedit meanwhile.
 func (s *Session) finalSave(f *sharedFile) error {
+	if s.opts.Source != nil {
+		return nil
+	}
 	var err error
 	for attempt := 1; ; attempt++ {
 		if s.beforeFinalWrite != nil {

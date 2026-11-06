@@ -57,6 +57,10 @@ const (
 	OriginsHeader = "X-Pedit-Origins"
 )
 
+// OriginsHeader is the host's request header naming the page origins that may
+// embed the room, comma-separated.
+const OriginsHeader = "X-Pedit-Origins"
+
 // WithKind is a message of this kind: the kind byte, then the parts.
 func WithKind(kind byte, parts ...[]byte) []byte {
 	out := []byte{kind}

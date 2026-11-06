@@ -89,6 +89,9 @@ type setupOpts struct {
 	meta    string
 	// projectDir, if set, is the project instead.
 	projectDir string
+	// source and origins are Options.Source and Options.Origins.
+	source  Source
+	origins []string
 }
 
 func setup(t *testing.T, content string, o setupOpts) *fixture {
@@ -150,6 +153,8 @@ func setup(t *testing.T, content string, o setupOpts) *fixture {
 		OnError:    o.onError,
 		OnPeople:   o.onPeople,
 		OnComments: o.onComments,
+		Source:     o.source,
+		Origins:    o.origins,
 		Dial: func(ctx context.Context, url string, header http.Header) (protocol.Conn, error) {
 			c, err := f.relay.Dial(ctx, url, header)
 			if err == nil && o.wrap != nil {

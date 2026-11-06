@@ -100,6 +100,9 @@ func sharedPath(root, file string) string {
 // room can add one. It fails, changing nothing, when the file cannot be
 // shared, or is already.
 func (s *Session) AddFile(file string) (protocol.FileEntry, error) {
+	if s.opts.Source != nil {
+		return protocol.FileEntry{}, errors.New("a room shared from a source shares one file")
+	}
 	file, err := filepath.Abs(file)
 	if err != nil {
 		return protocol.FileEntry{}, err

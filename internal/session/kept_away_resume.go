@@ -115,6 +115,10 @@ func hostHeader(opts Options, token string, res *resumed) (http.Header, protocol
 		header = http.Header{}
 	}
 	header.Set("Authorization", "Bearer "+token)
+	if len(opts.Origins) > 0 {
+		// On every connection, as the relay reads it on the first one only.
+		header.Set(protocol.OriginsHeader, strings.Join(opts.Origins, ","))
+	}
 	dial := opts.Dial
 	if opts.Keep > 0 || res != nil {
 		keep, after := int64(opts.Keep/time.Second), uint64(0)
