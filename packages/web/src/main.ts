@@ -1,11 +1,8 @@
 import { render } from '@barefootjs/client/runtime'
 import { markdown } from '@codemirror/lang-markdown'
-import { Compartment, EditorState, type Extension, Prec } from '@codemirror/state'
-import { EditorView, keymap } from '@codemirror/view'
-import { type FileEntry, isFinalStatus, type RoomStatus } from '@pedit/protocol'
-import { basicSetup } from 'codemirror'
-import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next'
-import * as Y from 'yjs'
+import { Compartment, EditorState, type Extension } from '@codemirror/state'
+import { EditorView } from '@codemirror/view'
+import type { FileEntry } from '@pedit/protocol'
 import { AlwaysLoad, followOtherTabs } from './alwaysload.ts'
 import {
   type Appearance,
@@ -17,16 +14,15 @@ import {
 } from './appearance.ts'
 import { BoardView, setCanvasStatus } from './board.ts'
 import { nodeText, read as readCanvas, toJSON } from './canvas.ts'
-import { type CommentTarget, type ShownThread, textTarget } from './core/comments.ts'
-import { mountComments } from './core/comments-mount.ts'
 import { mountBanner, mountNotice } from './core/banner.ts'
+import type { CommentTarget, ShownThread } from './core/comments.ts'
+import { mountComments } from './core/comments-mount.ts'
 import { copyText } from './core/copy.ts'
 import { type EditorExtras, mountTextEditor } from './core/editor.ts'
 import { FileSet, type FileView, type OpenFile } from './core/files.ts'
 import { guardDrops } from './core/guard.ts'
 import { ContextMenu } from './core/menu.ts'
 import { openRoom, type Room, RoomOpenError } from './core/open-room.ts'
-import { imagePaste, textAnchor } from './core/paste.ts'
 import { Store } from './core/store.ts'
 import { delimiterFor } from './csv.ts'
 import { avatarFor, fetchIdentity, loadName, saveName } from './identity.ts'
@@ -51,7 +47,6 @@ import './components/FileTabs.tsx'
 import './components/Header.tsx'
 import './components/Layout.tsx'
 import type { LayoutParts } from './components/Layout.tsx'
-import { lockedUndo } from './core/lockedundo.ts'
 import './style.css'
 
 const DARK_QUERY = '(prefers-color-scheme: dark)'
@@ -112,8 +107,6 @@ async function joinRoom(
   const {
     keys,
     writesFile,
-    writesComments,
-    doc,
     text,
     awareness,
     client,
@@ -122,19 +115,14 @@ async function joinRoom(
     away,
     fileName,
     people,
-    authorColors,
-    timeLimit,
     files: roomFiles,
     current,
-    locked,
     metaOf,
     openCounts,
     editLocked,
     fileLocked,
-    commentsLocked,
     noImages,
   } = room
-  const roomStatus = room.status
   // The room's files, each with its comments (#121) and the views below. A
   // new comment goes on what the view on screen says, else the editor's selection.
   const files = new FileSet(room, {
@@ -191,7 +179,7 @@ async function joinRoom(
     }
   }
   const textEditor = mountTextEditor({ room, files, parent: source, extra: pageExtras })
-  const { view: editor, selection } = textEditor
+  const { view: editor } = textEditor
 
   const followEditor = () => {
     if (main.dataset.view === 'split') preview.follow(editor)
