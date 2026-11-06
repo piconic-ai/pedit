@@ -118,6 +118,9 @@
     },
     {
       "relay": "https://relay.example:65536"
+    },
+    {
+      "relay": "http://0xffffffffffffffffffff"
     }
   ]
 }
