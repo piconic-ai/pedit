@@ -29,7 +29,7 @@ test('the page and bundle are served with the policy headers', async () => {
     }
     const page = await (await fetch(`${origin}/`)).text()
     assert.match(page, /<pedit-review relay="http:\/\/127\.0\.0\.1:8787"/)
-    assert.deepEqual(page.match(/<script\b[^>]*>/g), [
+    assert.deepEqual(page.match(/<script\b[^>]*>/gi), [
       '<script type="module" src="/assets/pedit-review.js">',
     ])
 
