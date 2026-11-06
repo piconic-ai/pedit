@@ -212,16 +212,20 @@ func (s *Server) restore(rec *stateRecord, initial string) (ok bool) {
 // reported and does not stop serving: the state only makes a restart smoother.
 func (s *Server) saveState(written string, pending *string) {
 	s.mu.Lock()
-	doc := crdt.EncodeStateAsUpdateV1(s.doc, nil)
+	doc, generation := crdt.EncodeStateAsUpdateV1(s.doc, nil), s.generation
 	s.mu.Unlock()
-	rec := stateRecord{Version: stateVersion, Generation: s.generation, Saved: time.Now(), Written: written, Pending: pending, Doc: doc}
+	rec := stateRecord{Version: stateVersion, Generation: generation, Saved: time.Now(), Written: written, Pending: pending, Doc: doc}
 	if err := writeState(s.statePath, rec); err != nil {
 		s.opts.OnError(fmt.Errorf("cannot save the recovery state: %w", err))
 	}
 }
 
 // Generation names this document: a restart that resumed the state keeps it.
-func (s *Server) Generation() string { return s.generation }
+func (s *Server) Generation() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.generation
+}
 
 // forgetState removes the state of file, which no longer exists.
 func forgetState(opts Options, file string) {

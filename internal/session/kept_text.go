@@ -45,6 +45,15 @@ type KeptTextOptions struct {
 	// Options): the host then leaves file 0 to the source.
 	Source     Source
 	Generation string
+	// Into is for a room of another history than the document it is closed
+	// into, which also owns file 0: once the room's edits are taken in, it is
+	// handed the text the room started from and the text it ends with, and
+	// applies the change between them as an edit. Source and Into are
+	// exclusive.
+	Into func(base, next string)
+	// Saved is called after Source or Into has the edits, before the room is
+	// ended: the owner saves its file there. An error leaves the room open.
+	Saved func() error
 }
 type keptTextState struct {
 	Project, Origin, Fragment, HostToken string
@@ -127,10 +136,45 @@ type keptTextHost struct {
 	// source, when set, owns file 0: the host never reads, checks or writes
 	// it, and takes the source's state in instead of a text diff.
 	source Source
+	// into and saved are KeptTextOptions' Into and Saved; base is the text
+	// file 0 had when the host opened, or when into last got it.
+	into  func(base, next string)
+	saved func() error
+	base  string
 }
 
 // owns tells whether the host reads and writes the file itself.
-func (h *keptTextHost) owns(file *keptTextFileState) bool { return h.source == nil || file.ID != 0 }
+func (h *keptTextHost) owns(file *keptTextFileState) bool {
+	return h.source == nil && h.into == nil || file.ID != 0
+}
+
+// handOver gives the owner of file 0 what the room holds, and has it saved.
+func (h *keptTextHost) handOver() error {
+	doc := h.files[0].doc
+	switch {
+	case h.source != nil:
+		if err := h.source.Apply(crdt.EncodeStateAsUpdateV1(doc, nil)); err != nil {
+			return err
+		}
+	case h.into != nil:
+		next := doc.GetText("content").ToString()
+		h.into(h.base, next)
+		h.base = next
+	default:
+		return nil
+	}
+	if h.saved != nil {
+		if err := h.saved(); err != nil {
+			return err
+		}
+	}
+	// What the owner has is saved: nothing of file 0 is pending any more.
+	file := &h.state.Files[0]
+	if file.Pending != nil {
+		file.Text, file.Pending = *file.Pending, nil
+	}
+	return saveKeptState(h.path, h.state)
+}
 
 // CloseKept takes in the edits of a room kept by the relay, writes them to the
 // files, and ends the room, which removes its link and its record. Source
@@ -804,4 +848,28 @@ func ListKeptText(project string) ([]KeptTextRecord, error) {
 	}
 	sort.SliceStable(records, func(i, j int) bool { return records[i].Until < records[j].Until })
 	return records, nil
+}
+
+// SetKeptGeneration gives the record of a kept room the generation of the
+// document that is now one history with it, if it has none. A record with a
+// generation is left as it is.
+func SetKeptGeneration(project, room, generation string) error {
+	project, e := filepath.Abs(project)
+	if e != nil || !keptTextRoomID.MatchString(room) || generation == "" {
+		return errors.New("invalid kept room")
+	}
+	directory, e := keptTextDirectory(filepath.Clean(project))
+	if e != nil {
+		return e
+	}
+	path := filepath.Join(directory, room+".json")
+	var s keptTextState
+	if e := readKeptState(path, &s); e != nil {
+		return e
+	}
+	if s.Generation != "" {
+		return nil
+	}
+	s.Generation = generation
+	return saveKeptState(path, s)
 }

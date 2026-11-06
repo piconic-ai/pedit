@@ -237,6 +237,13 @@ func openAway(opts KeptTextOptions) (*keptTextHost, error) {
 		}
 		h.source = opts.Source
 	}
+	h.saved = opts.Saved
+	if opts.Into != nil {
+		if opts.Source != nil || len(h.state.Files) != 1 || isCanvas(h.state.Files[0].Path) {
+			return nil, errors.New("a room closed into a document shares one text file")
+		}
+		h.into = opts.Into
+	}
 	if err := h.openFiles(); err != nil {
 		return nil, err
 	}
@@ -245,6 +252,9 @@ func openAway(opts KeptTextOptions) (*keptTextHost, error) {
 		return nil, err
 	}
 	h.after = h.state.After
+	if h.into != nil {
+		h.base = h.files[0].doc.GetText("content").ToString()
+	}
 	return h, nil
 }
 
@@ -413,6 +423,9 @@ func (h *keptTextHost) closeAway(ctx context.Context, dial protocol.Dialer) erro
 		}
 		if err == nil {
 			err = h.takeInLate(ctx, r.late)
+		}
+		if err == nil {
+			err = h.handOver()
 		}
 		if err == nil && (h.imagesFailed || !h.nothingPending()) {
 			err = errors.New("could not save everything to your files; the room is left open")
