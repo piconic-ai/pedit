@@ -8,6 +8,10 @@ import (
 	"github.com/reearth/ygo/crdt"
 )
 
+func adopt(s *Server, doc []byte, generation string) error {
+	return s.Adopt(func(string) ([]byte, string, error) { return doc, generation, nil })
+}
+
 func docWith(text string) []byte {
 	d := crdt.New()
 	t := d.GetText("content")
@@ -21,7 +25,7 @@ func TestServerAdoptReplacesTheDocumentAndEndsTheStreams(t *testing.T) {
 	eventually(t, "synced", func() bool { return c.get() == "old\n" })
 	before := s.Generation()
 
-	if err := s.Adopt(docWith("new text\n"), "G2"); err != nil {
+	if err := adopt(s, docWith("new text\n"), "G2"); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -53,7 +57,7 @@ func TestServerAdoptReplacesTheDocumentAndEndsTheStreams(t *testing.T) {
 func TestServerAdoptWithoutAGenerationMakesANewOne(t *testing.T) {
 	s, _, _ := open(t, "old\n")
 	before := s.Generation()
-	if err := s.Adopt(docWith("a\n"), ""); err != nil {
+	if err := adopt(s, docWith("a\n"), ""); err != nil {
 		t.Fatal(err)
 	}
 	if g := s.Generation(); g == "" || g == before {
@@ -63,14 +67,14 @@ func TestServerAdoptWithoutAGenerationMakesANewOne(t *testing.T) {
 
 func TestServerAdoptRefusesWhatItCannotUse(t *testing.T) {
 	s, _, _ := open(t, "old\n")
-	if err := s.Adopt([]byte{1, 2, 3}, "G"); err == nil {
+	if err := adopt(s, []byte{1, 2, 3}, "G"); err == nil {
 		t.Fatal("adopted garbage")
 	}
 	p, err := s.AttachPeer(PeerHandler{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Adopt(docWith("a\n"), "G"); err == nil {
+	if err := adopt(s, docWith("a\n"), "G"); err == nil {
 		t.Fatal("adopted with a room attached")
 	}
 	p.Close()
@@ -88,4 +92,30 @@ func TestServerEditMergesTheChangeIntoWhatWasWritten(t *testing.T) {
 	s.Edit("hello\n", "hello\nroom\n")
 	eventually(t, "the page gets the edit", func() bool { return c.get() == "app: hello\nroom\n" })
 	eventually(t, "the file", fileIs(t, file, "app: hello\nroom\n"))
+}
+
+// An edit the server accepts after the text was first looked at, but before
+// the document is replaced, is in what merge is given, so the replacement
+// keeps it.
+func TestServerAdoptSeesEditsAcceptedUntilTheReplacement(t *testing.T) {
+	s, file, _ := open(t, "hello\n")
+	c := dial(t, s)
+	eventually(t, "synced", func() bool { return c.get() == "hello\n" })
+	stale := s.Text()
+	c.insert(0, "late: ")
+	eventually(t, "the server has the edit", func() bool { return s.Text() == "late: hello\n" })
+	var given string
+	err := s.Adopt(func(app string) ([]byte, string, error) {
+		given = app
+		return docWith(app + "room\n"), "G2", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stale != "hello\n" || given != "late: hello\n" {
+		t.Fatalf("stale %q, merge was given %q", stale, given)
+	}
+	if s.Text() != "late: hello\nroom\n" || !fileIs(t, file, "late: hello\nroom\n")() {
+		t.Fatalf("adopted %q", s.Text())
+	}
 }

@@ -391,11 +391,13 @@ func (l *liveSharer) settle(ctx context.Context, project string, rec *session.Ke
 	if !sameSet(req.Origins, rec.Origins) {
 		return true, errOrigins
 	}
-	doc, err := mergeAppText(rec.State, l.srv.Text())
+	// The merge sees the app's text under serve's lock, so that no edit
+	// accepted meanwhile is lost to the replacement.
+	err = l.srv.Adopt(func(app string) ([]byte, string, error) {
+		doc, err := mergeAppText(rec.State, app)
+		return doc, rec.Generation, err
+	})
 	if err != nil {
-		return true, err
-	}
-	if err := l.srv.Adopt(doc, rec.Generation); err != nil {
 		return true, err
 	}
 	if rec.Generation == "" {

@@ -82,6 +82,12 @@ type keptTextFileState struct {
 	State      []byte
 	Text       string
 	Pending    *string `json:",omitempty"`
+	// Handover is, for a room being closed into a document of another history
+	// (KeptTextOptions.Into), the text the app last received: the diff to
+	// hand it starts there, however far replay has advanced State. It is
+	// cleared once the app has saved the result. Like CommentEntries it makes
+	// an older pedit refuse the record.
+	Handover *string `json:",omitempty"`
 	// Meta is the comments doc paired with the file, if its comments can be kept.
 	Meta *keptMetaState `json:",omitempty"`
 }
@@ -148,9 +154,23 @@ func (h *keptTextHost) owns(file *keptTextFileState) bool {
 	return h.source == nil && h.into == nil || file.ID != 0
 }
 
+// beginHandover records the text the app last received, before the room's log
+// is taken in: replay saves the advanced document first, and a retry after an
+// interruption must still hand over the diff from here.
+func (h *keptTextHost) beginHandover() error {
+	file := &h.state.Files[0]
+	if h.into == nil || file.Handover != nil {
+		return nil
+	}
+	base := h.base
+	file.Handover = &base
+	return saveKeptState(h.path, h.state)
+}
+
 // handOver gives the owner of file 0 what the room holds, and has it saved.
 func (h *keptTextHost) handOver() error {
 	doc := h.files[0].doc
+	file := &h.state.Files[0]
 	switch {
 	case h.source != nil:
 		if err := h.source.Apply(crdt.EncodeStateAsUpdateV1(doc, nil)); err != nil {
@@ -159,7 +179,11 @@ func (h *keptTextHost) handOver() error {
 	case h.into != nil:
 		next := doc.GetText("content").ToString()
 		h.into(h.base, next)
-		h.base = next
+		// The app has it, saved or not: a retry only has it saved again.
+		h.base, file.Handover = next, &next
+		if err := saveKeptState(h.path, h.state); err != nil {
+			return err
+		}
 	default:
 		return nil
 	}
@@ -169,7 +193,7 @@ func (h *keptTextHost) handOver() error {
 		}
 	}
 	// What the owner has is saved: nothing of file 0 is pending any more.
-	file := &h.state.Files[0]
+	file.Handover = nil
 	if file.Pending != nil {
 		file.Text, file.Pending = *file.Pending, nil
 	}

@@ -254,6 +254,9 @@ func openAway(opts KeptTextOptions) (*keptTextHost, error) {
 	h.after = h.state.After
 	if h.into != nil {
 		h.base = h.files[0].doc.GetText("content").ToString()
+		if kept := h.state.Files[0].Handover; kept != nil {
+			h.base = *kept
+		}
 	}
 	return h, nil
 }
@@ -416,19 +419,9 @@ func (h *keptTextHost) closeAway(ctx context.Context, dial protocol.Dialer) erro
 			_ = conn.Leave()
 			return errors.New("could not close the room: guests keep editing it")
 		}
-		r := &resumed{conn: conn}
-		err = r.takeIn(ctx, h)
+		err = h.takeInAndHandOver(ctx, conn)
 		if roomClosed(err) {
 			return os.Remove(h.path)
-		}
-		if err == nil {
-			err = h.takeInLate(ctx, r.late)
-		}
-		if err == nil {
-			err = h.handOver()
-		}
-		if err == nil && (h.imagesFailed || !h.nothingPending()) {
-			err = errors.New("could not save everything to your files; the room is left open")
 		}
 		_ = conn.Leave()
 		if err != nil {
@@ -439,6 +432,28 @@ func (h *keptTextHost) closeAway(ctx context.Context, dial protocol.Dialer) erro
 			return err
 		}
 	}
+}
+
+// takeInAndHandOver takes in the room's log over conn, gives file 0's owner
+// what the room holds, and checks that nothing is left to save.
+func (h *keptTextHost) takeInAndHandOver(ctx context.Context, conn protocol.Conn) error {
+	if err := h.beginHandover(); err != nil {
+		return err
+	}
+	r := &resumed{conn: conn}
+	if err := r.takeIn(ctx, h); err != nil {
+		return err
+	}
+	if err := h.takeInLate(ctx, r.late); err != nil {
+		return err
+	}
+	if err := h.handOver(); err != nil {
+		return err
+	}
+	if h.imagesFailed || !h.nothingPending() {
+		return errors.New("could not save everything to your files; the room is left open")
+	}
+	return nil
 }
 
 // dropIfGone removes the record when the relay turned the host away because
