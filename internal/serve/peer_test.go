@@ -322,6 +322,7 @@ func TestServerCloseClosesPeerFirstAndSavesItsEdits(t *testing.T) {
 	}
 	eventually(t, "synced", func() bool { return c.get() == "x\n" })
 	c.insert(0, "s:")
+	eventually(t, "server has the stream's edit", func() bool { return s.render() == "s:x\n" })
 	doc := crdt.New()
 	if err := crdt.ApplyUpdateV1(doc, p.State(), nil); err != nil {
 		t.Fatal(err)
