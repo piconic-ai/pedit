@@ -4,7 +4,9 @@ import {
   fetchIdentity,
   gravatarUrl,
   IDENTITY_PATH,
+  loadName,
   parseIdentity,
+  saveName,
 } from '../src/identity.ts'
 
 describe('parseIdentity', () => {
@@ -80,5 +82,35 @@ describe('avatarFor', () => {
       await avatarFor({ name: 't', email: 'test@example.com', picture: 'https://x.example/a.png' }),
     ).toContain('gravatar.com')
     expect(await avatarFor({ name: 't' })).toBeUndefined()
+  })
+})
+
+describe('loadName and saveName', () => {
+  function memory(): Pick<Storage, 'getItem' | 'setItem'> & { data: Map<string, string> } {
+    const data = new Map<string, string>()
+    return { data, getItem: (k) => data.get(k) ?? null, setItem: (k, v) => void data.set(k, v) }
+  }
+
+  it('remembers the name under pedit:name', () => {
+    const prefs = memory()
+    expect(loadName(prefs)).toBeNull()
+    saveName(prefs, 'Kenta')
+    expect(prefs.data.get('pedit:name')).toBe('Kenta')
+    expect(loadName(prefs)).toBe('Kenta')
+  })
+
+  it('does nothing without storage, or where it throws', () => {
+    const broken = {
+      getItem: () => {
+        throw new Error('denied')
+      },
+      setItem: () => {
+        throw new Error('denied')
+      },
+    }
+    expect(loadName(null)).toBeNull()
+    expect(() => saveName(null, 'Kenta')).not.toThrow()
+    expect(loadName(broken)).toBeNull()
+    expect(() => saveName(broken, 'Kenta')).not.toThrow()
   })
 })

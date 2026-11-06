@@ -79,4 +79,38 @@ describe('ContextMenu', () => {
     expect(menu.open).toBe(false)
     expect(document.activeElement).toBe(before)
   })
+
+  describe('inside a shadow root', () => {
+    function inShadow() {
+      const host = document.createElement('div')
+      document.body.append(host)
+      const shadow = host.attachShadow({ mode: 'open' })
+      const before = document.createElement('button')
+      shadow.append(before)
+      before.focus()
+      const menu = new ContextMenu(false)
+      shadow.append(menu.element)
+      const action = vi.fn()
+      menu.show([{ label: 'One', action }], 10, 10)
+      const items = [...menu.element.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
+      return { host, shadow, before, menu, items }
+    }
+
+    it('stays open on a press on one of its items', () => {
+      const { host, menu, items } = inShadow()
+      items[0]?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, composed: true }))
+      expect(menu.open).toBe(true)
+      menu.close()
+      host.remove()
+    })
+
+    it('closes on a press outside the host and focuses what was focused in the shadow root', () => {
+      const { host, shadow, before, menu } = inShadow()
+      expect(shadow.activeElement).not.toBe(before)
+      document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, composed: true }))
+      expect(menu.open).toBe(false)
+      expect(shadow.activeElement).toBe(before)
+      host.remove()
+    })
+  })
 })

@@ -60,7 +60,7 @@ import {
 } from './core/room.ts'
 import { Store } from './core/store.ts'
 import { delimiterFor } from './csv.ts'
-import { avatarFor, fetchIdentity } from './identity.ts'
+import { avatarFor, fetchIdentity, loadName, saveName } from './identity.ts'
 import { infoLinks } from './info.ts'
 import { JsonPane } from './jsonpane.ts'
 import { resolveLanguage } from './language.ts'
@@ -72,6 +72,7 @@ import { cleanName } from './settings.ts'
 import { lineWrapping, settingsModel } from './settings-model.ts'
 import { COPIED, shareLinks } from './share.ts'
 import { Splitter } from './splitter.ts'
+import { defaultStore } from './storage.ts'
 import { describeError, TableErrors, TableView } from './table.ts'
 import { fallbackTheme, loadTheme, readerTheme, ThemeSwitcher } from './themes.ts'
 import { NARROW_QUERY, type ViewMode, ViewSwitch } from './view.ts'
@@ -89,25 +90,8 @@ import { AwayView, commentsLockedFor, isLocked, keptKindFor } from './core/kepta
 import { lockedUndo } from './core/lockedundo.ts'
 import './style.css'
 
-const NAME_KEY = 'pedit:name'
 const DARK_QUERY = '(prefers-color-scheme: dark)'
 const app = document.getElementById('app') as HTMLElement
-
-function loadName(): string | null {
-  try {
-    return localStorage.getItem(NAME_KEY)
-  } catch {
-    return null
-  }
-}
-
-function saveName(name: string): void {
-  try {
-    localStorage.setItem(NAME_KEY, name)
-  } catch {
-    // Private mode or storage disabled: ask again next time.
-  }
-}
 
 function showLanding(): void {
   render(app, 'Landing')
@@ -117,7 +101,7 @@ function askName(): Promise<string> {
   return new Promise((resolve) => {
     render(app, 'JoinCard', {
       onJoin: (name: string) => {
-        saveName(name)
+        saveName(defaultStore(), name)
         resolve(name)
       },
     })
@@ -264,6 +248,7 @@ async function joinRoom(
   const admission = keys.editAdmission ?? keys.readAdmission
   const blobKeys = await deriveBlobKeys(keys.frameSecret, admission)
   const attachments = new Attachments({
+    relay: new URL(location.origin),
     roomId: id,
     keys: blobKeys,
     // The relay keeps the images while the host is away, which saves them on its return.
@@ -501,7 +486,7 @@ async function joinRoom(
     setName: (typed: string) => {
       const name = cleanName(typed)
       if (!name || name === myName.get()) return
-      saveName(name)
+      saveName(defaultStore(), name)
       myName.set(name)
       const user = awareness.getLocalState()?.user as Record<string, unknown> | undefined
       awareness.setLocalStateField('user', { ...user, name })
@@ -767,7 +752,7 @@ async function joinRoom(
   }
 
   client = new RoomClient({
-    url: roomSocketUrl(location, id),
+    url: roomSocketUrl(new URL(location.origin), id),
     keys,
     admissionToken: admission,
     doc,
@@ -942,11 +927,11 @@ async function start(): Promise<void> {
   const identity = await fetchIdentity()
   const me: Me = identity
     ? {
-        name: loadName() ?? identity.name,
+        name: loadName(defaultStore()) ?? identity.name,
         account: identity.name,
         avatar: await avatarFor(identity),
       }
-    : { name: loadName() ?? (await askName()) }
+    : { name: loadName(defaultStore()) ?? (await askName()) }
   const loaded = await theme
   // If the theme could not load, the page matches the default theme the editor falls back to.
   applyPalette(pageColors(appearance, loaded.id))

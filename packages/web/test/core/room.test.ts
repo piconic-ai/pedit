@@ -13,11 +13,20 @@ const key = 'k'.repeat(43)
 
 describe('roomSocketUrl', () => {
   it('builds a key-free WebSocket URL on the same host', () => {
-    expect(roomSocketUrl({ protocol: 'https:', host: 'edit.piconic.ai' }, id)).toBe(
+    expect(roomSocketUrl(new URL('https://edit.piconic.ai'), id)).toBe(
       `wss://edit.piconic.ai/api/rooms/${id}/ws`,
     )
-    expect(roomSocketUrl({ protocol: 'http:', host: 'localhost:8787' }, id)).toBe(
+    expect(roomSocketUrl(new URL('http://localhost:8787'), id)).toBe(
       `ws://localhost:8787/api/rooms/${id}/ws`,
+    )
+  })
+
+  it('keeps a path prefix on the relay and drops its query and fragment', () => {
+    expect(roomSocketUrl(new URL('https://x.test/pedit/?a=1#b'), id)).toBe(
+      `wss://x.test/pedit/api/rooms/${id}/ws`,
+    )
+    expect(roomSocketUrl(new URL('https://x.test:8443'), id)).toBe(
+      `wss://x.test:8443/api/rooms/${id}/ws`,
     )
   })
 })

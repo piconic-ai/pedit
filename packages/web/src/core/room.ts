@@ -1,9 +1,10 @@
 import type { Access } from '@pedit/protocol'
 import { safeAvatar } from './avatar.ts'
+import { socketUrl } from './relay.ts'
 
-export function roomSocketUrl(loc: { protocol: string; host: string }, id: string): string {
-  const scheme = loc.protocol === 'https:' ? 'wss' : 'ws'
-  return `${scheme}://${loc.host}/api/rooms/${id}/ws`
+/** The room's WebSocket URL on `relay`, without the key (see relay.ts). */
+export function roomSocketUrl(relay: URL, id: string): string {
+  return socketUrl(relay, id)
 }
 
 export interface Participant {

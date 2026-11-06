@@ -1,4 +1,5 @@
 import { safeAvatar } from './core/avatar.ts'
+import type { Prefs } from './core/prefs.ts'
 
 /**
  * Who the collaborator is, when pedit runs behind Cloudflare Access.
@@ -55,4 +56,23 @@ export async function avatarFor(identity: Identity): Promise<string | undefined>
   return (
     safeAvatar(identity.picture) ?? (identity.email ? await gravatarUrl(identity.email) : undefined)
   )
+}
+
+const NAME_KEY = 'pedit:name'
+
+/** The name this browser last used, or null before one was saved or where storage is out. */
+export function loadName(prefs: Prefs | null): string | null {
+  try {
+    return prefs?.getItem(NAME_KEY) ?? null
+  } catch {
+    return null
+  }
+}
+
+export function saveName(prefs: Prefs | null, name: string): void {
+  try {
+    prefs?.setItem(NAME_KEY, name)
+  } catch {
+    // Private mode or storage disabled: ask again next time.
+  }
 }
