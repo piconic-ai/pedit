@@ -46,7 +46,7 @@ import { lineWrapping, settingsModel } from './settings-model.ts'
 import { COPIED, shareLinks } from './share.ts'
 import { Splitter } from './splitter.ts'
 import { defaultStore } from './storage.ts'
-import { describeError, TableErrors, TableView } from './table.ts'
+import { describeError, TableErrors, TableView, tableReadOnly } from './table.ts'
 import { fallbackTheme, loadTheme, readerTheme, ThemeSwitcher } from './themes.ts'
 import { NARROW_QUERY, type ViewMode, ViewSwitch } from './view.ts'
 import { trackViewport } from './viewport.ts'
@@ -287,8 +287,7 @@ async function joinRoom(
     t.shown.subscribe(f.aim)
     return {
       setStatus(s, canWrite) {
-        if (isFinalStatus(s)) t.readOnly = true
-        else if (canWrite) t.readOnly = editLocked()
+        t.readOnly = tableReadOnly(s, canWrite, editLocked())
       },
       anchors: { table: t.parsed },
       commented(threads) {

@@ -260,6 +260,8 @@ export async function openRoom(opts: OpenRoomOptions): Promise<Room> {
   }
 
   const takeManifest = (list: FileEntry[]) => {
+    // Leaving is not the room changing: nothing reaches the views any more.
+    if (disposed) return
     metaOf.clear()
     formats.clear()
     for (const [file, meta] of metaFiles(list)) metaOf.set(file, meta)
@@ -286,7 +288,7 @@ export async function openRoom(opts: OpenRoomOptions): Promise<Room> {
     const host = [...awareness.getStates()].find(
       ([id, s]) => s.role === 'host' && accessOf(id) === 'edit',
     )?.[1]
-    hooks.people?.(host)
+    if (!disposed) hooks.people?.(host)
   }
 
   const rc = new RoomClient({
@@ -301,6 +303,7 @@ export async function openRoom(opts: OpenRoomOptions): Promise<Room> {
     },
     onKeptSkipped: (count) => away.skipped.set(count),
     onKeptComments: () => {
+      if (disposed) return
       locked.set(commentsLocked())
       setKeeps()
     },
@@ -308,18 +311,22 @@ export async function openRoom(opts: OpenRoomOptions): Promise<Room> {
       if (s === 'expired') timeLimit.set(client?.timeLimitSeconds)
       setStatus(s)
       renderPeople()
-      if (s === 'connected') {
+      if (s === 'connected' && !disposed) {
         attachments.reconnected()
         hooks.reconnected?.()
       }
     },
     onAttachment: (a) => attachments.handle(a),
-    onCanvas: (m) => hooks.canvas?.(0, m),
+    onCanvas: (m) => {
+      if (!disposed) hooks.canvas?.(0, m)
+    },
     onManifest: takeManifest,
     // A peer's state may stay the same while what it may do rises.
     onAccess: renderPeople,
     onFileAttachment: (_, a) => attachments.handle(a),
-    onFileCanvas: (fileId, m) => hooks.canvas?.(fileId, m),
+    onFileCanvas: (fileId, m) => {
+      if (!disposed) hooks.canvas?.(fileId, m)
+    },
   })
   client = rc
   commentDocs = new CommentDocs(rc)

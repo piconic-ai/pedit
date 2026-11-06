@@ -201,15 +201,102 @@ describe('FileSet', () => {
     expect(order).toEqual(['view', 'page'])
   })
 
-  it('disposes the comments and views', async () => {
+  it('disposes the comments and views, and takes no more from the room', async () => {
+    const { room, files, host } = await setup()
+    const gone = vi.fn()
+    files.addView(() => ({ dispose: gone }))
+    room.connect()
+    host.setManifest(list(NOTES, meta(1, 'notes.md')))
+    await vi.waitFor(() => expect(files.get(0)?.comments).not.toBeNull())
+    files.dispose()
+    expect(files.get(0)?.comments).toBeNull()
+    expect(files.comments.get()).toBeNull()
+    expect(files.commentable.get()).toBe(false)
+    expect(gone).toHaveBeenCalledOnce()
+    // A list that comes now follows nothing.
+    host.setManifest(list(NOTES, meta(4, 'notes.md')))
+    await vi.waitFor(() => expect(room.metaOf.get(0)).toBe(4))
+    expect(files.get(0)?.comments).toBeNull()
+  })
+
+  it('hears nothing from a room that was left', async () => {
+    const { room, files, host } = await setup()
+    const log: string[] = []
+    files.addView(fake(log))
+    room.connect()
+    host.setManifest(list(NOTES, meta(1, 'notes.md')))
+    await vi.waitFor(() => expect(files.get(0)?.comments).not.toBeNull())
+    await room.dispose()
+    log.length = 0
+    files.dispose()
+    host.setManifest(list(NOTES, meta(6, 'notes.md')))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(files.get(0)?.comments).toBeNull()
+    expect(log).toEqual([])
+  })
+
+  it('refuses a view once comments are followed', async () => {
     const { room, files, host } = await setup()
     room.connect()
     host.setManifest(list(NOTES, meta(1, 'notes.md')))
     await vi.waitFor(() => expect(files.get(0)?.comments).not.toBeNull())
-    const gone = vi.fn()
-    files.addView(() => ({ dispose: gone }))
-    files.dispose()
-    expect(files.get(0)?.comments).toBeNull()
-    expect(gone).toHaveBeenCalledOnce()
+    expect(() => files.addView(() => ({}))).toThrow(/before comments are followed/)
+  })
+
+  it('marks threads only in the views of the file on screen', async () => {
+    const { room, files, host } = await setup()
+    const seen: string[] = []
+    files.addView((f) => ({ commented: () => seen.push(`${f.id}`) }))
+    room.connect()
+    host.setManifest(list(NOTES, meta(1, 'notes.md'), LATER, meta(3, 'later.md')))
+    await vi.waitFor(() => expect(files.get(0)?.comments).not.toBeNull())
+    files.switchTo(2)
+    await vi.waitFor(() => expect(files.get(2)?.comments).not.toBeNull())
+    seen.length = 0
+    files.shown.get().comments?.refresh()
+    files.switchTo(0)
+    expect(seen.every((id) => id === '0' || id === '2')).toBe(true)
+    expect(seen.at(-1)).toBe('0')
+    seen.length = 0
+    files.switchTo(2)
+    expect(seen).toEqual(['2'])
+  })
+
+  it('leaves the target alone when a hidden file aims', async () => {
+    const { room, files, host } = await setup()
+    host.setManifest(list(NOTES, LATER))
+    room.connect()
+    await vi.waitFor(() => expect(room.files.get().length).toBe(2))
+    let node = 'a'
+    files.addView(() => ({ target: () => ({ kind: 'node', id: node }) }))
+    files.aim()
+    const other = files.open(LATER)
+    node = 'b'
+    other.aim()
+    expect(files.target.get()).toEqual({ kind: 'node', id: 'a' })
+    files.shown.get().aim()
+    expect(files.target.get()).toEqual({ kind: 'node', id: 'b' })
+  })
+
+  it('gives the comments the anchors of the views', async () => {
+    const { room, files, host } = await setup()
+    files.addView(() => ({ anchors: { nodes: () => new Map([['g1', 'Goal']]) } }))
+    room.connect()
+    await vi.waitFor(() => expect(room.status.get()).toBe('connected'))
+    host.setManifest(
+      list(
+        NOTES,
+        meta(1, 'notes.md'),
+        { id: 2, path: 'board.canvas', format: 'canvas' },
+        meta(3, 'board.canvas'),
+      ),
+    )
+    await vi.waitFor(() => expect(room.files.get().length).toBe(2))
+    files.switchTo(2)
+    const canvas = files.get(2)?.comments
+    expect(canvas?.startOn({ kind: 'node', id: 'g1' }, 'Scope')).not.toBeNull()
+    expect(canvas?.startOn({ kind: 'node', id: 'nope' }, 'Scope')).toBeNull()
+    // A text file takes none of them.
+    expect(files.get(0)?.comments?.startOn({ kind: 'node', id: 'g1' }, 'Scope')).toBeNull()
   })
 })

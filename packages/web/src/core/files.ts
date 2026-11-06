@@ -96,6 +96,8 @@ export class FileSet {
   readonly #opened = new Map<number, OpenFile>()
   readonly #factories: FileViewFactory[] = []
   #stopThreads = () => {}
+  #disposed = false
+  #started = false
 
   constructor(room: Room, opts: FileSetOptions) {
     this.#room = room
@@ -129,8 +131,13 @@ export class FileSet {
     return this.#opened.get(id)
   }
 
-  /** Adds a view to every file opened and every file to come. */
+  /**
+   * Adds a view to every file opened and every file to come. Views are added
+   * before any file follows its comments (that is, before the room connects):
+   * the anchors the comments read come from the views. Throws after.
+   */
   addView(factory: FileViewFactory): void {
+    if (this.#started) throw new Error('addView: views must be added before comments are followed')
     this.#factories.push(factory)
     for (const f of this.#opened.values()) this.#addTo(f, factory)
   }
@@ -184,8 +191,14 @@ export class FileSet {
 
   /** Lets go of every file's comments and views. */
   dispose(): void {
+    this.#disposed = true
     this.#stopThreads()
     this.#stopThreads = () => {}
+    this.comments.set(null)
+    this.commentable.set(false)
+    this.target.set(null)
+    this.threads.set([])
+    this.focus.set(null)
     for (const f of this.#opened.values()) {
       f.comments?.destroy()
       f.comments = null
@@ -221,6 +234,7 @@ export class FileSet {
 
   /** A file whose comments the list now puts in another doc, or in none, lets go of those it follows. */
   #manifest(): void {
+    if (this.#disposed) return
     const shown = this.shown.get()
     for (const f of this.#opened.values()) {
       if (!f.comments || this.#room.metaOf.get(f.id) === f.commentsMeta) continue
@@ -236,12 +250,14 @@ export class FileSet {
    * whose every update is checked: anyone in the room can send one.
    */
   #follow(f: OpenFile): void {
+    if (this.#disposed) return
     const room = this.#room
     const metaId = room.metaOf.get(f.id)
     const format = room.formats.get(f.id)
     if (f.comments || !getsComments(format)) return
     const metaDoc = metaId === undefined ? null : room.commentDocs.docFor(metaId)
     if (!metaDoc) return
+    this.#started = true
     f.commentsMeta = metaId
     const name = () => {
       const user = room.awareness.getLocalState()?.user as { name?: unknown } | undefined
