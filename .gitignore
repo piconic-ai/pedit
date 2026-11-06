@@ -9,3 +9,4 @@ dist/
 __pycache__/
 /pedit
 packages/serve/LICENSE
+packages/review/LICENSE

@@ -1,4 +1,4 @@
-import { AVATAR_HOSTS } from '@pedit/protocol/csp'
+import { AVATAR_HOSTS } from '@pedit/protocol/avatar-hosts'
 
 /**
  * Hosts an avatar may come from. Awareness state is written by anyone with the

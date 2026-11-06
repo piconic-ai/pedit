@@ -1,0 +1,59 @@
+/* What the element adds around the core's own styles: the page's layout, not the core's.
+   Theming variables come in a later change; these are the defaults the core reads. */
+:host {
+  display: block;
+  --bg: #fff;
+  --ink: #1f2328;
+  --muted: #59636e;
+  --line: #d1d9e0;
+  --panel: #f6f8fa;
+  --accent: #0969da;
+  --sans: system-ui, sans-serif;
+  --mono: ui-monospace, monospace;
+  color: var(--ink);
+  background: var(--bg);
+  font: 14px / 1.45 var(--sans);
+}
+.review {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 320px;
+}
+.review-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.review-header .file {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.review-header [hidden] {
+  display: none;
+}
+.review main.editor {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.review-message,
+.review-join {
+  padding: 16px;
+}
+.review-join {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+@media (max-width: 720px) {
+  .review main.editor {
+    flex-direction: column;
+  }
+}

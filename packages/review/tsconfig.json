@@ -1,0 +1,10 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["vite/client", "node"],
+    "jsx": "react-jsx",
+    "jsxImportSource": "@barefootjs/jsx"
+  },
+  "include": ["src", "test", "vite.config.ts", "memory-storage.ts", "vite.csp.config.ts"]
+}
