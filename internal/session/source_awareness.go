@@ -44,7 +44,7 @@ type sourceAwareness struct {
 	timer *time.Timer
 	// batches counts the renewals of all the pages.
 	batches int
-	// next is the least clock the next state sent for any page may have.
+	// next is the clock of the latest state sent for any page.
 	next uint64
 }
 
@@ -58,23 +58,24 @@ type pageState struct {
 }
 
 // send sends a page's state at a clock above every one sent for any page
-// before, and not below the source's own; under mu. Peers keep the clock of
+// before, and never the source's own, so that nothing a source claims can
+// move it; under mu. Peers keep the clock of
 // a removed ID for good, a browser in its awareness meta, so a clock that
 // only rises, shared by all pages, needs no memory of each ID to stay above
 // what was sent for it. When the clock would pass maxPageClock, nothing is
 // sent: the state is refused with errClockSpent, and renewals stop (the
 // states time out), rather than wrap around or be dropped by peers. At one
 // renewal per page every 15 s that takes thousands of years.
-func (s *Session) send(id, clock uint64, state []byte, access protocol.Access) error {
+func (s *Session) send(id uint64, state []byte, access protocol.Access) error {
 	a := &s.srcAw
-	clock = max(clock, a.next)
+	clock := a.next + 1
 	if clock > maxPageClock {
 		return errClockSpent
 	}
 	if err := s.Client.SendStateAt(protocol.EncodeState(id, clock, state), access); err != nil {
 		return err
 	}
-	a.next = clock + 1
+	a.next = clock
 	return nil
 }
 
@@ -85,7 +86,7 @@ var errClockSpent = errors.New("the clocks of the pages' awareness states are us
 // removal is one whose state is null. reader tells that the page may only
 // read: its state is sent at read access.
 func (s *Session) FromSourceAwareness(id uint64, reader bool, update []byte) error {
-	uid, clock, state, err := protocol.ParseState(update)
+	uid, _, state, err := protocol.ParseState(update)
 	if err != nil {
 		return err
 	}
@@ -103,7 +104,7 @@ func (s *Session) FromSourceAwareness(id uint64, reader bool, update []byte) err
 	if _, known := a.pages[id]; !known && removal {
 		return nil
 	}
-	if err := s.send(id, clock, state, access); err != nil {
+	if err := s.send(id, state, access); err != nil {
 		return err
 	}
 	if removal {
@@ -124,7 +125,7 @@ func (s *Session) renewPages() {
 	defer a.mu.Unlock()
 	a.batches++
 	for id, p := range a.pages {
-		_ = s.send(id, 0, p.state, p.access)
+		_ = s.send(id, p.state, p.access)
 	}
 }
 

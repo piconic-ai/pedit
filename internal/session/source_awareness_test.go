@@ -1,6 +1,7 @@
 package session
 
 import (
+	"math"
 	"net/url"
 	"strings"
 	"sync"
@@ -101,9 +102,6 @@ func TestAReadPageIsNeverSeenAboveRead(t *testing.T) {
 func TestAPageStaysWithinWhatPeersTake(t *testing.T) {
 	f, _ := shareSource(t, "x\n", setupOpts{})
 	host := uint64(f.session.Doc.ClientID())
-	if err := f.session.FromSourceAwareness(pageID, true, pageUpdate(1<<33, "far")); err == nil {
-		t.Fatal("a read clock past what peers take was sent")
-	}
 	if err := f.session.FromSourceAwareness(pageID, false, protocol.EncodeState(pageID+1, 1, []byte("{}"))); err == nil {
 		t.Fatal("an update of another client was sent")
 	}
@@ -284,7 +282,7 @@ func TestClocksStopBeforeWhatPeersTake(t *testing.T) {
 	f, _ := shareSource(t, "x\n", setupOpts{})
 	s := f.session
 	s.srcAw.mu.Lock()
-	s.srcAw.next = maxPageClock
+	s.srcAw.next = maxPageClock - 1
 	s.srcAw.mu.Unlock()
 	if err := s.FromSourceAwareness(pageID, true, pageUpdate(1, "last")); err != nil {
 		t.Fatal(err)
@@ -316,4 +314,31 @@ func TestNewcomersCauseBoundedBatches(t *testing.T) {
 	if n := batches(); n != 2 {
 		t.Fatalf("a burst of 200 newcomers caused %d batches", n)
 	}
+}
+
+// A clock the source claims moves nothing: one page's update at the highest
+// clocks does not stop the others.
+func TestASourceClockCannotStopOtherPages(t *testing.T) {
+	f, _ := shareSource(t, "x\n", setupOpts{})
+	s := f.session
+	g := joinAsGuest(t, f.relay, s.URL)
+	other := uint64(pageID + 1)
+	for _, clock := range []uint64{1 << 32, 1<<53 - 1} {
+		if err := s.FromSourceAwareness(pageID, true, protocol.EncodeState(pageID, clock, []byte(`{"name":"far"}`))); err != nil {
+			t.Fatalf("clock %d: %v", clock, err)
+		}
+	}
+	// The codec takes no clock past 53 bits.
+	if err := s.FromSourceAwareness(pageID, true, protocol.EncodeState(pageID, math.MaxUint64, []byte(`{}`))); err == nil {
+		t.Fatal("a clock past the codec was sent")
+	}
+	if err := s.FromSourceAwareness(other, true, protocol.EncodeState(other, 1, []byte(`{"name":"o"}`))); err != nil {
+		t.Fatal(err)
+	}
+	s.renewPages()
+	g.sees(t, other, "the other page")
+	if err := s.FromSourceAwareness(other, true, protocol.EncodeState(other, 2, []byte(`{"name":"o2"}`))); err != nil {
+		t.Fatal(err)
+	}
+	prototest.WaitFor(t, wait, func() bool { return g.aw.GetStates()[other].State["name"] == "o2" }, "the other page's update")
 }
