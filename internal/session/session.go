@@ -96,6 +96,10 @@ type Options struct {
 	// saves it. File still names the file, for the room's path, its images
 	// and its comments. Keep, Resume and More are refused with it.
 	Source Source
+	// BeforeRecord is called before a source's kept record is written, so
+	// the source can save its file: the record keeps only a state the file
+	// matches. It must not call into the Session.
+	BeforeRecord func()
 	// Generation is the generation of the document of the `pedit serve` that
 	// shares it as a Source. A kept room's record carries it.
 	Generation string

@@ -110,10 +110,11 @@ func (l *liveSharer) Share(ctx context.Context, req shareRequest) error {
 		Origins: req.Origins,
 		Keep:    req.Keep,
 		// Names the document the record belongs to.
-		Generation: l.srv.Generation(),
-		Source:     peerSource{ls.peer},
-		Dial:       serveDial,
-		OnError:    func(err error) { fmt.Fprintln(l.stderr, "pedit:", err) },
+		Generation:   l.srv.Generation(),
+		BeforeRecord: l.flush,
+		Source:       peerSource{ls.peer},
+		Dial:         serveDial,
+		OnError:      func(err error) { fmt.Fprintln(l.stderr, "pedit:", err) },
 		OnStatus: func(st protocol.Status) {
 			if st.Final() {
 				go l.ended(ls, st)
@@ -247,10 +248,20 @@ func (l *liveSharer) leave() {
 	ls := l.cur
 	l.cur = nil
 	ls.bridge.close()
+	// Serve saves the file before the last record is written.
+	l.flush()
 	if err := ls.session.Stop(); err != nil {
 		fmt.Fprintln(l.stderr, "pedit:", err)
 	}
 	ls.peer.Close()
+}
+
+// flush has serve save the file now, so a kept room's record starts from a
+// state the file matches.
+func (l *liveSharer) flush() {
+	if err := l.srv.Flush(); err != nil {
+		fmt.Fprintln(l.stderr, "pedit:", err)
+	}
 }
 
 // peerSource is serve's peer as the room's source.

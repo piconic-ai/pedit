@@ -265,6 +265,15 @@ func (s *Server) Close() error {
 	return err
 }
 
+// Flush writes the doc to the file now, as Close does at the end, and returns
+// once the write is done. The server stays open.
+func (s *Server) Flush() error {
+	s.writer.Schedule(s.render())
+	err := s.writer.Flush()
+	s.saveState(s.writer.LastWritten(), nil)
+	return err
+}
+
 func (s *Server) cleanup() {
 	if s.watcher != nil {
 		_ = s.watcher.Close()

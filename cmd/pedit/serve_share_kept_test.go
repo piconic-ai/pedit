@@ -43,6 +43,22 @@ func keptRecord(t *testing.T, room string) map[string]any {
 	return rec
 }
 
+// waitLeft waits for the record the host leaves with: it has a deadline, which
+// a record written while the host is here does not.
+func waitLeft(t *testing.T, room string) {
+	t.Helper()
+	eventually(t, "the record written on leaving", func() bool {
+		config, _ := os.UserConfigDir()
+		paths, _ := filepath.Glob(filepath.Join(config, "pedit", "keep", "*", room+".json"))
+		if len(paths) != 1 {
+			return false
+		}
+		b, _ := os.ReadFile(paths[0])
+		var rec map[string]any
+		return json.Unmarshal(b, &rec) == nil && rec["Until"] != float64(0) && rec["Until"] != nil
+	})
+}
+
 func TestServeShareKeepsTheRoomWhenUnshared(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("kept rooms need Unix file permissions")
@@ -74,6 +90,7 @@ func TestServeShareKeepsTheRoomWhenUnshared(t *testing.T) {
 	guestInsert(g, 0, "still here; ")
 	eventually(t, "the guest's entry is in the relay's log", func() bool { return len(env.relay.Log()) > 0 })
 
+	waitLeft(t, room)
 	rec := keptRecord(t, room)
 	if rec["Generation"] != generation || fmt.Sprint(rec["Origins"]) != "[https://cms.example.com]" || rec["Socket"] != true || rec["Initialized"] != true {
 		t.Fatalf("record %v", rec)

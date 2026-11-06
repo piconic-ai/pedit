@@ -96,6 +96,9 @@ type serveArgs struct {
 	noUpdateCheck   bool
 }
 
+// serveWriteDelay is serve's write delay; zero is its default. Tests set it.
+var serveWriteDelay time.Duration
+
 func parseServeArgs(args []string) (serveArgs, error) {
 	var opts serveArgs
 	var files []string
@@ -203,6 +206,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	}
 	so := serve.Options{
 		App:            opts.app,
+		WriteDelay:     serveWriteDelay,
 		OnError:        func(err error) { fmt.Fprintln(stderr, "pedit:", err) },
 		OnWritten:      func(n int) { st.Event("saved", map[string]any{"bytes": n}) },
 		OnExternalSave: func() { st.Event("external_save", map[string]any{}) },

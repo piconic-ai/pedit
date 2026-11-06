@@ -216,6 +216,9 @@ func (a *keepAway) saveRecord(leaving bool) error {
 	}
 	state := a.h.state
 	state.Files = append([]keptTextFileState{}, state.Files...)
+	if hook := a.s.opts.BeforeRecord; hook != nil && a.s.opts.Source != nil {
+		hook()
+	}
 	incomplete := false
 	a.s.Client.Do(func() {
 		for i := range state.Files {
@@ -238,6 +241,7 @@ func (a *keepAway) saveRecord(leaving bool) error {
 		}
 	})
 	if incomplete {
+		a.report(errors.New("the kept room has no record yet: the file does not match the document"))
 		return nil
 	}
 	state.Keep, state.After, state.Initialized = granted, after, true
