@@ -51,6 +51,9 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Release PR version script
+        run: bash scripts/test-release-pr-version.sh
+
       - name: Lint
         run: pnpm lint
 

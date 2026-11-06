@@ -1,0 +1,84 @@
+name: Release PR
+
+# tagpr runs only on push to main, so a tagpr:minor / tagpr:major label added to
+# its release PR does not change the PR title or the CHANGELOG heading by itself.
+# When such a label changes, `refresh` reruns tagpr, waits for it, and checks the
+# PR. On other events, `version` checks it. The check fails when the title or the
+# CHANGELOG heading does not match the version the labels select, and sets the
+# commit status `release-version` on the PR's current head, which branch
+# protection can require. (tagpr pushes with GITHUB_TOKEN, which starts no
+# workflow, so the check after a refresh runs in the refresh job itself, and a
+# job result would sit on the commit of the event: hence a commit status.)
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled, edited]
+
+permissions: {}
+
+jobs:
+  refresh:
+    if: >-
+      (github.event.action == 'labeled' || github.event.action == 'unlabeled') &&
+      startsWith(github.event.label.name, 'tagpr:') &&
+      startsWith(github.event.pull_request.head.ref, 'tagpr-from-') &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+      statuses: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      # The head as it is now must not stay green while tagpr updates it.
+      - name: Mark the release PR pending
+        run: bash scripts/check-release-pr.sh "${{ github.event.pull_request.number }}" pending
+      - name: Rerun tagpr on main and wait for it
+        run: |
+          set -euo pipefail
+          since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          gh workflow run tagpr.yml --ref main
+          id=""
+          for _ in $(seq 1 30); do
+            id=$(gh run list --workflow tagpr.yml --event workflow_dispatch \
+              --created ">=$since" --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+            [[ -n $id ]] && break
+            sleep 5
+          done
+          [[ -n $id ]] || { echo "::error::the dispatched tagpr run did not appear"; exit 1; }
+          gh run watch "$id" --exit-status --interval 10
+      # Also when the refresh failed: the PR is then stale and gets a failing status.
+      - name: Check the release PR matches its labels
+        if: always()
+        run: bash scripts/check-release-pr.sh "${{ github.event.pull_request.number }}"
+
+  version:
+    # A tagpr:* label change is checked by `refresh`, after tagpr's update.
+    if: >-
+      startsWith(github.event.pull_request.head.ref, 'tagpr-from-') &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !((github.event.action == 'labeled' || github.event.action == 'unlabeled') &&
+        startsWith(github.event.label.name, 'tagpr:'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Check the release PR matches its labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: bash scripts/check-release-pr.sh "${{ github.event.pull_request.number }}"
