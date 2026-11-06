@@ -242,7 +242,7 @@ func openAway(opts KeptTextOptions) (*keptTextHost, error) {
 		if opts.Source != nil || len(h.state.Files) != 1 || isCanvas(h.state.Files[0].Path) {
 			return nil, errors.New("a room closed into a document shares one text file")
 		}
-		h.into, h.appText = opts.Into, opts.AppText
+		h.into, h.reapply = opts.Into, opts.Reapply
 	}
 	if err := h.openFiles(); err != nil {
 		return nil, err

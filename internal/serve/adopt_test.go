@@ -119,3 +119,33 @@ func TestServerAdoptSeesEditsAcceptedUntilTheReplacement(t *testing.T) {
 		t.Fatalf("adopted %q", s.Text())
 	}
 }
+
+func TestServerApplyUpdateReappliesAnEditOnceAndOnlyInItsGeneration(t *testing.T) {
+	s, file, _ := open(t, "abc\n")
+	update, generation := s.Edit("abc\n", "ac\n")
+	if generation != s.Generation() || s.Text() != "ac\n" {
+		t.Fatalf("generation %q, text %q", generation, s.Text())
+	}
+	// What the edit made is already there: nothing changes, and what was typed
+	// since is not undone.
+	c := dial(t, s)
+	eventually(t, "synced", func() bool { return c.get() == "ac\n" })
+	c.insert(1, "X")
+	eventually(t, "the server has it", func() bool { return s.Text() == "aXc\n" })
+	if !s.ApplyUpdate(update, generation) || s.Text() != "aXc\n" {
+		t.Fatalf("text %q", s.Text())
+	}
+	if s.ApplyUpdate(update, "another") {
+		t.Fatal("applied in another generation")
+	}
+	// An update whose dependencies are missing is refused.
+	other := crdt.New()
+	ot := other.GetText("content")
+	other.Transact(func(txn *crdt.Transaction) { ot.Insert(txn, 0, "z", nil) })
+	before := other.StateVector()
+	other.Transact(func(txn *crdt.Transaction) { ot.Insert(txn, 1, "y", nil) })
+	if s.ApplyUpdate(crdt.EncodeStateAsUpdateV1(other, before), s.Generation()) {
+		t.Fatal("applied an update with missing dependencies")
+	}
+	eventually(t, "the file", fileIs(t, file, "aXc\n"))
+}

@@ -48,15 +48,18 @@ type KeptTextOptions struct {
 	// Into is for a room of another history than the document it is closed
 	// into, which also owns file 0: once the room's edits are taken in, it is
 	// handed the text the room started from and the text it ends with, and
-	// applies the change between them as an edit. Source and Into are
-	// exclusive.
-	Into func(base, next string)
+	// applies the change between them as an edit. It returns the Yjs update
+	// that edit made and the generation of the document then. Source and Into
+	// are exclusive.
+	Into func(base, next string) (update []byte, generation string)
+	// Reapply applies an update Into returned to the document, if its
+	// generation is still the document's and the update then integrates
+	// completely; it reports whether it did. Applying what the document
+	// already has changes nothing, so a retry never delivers an edit twice.
+	Reapply func(update []byte, generation string) bool
 	// Saved is called after Source or Into has the edits, before the room is
 	// ended: the owner saves its file there. An error leaves the room open.
 	Saved func() error
-	// AppText is the text the app holds now. With Into it lets a retry see
-	// that the app already has what the room holds, and not hand it over twice.
-	AppText func() string
 }
 type keptTextState struct {
 	Project, Origin, Fragment, HostToken string
@@ -88,13 +91,21 @@ type keptTextFileState struct {
 	// Handover is, for a room being closed into a document of another history
 	// (KeptTextOptions.Into), the text the app last received: the diff to
 	// hand it starts there, however far replay has advanced State. It is
-	// advanced only once the app has saved the result. Delivering is the text
-	// last handed to the app whose save is not confirmed (handoverBase).
+	// advanced only once the app has saved the result. Delivering is what was
+	// last handed to the app, whose save is not confirmed (handoverBase).
 	// Like CommentEntries they make an older pedit refuse the record.
-	Handover   *string `json:",omitempty"`
-	Delivering *string `json:",omitempty"`
+	Handover   *string       `json:",omitempty"`
+	Delivering *keptDelivery `json:",omitempty"`
 	// Meta is the comments doc paired with the file, if its comments can be kept.
 	Meta *keptMetaState `json:",omitempty"`
+}
+
+// keptDelivery is an edit handed to the app: the Yjs update it made, the
+// generation of the app's document then, and the room's text it delivered.
+type keptDelivery struct {
+	Update     []byte
+	Generation string
+	Text       string
 }
 type keptTextDocument struct {
 	doc   *crdt.Doc
@@ -149,9 +160,9 @@ type keptTextHost struct {
 	source Source
 	// into and saved are KeptTextOptions' Into and Saved; base is the text
 	// file 0 had when the host opened, or when into last got it.
-	into    func(base, next string)
+	into    func(base, next string) ([]byte, string)
+	reapply func(update []byte, generation string) bool
 	saved   func() error
-	appText func() string
 	base    string
 }
 
@@ -206,37 +217,44 @@ func (h *keptTextHost) finishHandover() error {
 }
 
 // handoverBase is the one decision on where the diff for the app starts, for a
-// first try and every retry alike. Delivering is the text the app was last
-// given whose save is not confirmed. If the app holds exactly that text, the
-// delivery survived (same process, or a state that has it): the diff starts
-// there, and nothing is handed over if the room holds no more. Otherwise the
-// delivery was lost or never made, and the diff starts at Handover, the text
-// the app is known to have saved. An app edit made in the window of a failed
-// save makes the equality fail: the fallback may then apply that delivery
-// again, a duplicate and never a loss, which is the side to err on.
-func (h *keptTextHost) handoverBase(next string) (base string, skip bool) {
+// first try and every retry alike. Delivering is what the app was last given,
+// whose save is not confirmed. Reapplying its Yjs update changes nothing if
+// the delivery survived and restores it exactly if the app lost it and came
+// back from a state of the same history, with the app's own edits untouched:
+// the diff then starts at the room text it delivered. If the generation
+// differs or the update does not integrate, the history is gone (the app
+// started afresh, a case of histories that differ): the diff starts at
+// Handover, the text the app is known to have saved, and may apply that
+// delivery's edits again, a duplicate and never a loss.
+func (h *keptTextHost) handoverBase() (base string, d *keptDelivery) {
 	file := &h.state.Files[0]
-	if d := file.Delivering; d != nil && h.appText != nil && h.appText() == *d {
-		return *d, *d == next
+	if d := file.Delivering; d != nil && h.reapply != nil && h.reapply(d.Update, d.Generation) {
+		return d.Text, d
 	}
 	if file.Handover != nil {
-		return *file.Handover, false
+		return *file.Handover, nil
 	}
-	return h.base, false
+	return h.base, nil
 }
 
 // handOverInto gives the app the change from handoverBase to next, and has it
-// saved. The record names the delivery before it is made, and moves Handover
-// on only once the save has succeeded.
+// saved. The record names the delivery right after it is made, and moves
+// Handover on only once the save has succeeded.
 func (h *keptTextHost) handOverInto(next string) error {
 	file := &h.state.Files[0]
-	base, skip := h.handoverBase(next)
-	file.Delivering = &next
-	if err := saveKeptState(h.path, h.state); err != nil {
-		return err
-	}
-	if !skip {
-		h.into(base, next)
+	base, kept := h.handoverBase()
+	if base != next {
+		update, generation := h.into(base, next)
+		if kept != nil {
+			// Both are in the app until saved: a retry reapplies them together.
+			if merged, err := crdt.MergeUpdatesV1(kept.Update, update); err == nil {
+				update = merged
+			}
+		}
+		file.Delivering = &keptDelivery{Update: update, Generation: generation, Text: next}
+		if err := saveKeptState(h.path, h.state); err != nil {
+			return err
+		}
 	}
 	if h.saved != nil {
 		if err := h.saved(); err != nil {

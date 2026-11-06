@@ -16,31 +16,69 @@ import (
 )
 
 // intoApp is the app's document, which takes the room's edits with the same
-// text merge serve uses, so that a second handover shows as duplicate text.
+// text merge serve uses, and hands back the update each made, as serve does.
 type intoApp struct {
-	doc  *crdt.Doc
-	text *crdt.YText
+	doc        *crdt.Doc
+	text       *crdt.YText
+	generation string
 }
 
 func newIntoApp(s string) *intoApp {
-	a := &intoApp{doc: crdt.New()}
+	a := &intoApp{doc: crdt.New(), generation: "g1"}
 	a.text = a.doc.GetText("content")
 	a.doc.Transact(func(txn *crdt.Transaction) { a.text.Insert(txn, 0, s, nil) })
 	return a
 }
 
+// restoredIntoApp is the app started again from a saved state of its document.
+func restoredIntoApp(state []byte, generation string) *intoApp {
+	a := &intoApp{doc: crdt.New(), generation: generation}
+	a.text = a.doc.GetText("content")
+	if err := crdt.ApplyUpdateV1(a.doc, state, nil); err != nil {
+		panic(err)
+	}
+	return a
+}
+
+func (a *intoApp) state() []byte { return crdt.EncodeStateAsUpdateV1(a.doc, nil) }
+
 func (a *intoApp) get() string { return a.text.ToString() }
 
-func (a *intoApp) into(base, next string) { merge.ExternalEdit(a.doc, a.text, base, next, nil) }
+func (a *intoApp) insert(at int, s string) {
+	a.doc.Transact(func(txn *crdt.Transaction) { a.text.Insert(txn, at, s, nil) })
+}
+
+func (a *intoApp) into(base, next string) ([]byte, string) {
+	before := a.doc.StateVector()
+	merge.ExternalEdit(a.doc, a.text, base, next, nil)
+	return crdt.EncodeStateAsUpdateV1(a.doc, before), a.generation
+}
+
+func (a *intoApp) reapply(update []byte, generation string) bool {
+	return a.generation == generation && crdt.ApplyUpdateV1(a.doc, update, nil) == nil
+}
 
 // intoOptions closes into *app. The app may be replaced by the test, as a
 // restart of the app would.
 func intoOptions(a *awayRoom, app **intoApp, saved func() error) KeptTextOptions {
 	opts := closeOptions(a)
-	opts.Into = func(base, next string) { (*app).into(base, next) }
-	opts.AppText = func() string { return (*app).get() }
+	opts.Into = func(base, next string) ([]byte, string) { return (*app).into(base, next) }
+	opts.Reapply = func(update []byte, generation string) bool { return (*app).reapply(update, generation) }
 	opts.Saved = saved
 	return opts
+}
+
+// remove makes the entry of deleting n characters at index.
+func (g *guestDoc) remove(index, n int) []byte {
+	g.t.Helper()
+	before := g.doc.StateVector()
+	text := g.doc.GetText("content")
+	g.doc.Transact(func(tx *crdt.Transaction) { text.Delete(tx, index, n) })
+	entry, err := protocol.SealKeptFileUpdate(g.keys, 0, crdt.EncodeStateAsUpdateV1(g.doc, before))
+	if err != nil {
+		g.t.Fatal(err)
+	}
+	return entry
 }
 
 func mustCount(t *testing.T, text, part string, n int) {
@@ -49,6 +87,11 @@ func mustCount(t *testing.T, text, part string, n int) {
 		t.Fatalf("%q holds %q %d times, want %d", text, part, strings.Count(text, part), n)
 	}
 }
+
+var (
+	saveFails = func() error { return errors.New("disk full") }
+	saveWorks = func() error { return nil }
+)
 
 // The log is taken in and saved, and the close is interrupted before the app
 // has the edit: the retry hands the app the guest's edit, once, from the text
@@ -87,26 +130,50 @@ func TestCloseIntoHandsOverAnEditOnceAfterAnInterruptionBeforeHandover(t *testin
 	}
 }
 
-// The save fails and the app is lost with what it held, recreated from the
-// last text it saved: the retry hands the edit over again, and once.
-func TestCloseIntoHandsOverAgainWhenTheAppRestartedAfterAFailedSave(t *testing.T) {
+// The save fails and the app is started again from the state it had saved,
+// which has the same history: the retry reapplies the delivery, once.
+func TestCloseIntoRestoresTheDeliveryWhenTheAppRestartedAfterAFailedSave(t *testing.T) {
 	a := newAwayRoom(t, "notes\n")
 	_, guest := keepAndLeave(t, a)
 	a.script(1, protocol.EncodeLogged(1, guest.insert(0, "guest ")), protocol.EncodeLogEnd(1))
 	a.closeAsks(func(int) int { return http.StatusOK })
 
 	app := newIntoApp("notes\n")
-	failing := func() error { return errors.New("disk full") }
-	if err := CloseKept(context.Background(), intoOptions(a, &app, failing)); err == nil {
+	saved := app.state()
+	if err := CloseKept(context.Background(), intoOptions(a, &app, saveFails)); err == nil {
 		t.Fatal("closed although the app could not save")
 	}
 	if app.get() != "guest notes\n" {
 		t.Fatalf("the app holds %q", app.get())
 	}
-	app = newIntoApp("notes\n") // restarted from what it had saved
+	app = restoredIntoApp(saved, "g1")
 
 	a.script(1, protocol.EncodeLogEnd(1))
-	if err := CloseKept(context.Background(), intoOptions(a, &app, func() error { return nil })); err != nil {
+	if err := CloseKept(context.Background(), intoOptions(a, &app, saveWorks)); err != nil {
+		t.Fatal(err)
+	}
+	if app.get() != "guest notes\n" {
+		t.Fatalf("the app holds %q", app.get())
+	}
+}
+
+// The app started afresh, so its history is gone: the retry falls back to the
+// text diff from what the app saved.
+func TestCloseIntoFallsBackToTheTextDiffWhenTheAppStartedAfresh(t *testing.T) {
+	a := newAwayRoom(t, "notes\n")
+	_, guest := keepAndLeave(t, a)
+	a.script(1, protocol.EncodeLogged(1, guest.insert(0, "guest ")), protocol.EncodeLogEnd(1))
+	a.closeAsks(func(int) int { return http.StatusOK })
+
+	app := newIntoApp("notes\n")
+	if err := CloseKept(context.Background(), intoOptions(a, &app, saveFails)); err == nil {
+		t.Fatal("closed although the app could not save")
+	}
+	app = newIntoApp("notes\n")
+	app.generation = "g2"
+
+	a.script(1, protocol.EncodeLogEnd(1))
+	if err := CloseKept(context.Background(), intoOptions(a, &app, saveWorks)); err != nil {
 		t.Fatal(err)
 	}
 	if app.get() != "guest notes\n" {
@@ -123,13 +190,12 @@ func TestCloseIntoHandsOverOnlyWhatIsMissingWhenTheAppSurvivedAFailedSave(t *tes
 	a.closeAsks(func(int) int { return http.StatusOK })
 
 	app := newIntoApp("notes\n")
-	failing := func() error { return errors.New("disk full") }
-	if err := CloseKept(context.Background(), intoOptions(a, &app, failing)); err == nil {
+	if err := CloseKept(context.Background(), intoOptions(a, &app, saveFails)); err == nil {
 		t.Fatal("closed although the app could not save")
 	}
 
 	a.script(2, protocol.EncodeLogged(2, guest.insert(0, "more ")), protocol.EncodeLogEnd(2))
-	if err := CloseKept(context.Background(), intoOptions(a, &app, func() error { return nil })); err != nil {
+	if err := CloseKept(context.Background(), intoOptions(a, &app, saveWorks)); err != nil {
 		t.Fatal(err)
 	}
 	got := app.get()
@@ -139,8 +205,7 @@ func TestCloseIntoHandsOverOnlyWhatIsMissingWhenTheAppSurvivedAFailedSave(t *tes
 }
 
 // The app has the edit and has saved it, and the close dies before the record
-// says so: the retry sees the app already holds the room's text and does not
-// hand the edit over a second time.
+// says so: the retry reapplies the delivery, which changes nothing.
 func TestCloseIntoDoesNotHandOverAgainAfterACrashAfterTheSave(t *testing.T) {
 	a := newAwayRoom(t, "notes\n")
 	_, guest := keepAndLeave(t, a)
@@ -168,4 +233,50 @@ func TestCloseIntoDoesNotHandOverAgainAfterACrashAfterTheSave(t *testing.T) {
 	}
 	mustCount(t, app.get(), "guest ", 1)
 	mustCount(t, app.get(), "notes\n", 1)
+}
+
+// A text replay of the delivery would delete what the app typed meanwhile:
+// reapplying its update does not.
+func TestCloseIntoKeepsWhatTheAppTypedAfterAFailedSave(t *testing.T) {
+	a := newAwayRoom(t, "abc\n")
+	_, guest := keepAndLeave(t, a)
+	a.script(1, protocol.EncodeLogged(1, guest.remove(1, 1)), protocol.EncodeLogEnd(1))
+	a.closeAsks(func(int) int { return http.StatusOK })
+
+	app := newIntoApp("abc\n")
+	if err := CloseKept(context.Background(), intoOptions(a, &app, saveFails)); err == nil {
+		t.Fatal("closed although the app could not save")
+	}
+	if app.get() != "ac\n" {
+		t.Fatalf("the app holds %q", app.get())
+	}
+	app.insert(1, "X")
+
+	a.script(1, protocol.EncodeLogEnd(1))
+	if err := CloseKept(context.Background(), intoOptions(a, &app, saveWorks)); err != nil {
+		t.Fatal(err)
+	}
+	if app.get() != "aXc\n" {
+		t.Fatalf("the app holds %q", app.get())
+	}
+}
+
+// The app has content of its own that the room never had: the retry does not
+// hand over the guest's edit again.
+func TestCloseIntoHandsOverOnceToAppContentTheRoomNeverHad(t *testing.T) {
+	a := newAwayRoom(t, "notes\n")
+	_, guest := keepAndLeave(t, a)
+	a.script(1, protocol.EncodeLogged(1, guest.insert(0, "guest ")), protocol.EncodeLogEnd(1))
+	a.closeAsks(func(int) int { return http.StatusOK })
+
+	app := newIntoApp("app notes\n")
+	if err := CloseKept(context.Background(), intoOptions(a, &app, saveFails)); err == nil {
+		t.Fatal("closed although the app could not save")
+	}
+	a.script(1, protocol.EncodeLogEnd(1))
+	if err := CloseKept(context.Background(), intoOptions(a, &app, saveWorks)); err != nil {
+		t.Fatal(err)
+	}
+	mustCount(t, app.get(), "guest ", 1)
+	mustCount(t, app.get(), "app ", 1)
 }

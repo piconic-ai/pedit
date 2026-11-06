@@ -24,11 +24,41 @@ func (s *Server) Text() string {
 // Edit applies the change from base to next onto the document as an ordinary
 // edit, as a save made by another editor is applied: what was written
 // meanwhile is kept unless the change replaced the same region. The streams
-// and the file get it as for any edit.
-func (s *Server) Edit(base, next string) {
+// and the file get it as for any edit. It returns the Yjs update the edit made
+// and the generation it was made in, for ApplyUpdate.
+func (s *Server) Edit(base, next string) (update []byte, generation string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	before := s.doc.StateVector()
 	merge.ExternalEdit(s.doc, s.text, base, next, &fileOrigin{})
+	return crdt.EncodeStateAsUpdateV1(s.doc, before), s.generation
+}
+
+// ApplyUpdate applies an update Edit returned. It does nothing and reports
+// false unless the document still has that generation and the update then
+// integrates completely: a document restarted from a state of the same
+// history lacks what Edit made, and gets it back here, while what it already
+// has is unchanged and edits made since are untouched.
+func (s *Server) ApplyUpdate(update []byte, generation string) (ok bool) {
+	defer func() {
+		// ygo can panic on a malformed update; it must not end the process.
+		if recover() != nil {
+			ok = false
+		}
+	}()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closing || s.generation != generation {
+		return false
+	}
+	probe := crdt.New()
+	if crdt.ApplyUpdateV1(probe, crdt.EncodeStateAsUpdateV1(s.doc, nil), nil) != nil || crdt.ApplyUpdateV1(probe, update, nil) != nil {
+		return false
+	}
+	if p := probe.PendingStats(); p.Items != 0 || p.DeleteRanges != 0 {
+		return false
+	}
+	return crdt.ApplyUpdateV1(s.doc, update, &fileOrigin{}) == nil
 }
 
 // Adopt replaces the document with the one merge makes (a v1 update holding
