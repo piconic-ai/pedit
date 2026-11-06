@@ -4,6 +4,7 @@ package prototest
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -18,6 +19,12 @@ import (
 // connected, and everyone is disconnected with RoomClosed when the last host
 // leaves. With Guests set, guests beyond that many are turned away with
 // RoomFull.
+//
+// With Keep set (seconds) it speaks version 7 and keeps a room whose host asked
+// for it (X-Pedit-Keep) when the host leaves on purpose: guests stay and edit
+// as entries, which it logs, answers with their id, and replays to a guest
+// that joins. It holds the host's last snapshot and does not relay snapshots.
+// Without Keep it keeps nothing, as a relay before version 6.
 //
 // With Refuse set it turns every connection away with that close code, as the
 // Room does on a protocol version mismatch.
@@ -36,6 +43,8 @@ type Relay struct {
 	RefuseReason string
 	// Busy turns away this many connections with RelayBusy before letting any in.
 	Busy int
+	// Keep is the seconds the relay keeps a room after its host leaves.
+	Keep int64
 	// MaxFrame is the most bytes a frame may have; 0 for no limit.
 	MaxFrame int
 	// Bytes is what one connection may write; zero for no limit.
@@ -49,6 +58,23 @@ type Relay struct {
 	urls       []string
 	headers    []http.Header
 	frames     [][]byte
+	// What a kept room holds: the host's snapshot and the entries logged.
+	kept     bool
+	until    int64
+	snapshot []byte
+	log      [][]byte
+}
+
+// keptSignal tells a guest the room is kept until the deadline.
+func (r *Relay) keptSignal() protocol.Signal {
+	return protocol.Signal(fmt.Sprintf("kept %d", r.until))
+}
+
+// Log returns the entries a kept room logged, oldest first.
+func (r *Relay) Log() [][]byte {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([][]byte{}, r.log...)
 }
 
 func NewRelay(hosted bool) *Relay {
@@ -76,11 +102,23 @@ func (r *Relay) Dial(_ context.Context, url string, header http.Header) (protoco
 		r.signalGuests(protocol.HostBack)
 		r.hostAway = false
 	}
-	if r.Hosted && !c.isHost && !r.hasHost() {
+	if r.Hosted && !c.isHost && !r.hasHost() && !r.kept {
 		return nil, &protocol.CloseError{Code: protocol.RoomClosed}
 	}
 	if !c.isHost && r.Guests > 0 && r.guests() >= r.Guests {
 		return nil, &protocol.CloseError{Code: protocol.RoomFull}
+	}
+	if c.isHost && r.Keep > 0 && header.Get(protocol.KeepHeader) != "" {
+		c.keeps = true
+		c.signals = append(c.signals, protocol.Signal(fmt.Sprintf("keep %d 0", r.Keep)))
+	}
+	if r.kept && !c.isHost {
+		c.signals = append(c.signals, r.keptSignal())
+		c.inbox = append(c.inbox, protocol.WithKind(protocol.KindReplay, r.snapshot))
+		for i, entry := range r.log {
+			c.inbox = append(c.inbox, protocol.EncodeLogged(uint64(i+1), entry))
+		}
+		c.inbox = append(c.inbox, protocol.EncodeLogEnd(uint64(len(r.log))))
 	}
 	r.conns[c] = true
 	return c, nil
@@ -216,6 +254,12 @@ func (r *Relay) guests() int {
 // left is called with r.mu held.
 func (r *Relay) left(c *Conn) {
 	delete(r.conns, c)
+	if c.keeps && c.leaving {
+		r.kept = true
+		r.until = time.Now().Add(time.Duration(r.Keep) * time.Second).UnixMilli()
+		r.signalGuests(r.keptSignal())
+		return
+	}
 	if r.Hosted && c.isHost && !r.hasHost() {
 		for peer := range r.conns {
 			delete(r.conns, peer)
@@ -228,6 +272,9 @@ func (r *Relay) left(c *Conn) {
 type Conn struct {
 	relay  *Relay
 	isHost bool
+	// keeps: the host asked the relay to keep the room. leaving: it is
+	// leaving on purpose.
+	keeps, leaving bool
 
 	mu      sync.Mutex
 	inbox   [][]byte
@@ -301,6 +348,19 @@ func (c *Conn) Write(_ context.Context, data []byte) error {
 		c.bytes -= float64(len(data))
 	}
 	r.frames = append(r.frames, append([]byte{}, data...))
+	if r.Keep > 0 && len(data) > 0 {
+		switch {
+		case c.isHost && data[0] == protocol.KindSnapshot:
+			r.snapshot = append([]byte{}, data[1:]...)
+			return nil
+		case c.isHost && data[0] == protocol.KindCheckpoint:
+			return nil
+		case !c.isHost && data[0] == protocol.KindEntry && r.kept:
+			r.log = append(r.log, append([]byte{}, data[1:]...))
+			c.deliver(protocol.EncodeLogged(uint64(len(r.log)), data[1:]))
+			return nil
+		}
+	}
 	for peer := range r.conns {
 		if peer != c {
 			peer.deliver(append([]byte{}, data...))
@@ -321,7 +381,20 @@ func (c *Conn) Close() error {
 }
 
 // Leave is Close as a host leaving on purpose.
-func (c *Conn) Leave() error { return c.Close() }
+func (c *Conn) Leave() error {
+	c.relay.mu.Lock()
+	c.leaving = true
+	c.relay.mu.Unlock()
+	return c.Close()
+}
+
+// Subprotocol is the version the relay speaks.
+func (c *Conn) Subprotocol() string {
+	if c.relay.Keep > 0 {
+		return "pedit-v7"
+	}
+	return ""
+}
 
 func (c *Conn) deliver(data []byte) {
 	c.mu.Lock()

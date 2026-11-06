@@ -34,9 +34,12 @@ big-endian) | payload. The kinds are 1 open (app: one byte, 0 edit or 1 read),
 code and a reason), 4 event (pedit: stream 0, one JSON event) and 5 command
 (app: stream 0, one JSON object of at most 64 KiB: share, unshare or close).
 share is {"cmd":"share","origins":[…],"keep":"0","relay":"<url>"} and opens a
-live room (kept rooms are not available yet, so keep must be "0"). The project
+room: live with keep "0", otherwise kept by the relay for that long after
+unshare (Unix only). The shared event's keptUntil is when the relay ends a kept
+room, in Unix ms, or 0 if it keeps nothing (an old relay). Sharing a file that
+has a kept room, and close, are not available yet. The project
 is found as for pedit <file>, without creating a configuration.
-share opens a live room for the file and unshare ends it. A bad command is
+unshare ends a live room and leaves a kept one kept. A bad command is
 answered with an error event and does not end pedit. Stream
 ids start at 1 and only increase; at most 8 are open at once. See
 docs/design/serve.md.

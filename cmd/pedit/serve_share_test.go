@@ -299,9 +299,8 @@ func TestServeShareRefusalsKeepServing(t *testing.T) {
 	if e := a.event("error", 1); e["cmd"] != "unshare" || !strings.Contains(e["message"].(string), "not shared") {
 		t.Fatalf("%v", e)
 	}
-	// Kept rooms are not built yet; the default keep is one.
-	a.command(fmt.Sprintf(`{"cmd":"share","relay":%q}`, env.server.URL))
-	if e := a.event("error", 2); e["cmd"] != "share" || !strings.Contains(e["message"].(string), "not available yet") {
+	a.command(`{"cmd":"close"}`)
+	if e := a.event("error", 2); e["cmd"] != "close" || !strings.Contains(e["message"].(string), "not available yet") {
 		t.Fatalf("%v", e)
 	}
 	a.command(`{"cmd":"share","keep":"0","relay":"http://127.0.0.1:1"}`)

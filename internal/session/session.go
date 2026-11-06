@@ -96,6 +96,9 @@ type Options struct {
 	// saves it. File still names the file, for the room's path, its images
 	// and its comments. Keep, Resume and More are refused with it.
 	Source Source
+	// Generation is the generation of the document of the `pedit serve` that
+	// shares it as a Source. A kept room's record carries it.
+	Generation string
 	// Origins are the page origins the relay lets embed the room, sent with
 	// every connection of the host as X-Pedit-Origins.
 	Origins []string
