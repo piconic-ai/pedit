@@ -21,7 +21,7 @@ name: tagpr
 on:
   push:
     branches: ["main"]
-  # Publish @pedit/serve again for a tag that exists (for example after the
+  # Publish the npm packages again for a tag that exists (for example after the
   # npm trusted publisher was fixed). Only the publish job runs then.
   workflow_dispatch:
     inputs:
@@ -99,7 +99,7 @@ jobs:
   # the package's trusted publisher names tagpr.yml; the steps live in
   # publish-npm.yml. Runs after the Release is complete, or alone on dispatch.
   publish-npm:
-    name: Publish @pedit/serve
+    name: Publish the npm packages
     needs: [tagpr, release-cli]
     if: >-
       always() && (

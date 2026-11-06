@@ -161,21 +161,24 @@ and `edit-lab-blobs` is the lab's.
 
 ### npm package
 
-`@pedit/serve` (packages/serve) is published to npm by tagpr.yml's
-`publish-npm` job, which calls `.github/workflows/publish-npm.yml` once the
-Release is complete, with the release's version: the package and the CLI share
-one version number. The job runs only after the CLI archives were built and
+`@pedit/serve` (packages/serve) and `@pedit/review` (packages/review) are
+published to npm by tagpr.yml's `publish-npm` job, which calls
+`.github/workflows/publish-npm.yml` once the Release is complete, with the
+release's version: the packages and the CLI share one version number. Each
+package is its own matrix job, so one failing does not stop the other. The job runs only after the CLI archives were built and
 attached, so a release whose build failed publishes no package. (A `release`
 trigger would not do: a Release published with `GITHUB_TOKEN` starts no other
 workflow.) The job authenticates with npm's trusted publishing (a GitHub OIDC
 token; no npm token is stored) and publishes with provenance.
 
-One-time setup, done by hand: the first version was published from a
-maintainer's machine (`pnpm --filter @pedit/serve build`, then `npm publish
---access public --provenance=false` in packages/serve; provenance needs a
+One-time setup per package, done by hand: the first version is published from
+a maintainer's machine (`pnpm --filter @pedit/<name> build`, then `npm publish
+--access public --provenance=false` in packages/<name>; provenance needs a
 cloud CI runner, which the package's `publishConfig` otherwise asks for),
 because npm lets a trusted publisher be configured only on a package that
-exists. Then, on npmjs.com under the package's settings, "Trusted Publisher":
+exists. `@pedit/serve` has this; `@pedit/review` needs it before its first
+release, or its job fails while `@pedit/serve` still publishes. Then, on
+npmjs.com under the package's settings, "Trusted Publisher":
 GitHub Actions, organization `piconic-ai`, repository `pedit`, workflow
 `tagpr.yml` (npm checks the calling workflow's file name, not the reusable
 one), no environment. To publish a release again (for example after fixing
