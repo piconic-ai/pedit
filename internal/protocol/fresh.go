@@ -215,9 +215,8 @@ func (c *Client) receiveFresh(access Access, vouched bool, from Sender, counter 
 	if !c.fresh.toAnswer(m.Nonce) {
 		return nil
 	}
-	state := c.fresh.hasToResend(answersMe)
 	c.send(MessageFresh, EncodeFresh(FreshMessage{Nonce: c.fresh.current(), Answer: &m.Nonce}))
-	c.resend(state)
+	c.resend(c.fresh.hasToResend(answersMe))
 	c.settleIn(resendEvery)
 	return nil
 }
