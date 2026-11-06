@@ -210,7 +210,8 @@ async function joinRoom(
   const readOnly = [EditorState.readOnly.of(true), EditorView.editable.of(false)]
   // One instance for every editor on the page: readerTheme() alternates.
   const reader = readerTheme()
-  const undoManager = new Y.UndoManager(text)
+  // File 0's (on screen until a switch): its table and the vim undo use the same one.
+  const undoManager = files.shown.get().undo
   // The editor's extensions for a file's text. Switching files keeps the
   // settings: each compartment takes what it holds in `from`.
   const editorExtensions = (
