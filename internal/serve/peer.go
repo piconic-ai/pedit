@@ -49,19 +49,26 @@ func (s *Server) peerAwareness(ids []uint64, origin any) []PeerAwareness {
 	return out
 }
 
-// readerOf is whether id is held to a reader's role: its owner is a read
-// stream, or it has no owner and origin, which may be introducing it, is not
-// an edit stream. The caller holds s.mu.
+// readerOf is whether id is held to a reader's role. It is false only when no
+// stream that sent or claimed id is a read stream, and the sender, if it is a
+// stream, is an edit stream; a state with no stream behind it is a reader's.
+// The most restrictive role wins, so that a read stream that took over an ID
+// keeps it, and map order decides nothing. The caller holds s.mu.
 func (s *Server) readerOf(id uint64, origin any) bool {
+	from, fromStream := origin.(*client)
+	if fromStream && from.reader {
+		return true
+	}
+	claimed := fromStream // an edit stream's own claim counts
 	for c := range s.clients {
 		if c.ids[id] {
-			return c.reader
+			if c.reader {
+				return true
+			}
+			claimed = true
 		}
 	}
-	if c, ok := origin.(*client); ok {
-		return c.reader
-	}
-	return true
+	return !claimed
 }
 
 // A Peer is an in-process client of the server's doc, for a room that keeps a

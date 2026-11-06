@@ -470,6 +470,50 @@ func TestPeerAwarenessCarriesTheRoleOfItsStream(t *testing.T) {
 	}
 }
 
+// sendRaw sends an awareness update for id at clock from c.
+func (c *tclient) sendRaw(id, clock uint64, state string) {
+	u := encoding.NewEncoder()
+	u.WriteVarUint(1)
+	u.WriteVarUint(id)
+	u.WriteVarUint(clock)
+	u.WriteVarString(state)
+	enc := encoding.NewEncoder()
+	enc.WriteVarBytes(u.Bytes())
+	c.send(msgAwareness, enc.Bytes())
+}
+
+func (g entries) count(id uint64) int {
+	n := 0
+	for _, e := range g {
+		if e.ID == id {
+			n++
+		}
+	}
+	return n
+}
+
+func TestReaderCannotRaiseAnEditStreamsID(t *testing.T) {
+	s, _, _ := open(t, "x\n")
+	_, got := collect(t, s)
+	edit, read := dial(t, s), dialAs(t, s, "read")
+	const x = 777
+	edit.sendRaw(x, 1, `{"by":"edit"}`)
+	eventually(t, "the edit stream's claim", func() bool { return got().count(x) == 1 })
+	if e := got()[0]; e.Reader {
+		t.Fatal("an edit stream's own claim arrived as a reader's")
+	}
+	read.sendRaw(x, 100, `{"by":"read"}`)
+	eventually(t, "the reader's update", func() bool { return got().count(x) == 2 })
+	if e := got()[1]; !e.Reader {
+		t.Fatal("a reader's state arrived as an editor's")
+	}
+	edit.sendRaw(x, 101, `{"by":"edit"}`)
+	eventually(t, "the edit stream's update", func() bool { return got().count(x) == 3 })
+	if e := got()[2]; !e.Reader {
+		t.Fatal("an ID a reader has claimed arrived as an editor's")
+	}
+}
+
 func TestStreamLeavingDeliversRemovalsWithANewerClock(t *testing.T) {
 	s, _, _ := open(t, "x\n")
 	_, got := collect(t, s)
