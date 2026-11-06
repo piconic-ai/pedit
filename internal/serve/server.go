@@ -56,6 +56,13 @@ type Options struct {
 	// it, and a path that leaves it (an absolute one, "..", or a link in a
 	// directory component) is refused.
 	Root *os.Root
+	// RecordFor gives the kept room's record for file, if there is one that
+	// carries a generation: that, its document, and the text the file was last
+	// known to hold. serve then does not let its own state of that generation
+	// expire, and starts from the record when the state cannot be used. It
+	// may be nil. It is called while serve opens, and must be cheap.
+	// pending, when set, is a text the file may hold instead of text.
+	RecordFor func(file string) (generation string, doc []byte, text string, pending *string, ok bool)
 	// FrameRate and Step1Rate are the most frames, and the most sync step 1
 	// messages, per second one connection may send: 1000 and 10 by default.
 	FrameRate, Step1Rate int

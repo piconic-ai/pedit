@@ -76,7 +76,11 @@ func (o Options) statePath(file string) string {
 
 // readState returns the state at path, or nil when there is none that this
 // pedit may use: unreadable, of another version, or older than seven days.
-func readState(path string) *stateRecord {
+func readState(path string) *stateRecord { return readStateKeeping(path, nil) }
+
+// readStateKeeping is readState, except that a state of a generation keep
+// accepts does not expire by age: a kept room holds that document too.
+func readStateKeeping(path string, keep func(generation string) bool) *stateRecord {
 	if path == "" {
 		return nil
 	}
@@ -100,7 +104,10 @@ func readState(path string) *stateRecord {
 	if err != nil || len(raw) > stateMaxBytes || dec.Decode(&rec) != nil || dec.Decode(new(any)) != io.EOF {
 		return nil
 	}
-	if rec.Version != stateVersion || rec.Generation == "" || time.Since(rec.Saved) > stateMaxAge {
+	if rec.Version != stateVersion || rec.Generation == "" {
+		return nil
+	}
+	if time.Since(rec.Saved) > stateMaxAge && (keep == nil || !keep(rec.Generation)) {
 		return nil
 	}
 	return &rec
@@ -143,8 +150,24 @@ func writeState(path string, rec stateRecord) error {
 func (s *Server) seed(initial string) {
 	s.doc = crdt.New()
 	s.text = s.doc.GetText("content")
-	if rec := readState(s.statePath); rec != nil && s.restore(rec, initial) {
+	record := func() (generation string, doc []byte, text string, pending *string, ok bool) {
+		if s.opts.RecordFor == nil {
+			return "", nil, "", nil, false
+		}
+		generation, doc, text, pending, ok = s.opts.RecordFor(s.file)
+		return generation, doc, text, pending, ok && generation != ""
+	}
+	keep := func(generation string) bool { g, _, _, _, ok := record(); return ok && g == generation }
+	if rec := readStateKeeping(s.statePath, keep); rec != nil && s.restore(rec, initial) {
 		s.generation = rec.Generation
+		return
+	}
+	s.doc = crdt.New()
+	s.text = s.doc.GetText("content")
+	// The state cannot be used: a kept room's record of the same document may
+	// still fit the file, and then it is the same history to go on with.
+	if g, doc, text, pending, ok := record(); ok && s.restore(&stateRecord{Generation: g, Written: text, Pending: pending, Doc: doc}, initial) {
+		s.generation = g
 		return
 	}
 	s.doc = crdt.New()

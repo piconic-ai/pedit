@@ -107,12 +107,7 @@ func TestServeShareKeepsTheRoomWhenUnshared(t *testing.T) {
 		t.Fatalf("file %q", got)
 	}
 
-	// Sharing the file again is refused for now, naming the room.
-	a.command(fmt.Sprintf(`{"cmd":"share","keep":"1h","relay":%q}`, env.server.URL))
-	if e := a.event("error", 1); e["cmd"] != "share" || !strings.Contains(e["message"].(string), "kept room "+room) || !strings.Contains(e["message"].(string), "not available yet") {
-		t.Fatalf("%v", e)
-	}
-	// A live room is another matter.
+	// A live room is not about the kept one.
 	a.shares++
 	a.command(fmt.Sprintf(`{"cmd":"share","keep":"0","relay":%q}`, env.server.URL))
 	if second := a.event("shared", a.shares); second["room"] == room || second["keptUntil"] != float64(0) {

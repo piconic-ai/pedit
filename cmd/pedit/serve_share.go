@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"sync"
 	"time"
 
@@ -22,7 +24,8 @@ var serveDial protocol.Dialer
 
 // liveSharer shares the served file in a live room (docs/design/embedding.md
 // "Share from `pedit serve`"): the room is one more client of serve's
-// document. A kept room is left kept by unshare; resuming it is not built yet.
+// document. A kept room is left kept by unshare; a share of the file takes it up
+// again when it is one history with serve's document.
 type liveSharer struct {
 	srv    *serve.Server
 	st     *serve.Stdio
@@ -54,6 +57,7 @@ var (
 	errCloseNotYet   = errors.New("close is not available yet")
 	errKeptWindows   = errors.New(`kept rooms need Unix file permissions and are not available on Windows; send keep "0" for a live room`)
 	errChoiceNotYet  = errors.New("choice is not available yet")
+	errOrigins       = errors.New("this file has a kept room with other origins; share with the origins it was opened with")
 )
 
 func (l *liveSharer) Share(ctx context.Context, req shareRequest) error {
@@ -76,9 +80,17 @@ func (l *liveSharer) Share(ctx context.Context, req shareRequest) error {
 	if req.Relay != "" {
 		server = req.Relay
 	}
+	resume := ""
 	if req.Keep > 0 {
-		if err := l.checkNotKept(cfg.root); err != nil {
+		rec, err := keptRecordOf(cfg.root, l.srv.Path())
+		if err != nil {
 			return err
+		}
+		if rec != nil {
+			if err := l.checkResume(rec, req); err != nil {
+				return err
+			}
+			resume = rec.Room
 		}
 	}
 	ls := &liveShare{bridge: &bridge{onError: func(err error) { fmt.Fprintln(l.stderr, "pedit:", err) }}}
@@ -108,7 +120,9 @@ func (l *liveSharer) Share(ctx context.Context, req shareRequest) error {
 		// one from the account, with no avatar unless Access gives one.
 		Name:    nameOf(commandArgs{}),
 		Origins: req.Origins,
-		Keep:    req.Keep,
+		// A resumed room goes on with the keep it was opened with.
+		Keep:   req.Keep,
+		Resume: resume,
 		// Names the document the record belongs to.
 		Generation:   l.srv.Generation(),
 		BeforeRecord: l.flush,
@@ -143,7 +157,7 @@ func (l *liveSharer) Share(ctx context.Context, req shareRequest) error {
 	if comment != "" {
 		links["comment"] = room + "." + comment
 	}
-	l.st.Event("shared", map[string]any{"room": room, "links": links, "keptUntil": keptUntil(ctx, s, req, kept), "resumed": false})
+	l.st.Event("shared", map[string]any{"room": room, "links": links, "keptUntil": keptUntil(ctx, s, req, kept), "resumed": resume != ""})
 	return nil
 }
 
@@ -168,29 +182,76 @@ func keptUntil(ctx context.Context, s *session.Session, req shareRequest, kept <
 	return 0
 }
 
-// checkNotKept refuses a share of a file that has a kept room. Resuming it is
-// not available yet, and a second room would leave two records for the file.
-func (l *liveSharer) checkNotKept(project string) error {
-	file, err := filepath.Abs(l.srv.Path())
+// keptRecordOf is the record of the live kept room that holds file, if any.
+func keptRecordOf(project, file string) (*session.KeptTextRecord, error) {
+	file, err := filepath.Abs(file)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	records, err := session.ListKeptText(project)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, r := range records {
 		// An unknown deadline (0) may still be a live room.
 		if r.Until != 0 && r.Until <= time.Now().UnixMilli() {
 			continue
 		}
-		for _, f := range r.Files {
-			if f == file {
-				return fmt.Errorf("this file has a kept room %s; resuming it from pedit serve is not available yet", r.Room)
-			}
+		if slices.ContainsFunc(r.Files, func(f string) bool { return sameFile(f, file) }) {
+			return &r, nil
 		}
 	}
+	return nil, nil
+}
+
+// sameFile tells whether two paths are one file: serve's path has its links
+// resolved, and a record of pedit <file> may not.
+func sameFile(a, b string) bool {
+	if a == b {
+		return true
+	}
+	ia, err1 := os.Stat(a)
+	ib, err2 := os.Stat(b)
+	return err1 == nil && err2 == nil && os.SameFile(ia, ib)
+}
+
+// checkResume refuses to take up a kept room unless it is one history with
+// serve's document, which only the generation proves, and the share asks for
+// the origins the room was opened with. Choosing is not available yet.
+func (l *liveSharer) checkResume(rec *session.KeptTextRecord, req shareRequest) error {
+	if rec.Generation == "" || rec.Generation != l.srv.Generation() {
+		return fmt.Errorf("this file has a kept room %s with another history; choosing is not available yet", rec.Room)
+	}
+	if !sameSet(req.Origins, rec.Origins) {
+		return errOrigins
+	}
 	return nil
+}
+
+func sameSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for _, s := range a {
+		if !slices.Contains(b, s) {
+			return false
+		}
+	}
+	return true
+}
+
+// serveRecordFor is serve's view of the kept room of a file: its generation,
+// document and the text it matched. The project is looked up as share does.
+func serveRecordFor(file string) (generation string, doc []byte, text string, pending *string, ok bool) {
+	cfg, err := loadProject(filepath.Dir(file))
+	if err != nil {
+		return "", nil, "", nil, false
+	}
+	rec, err := keptRecordOf(cfg.root, file)
+	if err != nil || rec == nil || rec.Generation == "" || len(rec.State) == 0 {
+		return "", nil, "", nil, false
+	}
+	return rec.Generation, rec.State, rec.Text, rec.Pending, true
 }
 
 // peers tells the app who is in the room, when that changed.
