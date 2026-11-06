@@ -16,7 +16,7 @@ if [[ ! $tag =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
 fi
 major=${BASH_REMATCH[1]} minor=${BASH_REMATCH[2]} patch=${BASH_REMATCH[3]}
 
-bump=patch
+bump="patch"
 for label in "$@"; do
   case $label in
     tagpr:major | tagpr/major) bump=major ;;
