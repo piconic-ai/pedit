@@ -105,6 +105,22 @@ the host half of `pedit <file>` to the same process.
 - Awareness is bridged too, so app pages and reviewers see each other's
   cursors and presence. Each state crosses under its own client id. A state
   leaves the other side when its own side drops it, or when the bridge closes.
+  - **Into the room**, presence rules hold (packages/protocol/src/presence.ts).
+    Peers show a participant's access from how its frame is signed, never from
+    its state, and a frame holds one entry. So the host sends each app page's
+    state in a frame of its own, signed for that page's access:
+    - an `edit` stream's state is edit-signed;
+    - a `read` stream's state is sent unsigned, as a read link's is.
+
+    The host holds every key, so this needs no change to the wire. It must
+    never sign a page's state above that page's stream role, so a read-only
+    page is never shown as an editor. The host renews these states, as it
+    renews its own. When a page leaves, the host stops renewing its state, and
+    peers time it out, since nobody sends another client's removal.
+  - **Into serve**, the session forwards only the states it accepted under
+    those rules, and the access each was heard with goes to the app in the
+    `peers` event. Pages on the app's side are trusted as the app is; they get
+    the states and nothing to sign with.
 - The room's bridge is not a browser stream. It is not held to a stream's frame
   rates, awareness caps or queue, and it does not count toward the open-stream
   limit.
@@ -166,28 +182,33 @@ most 64 KiB. Each is answered by events on stream 0.
 
 #### Kept rooms keep one history
 
-A kept room's record (the one `pedit <file>` writes) also stores serve's
-generation and the room's origins. serve's state and the record then hold the
-same history, and they must not drift apart for no reason:
+A kept room's record written by serve also stores serve's generation and the
+room's origins. serve's state and the record then hold the same history, and
+they must not drift apart for no reason. A matching generation is the only
+proof of one history. Finding a record by the file's path proves nothing: a
+record written by `pedit <file>` has no generation, and its document was
+created on its own even when the text is the same.
 
 - On start, serve resumes its state as today. If the state cannot be used
   (missing, too old, of another version, damaged), but a kept record for the
-  file exists and its document fits the file by the same last-written check,
-  serve resumes from the record's document and generation instead.
+  file carries a generation and its document fits the file by the same
+  last-written check, serve resumes from the record's document and generation
+  instead.
 - While a kept record for the file exists, serve's state does not expire by
   age.
 
-**Resuming.** When the app sends `share` for a file that has a record, pedit
-takes the room up again. The record is found by the file's path among the
-project's records. pedit applies what reviewers wrote meanwhile to the
+**Resuming.** When the app sends `share` for a file that has a record whose
+generation is serve's, pedit takes the room up again. The record is found by
+the file's path among the project's records. pedit applies what reviewers wrote meanwhile to the
 document as Yjs updates (it is the same history), then answers `shared` with
 `"resumed": true` and the same links. It does not apply them as a text diff,
 which would insert the app's edits a second time. A resumed room keeps the
 origins it was opened with: a `share` with a different list is an error.
 
-**When the histories differ anyway.** This happens when both serve's state and
-the record's document are unusable, or when the file changed so that neither
-fits it. Then `share` answers with a choice instead of `shared`:
+**When the histories differ.** The record found for the file may have no
+generation (it was written by `pedit <file>`) or another one (serve's state and
+the record's document were both unusable, or the file changed so that neither
+fits it). Then `share` answers with a choice instead of `shared`:
 
     {"event":"resume_choice","room":"<id>","choices":[
       {"choice":"room","text":<chars>,"entries":<written while away>},
