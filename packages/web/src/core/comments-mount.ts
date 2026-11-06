@@ -50,6 +50,8 @@ export function mountComments(opts: CommentsMountOptions): CommentsMount {
       if (!narrow.get()) saveCommentsOpen(open, prefs)
     },
   )
+  // The panel's menu (a thread's More); disposed with it, open or not.
+  const menu = new ContextMenu()
   const unmount = mountComponent(parent, 'CommentsPanel', {
     comments: files.comments,
     target: files.target,
@@ -57,7 +59,7 @@ export function mountComments(opts: CommentsMountOptions): CommentsMount {
     focus: files.focus,
     list: files.list,
     colors: room.authorColors,
-    menu: new ContextMenu(),
+    menu,
     open: panel.open,
     // The title folds the panel on a narrow screen; on a wide one, the header's button does.
     onToggle: () => {
@@ -89,6 +91,7 @@ export function mountComments(opts: CommentsMountOptions): CommentsMount {
     dispose() {
       keyTarget.removeEventListener('keydown', onKey)
       panel.dispose()
+      menu.dispose()
       unmount()
     },
   }

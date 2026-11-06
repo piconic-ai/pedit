@@ -1,4 +1,4 @@
-import { render } from '@barefootjs/client/runtime'
+import { mountComponent } from './render.ts'
 import { Store } from './store.ts'
 import './components/Menu.tsx'
 
@@ -60,6 +60,7 @@ export class ContextMenu {
   #mac: boolean
   #actions: ((() => void) | null)[] = []
   #returnFocus: HTMLElement | null = null
+  #unmount: () => void
   // Inside a shadow root the target is retargeted to the host, so ask the path.
   #onOutside = (ev: Event) => {
     if (!ev.composedPath().includes(this.element)) this.close()
@@ -69,7 +70,13 @@ export class ContextMenu {
     this.#mac = mac
     this.element = document.createElement('div')
     this.element.className = 'menu-slot'
-    render(this.element, 'Menu', { menu: this })
+    this.#unmount = mountComponent(this.element, 'Menu', { menu: this })
+  }
+
+  /** Closes the menu, letting go of its outside-click listener, and stops its rendering. */
+  dispose(): void {
+    this.close()
+    this.#unmount()
   }
 
   get open(): boolean {
