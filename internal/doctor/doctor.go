@@ -4,12 +4,17 @@
 package doctor
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"fmt"
+	"mime"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
+	"unicode"
 )
 
 const (
@@ -60,14 +65,21 @@ type Options struct {
 	Newer func(current, latest string) bool
 }
 
+// StripFragment drops everything from the first '#': what follows may be a
+// key, so no message may repeat it.
+func StripFragment(arg string) string {
+	before, _, _ := strings.Cut(arg, "#")
+	return before
+}
+
 // ParseTarget checks the URL given on the command line and drops its
 // fragment, which may carry a key: it is never sent and never printed.
 func ParseTarget(raw string) (*url.URL, error) {
+	raw = StripFragment(raw)
 	u, err := url.Parse(raw)
 	if err != nil {
 		return nil, errors.New("not a URL: " + raw)
 	}
-	u.Fragment, u.RawFragment = "", ""
 	switch {
 	case u.Scheme == "" || u.Host == "":
 		return nil, errors.New("not an absolute http(s) URL")
@@ -81,24 +93,29 @@ func ParseTarget(raw string) (*url.URL, error) {
 
 func ok(id, msg string) Check { return Check{ID: id, Status: OK, Message: msg} }
 
+// runLimit caps the whole run: the page and every script it fetches.
+const runLimit = 30 * time.Second
+
 // Run fetches the page at u (from ParseTarget) and checks it.
 func Run(u *url.URL, opts Options) *Report {
 	rep := &Report{URL: u.String()}
-	if u.Scheme == "http" && !isLocalHost(u.Hostname()) {
+	if u.Scheme == "http" && !isLocalHost(strings.ToLower(u.Hostname())) {
 		rep.Checks = append(rep.Checks, Check{ID: "https", Status: Fail,
 			Message: "the page is served over http, which is only for development on localhost",
 			Fix:     "serve the page over https: the key in the link is only as safe as the connection that carries the page"})
 		return rep
 	}
 	rep.Checks = append(rep.Checks, ok("https", httpsMessage(u)))
+	ctx, cancel := context.WithTimeout(context.Background(), runLimit)
+	defer cancel()
 	client := newClient()
-	resp, err := fetch(client, u, pageLimit, opts.Version)
+	resp, err := fetch(ctx, client, u, pageLimit, opts.Version)
 	if err != nil {
-		rep.Unreachable = true
-		rep.Checks = append(rep.Checks, Check{ID: "fetch", Status: Fail, Message: "could not fetch the page: " + err.Error()})
+		rep.Unreachable = !errors.Is(err, errOffOrigin)
+		rep.Checks = append(rep.Checks, fetchFailure(err))
 		return rep
 	}
-	pg, err := parsePage(strings.NewReader(string(resp.Body)))
+	pg, err := parsePage(bytes.NewReader(resp.Body))
 	if err != nil {
 		rep.Unreachable = true
 		rep.Checks = append(rep.Checks, Check{ID: "fetch", Status: Fail, Message: "could not read the page: " + err.Error()})
@@ -106,14 +123,25 @@ func Run(u *url.URL, opts Options) *Report {
 	}
 	elem, relay := checkElement(pg)
 	rep.Relay = relay
-	comp := findComponent(client, resp.URL, pg, opts)
+	comp := findComponent(ctx, client, resp.URL, pg, opts)
 	rep.Component = Component{Src: comp.src, Version: comp.version}
 	rep.Checks = append(rep.Checks, elem,
-		checkCSP(resp.Header, pg, relay),
+		checkCSP(resp.Header, pg, relay, origin(resp.URL)),
 		checkScripts(resp.URL, pg, comp),
 		checkVersion(comp, opts),
 		checkReferrer(resp.Header, pg))
 	return rep
+}
+
+// fetchFailure is the check for a page that could not be fetched. A redirect
+// off the origin is the page's fault, so it is a failed check of its own
+// ("redirect", exit 1), not a fetch error.
+func fetchFailure(err error) Check {
+	if errors.Is(err, errOffOrigin) {
+		return Check{ID: "redirect", Status: Fail, Message: "the page redirects to another origin",
+			Fix: "serve the review page at the URL you share, on one origin: doctor follows redirects within the origin only, and a review page never belongs to two"}
+	}
+	return Check{ID: "fetch", Status: Fail, Message: "could not fetch the page: " + err.Error()}
 }
 
 func httpsMessage(u *url.URL) string {
@@ -143,7 +171,7 @@ func checkElement(pg *page) (Check, string) {
 	return ok("element", "one <pedit-review>, relay "+relay), relay
 }
 
-func checkCSP(h http.Header, pg *page, relay string) Check {
+func checkCSP(h http.Header, pg *page, relay, pageOrigin string) Check {
 	values := h.Values("Content-Security-Policy")
 	if len(values) == 0 {
 		fix := "send the Content-Security-Policy that reviewCSP({ relay }) from @pedit/review gives, as a response header"
@@ -158,7 +186,7 @@ func checkCSP(h http.Header, pg *page, relay string) Check {
 			Fix: "fix the <pedit-review> element first"}
 	}
 	policies := splitPolicies(values)
-	problems, best := bestPolicy(policies, parseCSP(expectedText))
+	problems, best := bestPolicy(policies, parseCSP(expectedText), pageOrigin)
 	if len(problems) > 0 {
 		return Check{ID: "csp", Status: Fail, Message: "the policy is looser than reviewCSP's: " + strings.Join(problems, "; "),
 			Fix: "send exactly this policy (plus a frame-ancestors of your choice): " + expectedText}
@@ -182,10 +210,10 @@ func splitPolicies(values []string) [][]directive {
 
 // bestPolicy returns no problems when one enforced policy is as strict as the
 // expected one (the others can only restrict more), else the first one's.
-func bestPolicy(policies [][]directive, expected []directive) ([]string, []directive) {
+func bestPolicy(policies [][]directive, expected []directive, pageOrigin string) ([]string, []directive) {
 	var first []string
 	for i, p := range policies {
-		problems := cspProblems(p, expected)
+		problems := cspProblems(p, expected, pageOrigin)
 		if len(problems) == 0 {
 			return nil, p
 		}
@@ -228,6 +256,8 @@ type component struct {
 	cross   bool // loaded from another origin
 }
 
+var semverRe = regexp.MustCompile(`^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$`)
+
 var banner = regexp.MustCompile(`^(?:\xef\xbb\xbf)?/\*! @pedit/review (\S+) \*/`)
 
 const maxScriptFetches = 8
@@ -237,7 +267,7 @@ const maxScriptFetches = 8
 func scriptURLs(base *url.URL, pg *page) (same []*url.URL, cross *url.URL) {
 	for _, s := range pg.Scripts {
 		u, err := base.Parse(s.Src)
-		if s.Inline || err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		if s.Inline || badSrc(s.Src) || err != nil || (u.Scheme != "http" && u.Scheme != "https") {
 			continue
 		}
 		switch {
@@ -253,17 +283,17 @@ func scriptURLs(base *url.URL, pg *page) (same []*url.URL, cross *url.URL) {
 // findComponent finds the script whose first line is the @pedit/review
 // banner. Only same-origin scripts are fetched. A page with a single script
 // has that script as its component, banner or not.
-func findComponent(client *http.Client, base *url.URL, pg *page, opts Options) component {
+func findComponent(ctx context.Context, client *http.Client, base *url.URL, pg *page, opts Options) component {
 	same, cross := scriptURLs(base, pg)
 	for _, u := range same[:min(len(same), maxScriptFetches)] {
-		resp, err := fetch(client, u, scriptLimit, opts.Version)
+		resp, err := fetch(ctx, client, u, scriptLimit, opts.Version)
 		if err != nil {
 			continue
 		}
 		if m := banner.FindSubmatch(firstLine(resp.Body)); m != nil {
 			return component{src: u.String(), version: string(m[1])}
 		}
-		if len(pg.Scripts) == 1 {
+		if len(pg.Scripts) == 1 && isJavaScript(resp.Header.Get("Content-Type")) {
 			return component{src: u.String()}
 		}
 	}
@@ -271,6 +301,22 @@ func findComponent(client *http.Client, base *url.URL, pg *page, opts Options) c
 		return component{src: cross.String(), cross: true}
 	}
 	return component{}
+}
+
+// badSrc is a src that browsers and Go may read as different URLs: a
+// backslash is a slash to a browser, and whitespace or control characters are
+// trimmed or dropped.
+func badSrc(src string) bool {
+	if strings.TrimSpace(src) != src || strings.Contains(src, "\\") {
+		return true
+	}
+	return strings.IndexFunc(src, unicode.IsControl) >= 0
+}
+
+// isJavaScript reports whether a Content-Type names JavaScript, parameters aside.
+func isJavaScript(contentType string) bool {
+	mt, _, err := mime.ParseMediaType(contentType)
+	return err == nil && (mt == "text/javascript" || mt == "application/javascript")
 }
 
 func firstLine(b []byte) []byte {
@@ -291,6 +337,8 @@ func checkScripts(base *url.URL, pg *page, comp component) Check {
 	for _, s := range pg.Scripts {
 		if s.Inline {
 			problems = append(problems, "an inline script")
+		} else if badSrc(s.Src) {
+			problems = append(problems, fmt.Sprintf("the script src %q has a backslash, space or control character: browsers read it differently from other tools", s.Src))
 		} else if u, err := base.Parse(s.Src); comp.src == "" || err != nil || u.String() != comp.src {
 			problems = append(problems, notComponent(base, s.Src))
 		}
@@ -323,6 +371,10 @@ func checkVersion(comp component, opts Options) Check {
 	if comp.version == "" {
 		return Check{ID: "version", Status: Warn, Message: "the component's version is unknown: no @pedit/review banner on its first line",
 			Fix: "update @pedit/review to a release that carries the banner, and serve its file as it is"}
+	}
+	if !semverRe.MatchString(comp.version) {
+		return Check{ID: "version", Status: Warn, Message: fmt.Sprintf("the component's banner has no version number: %q", comp.version),
+			Fix: "serve the file of a @pedit/review release as it is"}
 	}
 	have, mine := "v"+strings.TrimPrefix(comp.version, "v"), opts.Version
 	switch {

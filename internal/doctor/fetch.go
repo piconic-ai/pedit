@@ -22,7 +22,15 @@ var errOffOrigin = errors.New("redirects to another origin")
 
 // origin is scheme://host[:port] of u, in lower case.
 func origin(u *url.URL) string {
-	return strings.ToLower(u.Scheme + "://" + u.Host)
+	host := strings.ToLower(u.Hostname())
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if port := u.Port(); port != "" && !(scheme == "https" && port == "443") && !(scheme == "http" && port == "80") {
+		host += ":" + port
+	}
+	return scheme + "://" + host
 }
 
 func isLocalHost(host string) bool {
@@ -55,9 +63,7 @@ type response struct {
 	Body   []byte
 }
 
-func fetch(client *http.Client, u *url.URL, limit int64, version string) (*response, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
+func fetch(ctx context.Context, client *http.Client, u *url.URL, limit int64, version string) (*response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
@@ -72,7 +78,7 @@ func fetch(client *http.Client, u *url.URL, limit int64, version string) (*respo
 		return nil, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))

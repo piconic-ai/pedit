@@ -96,3 +96,52 @@ func TestDoctorInUsage(t *testing.T) {
 		t.Error("doctor is not in the help")
 	}
 }
+
+func TestDoctorNeverEchoesFragment(t *testing.T) {
+	for _, args := range [][]string{
+		{"https://x.example/%zz#SECRETKEY"},
+		{"https://exa mple.com/#SECRETKEY"},
+		{"https://x.example/a", "https://x.example/b#SECRETKEY"},
+		{"--bogus#SECRETKEY"},
+		{"--json", "ftp://x.example/#SECRETKEY"},
+	} {
+		code, out, errOut := doctorRun(args...)
+		if code != 2 || strings.Contains(out+errOut, "SECRET") {
+			t.Errorf("%v: %d %q %q", args, code, out, errOut)
+		}
+	}
+}
+
+func TestDoctorStripsControlCharacters(t *testing.T) {
+	mux := http.NewServeMux()
+	policy, _ := doctor.ReviewCSP("https://edit.piconic.ai", nil)
+	mux.HandleFunc("/review", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", policy+"; frame-ancestors 'none'")
+		_, _ = w.Write([]byte(doctorHTML))
+	})
+	mux.HandleFunc("/review.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/javascript")
+		_, _ = w.Write([]byte("/*! @pedit/review 1.0.0\x1b[31mRED */\nexport{}\n"))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	_, out, _ := doctorRun(srv.URL + "/review")
+	if strings.Contains(out, "\x1b") || !strings.Contains(out, "! version") {
+		t.Errorf("%q", out)
+	}
+	_, js, _ := doctorRun("--json", srv.URL+"/review")
+	if !strings.Contains(js, `\u001b`) {
+		t.Errorf("JSON is not escaped: %s", js)
+	}
+}
+
+func TestDoctorRedirectOffOriginExitsOne(t *testing.T) {
+	other := doctorSite(t, doctorHTML, true)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other+"/review", http.StatusFound)
+	}))
+	defer srv.Close()
+	if code, out, _ := doctorRun(srv.URL + "/x"); code != 1 || !strings.Contains(out, "✗ redirect") || !strings.Contains(out, "to fix:") {
+		t.Errorf("%d\n%s", code, out)
+	}
+}

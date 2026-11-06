@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode"
 
 	"github.com/piconic-ai/pedit/internal/doctor"
 )
@@ -32,7 +33,7 @@ func runDoctor(args []string, stdout, stderr io.Writer) int {
 		case arg == "--json" && !asJSON:
 			asJSON = true
 		case strings.HasPrefix(arg, "-") || target != "":
-			return usageError(stderr, doctorUsage, fmt.Errorf("unexpected argument: %s", arg))
+			return usageError(stderr, doctorUsage, fmt.Errorf("unexpected argument: %s", doctor.StripFragment(arg)))
 		default:
 			target = arg
 		}
@@ -64,15 +65,26 @@ func runDoctor(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+// doctorText drops control characters, ESC among them, from text a page
+// supplied, so it cannot drive the terminal. JSON is escaped by its encoder.
+func doctorText(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, s)
+}
+
 func printDoctor(w io.Writer, rep *doctor.Report) {
 	marks := map[string]string{doctor.OK: "✓", doctor.Warn: "!", doctor.Fail: "✗"}
 	counts := map[string]int{}
 	fmt.Fprintln(w, "Checking", rep.URL)
 	for _, c := range rep.Checks {
 		counts[c.Status]++
-		fmt.Fprintf(w, "%s %s: %s\n", marks[c.Status], c.ID, c.Message)
+		fmt.Fprintf(w, "%s %s: %s\n", marks[c.Status], c.ID, doctorText(c.Message))
 		if c.Fix != "" {
-			fmt.Fprintf(w, "    to fix: %s\n", c.Fix)
+			fmt.Fprintf(w, "    to fix: %s\n", doctorText(c.Fix))
 		}
 	}
 	fmt.Fprintf(w, "%d ok, %d warnings, %d failed\n", counts[doctor.OK], counts[doctor.Warn], counts[doctor.Fail])

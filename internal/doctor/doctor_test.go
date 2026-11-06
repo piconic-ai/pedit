@@ -229,7 +229,7 @@ func TestRedirects(t *testing.T) {
 	s.extra = func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, base+"/review", http.StatusFound) }
 	off, _ := serve(t, s)
 	rep := run(t, off+"/away")
-	if !rep.Unreachable || status(rep, "fetch") != Fail || !strings.Contains(rep.Checks[1].Message, "another origin") {
+	if rep.Unreachable || status(rep, "redirect") != Fail || rep.Checks[1].Fix == "" || !rep.Failed() {
 		t.Errorf("off-origin redirect: %+v", rep.Checks)
 	}
 }
@@ -355,5 +355,103 @@ func TestCrossOriginScriptNotFetched(t *testing.T) {
 	run(t, base+"/review")
 	if len(log.reqs) != 0 {
 		t.Errorf("another origin was contacted: %d requests", len(log.reqs))
+	}
+}
+
+func TestBadScriptSrc(t *testing.T) {
+	for _, src := range []string{`/assets\\review.js`, ` /assets/review.js`, "/assets/review.js ", "/assets/re&#1;view.js"} {
+		s := good()
+		s.html = goodPage(`<script type="module" src="` + src + `"></script>`)
+		base, _ := serve(t, s)
+		rep := run(t, base+"/review")
+		if status(rep, "scripts") != Fail || rep.Component.Src != "" {
+			t.Errorf("%q: %+v", src, rep.Checks)
+		}
+	}
+}
+
+func TestComponentContentType(t *testing.T) {
+	for ct, want := range map[string]string{
+		"text/javascript; charset=utf-8": OK,
+		"application/javascript":         OK,
+		"text/html":                      Fail,
+		"":                               Fail,
+	} {
+		s := good()
+		s.files["/assets/review.js"] = bundle("")
+		s.extra = func(w http.ResponseWriter, r *http.Request) {
+			if ct != "" {
+				w.Header().Set("Content-Type", ct)
+			} else {
+				w.Header()["Content-Type"] = nil
+			}
+			_, _ = w.Write([]byte(bundle("")))
+		}
+		base, _ := serve(t, s)
+		rep := run(t, base+"/review")
+		got := status(rep, "scripts")
+		if got != want {
+			t.Errorf("%q: scripts %s %+v", ct, got, rep.Checks)
+		}
+		if want == Fail && rep.Component.Src != "" {
+			t.Errorf("%q: taken as the component", ct)
+		}
+	}
+}
+
+func TestNonSemverBannerWarns(t *testing.T) {
+	s := good()
+	s.files["/assets/review.js"] = bundle("latest")
+	base, _ := serve(t, s)
+	if got := status(run(t, base+"/review"), "version"); got != Warn {
+		t.Errorf("version %s", got)
+	}
+}
+
+func TestStatusCodes(t *testing.T) {
+	for code, fetchFails := range map[int]bool{200: false, 203: false, 404: true, 500: true} {
+		s := good()
+		s.extra = func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(code) }
+		s.html = ""
+		base, _ := serve(t, s)
+		rep := run(t, base+"/other")
+		if got := rep.Unreachable; got != (code != 200 && code != 203) {
+			t.Errorf("%d: unreachable %v", code, got)
+		}
+		if fetchFails && !strings.Contains(rep.Checks[1].Message, "HTTP") {
+			t.Errorf("%d: %+v", code, rep.Checks)
+		}
+	}
+}
+
+func TestOriginDefaultPort(t *testing.T) {
+	same := [][2]string{{"https://x.example:443/a", "https://X.example/b"}, {"http://x.example:80", "http://x.example"}}
+	for _, p := range same {
+		a, _ := ParseTarget(p[0])
+		b, _ := ParseTarget(p[1])
+		if origin(a) != origin(b) {
+			t.Errorf("%s != %s", origin(a), origin(b))
+		}
+	}
+	a, _ := ParseTarget("https://x.example:444")
+	b, _ := ParseTarget("https://x.example")
+	if origin(a) == origin(b) {
+		t.Error("other port is the same origin")
+	}
+}
+
+func TestUpperCaseLocalhost(t *testing.T) {
+	u, _ := ParseTarget("http://LOCALHOST:1/review")
+	if rep := Run(u, testOpts); !rep.Unreachable {
+		t.Errorf("not tried as a development origin: %+v", rep.Checks)
+	}
+}
+
+func TestParseTargetNeverEchoesFragment(t *testing.T) {
+	for _, raw := range []string{"https://x.example/%zz#SECRETKEY", "https://exa mple.com/#SECRETKEY", "ftp://x.example/#SECRETKEY", "x#SECRETKEY"} {
+		_, err := ParseTarget(raw)
+		if err == nil || strings.Contains(err.Error(), "SECRET") {
+			t.Errorf("%q: %v", raw, err)
+		}
 	}
 }
