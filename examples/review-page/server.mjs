@@ -13,7 +13,8 @@ if (!Number.isInteger(port) || port < 0 || port > 65535) {
 }
 const relay = (process.env.PEDIT_RELAY ?? 'https://edit.piconic.ai').replace(/\/+$/, '')
 // Throws if the relay is not an http(s) URL: better at start than as a broken page.
-const csp = reviewCSP({ relay })
+// No site may frame this page (`pedit doctor` warns without frame-ancestors).
+const csp = reviewCSP({ relay, frameAncestors: "'none'" })
 
 const file = (name) => readFile(fileURLToPath(new URL(`public/${name}`, import.meta.url)))
 // The relay is the only value put into the HTML, and it goes in an attribute, so it is escaped.

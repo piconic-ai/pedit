@@ -258,6 +258,10 @@ type component struct {
 
 var semverRe = regexp.MustCompile(`^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$`)
 
+// releaseRe is a released pedit's version: a tag, not a dev build's pseudo-version
+// (v0.6.1-0.20261106221436-45e6d69a29d2) or a local build.
+var releaseRe = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
+
 var banner = regexp.MustCompile(`^(?:\xef\xbb\xbf)?/\*! @pedit/review (\S+) \*/`)
 
 const maxScriptFetches = 8
@@ -378,7 +382,7 @@ func checkVersion(comp component, opts Options) Check {
 	}
 	have, mine := "v"+strings.TrimPrefix(comp.version, "v"), opts.Version
 	switch {
-	case !strings.HasPrefix(mine, "v"):
+	case !releaseRe.MatchString(mine):
 		return Check{ID: "version", Status: Warn, Message: "component " + comp.version + "; this pedit has no release version to compare with",
 			Fix: "run doctor from a released pedit"}
 	case have == mine:

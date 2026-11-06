@@ -107,6 +107,15 @@ func run(t *testing.T, raw string) *Report {
 	return Run(u, testOpts)
 }
 
+func find(rep *Report, id string) Check {
+	for _, c := range rep.Checks {
+		if c.ID == id {
+			return c
+		}
+	}
+	return Check{Status: "absent"}
+}
+
 func status(rep *Report, id string) string {
 	for _, c := range rep.Checks {
 		if c.ID == id {
@@ -263,8 +272,12 @@ func TestVersion(t *testing.T) {
 		}
 	}
 	u, _ := ParseTarget(func() string { b, _ := serve(t, good()); return b + "/review" }())
-	if got := status(Run(u, Options{Version: "dev", Newer: testOpts.Newer}), "version"); got != Warn {
-		t.Errorf("dev build: %s", got)
+	for _, v := range []string{"dev", "v0.6.1-0.20261106221436-45e6d69a29d2", "v0.7.0-rc.1"} {
+		rep := Run(u, Options{Version: v, Newer: testOpts.Newer})
+		c := find(rep, "version")
+		if c.Status != Warn || !strings.Contains(c.Message, "no release version") {
+			t.Errorf("not a release (%s): %+v", v, c)
+		}
 	}
 }
 
