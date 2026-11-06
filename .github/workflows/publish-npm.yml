@@ -1,7 +1,7 @@
 name: publish-npm
 
-# Publishes @pedit/serve to npm with the version of a pedit release: the
-# package follows the CLI's version, one number for both
+# Publishes @pedit/serve and @pedit/review to npm with the version of a pedit
+# release: the packages follow the CLI's version, one number for all
 # (docs/contributing/deployment.md "npm package"). tagpr.yml calls this after
 # the CLI archives were built and attached to the Release, so a release whose
 # build failed publishes nothing. It is a reusable workflow, not a `release`
@@ -27,6 +27,13 @@ permissions:
 
 jobs:
   publish:
+    name: Publish @pedit/${{ matrix.package }}
+    strategy:
+      # One package failing (e.g. its trusted publisher not set up yet) does
+      # not stop the other.
+      fail-fast: false
+      matrix:
+        package: [serve, review]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -56,11 +63,11 @@ jobs:
       - run: npm install -g npm@11
       - run: pnpm install --frozen-lockfile
         working-directory: packages
-      - run: pnpm --filter @pedit/serve build
+      - run: pnpm --filter "@pedit/${{ matrix.package }}" build
         working-directory: packages
       - name: Set the package version to the release
-        working-directory: packages/serve
+        working-directory: packages/${{ matrix.package }}
         run: npm version "${TAG#v}" --no-git-tag-version
       - name: Publish
-        working-directory: packages/serve
+        working-directory: packages/${{ matrix.package }}
         run: npm publish --provenance --access public
