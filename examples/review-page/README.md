@@ -11,7 +11,7 @@ your branding in the header slots and a few `--pedit-*` properties. The guide is
 
 ## Run
 
-`@pedit/review` is not on npm yet, so the sample takes the bundle from the workspace build:
+The sample takes the bundle from the workspace build, so it runs the code in this repository:
 
 ```sh
 pnpm --dir ../../packages --filter @pedit/review build   # once
@@ -22,7 +22,7 @@ node server.mjs
 
 `PORT` changes the port, `PEDIT_RELAY` the relay (default https://edit.piconic.ai).
 
-After the release this becomes `npm i @pedit/review` at a pinned version, a copy of
+In your own app, use `npm i --save-exact @pedit/review` instead, a copy of
 `node_modules/@pedit/review/dist/pedit-review.js` into your static files, and
 `import { reviewCSP } from '@pedit/review/csp'`. Serve the file from your own origin, never from a
 CDN: the policy allows scripts from `'self'` only, and a script you do not control on this page

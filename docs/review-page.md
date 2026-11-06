@@ -20,14 +20,14 @@ into your static files:
 
 ```sh
 npm install --save-exact @pedit/review
-cp node_modules/@pedit/review/dist/pedit-review.js public/assets/pedit-review-0.1.0.js
+cp node_modules/@pedit/review/dist/pedit-review.js public/assets/pedit-review-0.7.0.js
 ```
 
 ```html
 <!doctype html>
 <meta charset="utf-8">
 <title>Review</title>
-<script type="module" src="/assets/pedit-review-0.1.0.js"></script>
+<script type="module" src="/assets/pedit-review-0.7.0.js"></script>
 <pedit-review relay="https://edit.piconic.ai"></pedit-review>
 ```
 
@@ -45,7 +45,8 @@ response.headers.set('Content-Security-Policy', reviewCSP({ relay: 'https://edit
 response.headers.set('Referrer-Policy', 'no-referrer')
 ```
 
-`frameAncestors` is optional in `reviewCSP` and left out by default; set it if you want the page not to be framed.
+`reviewCSP` leaves `frame-ancestors` out unless you pass `frameAncestors`; pass `"'none'"` unless
+another page of yours must frame the review page.
 No analytics, no tag manager, no chat widget: anything that runs on the page can read the key in the
 link. [examples/review-page](../examples/review-page/README.md) is a complete small server.
 
@@ -79,6 +80,7 @@ It fetches the page (no cookies, no Referer; it contacts only the page's origin;
 and never opens a room. It checks:
 
 - `https`: the page is served over HTTPS;
+- `redirect`: the page does not redirect to another origin;
 - `element`: one `<pedit-review>` with a valid `relay`;
 - `csp`: the policy is a response header and not looser than `reviewCSP`'s for that relay;
 - `scripts`: the component is the only script, with no inline scripts or handlers;

@@ -36,8 +36,8 @@ the key in the link included. The relay still sees only ciphertext, as before.
 The host lists the page's origins when it shares. The relay lets a browser join the room (WebSocket
 and attachments) only from one of them. This limits which web pages can join; it is not
 authentication. A browser enforces `Origin` and a page cannot forge it, but the relay only reads the
-header: a client that is not a browser can send any `Origin`. To read anything, such a client still
-needs the link, and the link is what grants access, as on any other page. A room with no list refuses every
+header: a client that is not a browser can send any `Origin`. It still gets only ciphertext without the key
+in the link's fragment: the link, not the origin, is what grants access, as on any other page. A room with no list refuses every
 foreign origin.
 
 The integrator must:
