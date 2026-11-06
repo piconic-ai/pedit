@@ -31,8 +31,10 @@ stdout carries frames and nothing else; messages for people go to stderr. Each
 frame is: kind (1 byte) | stream (uint32, big-endian) | length (uint32,
 big-endian) | payload. The kinds are 1 open (app: one byte, 0 edit or 1 read),
 2 data (both: one y-websocket message), 3 close (app: empty; pedit: a uint16
-code and a reason) and 4 event (pedit: stream 0, one JSON event). Stream ids
-start at 1 and only increase; at most 8 are open at once. See
+code and a reason), 4 event (pedit: stream 0, one JSON event) and 5 command
+(app: stream 0, one JSON object of at most 64 KiB: share, unshare or close).
+A bad command is answered with an error event and does not end pedit. Stream
+ids start at 1 and only increase; at most 8 are open at once. See
 docs/design/serve.md.
 
 pedit runs until stdin is closed or Ctrl+C; it then saves the file and removes
@@ -64,6 +66,9 @@ Events (JSON in event frames):
                                             most once, after listening
   {"event":"held","pid":N,"app":"<name>"}   another process serves the file
   {"event":"error","message":"<one line>"}  any other failure
+  {"event":"error","cmd":"<cmd or empty>","message":"<one line>"}
+                                            a command was refused; pedit keeps
+                                            serving
 
 Exit codes: 0 normal, 1 error, 2 usage, 3 refused because another process
 serves the file.`
@@ -135,7 +140,7 @@ func failure(st *serve.Stdio, err error) int {
 // serveVersion is the version of the `pedit serve --stdio` surface: the
 // framing and the events. It changes only additively within a value; an app
 // checks it instead of comparing pedit versions. See docs/design/serve.md.
-const serveVersion = 1
+const serveVersion = 2
 
 // serveUpdateCheck sends update_available once if a newer release is out. It
 // is silent when the check cannot be made or fails. Development builds and CI
@@ -205,12 +210,22 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	if !opts.noUpdateCheck {
 		go serveUpdateCheck(ctx, st, getVersion(), newUpdateChecker)
 	}
+	// One goroutine handles the commands, so the read loop keeps the streams
+	// flowing while a command is handled.
+	cmds := newCommands(st, noSharer{})
+	st.OnCommand = cmds.Enqueue
+	cmdsDone := make(chan struct{})
+	go func() {
+		defer close(cmdsDone)
+		cmds.Run(ctx)
+	}()
 	violation := make(chan error, 1)
 	go func() {
 		violation <- st.Serve(s, serveStdin)
 		cancel()
 	}()
 	<-ctx.Done()
+	<-cmdsDone
 	closeErr := s.Close()
 	var broke error
 	select {

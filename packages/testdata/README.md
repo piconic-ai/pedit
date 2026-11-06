@@ -43,3 +43,9 @@ the message under the comment domain and the commenters' Ed25519 signature over 
 `internal/protocol/kept_comment_test.go` writes it (`PEDIT_UPDATE_VECTORS=1 go test
 ./internal/protocol/`), and `packages/protocol/test/kept-comments.test.ts` checks the
 TypeScript side seals and opens the same bytes.
+
+`origin-vectors.json` lists origin lists and whether `parseOrigins`
+(`packages/worker/src/origins.ts`) and `protocol.ParseOrigins`
+(`internal/protocol/origins.go`) accept them, with the result when duplicates
+are dropped. `packages/worker/test/origins-vectors.test.ts` and
+`internal/protocol/origins_test.go` both read it.

@@ -47,11 +47,14 @@ const (
 // packages/testdata/close-codes.json.
 const KeptComments = "kept comments"
 
-// KeepHeader and AfterHeader are the host's request headers: the keep it asks
-// for in seconds, and the last log entry it holds.
+// KeepHeader, AfterHeader and OriginsHeader are the host's request headers:
+// the keep it asks for in seconds, the last log entry it holds, and the page
+// origins the room admits, comma-separated. Keep OriginsHeader equal to
+// ORIGINS_HEADER in packages/worker/src/origins.ts.
 const (
-	KeepHeader  = "X-Pedit-Keep"
-	AfterHeader = "X-Pedit-After"
+	KeepHeader    = "X-Pedit-Keep"
+	AfterHeader   = "X-Pedit-After"
+	OriginsHeader = "X-Pedit-Origins"
 )
 
 // WithKind is a message of this kind: the kind byte, then the parts.
