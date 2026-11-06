@@ -4,8 +4,27 @@
   { "origins": ["https://cms.example.com:8443"], "ok": true },
   { "origins": ["https://203.0.113.7"], "ok": true },
   { "origins": ["https://a.com", "https://b.com", "https://c.com", "https://d.com"], "ok": true },
-  { "origins": ["https://a.com", "https://b.com", "https://c.com", "https://d.com", "https://e.com"], "ok": false },
-  { "origins": ["https://a.com", "https://a.com", "https://b.com", "https://c.com", "https://d.com", "https://e.com"], "ok": false },
+  {
+    "origins": [
+      "https://a.com",
+      "https://b.com",
+      "https://c.com",
+      "https://d.com",
+      "https://e.com"
+    ],
+    "ok": false
+  },
+  {
+    "origins": [
+      "https://a.com",
+      "https://a.com",
+      "https://b.com",
+      "https://c.com",
+      "https://d.com",
+      "https://e.com"
+    ],
+    "ok": false
+  },
   { "origins": ["http://localhost:3000"], "ok": true },
   { "origins": ["http://127.0.0.1:5173"], "ok": true },
   { "origins": ["http://localhost"], "ok": false },
@@ -29,9 +48,20 @@
   { "origins": ["https://1.2.3"], "ok": false },
   { "origins": ["https://01.2.3.4"], "ok": false },
   { "origins": ["https://256.1.1.1"], "ok": false },
+  { "origins": ["https://0x7f000001"], "ok": false },
+  { "origins": ["https://127.0.0.1."], "ok": false },
+  { "origins": ["https://example.0x1"], "ok": false },
+  { "origins": ["https://1.2.3.4."], "ok": false },
+  { "origins": ["https://example.com."], "ok": true },
+  { "origins": ["https://0x.example.com"], "ok": true },
+  { "origins": ["https://a.0"], "ok": false },
   { "origins": ["ftp://cms.example.com"], "ok": false },
   { "origins": ["cms.example.com"], "ok": false },
   { "origins": ["null"], "ok": false },
   { "origins": ["https://a.com", "https://a.com"], "ok": true, "result": ["https://a.com"] },
-  { "origins": ["https://b.com", "https://a.com", "https://b.com"], "ok": true, "result": ["https://b.com", "https://a.com"] }
+  {
+    "origins": ["https://b.com", "https://a.com", "https://b.com"],
+    "ok": true,
+    "result": ["https://b.com", "https://a.com"]
+  }
 ]
