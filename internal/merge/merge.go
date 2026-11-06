@@ -56,33 +56,40 @@ func offsetMapper(base, current []rune) func(offset int, after bool) int {
 		b, c := 0, 0
 		for i, d := range diffs {
 			n := utf8.RuneCountInString(d.Text)
-			switch d.Type {
-			case diffmatchpatch.DiffEqual:
-				if offset <= b+n {
-					c += offset - b
-					if after && offset == b+n {
-						for _, next := range diffs[i+1:] {
-							if next.Type != diffmatchpatch.DiffInsert {
-								break
-							}
-							c += utf8.RuneCountInString(next.Text)
-						}
-					}
-					return c
-				}
-				b += n
+			switch {
+			case d.Type == diffmatchpatch.DiffInsert:
 				c += n
-			case diffmatchpatch.DiffDelete:
-				if offset <= b+n {
-					return c
-				}
+				continue
+			case offset > b+n:
+				// Past this part: it moves both offsets, or only base's if deleted.
 				b += n
-			case diffmatchpatch.DiffInsert:
-				c += n
+				if d.Type == diffmatchpatch.DiffEqual {
+					c += n
+				}
+				continue
+			case d.Type == diffmatchpatch.DiffDelete:
+				return c
 			}
+			c += offset - b
+			if after && offset == b+n {
+				c += insertedAfter(diffs[i+1:])
+			}
+			return c
 		}
 		return c + (offset - b)
 	}
+}
+
+// insertedAfter is how many runes current inserts right at the start of diffs.
+func insertedAfter(diffs []diffmatchpatch.Diff) int {
+	n := 0
+	for _, d := range diffs {
+		if d.Type != diffmatchpatch.DiffInsert {
+			break
+		}
+		n += utf8.RuneCountInString(d.Text)
+	}
+	return n
 }
 
 // utf16Offsets maps each rune offset in rs (0..len(rs)) to a UTF-16 offset,
