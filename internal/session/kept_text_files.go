@@ -58,10 +58,13 @@ func (h *keptTextHost) openFiles() error {
 				return errors.New("duplicate saved kept source")
 			}
 		}
-		bound, e := filewriter.OpenBound(file.File)
-		if e != nil {
-			h.closeFiles()
-			return errors.New("cannot open kept file")
+		var bound *filewriter.BoundFile
+		if h.owns(&file) {
+			var e error
+			if bound, e = filewriter.OpenBound(file.File); e != nil {
+				h.closeFiles()
+				return errors.New("cannot open kept file")
+			}
 		}
 		h.files[file.ID] = &keptTextDocument{doc: crdt.New(crdt.WithGC(false)), bound: bound, root: keptRoot(file.Path)}
 		paths[protocol.PathKey(file.Path)] = true
@@ -149,7 +152,7 @@ func (h *keptTextHost) finishWrites() error {
 	// Preflight the entire batch before exchanging any source; the saved journal
 	// permits recovery if a later write or sync fails after an earlier succeeds.
 	for _, file := range h.state.Files {
-		if e := checkKeptSource(file, h.files[file.ID].bound); e != nil {
+		if e := h.checkSourceOf(file); e != nil {
 			return e
 		}
 		if e := h.checkKeptMetaSource(file.Meta); e != nil {
@@ -158,8 +161,10 @@ func (h *keptTextHost) finishWrites() error {
 	}
 	for i := range h.state.Files {
 		file := &h.state.Files[i]
-		if e := finishKeptWrite(file, h.files[file.ID].bound); e != nil {
-			return e
+		if h.owns(file) {
+			if e := finishKeptWrite(file, h.files[file.ID].bound); e != nil {
+				return e
+			}
 		}
 		if e := saveKeptState(h.path, h.state); e != nil {
 			return e
@@ -170,6 +175,13 @@ func (h *keptTextHost) finishWrites() error {
 	}
 	return nil
 }
+func (h *keptTextHost) checkSourceOf(file keptTextFileState) error {
+	if !h.owns(&file) {
+		return nil
+	}
+	return checkKeptSource(file, h.files[file.ID].bound)
+}
+
 func checkKeptSource(file keptTextFileState, bound *filewriter.BoundFile) error {
 	text, ok := bound.Read()
 	if !ok || (text != file.Text && (file.Pending == nil || text != *file.Pending)) {

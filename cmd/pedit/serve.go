@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -37,7 +38,7 @@ share is {"cmd":"share","origins":[…],"keep":"0","relay":"<url>"} and opens a
 room: live with keep "0", otherwise kept by the relay for that long after
 unshare (Unix only). The shared event's keptUntil is when the relay ends a kept
 room, in Unix ms, or 0 if it keeps nothing (an old relay). Sharing a file that
-has a kept room, and close, are not available yet. The project
+has a kept room with another history, and close, are not available yet. The project
 is found as for pedit <file>, without creating a configuration.
 unshare ends a live room and leaves a kept one kept. A bad command is
 answered with an error event and does not end pedit. Stream
@@ -210,6 +211,10 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		OnError:        func(err error) { fmt.Fprintln(stderr, "pedit:", err) },
 		OnWritten:      func(n int) { st.Event("saved", map[string]any{"bytes": n}) },
 		OnExternalSave: func() { st.Event("external_save", map[string]any{}) },
+	}
+	if runtime.GOOS != "windows" {
+		// Kept rooms need Unix file permissions.
+		so.RecordFor = serveRecordFor
 	}
 	if opts.root != "" {
 		root, err := os.OpenRoot(opts.root)

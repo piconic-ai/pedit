@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -42,7 +44,10 @@ func newShareEnv(t *testing.T) *shareEnv {
 	rooms := &shareRooms
 	e.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(map[string]string{"id": fmt.Sprintf("%022d", rooms.Add(1)), "hostToken": "host-token"})
+		// A room's id is the digest of its host token: a record is checked by it.
+		token := fmt.Sprintf("host-token-%d", rooms.Add(1))
+		digest := sha256.Sum256([]byte(token))
+		_ = json.NewEncoder(w).Encode(map[string]string{"id": base64.RawURLEncoding.EncodeToString(digest[:])[:22], "hostToken": token})
 	}))
 	t.Cleanup(e.server.Close)
 	serveDial = e.relay.Dial

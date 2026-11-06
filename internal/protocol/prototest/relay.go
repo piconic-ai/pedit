@@ -3,9 +3,11 @@ package prototest
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -120,8 +122,28 @@ func (r *Relay) Dial(_ context.Context, url string, header http.Header) (protoco
 		}
 		c.inbox = append(c.inbox, protocol.EncodeLogEnd(uint64(len(r.log))))
 	}
+	if r.kept && c.isHost && c.keeps {
+		r.hostReturns(c, header.Get(protocol.AfterHeader))
+	}
 	r.conns[c] = true
 	return c, nil
+}
+
+// hostReturns replays the log after the last entry the host holds, as the
+// relay does for a host that comes back to a kept room, and has the room live
+// again: guests are told, and their entries are relayed. The log is not cut by
+// the host's checkpoint, which is harmless: a guest that joins applies entries
+// the snapshot holds again. Called with r.mu held.
+func (r *Relay) hostReturns(c *Conn, after string) {
+	held, _ := strconv.ParseUint(after, 10, 64)
+	for i, entry := range r.log {
+		if id := uint64(i + 1); id > held {
+			c.inbox = append(c.inbox, protocol.EncodeLogged(id, entry))
+		}
+	}
+	c.inbox = append(c.inbox, protocol.EncodeLogEnd(uint64(len(r.log))))
+	r.kept = false
+	r.signalGuests(protocol.HostBack)
 }
 
 // Limited counts the connections closed for going over Bytes.
@@ -353,7 +375,12 @@ func (c *Conn) Write(_ context.Context, data []byte) error {
 		case c.isHost && data[0] == protocol.KindSnapshot:
 			r.snapshot = append([]byte{}, data[1:]...)
 			return nil
-		case c.isHost && data[0] == protocol.KindCheckpoint:
+		case c.isHost && data[0] == protocol.KindCheckpoint && len(data) > 8:
+			r.snapshot = append([]byte{}, data[9:]...)
+			c.mu.Lock()
+			c.signals = append(c.signals, protocol.Signal(fmt.Sprintf("checkpoint %d %d", binary.BigEndian.Uint64(data[1:9]), len(r.log))))
+			c.mu.Unlock()
+			c.signal()
 			return nil
 		case !c.isHost && data[0] == protocol.KindEntry && r.kept:
 			r.log = append(r.log, append([]byte{}, data[1:]...))

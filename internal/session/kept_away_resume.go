@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/piconic-ai/pedit/internal/protocol"
+	"github.com/reearth/ygo/crdt"
 )
 
 // resumed is a kept room after the host took in what was written while it was
@@ -23,6 +24,9 @@ type resumed struct {
 	// late are the entries that came in between the replay and the checkpoint.
 	late [][]byte
 	keep int64
+	// merged is file 0's doc after the source's state and the log went in, for
+	// a room shared from a source, which owns that file.
+	merged []byte
 }
 
 func (r *resumed) roomInfo() *room { return &room{ID: r.roomID, HostToken: r.state.HostToken} }
@@ -31,6 +35,9 @@ func (r *resumed) roomInfo() *room { return &room{ID: r.roomID, HostToken: r.sta
 // or nil if there is no kept room being taken in (r is nil) or no such file.
 func (r *resumed) stateOf(path string) []byte {
 	if f := r.file(path); f != nil {
+		if f.ID == 0 && r.merged != nil {
+			return r.merged
+		}
 		return f.State
 	}
 	return nil
@@ -182,7 +189,7 @@ const resumeStep = 30 * time.Second
 // files while the host was away, connects as the host, applies the replayed log, writes the files, and checkpoints, which has the
 // relay drop its log. It sets opts to share the record's files.
 func resumeAway(ctx context.Context, opts *Options) (*resumed, error) {
-	h, err := openAway(KeptTextOptions{Project: opts.Project, Resume: opts.Resume, OnSkipped: opts.OnSkipped, OnImageError: opts.OnImageError})
+	h, err := openAway(KeptTextOptions{Project: opts.Project, Resume: opts.Resume, OnSkipped: opts.OnSkipped, OnImageError: opts.OnImageError, Source: opts.Source, Generation: opts.Generation})
 	if err != nil {
 		return nil, err
 	}
@@ -199,6 +206,9 @@ func resumeAway(ctx context.Context, opts *Options) (*resumed, error) {
 		return nil, err
 	}
 	r.state = h.state
+	if opts.Source != nil {
+		r.merged = crdt.EncodeStateAsUpdateV1(h.files[0].doc, nil)
+	}
 	opts.File, opts.Server = h.state.Files[0].File, h.state.Origin
 	opts.More = nil
 	for _, file := range h.state.Files[1:] {
@@ -216,6 +226,16 @@ func openAway(opts KeptTextOptions) (*keptTextHost, error) {
 	}
 	if !h.state.Socket {
 		return nil, errors.New("this room was kept by an older version of pedit and can no longer be resumed")
+	}
+	if opts.Source != nil {
+		// The session does not trust its caller to have compared the histories.
+		if opts.Generation == "" || h.state.Generation != opts.Generation {
+			return nil, errors.New("the kept room has another history than the source's document")
+		}
+		if len(h.state.Files) != 1 || isCanvas(h.state.Files[0].Path) {
+			return nil, errors.New("a room shared from a source shares one text file")
+		}
+		h.source = opts.Source
 	}
 	if err := h.openFiles(); err != nil {
 		return nil, err

@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"os"
 
 	"github.com/piconic-ai/pedit/internal/attach"
 	"github.com/piconic-ai/pedit/internal/protocol"
@@ -36,7 +37,7 @@ func (h *keptTextHost) saveImages(ctx context.Context) error {
 	for _, file := range h.state.Files {
 		// Through the directory the text is written in, which stays the one
 		// opened at the start even if its path is later swapped for a link.
-		images := attach.New(attach.Options{File: file.File, Root: h.files[file.ID].bound.Dir(), Server: h.state.Origin, Room: h.room, Keys: h.blobKeys, HTTPClient: h.imageClient})
+		images := attach.New(attach.Options{File: file.File, Root: h.files[file.ID].imageRoot(), Server: h.state.Origin, Room: h.room, Keys: h.blobKeys, HTTPClient: h.imageClient})
 		_, errs := images.Restore(ctx, h.files[file.ID].render(""))
 		images.Close()
 		if ctx.Err() != nil {
@@ -49,6 +50,10 @@ func (h *keptTextHost) saveImages(ctx context.Context) error {
 	}
 	return ctx.Err()
 }
+
+// imageRoot is the directory the file was opened in, or nil for a file the
+// host does not own, whose images then open their directory themselves.
+func (h *keptTextDocument) imageRoot() *os.Root { return boundDir(h.bound) }
 
 // reportImage tells of an image that could not be saved, once.
 func (h *keptTextHost) reportImage(path string, err error) {

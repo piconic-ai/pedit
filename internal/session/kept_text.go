@@ -41,6 +41,10 @@ type KeptTextOptions struct {
 	OnImageError func(path string, err error)
 	// Dial connects to the relay, to take in a live room (kept_away_resume.go).
 	Dial protocol.Dialer
+	// Source and Generation are those of a room shared from a source (see
+	// Options): the host then leaves file 0 to the source.
+	Source     Source
+	Generation string
 }
 type keptTextState struct {
 	Project, Origin, Fragment, HostToken string
@@ -120,7 +124,13 @@ type keptTextHost struct {
 	onImageError func(path string, err error)
 	imageErrors  map[string]bool
 	imagesFailed bool // some image could not be saved at the last try
+	// source, when set, owns file 0: the host never reads, checks or writes
+	// it, and takes the source's state in instead of a text diff.
+	source Source
 }
+
+// owns tells whether the host reads and writes the file itself.
+func (h *keptTextHost) owns(file *keptTextFileState) bool { return h.source == nil || file.ID != 0 }
 
 // CloseKept takes in the edits of a room kept by the relay, writes them to the
 // files, and ends the room, which removes its link and its record. Source
@@ -222,6 +232,12 @@ func (h *keptTextHost) restore() error {
 			}
 		}
 	}
+	if h.source != nil {
+		// One history: this is a merge, and the log comes on top of it later.
+		if d := h.files[0]; d.applyUpdate(h.source.State()) != nil || !completeKeptText(d.doc) {
+			return errors.New("invalid source document")
+		}
+	}
 	h.followComments()
 	if e := h.mergeLocalEdits(); e != nil {
 		return e
@@ -244,7 +260,7 @@ func (h *keptTextHost) mergeLocalEdits() error {
 		file := &h.state.Files[i]
 		// With a write pending, an edit may have been made before or after it
 		// landed: the base is ambiguous, so finishWrites refuses the file.
-		if file.Pending != nil || isCanvas(file.Path) {
+		if file.Pending != nil || isCanvas(file.Path) || !h.owns(file) {
 			continue
 		}
 		onDisk, ok := h.files[file.ID].bound.Read()
@@ -292,12 +308,13 @@ func (h *keptTextHost) persist(ctx context.Context) ([]byte, error) {
 	}
 	for i := range h.state.Files {
 		file := &h.state.Files[i]
-		doc := h.files[file.ID].doc
-		next := h.files[file.ID].render(file.Text)
-		if !utf8.ValidString(next) {
-			return nil, errors.New("invalid kept UTF-8 text")
+		if h.owns(file) {
+			next := h.files[file.ID].render(file.Text)
+			if !utf8.ValidString(next) {
+				return nil, errors.New("invalid kept UTF-8 text")
+			}
+			file.State, file.Pending = crdt.EncodeStateAsUpdateV1(h.files[file.ID].doc, nil), &next
 		}
-		file.State, file.Pending = crdt.EncodeStateAsUpdateV1(doc, nil), &next
 		if e := h.syncMeta(file); e != nil {
 			return nil, e
 		}
@@ -741,6 +758,13 @@ type KeptTextRecord struct {
 	Paths []string // display paths of the shared files
 	Files []string // their absolute paths on disk
 	Until int64    // relay deadline in Unix ms; 0 if unknown
+	// Generation and Origins are those of a room shared from pedit serve; a
+	// record of pedit <file> has neither. State and Text are the first file's
+	// document and the text it was last known to match.
+	Generation string
+	Origins    []string
+	State      []byte
+	Text       string
 }
 
 // ListKeptText returns the resume records of project, soonest deadline first.
@@ -763,7 +787,10 @@ func ListKeptText(project string) ([]KeptTextRecord, error) {
 		if !keptTextRoomID.MatchString(room) || readKeptState(path, &s) != nil || !s.Initialized || !s.Socket {
 			continue
 		}
-		r := KeptTextRecord{Room: room, Until: s.Until}
+		r := KeptTextRecord{Room: room, Until: s.Until, Generation: s.Generation, Origins: s.Origins}
+		if len(s.Files) > 0 {
+			r.State, r.Text = s.Files[0].State, s.Files[0].Text
+		}
 		for _, f := range s.Files {
 			r.Paths = append(r.Paths, f.Path)
 			r.Files = append(r.Files, f.File)

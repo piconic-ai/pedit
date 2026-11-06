@@ -38,20 +38,26 @@ func checkSource(opts *Options) error {
 	switch {
 	case isCanvas(opts.File):
 		return errors.New("only text files can be shared from a source, not a canvas")
-	case opts.Resume != "":
-		return errors.New("a room shared from a source cannot be resumed yet")
+	case opts.Resume != "" && opts.Generation == "":
+		return errors.New("a room shared from a source resumes only with the generation of its document")
 	case len(opts.More) > 0:
 		return errors.New("a room shared from a source shares one file")
 	}
 	return nil
 }
 
-// newSourceContent builds the session's doc from the source's state. The file
-// is read once, only for its line ending, so render stays right for whoever
-// renders it; the session never writes the file.
-func newSourceContent(doc *crdt.Doc, file string, state []byte) (*textContent, error) {
-	if err := crdt.ApplyUpdateV1(doc, state, nil); err != nil {
-		return nil, err
+// newSourceContent builds the session's doc from the source's state, and from
+// the state of a kept room taken in again, if any: both are one history, so
+// the doc is their merge. The file is read once, only for its line ending, so
+// render stays right for whoever renders it; the session never writes the file.
+func newSourceContent(doc *crdt.Doc, file string, state, kept []byte) (*textContent, error) {
+	for _, u := range [][]byte{kept, state} {
+		if len(u) == 0 {
+			continue
+		}
+		if err := crdt.ApplyUpdateV1(doc, u, nil); err != nil {
+			return nil, err
+		}
 	}
 	onDisk, _ := filewriter.ReadFile(file)
 	return &textContent{doc: doc, text: doc.GetText("content"), crlf: lineend.IsCRLF(onDisk)}, nil
@@ -131,9 +137,15 @@ func (s *Session) Fragments() (room, edit, comment, read string) {
 // for a session that owns it, the source's state for one that does not.
 func openContent(opts Options, res *resumed, doc *crdt.Doc) (*filewriter.BoundFile, string, content, error) {
 	if opts.Source != nil {
-		c, err := newSourceContent(doc, opts.File, opts.Source.State())
+		c, err := newSourceContent(doc, opts.File, opts.Source.State(), res.stateOf(opts.File))
 		if err != nil {
 			return nil, "", nil, err
+		}
+		if res != nil {
+			// The source takes the merge, which for one history is harmless.
+			if err := opts.Source.Apply(crdt.EncodeStateAsUpdateV1(doc, nil)); err != nil {
+				return nil, "", nil, err
+			}
 		}
 		return nil, lineend.FromDoc(c.text.ToString(), c.crlf), c, nil
 	}
