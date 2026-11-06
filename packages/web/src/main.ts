@@ -1,11 +1,8 @@
 import { render } from '@barefootjs/client/runtime'
 import { markdown } from '@codemirror/lang-markdown'
-import { Compartment, EditorState, type Extension, Prec } from '@codemirror/state'
-import { EditorView, keymap } from '@codemirror/view'
-import { type FileEntry, isFinalStatus, type RoomStatus } from '@pedit/protocol'
-import { basicSetup } from 'codemirror'
-import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next'
-import * as Y from 'yjs'
+import { Compartment, EditorState, type Extension } from '@codemirror/state'
+import { EditorView } from '@codemirror/view'
+import type { FileEntry } from '@pedit/protocol'
 import { AlwaysLoad, followOtherTabs } from './alwaysload.ts'
 import {
   type Appearance,
@@ -17,7 +14,6 @@ import {
 } from './appearance.ts'
 import { BoardView, setCanvasStatus } from './board.ts'
 import { nodeText, read as readCanvas, toJSON } from './canvas.ts'
-import { commentMarks } from './core/commentmarks.ts'
 import {
   CommentsPanelState,
   type CommentTarget,
@@ -25,13 +21,12 @@ import {
   loadCommentsOpen,
   type ShownThread,
   saveCommentsOpen,
-  textTarget,
 } from './core/comments.ts'
 import { copyText } from './core/copy.ts'
+import { type EditorExtras, mountTextEditor } from './core/editor.ts'
 import { FileSet, type FileView, type OpenFile } from './core/files.ts'
 import { ContextMenu, isMac } from './core/menu.ts'
 import { openRoom, type Room, RoomOpenError } from './core/open-room.ts'
-import { imagePaste, textAnchor } from './core/paste.ts'
 import { Store } from './core/store.ts'
 import { delimiterFor } from './csv.ts'
 import { avatarFor, fetchIdentity, loadName, saveName } from './identity.ts'
@@ -59,7 +54,6 @@ import './components/Header.tsx'
 import './components/Layout.tsx'
 import './components/Notice.tsx'
 import type { LayoutParts } from './components/Layout.tsx'
-import { lockedUndo } from './core/lockedundo.ts'
 import './style.css'
 
 const DARK_QUERY = '(prefers-color-scheme: dark)'
@@ -120,8 +114,6 @@ async function joinRoom(
   const {
     keys,
     writesFile,
-    writesComments,
-    doc,
     text,
     awareness,
     client,
@@ -139,24 +131,19 @@ async function joinRoom(
     openCounts,
     editLocked,
     fileLocked,
-    commentsLocked,
     noImages,
   } = room
   const roomStatus = room.status
   // The room's files, each with its comments (#121) and the views below. A
   // new comment goes on what the view on screen says, else the editor's selection.
-  const selection = new Store({ from: 0, to: 0 })
   const files = new FileSet(room, {
     name: me.name,
-    textTarget: () => textTarget(selection.get()),
-    onStatus: (s, wasLocked) => onStatus(s, wasLocked),
     onManifest: (known) => onManifest(known),
   })
-  const { comments, threads: threadsShown, focus: commentFocus, list: commentList } = files
+  const { comments, focus: commentFocus, list: commentList } = files
   const { commentable } = files
   const commentTarget = files.target
   const shown = () => files.shown.get()
-  selection.subscribe(() => files.aim())
   // A narrow screen starts with the panel folded, over the text; a wide one
   // as the reader left it, and keeps what the reader chooses.
   const panel = new CommentsPanelState(
@@ -200,59 +187,31 @@ async function joinRoom(
   // The header is drawn once the editor exists, since the settings act on it.
 
   const vimMode = new Compartment()
-  const editable = new Compartment()
   const language = new Compartment()
   const themeMode = new Compartment()
   const wrap = new Compartment()
   const fontMode = new Compartment()
   // Reused so switching back to Markdown does not reparse the document.
   const markdownSupport = markdown()
-  const readOnly = [EditorState.readOnly.of(true), EditorView.editable.of(false)]
   // One instance for every editor on the page: readerTheme() alternates.
   const reader = readerTheme()
-  // File 0's (on screen until a switch): its table and the vim undo use the same one.
-  const undoManager = files.shown.get().undo
-  // The editor's extensions for a file's text. Switching files keeps the
-  // settings: each compartment takes what it holds in `from`.
-  const editorExtensions = (
-    fileId: number,
-    fileText: Y.Text,
-    undo: Y.UndoManager,
-    from?: EditorState,
-  ): Extension[] => {
+  // The page's part of a file's editor. Switching files keeps the settings:
+  // each compartment takes what it holds in `from`.
+  const pageExtras = (_file: OpenFile, from?: EditorState): EditorExtras => {
     const held = (c: Compartment, initial: Extension) => (from && c.get(from)) ?? initial
-    return [
+    return {
       // The Vim keymap must see keys before basicSetup's.
-      vimMode.of(held(vimMode, [])),
-      basicSetup,
-      // Undo only this browser's edits, not everyone's.
-      Prec.high(keymap.of(lockedUndo(yUndoManagerKeymap, fileLocked))),
-      language.of(held(language, markdownSupport)),
-      themeMode.of(held(themeMode, theme.extension)),
-      fontMode.of(held(fontMode, reader)),
-      wrap.of(held(wrap, lineWrapping(appearance.wrap))),
-      editable.of(held(editable, writesFile ? [] : readOnly)),
-      yCollab(fileText, awareness, { undoManager: undo }),
-      commentMarks(threadsShown, commentFocus),
-      EditorView.updateListener.of((u) => {
-        const s = u.state.selection.main
-        const was = selection.get()
-        if (s.from !== was.from || s.to !== was.to) selection.set({ from: s.from, to: s.to })
-      }),
-      imagePaste({
-        blocked: noImages,
-        // To the file it was added to, and into it, though another
-        // file may be on screen by then.
-        upload: (file) => attachments.upload(file, fileId),
-        anchor: (pos) => textAnchor(fileText, pos),
-        onError: (message) => notices.show(message),
-      }),
-    ]
+      before: [vimMode.of(held(vimMode, []))],
+      after: [
+        language.of(held(language, markdownSupport)),
+        themeMode.of(held(themeMode, theme.extension)),
+        fontMode.of(held(fontMode, reader)),
+        wrap.of(held(wrap, lineWrapping(appearance.wrap))),
+      ],
+    }
   }
-  const editor = new EditorView({
-    parent: source,
-    extensions: editorExtensions(0, text, undoManager),
-  })
+  const textEditor = mountTextEditor({ room, files, parent: source, extra: pageExtras })
+  const { view: editor } = textEditor
 
   const followEditor = () => {
     if (main.dataset.view === 'split') preview.follow(editor)
@@ -450,19 +409,6 @@ async function joinRoom(
     },
   })
 
-  // The editor and the tables follow the room's status, once the room has
-  // set the stores: nobody edits while the host is away and nothing keeps the
-  // edits, and once the room has ended, for good.
-  const onStatus = (s: RoomStatus, wasLocked: boolean) => {
-    if (isFinalStatus(s)) {
-      editor.dispatch({ effects: editable.reconfigure(readOnly) })
-    } else if (writesFile) {
-      const away = editLocked()
-      if (away !== wasLocked)
-        editor.dispatch({ effects: editable.reconfigure(away ? readOnly : []) })
-    }
-  }
-
   // Markdown until the host tells us the file name; other languages load lazily.
   let languageFor: string | undefined
   const applyLanguage = async (fileName: string, canvas: boolean) => {
@@ -506,14 +452,7 @@ async function joinRoom(
     const entry = files.switchTo(id)
     if (!entry) return
     const f = shown()
-    editor.setState(
-      EditorState.create({
-        doc: f.text.toString(),
-        extensions: editorExtensions(f.id, f.text, f.undo, editor.state),
-      }),
-    )
-    // setState runs no update listener: the selection is the new file's.
-    selection.set({ from: 0, to: 0 })
+    textEditor.setFile(f)
     preview.setText(f.text)
     table.replaceChildren(tableOf(f).element)
     canvas.replaceChildren(boardOf(f).element)

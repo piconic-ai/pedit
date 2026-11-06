@@ -60,11 +60,17 @@ export interface OpenFile {
 
 export type FileViewFactory = (file: OpenFile) => FileView
 
+/** What the text editor gives the set (see `mountTextEditor`). */
+export interface EditorHooks {
+  textTarget(): CommentTarget | null
+  onStatus(status: RoomStatus, wasLocked: boolean): void
+}
+
 export interface FileSetOptions {
   /** The name comments are signed with when awareness does not say. */
   name: string
-  /** What a new comment goes on when no view says: the editor's selection. */
-  textTarget: () => CommentTarget | null
+  /** What a new comment goes on when no view says: the editor's selection (or `attachEditor`). */
+  textTarget?: () => CommentTarget | null
   /** After the files have followed the room's status. */
   onStatus?(status: RoomStatus, wasLocked: boolean): void
   /** After the files have followed a list of files; `known` is the list. */
@@ -95,6 +101,7 @@ export class FileSet {
   readonly #opts: FileSetOptions
   readonly #opened = new Map<number, OpenFile>()
   readonly #factories: FileViewFactory[] = []
+  #editor: EditorHooks | undefined
   #stopThreads = () => {}
   #disposed = false
   #started = false
@@ -108,6 +115,7 @@ export class FileSet {
     followFocus(this.threads, this.focus, this.list)
     room.hooks.status = (s, wasLocked) => {
       for (const f of this.#opened.values()) this.#status(f, s)
+      this.#editor?.onStatus(s, wasLocked)
       opts.onStatus?.(s, wasLocked)
     }
     room.hooks.manifest = (known) => {
@@ -178,6 +186,14 @@ export class FileSet {
     return entry
   }
 
+  /** Lets the text editor answer for the text target and follow the room's status; returns how to let go. */
+  attachEditor(hooks: EditorHooks): () => void {
+    this.#editor = hooks
+    return () => {
+      if (this.#editor === hooks) this.#editor = undefined
+    }
+  }
+
   /** Works out what a new comment would go on, when the selection, the view or the file changes. */
   aim(): void {
     let next: CommentTarget | null | undefined
@@ -187,7 +203,7 @@ export class FileSet {
     }
     // Only when no view is active: an active view with nothing selected says
     // null, and a comment must not go on the hidden editor's selection then.
-    if (next === undefined) next = this.#opts.textTarget()
+    if (next === undefined) next = (this.#editor?.textTarget ?? this.#opts.textTarget)?.() ?? null
     if (!sameTarget(next, this.target.get())) this.target.set(next)
   }
 
