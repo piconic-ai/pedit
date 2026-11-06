@@ -995,6 +995,14 @@ func (c *Client) sendAwareness(ids []uint64) {
 // send queues a frame on the current connection, or drops it while
 // disconnected: the handshake on reconnect carries everything that was missed.
 func (c *Client) send(t MessageType, payload []byte) {
+	c.sendAt(c.keys.Access, t, payload)
+}
+
+// sendAt is send for a message that speaks for access: a Client may speak
+// for a lower one than its own, since a lower link's secrets are derived
+// from its own. Below an editor a frame carries no signature, as a read
+// link's do not (signed.go).
+func (c *Client) sendAt(access Access, t MessageType, payload []byte) {
 	c.mu.Lock()
 	out := c.out
 	c.mu.Unlock()
@@ -1011,9 +1019,9 @@ func (c *Client) send(t MessageType, payload []byte) {
 	defer c.sendMu.Unlock()
 	c.sent++
 	message := EncodeMessage(t, payload)
-	if c.keys.Signer != nil {
+	if c.keys.Signer != nil && access != AccessRead {
 		header := EncodeFrame(c.guard.self, c.sent, nil)
-		message = signMessage(c.keys.Signer, c.keys.Access, header, message)
+		message = signMessage(c.keys.Signer, access, header, message)
 	}
 	frame := c.cipher.Encrypt(EncodeFrame(c.guard.self, c.sent, message))
 	if c.Version() >= 6 {

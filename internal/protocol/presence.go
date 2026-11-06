@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -181,4 +182,48 @@ func (c *Client) isHost(from Sender) bool {
 		}
 	}
 	return false
+}
+
+// ParseState reads an awareness update that holds one entry: the client
+// ID, the clock and the state, which is JSON, "null" for a removal.
+func ParseState(update []byte) (id, clock uint64, state []byte, err error) {
+	e, err := decodeAwarenessEntry(update)
+	return e.id, e.clock, e.state, err
+}
+
+// EncodeState is the awareness update of one client's state at a clock.
+func EncodeState(id, clock uint64, state []byte) []byte {
+	return awarenessEntry{id: id, clock: clock, state: state}.encode()
+}
+
+// SendStateAt sends an awareness update of one client, other than the
+// Client's own, to the room as that client's own link would: signed for an
+// editor, plain for a read link (signed.go). It is for a host that speaks
+// for pages it does not run, such as an app's. A state is never sent above
+// the access it is given, so peers take it for what it is: the frame says
+// who may have written it, never the state.
+//
+// A plain frame is neither counted nor ordered by its receivers, and a read
+// state's clock is its own: it must rise with each state, and stay within
+// maxWireClock, or peers drop it. Only AccessEdit and AccessRead are
+// allowed, and an editing Client alone may speak for an editor.
+func (c *Client) SendStateAt(update []byte, access Access) error {
+	e, err := decodeAwarenessEntry(update)
+	if err != nil {
+		return err
+	}
+	switch {
+	case e.id == c.aw.ClientID():
+		return errors.New("a state of this client is sent by the client itself")
+	case access != AccessRead && access != AccessEdit:
+		return fmt.Errorf("awareness cannot be sent at %s access", access)
+	case access > c.keys.Access:
+		return fmt.Errorf("a client with %s access cannot speak at %s access", c.keys.Access, access)
+	case access == AccessRead && e.clock > maxWireClock:
+		return errors.New("an awareness clock out of range for read access")
+	}
+	enc := encoding.NewEncoder()
+	enc.WriteVarBytes(update)
+	c.sendAt(access, MessageAwareness, enc.Bytes())
+	return nil
 }

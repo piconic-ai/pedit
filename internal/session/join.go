@@ -511,7 +511,7 @@ func (s *Session) reportPeople(onPeople func([]string)) {
 	}
 	var names []string
 	for id, st := range s.awareness.GetStates() {
-		if id == s.awareness.ClientID() {
+		if id == s.awareness.ClientID() || s.isSourcePage(id) {
 			continue
 		}
 		name := displayName(st.State)
