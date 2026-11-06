@@ -1,18 +1,56 @@
 /* What the element adds around the core's own styles: the page's layout, not the core's.
-   Theming variables come in a later change; these are the defaults the core reads. */
+   Public properties (all optional; the defaults are pedit's light theme, and its dark one
+   under prefers-color-scheme: dark, or as the scheme attribute says, unless the page sets the property):
+     --pedit-bg      -> --bg                     --pedit-fg     -> --ink
+     --pedit-muted   -> --muted                  --pedit-border -> --line
+     --pedit-accent  -> --accent                 --pedit-font   -> --sans
+     --pedit-mono    -> --mono                   --pedit-radius -> the join form and messages
+   Derived from those: --panel (a tint of bg towards fg).
+   Fixed (not themable): --warn-bg, --warn-ink (light and dark), --comment-mark.
+   The core has no spacing variable, so there is no --pedit-space. */
 :host {
   display: block;
-  --bg: #fff;
-  --ink: #1f2328;
-  --muted: #59636e;
-  --line: #d1d9e0;
-  --panel: #f6f8fa;
-  --accent: #0969da;
-  --sans: system-ui, sans-serif;
-  --mono: ui-monospace, monospace;
+  color-scheme: light dark;
+  --bg: var(--pedit-bg, #fff);
+  --ink: var(--pedit-fg, #1f2328);
+  --muted: var(--pedit-muted, #59636e);
+  --line: var(--pedit-border, #d1d9e0);
+  --accent: var(--pedit-accent, #0969da);
+  --sans: var(--pedit-font, system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif);
+  --mono: var(--pedit-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  --panel: color-mix(in srgb, var(--bg) 95%, var(--ink));
+  --radius: var(--pedit-radius, 6px);
+  --warn-bg: #f9ecdf;
+  --warn-ink: #8a4308;
+  --comment-mark: #e8a317;
   color: var(--ink);
   background: var(--bg);
   font: 14px / 1.45 var(--sans);
+}
+/* scheme="auto" (the default) follows the OS; "light" and "dark" fix it. */
+@media (prefers-color-scheme: dark) {
+  :host(:not([scheme="light"])) {
+    --bg: var(--pedit-bg, #0d1117);
+    --ink: var(--pedit-fg, #c9d1d9);
+    --muted: var(--pedit-muted, #8b949e);
+    --line: var(--pedit-border, #30363d);
+    --accent: var(--pedit-accent, #58a6ff);
+    --warn-bg: #2c221a;
+    --warn-ink: #f5c08a;
+  }
+}
+:host([scheme="light"]) {
+  color-scheme: light;
+}
+:host([scheme="dark"]) {
+  color-scheme: dark;
+  --bg: var(--pedit-bg, #0d1117);
+  --ink: var(--pedit-fg, #c9d1d9);
+  --muted: var(--pedit-muted, #8b949e);
+  --line: var(--pedit-border, #30363d);
+  --accent: var(--pedit-accent, #58a6ff);
+  --warn-bg: #2c221a;
+  --warn-ink: #f5c08a;
 }
 .review {
   display: flex;
@@ -26,6 +64,18 @@
   gap: 12px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--line);
+}
+.review-header slot[name="logo"]::slotted(*) {
+  flex: none;
+  max-height: 28px;
+}
+.review-header ::slotted([slot="title"]) {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
 }
 .review-header .file {
   flex: 1;
@@ -46,6 +96,40 @@
 .review-message,
 .review-join {
   padding: 16px;
+}
+.review-message {
+  border-radius: var(--radius);
+}
+.review-join input,
+.review-join button {
+  border-radius: var(--radius);
+}
+/* The editor follows the variables: the core editor has no theme of its own. */
+main.editor .cm-editor {
+  color: var(--ink);
+  background: var(--bg);
+}
+main.editor .cm-editor .cm-content,
+main.editor .cm-editor .cm-scroller {
+  font-family: var(--mono);
+  caret-color: var(--ink);
+}
+main.editor .cm-editor .cm-cursor,
+main.editor .cm-editor .cm-dropCursor {
+  border-left-color: var(--ink);
+}
+main.editor .cm-editor .cm-selectionBackground,
+main.editor .cm-editor .cm-content ::selection {
+  background: color-mix(in srgb, var(--accent) 28%, transparent) !important;
+}
+main.editor .cm-editor .cm-gutters {
+  color: var(--muted);
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+}
+main.editor .cm-editor .cm-activeLine,
+main.editor .cm-editor .cm-activeLineGutter {
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
 }
 .review-join {
   display: flex;
