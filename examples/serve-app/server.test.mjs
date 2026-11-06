@@ -7,6 +7,7 @@ import { createInterface } from 'node:readline'
 import { test } from 'node:test'
 import { WebSocket } from 'ws'
 
+const reviewPage = 'http://127.0.0.1:3001/'
 const skip = process.env.PEDIT ? false : 'set PEDIT to a pedit binary'
 
 function post(origin, path, headers, method = 'POST') {
@@ -32,7 +33,7 @@ test('the app serves its page, guards the routes, and bridges the file', { skip 
   })
   const app = spawn('node', ['server.mjs'], {
     stdio: ['ignore', 'pipe', 'inherit'],
-    env: { ...process.env, PORT: String(port) },
+    env: { ...process.env, PORT: String(port), REVIEW_PAGE: reviewPage },
   })
   try {
     const line = await new Promise((resolve) =>
@@ -91,7 +92,10 @@ test('the app serves its page, guards the routes, and bridges the file', { skip 
       const result = await shared.json()
       assert.equal(shared.status, 200, result.error)
       assert.equal(result.type, 'shared')
-      assert.ok(result.links.edit.startsWith(`${relay}/r/`), result.links.edit)
+      // REVIEW_PAGE is set: the links open the review page, with the link after the '#'.
+      assert.ok(result.links.edit.startsWith(`${reviewPage}#`), result.links.edit)
+      assert.ok(result.links.read.startsWith(`${reviewPage}#`), result.links.read)
+      assert.ok(!result.links.edit.includes(relay))
       // No page has opened the file yet, and the stream still hears of the share and its end.
       let s = await nextState()
       while (!s.shared) s = await nextState()

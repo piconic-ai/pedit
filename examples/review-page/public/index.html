@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Acme review</title>
+  <style>
+    body { margin: 0; }
+    /* Theming: any --pedit-* property on the element or an ancestor. */
+    pedit-review {
+      --pedit-accent: #c026d3;
+      --pedit-font: system-ui, sans-serif;
+      --pedit-radius: 2px;
+    }
+  </style>
+  <!-- The only script on the page: the element itself, from this origin. -->
+  <script type="module" src="/assets/pedit-review.js"></script>
+</head>
+<body>
+  <!-- server.mjs replaces the relay's placeholder at start. -->
+  <pedit-review relay="__PEDIT_RELAY__">
+    <svg slot="logo" width="20" height="20" viewBox="0 0 20 20" role="img" aria-label="Acme">
+      <circle cx="10" cy="10" r="9" fill="#c026d3" />
+    </svg>
+    <span slot="title">Acme review</span>
+  </pedit-review>
+</body>
+</html>

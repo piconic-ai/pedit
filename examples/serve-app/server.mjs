@@ -1,6 +1,7 @@
 // Usage: npm run build && node server.mjs
 // PEDIT=/path/to/pedit if pedit is not on the PATH; PORT to change the port (default 3000);
-// PEDIT_RELAY for a relay other than https://edit.piconic.ai (e.g. http://127.0.0.1:8787).
+// PEDIT_RELAY for a relay other than https://edit.piconic.ai (e.g. http://127.0.0.1:8787);
+// REVIEW_PAGE (e.g. http://127.0.0.1:3001/) to share to a page that holds <pedit-review>.
 import { mkdir, realpath, stat, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { serve } from '@hono/node-server'
@@ -23,10 +24,15 @@ await stat(`${root}/demo.md`).catch(() => writeFile(`${root}/demo.md`, '# Hello\
 // Events name the file by its real path, also when no page has opened it yet.
 const file = await realpath(`${root}/demo.md`)
 
-// Reviewers open the relay's own editor until a review component exists. The sample always passes
-// this relay to share(), so the links and these URLs agree even if the project config sets another.
+// Reviewers open the review page (REVIEW_PAGE) when it is set, else the relay's own editor. The
+// sample always passes this relay to share(), so the links and these URLs agree even if the
+// project config sets another.
 const relay = (process.env.PEDIT_RELAY ?? 'https://edit.piconic.ai').replace(/\/+$/, '')
+const reviewPage = process.env.REVIEW_PAGE ? new URL(process.env.REVIEW_PAGE) : null
+if (reviewPage) reviewPage.hash = ''
 const reviewerUrl = (link) => {
+  // The review page reads `#<room>.<key>` itself: the link goes after the `#` as it is.
+  if (reviewPage) return `${reviewPage.href}#${link}`
   const dot = link.indexOf('.')
   return `${relay}/r/${link.slice(0, dot)}#${link.slice(dot + 1)}`
 }
@@ -104,7 +110,13 @@ app.use('/share/*', guardShare)
 app.post('/share', (c) =>
   answer(c, async () => {
     const { keep, choice } = await c.req.json().catch(() => ({}))
-    const r = await routes.share(file, { relay, keep, choice })
+    const r = await routes.share(file, {
+      relay,
+      keep,
+      choice,
+      // The relay admits only these page origins to the room.
+      ...(reviewPage && { origins: [reviewPage.origin] }),
+    })
     return c.json(r.type === 'shared' ? { ...r, links: reviewerLinks(r.links) } : r)
   }),
 )
