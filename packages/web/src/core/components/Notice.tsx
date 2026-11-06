@@ -1,6 +1,6 @@
 'use client'
 
-import type { Readable } from '../core/store.ts'
+import type { Readable } from '../store.ts'
 
 export interface NoticeProps {
   message: Readable<string | null>

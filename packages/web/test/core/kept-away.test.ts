@@ -2,7 +2,7 @@
 import { render } from '@barefootjs/client/runtime'
 import type { RoomStatus } from '@pedit/protocol'
 import { describe, expect, it } from 'vitest'
-import '../../src/components/EndedBanner.tsx'
+import '../../src/core/components/EndedBanner.tsx'
 import '../../src/components/RoomStatusIndicator.tsx'
 import { whyNoImages } from '../../src/core/attachments.ts'
 import {

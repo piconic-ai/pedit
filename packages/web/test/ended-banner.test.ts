@@ -2,7 +2,7 @@
 import { render } from '@barefootjs/client/runtime'
 import type { RoomStatus } from '@pedit/protocol'
 import { describe, expect, it, vi } from 'vitest'
-import '../src/components/EndedBanner.tsx'
+import '../src/core/components/EndedBanner.tsx'
 import { Store } from '../src/core/store.ts'
 
 function mount(props: Record<string, unknown> = {}) {

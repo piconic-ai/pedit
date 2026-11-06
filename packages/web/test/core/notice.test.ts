@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { render } from '@barefootjs/client/runtime'
 import { describe, expect, it, vi } from 'vitest'
-import '../../src/components/Notice.tsx'
+import '../../src/core/components/Notice.tsx'
 import { NoticeBoard } from '../../src/core/notice.ts'
 import { Store } from '../../src/core/store.ts'
 
