@@ -14,18 +14,14 @@ import {
 } from './appearance.ts'
 import { BoardView, setCanvasStatus } from './board.ts'
 import { nodeText, read as readCanvas, toJSON } from './canvas.ts'
-import {
-  CommentsPanelState,
-  type CommentTarget,
-  isCommentKey,
-  loadCommentsOpen,
-  type ShownThread,
-  saveCommentsOpen,
-} from './core/comments.ts'
+import { mountBanner, mountNotice } from './core/banner.ts'
+import type { CommentTarget, ShownThread } from './core/comments.ts'
+import { mountComments } from './core/comments-mount.ts'
 import { copyText } from './core/copy.ts'
 import { type EditorExtras, mountTextEditor } from './core/editor.ts'
 import { FileSet, type FileView, type OpenFile } from './core/files.ts'
-import { ContextMenu, isMac } from './core/menu.ts'
+import { guardDrops } from './core/guard.ts'
+import { ContextMenu } from './core/menu.ts'
 import { openRoom, type Room, RoomOpenError } from './core/open-room.ts'
 import { Store } from './core/store.ts'
 import { delimiterFor } from './csv.ts'
@@ -47,12 +43,9 @@ import { NARROW_QUERY, type ViewMode, ViewSwitch } from './view.ts'
 import { trackViewport } from './viewport.ts'
 import { loadVimMode, VimToggle, vimExtension } from './vim.ts'
 import './components/Cards.tsx'
-import './core/components/CommentsPanel.tsx'
-import './components/EndedBanner.tsx'
 import './components/FileTabs.tsx'
 import './components/Header.tsx'
 import './components/Layout.tsx'
-import './components/Notice.tsx'
 import type { LayoutParts } from './components/Layout.tsx'
 import './style.css'
 
@@ -122,57 +115,32 @@ async function joinRoom(
     away,
     fileName,
     people,
-    authorColors,
-    timeLimit,
     files: roomFiles,
     current,
-    locked,
     metaOf,
     openCounts,
     editLocked,
     fileLocked,
     noImages,
   } = room
-  const roomStatus = room.status
   // The room's files, each with its comments (#121) and the views below. A
   // new comment goes on what the view on screen says, else the editor's selection.
   const files = new FileSet(room, {
     name: me.name,
     onManifest: (known) => onManifest(known),
   })
-  const { comments, focus: commentFocus, list: commentList } = files
   const { commentable } = files
-  const commentTarget = files.target
   const shown = () => files.shown.get()
-  // A narrow screen starts with the panel folded, over the text; a wide one
-  // as the reader left it, and keeps what the reader chooses.
-  const panel = new CommentsPanelState(
-    commentFocus,
-    !matchMedia(NARROW_QUERY).matches && (loadCommentsOpen(defaultStore()) ?? true),
-    (open) => {
-      if (!isNarrow.get()) saveCommentsOpen(open, defaultStore())
-    },
-  )
   // The room closes as soon as the host leaves (or was never there).
   let parts: LayoutParts | undefined
   render(app, 'Layout', { onReady: (p: LayoutParts) => (parts = p) })
   if (!parts) throw new Error('the room page did not lay out')
   const { header, banner, main, source, table, canvas } = parts
-  render(banner, 'EndedBanner', {
-    status: roomStatus,
-    timeLimit,
+  mountBanner(banner, room, {
     text: () => (shown().canvas ? toJSON(readCanvas(shown().doc)) : shown().text.toString()),
-    keptUntil: away.until,
-    keeps: away.keeps,
-    skipped: away.skipped,
-    hostClosed: away.hostClosed,
     onReconnect: () => location.reload(),
   })
-  render(parts.notice, 'Notice', {
-    message: notices.message,
-    uploading: attachments.uploading,
-    onDismiss: () => notices.dismiss(),
-  })
+  mountNotice(parts.notice, room)
   const narrow = matchMedia(NARROW_QUERY)
   const isNarrow = new Store(narrow.matches)
   // Filled in below; the switch applies its first mode before the editor exists.
@@ -375,6 +343,29 @@ async function joinRoom(
     ...(me.account && { account: me.account }),
   }
   if (loadVimMode()) settings.setVim(true)
+  // A narrow screen starts with the panel folded, over the text; a wide one
+  // as the reader left it, and keeps what the reader chooses.
+  const commentsPanel = mountComments({
+    room,
+    files,
+    editor,
+    parent: parts.comments,
+    keyTarget: document,
+    narrow: isNarrow,
+    prefs: defaultStore(),
+    // The table and the board show a thread on their own cell or node.
+    onShow: (t) => {
+      if (t.cells && tableOf(shown()).active) {
+        tableOf(shown()).select(t.cells.from)
+        return true
+      }
+      if (t.node && boardOf(shown()).active) {
+        boardOf(shown()).selectNode(t.node)
+        return true
+      }
+      return false
+    },
+  })
   render(header, 'Header', {
     file: fileName,
     status: away.header,
@@ -387,8 +378,8 @@ async function joinRoom(
       files: roomFiles,
       current,
       commentable,
-      open: panel.open,
-      onToggle: () => panel.toggle(),
+      open: commentsPanel.open,
+      onToggle: () => commentsPanel.toggle(),
     },
     access: keys.access,
     info: infoLinks(location.hostname),
@@ -491,41 +482,6 @@ async function joinRoom(
     onOpen: switchTo,
     counts: openCounts.counts,
   })
-  render(parts.comments, 'CommentsPanel', {
-    comments,
-    target: commentTarget,
-    locked,
-    focus: commentFocus,
-    list: commentList,
-    colors: authorColors,
-    menu: new ContextMenu(),
-    open: panel.open,
-    // The title folds the panel on a narrow screen; on a wide one, the header's button does.
-    onToggle: () => {
-      if (isNarrow.get()) panel.toggle()
-    },
-    onShow: (t: ShownThread) => {
-      if (t.cells && tableOf(shown()).active) {
-        tableOf(shown()).select(t.cells.from)
-        return
-      }
-      if (t.node && boardOf(shown()).active) {
-        boardOf(shown()).selectNode(t.node)
-        return
-      }
-      if (t.from < 0 || t.to > editor.state.doc.length) return
-      editor.dispatch({ selection: { anchor: t.from, head: t.to }, scrollIntoView: true })
-      editor.focus()
-    },
-  })
-  // Ctrl or ⌘ with Alt and M comments on the selection, as document editors do.
-  document.addEventListener('keydown', (e) => {
-    if (!isCommentKey(e, isMac()) || !commentable.get()) return
-    e.preventDefault()
-    commentList.set('open')
-    panel.open.set(true)
-    parts?.comments.querySelector<HTMLTextAreaElement>('.comments-new textarea')?.focus()
-  })
   room.hooks.people = onPeople
   room.connect()
   // Edits the relay has not logged yet are lost if the page goes.
@@ -585,18 +541,6 @@ function sameSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
   return true
 }
 
-// A file dropped outside the editor would open in place of the page, and
-// the room's key in the URL would go with it.
-function keepDroppedFiles(): void {
-  const hasFiles = (e: DragEvent) => e.dataTransfer?.types.includes('Files') ?? false
-  window.addEventListener('dragover', (e) => {
-    if (hasFiles(e)) e.preventDefault()
-  })
-  window.addEventListener('drop', (e) => {
-    if (hasFiles(e)) e.preventDefault()
-  })
-}
-
 async function start(): Promise<void> {
   // index.html applied the stored values already; this validates and completes them.
   const prefersDark = matchMedia(DARK_QUERY).matches
@@ -630,7 +574,7 @@ async function start(): Promise<void> {
   const loaded = await theme
   // If the theme could not load, the page matches the default theme the editor falls back to.
   applyPalette(pageColors(appearance, loaded.id))
-  keepDroppedFiles()
+  guardDrops(window)
   await joinRoom(room.id, room.key, me, appearance, loaded)
 }
 
