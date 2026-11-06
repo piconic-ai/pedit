@@ -22,10 +22,14 @@ const (
 	kindData  = 2 // both: one y-websocket message
 	kindClose = 3 // app: empty; pedit: uint16 code, then a UTF-8 reason
 	kindEvent = 4 // pedit: stream 0, one JSON event
+	kindCmd   = 5 // app: stream 0, one JSON command (serve version 2)
 
 	maxStreams = 8
 	maxPayload = maxFrame
 	headerLen  = 9
+
+	// maxCommand is the most a command frame may carry.
+	maxCommand = 64 << 10
 
 	// eventWait is how long an event waits for room on stdout. A parent that
 	// stopped reading must not hold up the shutdown, which writes the file.
@@ -38,6 +42,12 @@ type Stdio struct {
 	closing chan struct{} // closes when Close begins
 	done    chan struct{} // closes when the writer has returned
 	once    sync.Once
+
+	// OnCommand gets the payload of each command frame, in order. It runs on
+	// the read loop, so it must only queue the command: the streams keep
+	// flowing while a command is handled. Set it before Serve; nil drops
+	// commands.
+	OnCommand func(payload []byte)
 }
 
 // NewStdio starts writing frames to w.
@@ -184,7 +194,9 @@ func readHeader(r io.Reader) (header, error) {
 		return h, errors.New("open frame without a role")
 	case h.kind == kindClose && h.length != 0:
 		return h, errors.New("close frame with a payload")
-	case h.kind < kindOpen || h.kind > kindClose:
+	case h.kind == kindCmd && (h.stream != 0 || h.length > maxCommand):
+		return h, errors.New("command frame off stream 0 or over the limit")
+	case h.kind < kindOpen || h.kind > kindCmd || h.kind == kindEvent:
 		return h, fmt.Errorf("unknown frame kind %d", h.kind)
 	}
 	return h, nil
@@ -216,6 +228,12 @@ func (st *Stdio) Serve(s *Server, in io.Reader) error {
 }
 
 func (sess *session) handle(h header, payload []byte) error {
+	if h.kind == kindCmd {
+		if f := sess.st.OnCommand; f != nil {
+			f(payload)
+		}
+		return nil
+	}
 	if h.kind == kindOpen {
 		return sess.openStream(h.stream, payload[0])
 	}

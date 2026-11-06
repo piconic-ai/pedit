@@ -119,7 +119,8 @@ Each direction is a sequence of frames, nothing else:
 - Stream ids are chosen by the app, start at 1 and only increase; an id is
   never reused within a child. At most 8 streams are open at once.
 - A frame from the app that breaks the format ends the child (it saves first):
-  an unknown kind, a length over 64 MiB, an `open` with an id that is not
+  an unknown kind, a length over 64 MiB, a `command` off stream 0 or over
+  64 KiB, an `open` with an id that is not
   greater than every earlier one, an eighth-plus-one open stream, or `data`
   or `close` for an id never opened.
 - `data` or `close` for a stream pedit has already closed is ignored: the app
@@ -144,7 +145,7 @@ Each direction is a sequence of frames, nothing else:
 `pedit --version --json` prints one line, for an app that has to know what it
 is talking to:
 
-    {"version":"v0.5.2","wire":7,"serve":1,"state":1}
+    {"version":"v0.5.2","wire":7,"serve":2,"state":1}
 
 - `version`: what `pedit --version` prints.
 - `wire`: the relay protocol version (`internal/protocol`).
