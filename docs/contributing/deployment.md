@@ -6,7 +6,9 @@ the [self-hosting guide](../self-hosting.md).
 Production (`edit.piconic.ai`) deploys when a tagpr release PR is merged
 (see `.github/workflows/tagpr.yml`): the merge tags the release, the workflow
 fast-forwards the `release` branch to the tag, and Cloudflare Workers Builds
-deploys `release`. Every other branch gets its own
+deploys `release`. Adding or removing a `tagpr:*` label on the release PR reruns
+tagpr (`.github/workflows/release-pr.yml`) so its title and CHANGELOG heading take
+the new version; its `version` check must pass before the PR is merged. Every other branch gets its own
 [Worker Preview](https://developers.cloudflare.com/workers/previews/) on push, at
 `https://<branch-name>-edit.<subdomain>.workers.dev`, with its own Durable Object
 namespace and its own logs under the Preview's Observability tab (Cloudflare

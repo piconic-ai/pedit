@@ -18,7 +18,7 @@
 - Add a sample review page, and share to it from the serve-app sample by @kfly8 in https://github.com/piconic-ai/pedit/pull/477
 - Publish @pedit/review with each release by @kfly8 in https://github.com/piconic-ai/pedit/pull/478
 
-## [v0.5.5](https://github.com/piconic-ai/pedit/compare/v0.5.4...v0.5.5) - 2026-11-06
+## [v0.6.0](https://github.com/piconic-ai/pedit/compare/v0.5.4...v0.6.0) - 2026-11-06
 
 ### Changes
 - Design sharing from pedit serve by @kfly8 in https://github.com/piconic-ai/pedit/pull/449
@@ -137,7 +137,7 @@
 - Count no zombie as a running process of a kept-relay group by @kfly8 in https://github.com/piconic-ai/pedit/pull/365
 - Add pedit close and pedit rooms; print Room: <id> by @kfly8 in https://github.com/piconic-ai/pedit/pull/366
 
-## [v0.1.20](https://github.com/piconic-ai/pedit/compare/v0.1.19...v0.1.20) - 2026-10-30
+## [v0.2.0](https://github.com/piconic-ai/pedit/compare/v0.1.19...v0.2.0) - 2026-10-30
 
 - chore(deps): bump the actions group with 5 updates by @dependabot[bot] in https://github.com/piconic-ai/pedit/pull/277
 - Design encrypted asynchronous rooms and canvas recovery by @kfly8 in https://github.com/piconic-ai/pedit/pull/314

@@ -1,0 +1,73 @@
+name: Release PR
+
+# tagpr runs only on push to main, so a tagpr:minor / tagpr:major label added to
+# its release PR does not change the PR title or the CHANGELOG heading by itself.
+# `refresh` reruns tagpr when such a label changes; `version` refuses a release
+# PR whose title or CHANGELOG heading does not match the version its labels
+# select, so a stale one cannot be merged.
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled, edited]
+
+permissions: {}
+
+jobs:
+  refresh:
+    if: >-
+      (github.event.action == 'labeled' || github.event.action == 'unlabeled') &&
+      startsWith(github.event.pull_request.head.ref, 'tagpr-from-') &&
+      startsWith(github.event.label.name, 'tagpr:')
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Rerun tagpr on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run tagpr.yml --ref main
+
+  version:
+    if: >-
+      startsWith(github.event.pull_request.head.ref, 'tagpr-from-') &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Check the release PR matches its labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          # Read the PR live: a rerun would otherwise see the stale event payload.
+          pr=$(gh pr view "$PR" --json title,labels,headRefName)
+          title=$(jq -r .title <<<"$pr")
+          mapfile -t labels < <(jq -r '.labels[].name' <<<"$pr")
+          head=$(jq -r .headRefName <<<"$pr")
+          latest=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1)
+          want=$(bash scripts/release-pr-version.sh "$latest" "${labels[@]}")
+          heading=$(gh api -H 'Accept: application/vnd.github.raw' \
+            "repos/$GH_REPO/contents/CHANGELOG.md?ref=$head" |
+            sed -n 's/^## \[\(v[^]]*\)\].*/\1/p' | head -n 1)
+          status=0
+          if [[ $title != "Release for v$want" ]]; then
+            echo "::error::PR title is '$title', expected 'Release for v$want' (latest tag $latest, labels: ${labels[*]})"
+            status=1
+          fi
+          if [[ $heading != "v$want" ]]; then
+            echo "::error::CHANGELOG.md's first heading is '$heading', expected 'v$want'"
+            status=1
+          fi
+          if [[ $status != 0 ]]; then
+            echo "::error::The release PR is stale. Wait for tagpr's update, or rerun the tagpr workflow, then rerun this check."
+          fi
+          exit $status
