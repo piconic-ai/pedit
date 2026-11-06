@@ -2,8 +2,8 @@
 
 A sample review page: the page an integrator serves so reviewers can open a file shared from their
 app. It is one static HTML page that holds [`<pedit-review>`](../../packages/review/README.md), with
-your branding in the header slots and a few `--pedit-*` properties. See "For integrators" in
-[docs/design/embedding.md](../../docs/design/embedding.md).
+your branding in the header slots and a few `--pedit-*` properties. The guide is
+[docs/review-page.md](../../docs/review-page.md).
 
 - `public/index.html`: the whole page. Its only script is the element, from this origin.
 - `server.mjs`: plain `node:http` on `127.0.0.1`. Every response carries `reviewCSP({ relay })`,

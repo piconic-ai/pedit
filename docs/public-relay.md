@@ -154,6 +154,11 @@ This relay runs on Workers Paid, where Workers Logs keeps logs for 7 days
 
 ## In your browser
 
+This section is about the editor at edit.piconic.ai. A room shared to an app's own review page is
+opened by that page's JavaScript, not by the relay's, so what this section says about the relay's served code
+does not cover that page. Its operator is who you trust there; see
+[your own review page](review-page.md).
+
 The editor's own code sets no cookies and loads no analytics or tracking
 scripts. The home page and `POST /api/rooms` were checked and set no cookie.
 Cloudflare inserts its Web Analytics script tag
