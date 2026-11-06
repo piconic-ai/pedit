@@ -88,9 +88,11 @@ type keptTextFileState struct {
 	// Handover is, for a room being closed into a document of another history
 	// (KeptTextOptions.Into), the text the app last received: the diff to
 	// hand it starts there, however far replay has advanced State. It is
-	// cleared once the app has saved the result. Like CommentEntries it makes
-	// an older pedit refuse the record.
-	Handover *string `json:",omitempty"`
+	// advanced only once the app has saved the result. Delivering is the text
+	// last handed to the app whose save is not confirmed (handoverBase).
+	// Like CommentEntries they make an older pedit refuse the record.
+	Handover   *string `json:",omitempty"`
+	Delivering *string `json:",omitempty"`
 	// Meta is the comments doc paired with the file, if its comments can be kept.
 	Meta *keptMetaState `json:",omitempty"`
 }
@@ -196,34 +198,52 @@ func (h *keptTextHost) handOver() error {
 func (h *keptTextHost) finishHandover() error {
 	file := &h.state.Files[0]
 	// What the owner has is saved: nothing of file 0 is pending any more.
-	file.Handover = nil
+	file.Delivering = nil
 	if file.Pending != nil {
 		file.Text, file.Pending = *file.Pending, nil
 	}
 	return saveKeptState(h.path, h.state)
 }
 
-// handOverInto gives the app the change from the text it last received to
-// next, has it saved, and only then records that it has it. A crash after the
-// save and before that record leaves the app holding next with the record
-// still naming the older base: the retry sees the app's text is next and does
-// not hand it over again (the diff is not idempotent). An app edit landing in
-// that window, between the save and the record write, is not covered.
-// When the save fails the process is alive and the app holds the edit in
-// memory, so the record moves on at once: a retry only saves again.
+// handoverBase is the one decision on where the diff for the app starts, for a
+// first try and every retry alike. Delivering is the text the app was last
+// given whose save is not confirmed. If the app holds exactly that text, the
+// delivery survived (same process, or a state that has it): the diff starts
+// there, and nothing is handed over if the room holds no more. Otherwise the
+// delivery was lost or never made, and the diff starts at Handover, the text
+// the app is known to have saved. An app edit made in the window of a failed
+// save makes the equality fail: the fallback may then apply that delivery
+// again, a duplicate and never a loss, which is the side to err on.
+func (h *keptTextHost) handoverBase(next string) (base string, skip bool) {
+	file := &h.state.Files[0]
+	if d := file.Delivering; d != nil && h.appText != nil && h.appText() == *d {
+		return *d, *d == next
+	}
+	if file.Handover != nil {
+		return *file.Handover, false
+	}
+	return h.base, false
+}
+
+// handOverInto gives the app the change from handoverBase to next, and has it
+// saved. The record names the delivery before it is made, and moves Handover
+// on only once the save has succeeded.
 func (h *keptTextHost) handOverInto(next string) error {
 	file := &h.state.Files[0]
-	if h.appText == nil || h.appText() != next {
-		h.into(h.base, next)
+	base, skip := h.handoverBase(next)
+	file.Delivering = &next
+	if err := saveKeptState(h.path, h.state); err != nil {
+		return err
 	}
-	h.base = next
+	if !skip {
+		h.into(base, next)
+	}
 	if h.saved != nil {
 		if err := h.saved(); err != nil {
-			file.Handover = &next
-			_ = saveKeptState(h.path, h.state)
 			return err
 		}
 	}
+	file.Handover = &next
 	return h.finishHandover()
 }
 
