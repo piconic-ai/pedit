@@ -32,11 +32,13 @@ cp node_modules/@pedit/review/dist/pedit-review.js public/assets/pedit-review-0.
 ```
 
 Serve the file from your own origin. Do not load it from edit.piconic.ai or a CDN. The component, `@pedit/serve` and the
-`pedit` CLI share one version number: keep them on the same one, and update them together.
+`pedit` CLI share one version number: keep them on the same one, and update them together. The
+version banner that `pedit doctor` reads (step 4) is in releases after 0.7.0.
 
 ### 2. Send the policy and the Referrer-Policy
 
-Send these as response headers (a `<meta>` tag is not enough), and put no other script on the page:
+Send these as response headers (a `<meta>` tag is not enough), and put no other script on the page.
+In a handler that returns a Fetch API `Response` (Hono, Workers, Deno, Bun):
 
 ```js
 import { reviewCSP } from '@pedit/review/csp'
@@ -75,6 +77,8 @@ in front. A resumed room keeps the origins it was opened with.
 ```sh
 pedit doctor https://cms.example.com/review
 ```
+
+`doctor` is in pedit releases after 0.7.0.
 
 It fetches the page (no cookies, no Referer; it contacts only the page's origin; the `#fragment` is dropped)
 and never opens a room. It checks:
