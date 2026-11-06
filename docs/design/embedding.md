@@ -91,42 +91,123 @@ code, and say so to your users.
 
 ### Share from `pedit serve`
 
-`pedit serve` holds the document with no room and no relay (#372). Sharing adds the
-host half of `pedit <file>` to the same process:
+`pedit serve` holds the document with no room and no relay (#372). Sharing adds
+the host half of `pedit <file>` to the same process.
 
-- A new command on the control stream: `{"cmd":"share","origins":["https://cms.example.com"],"keep":"1d"}`.
-  pedit creates the room, connects as host with the document it already holds,
-  and answers with an event: `{"event":"shared","room":"<id>","links":{"edit":…,"comment":…,"read":…},"keptUntil":…}`.
-  The links are fragments only (see "Links"); the app puts its page URL in front.
-- **Kept rooms are in v1.** `keep` works as `--keep` does (default 1 day, up to
-  the relay's cap; `0` for a live room). When the app stops pedit, or the app
-  quits, a kept room stays on the relay: reviewers keep commenting (and, with an edit link, editing)
-  through their page, and the relay holds their encrypted edits, as in
-  docs/design/rooms-away.md.
-- **Resuming.** pedit keeps the resume record it keeps for `pedit <file>` (under
-  `pedit/keep/` in the user configuration directory, `0600`). When the app starts
-  `pedit serve` on the same file again and sends `share`, pedit finds the record,
-  takes the room up, merges what reviewers wrote meanwhile with the file, and
-  answers `shared` with `"resumed": true` and the same links. The origins of a
-  resumed room are the ones it was opened with; a different list is an error.
+#### The room is one more client of serve's document
+
+- `serve.Server` stays the only owner of the document and the only writer of
+  the file. The room's session keeps a doc of its own, started from the
+  server's whole state rather than from the file's text, so both docs have one
+  history. The two exchange Yjs updates in the process, each update going to
+  the other side once and never back. One doc under two locks (the room
+  client's and the server's) would race, so they are not one doc.
+- Awareness is bridged too, so app pages and reviewers see each other's
+  cursors and presence. Each state crosses under its own client id. A state
+  leaves the other side when its own side drops it, or when the bridge closes.
+- The room's bridge is not a browser stream. It is not held to a stream's frame
+  rates, awareness caps or queue, and it does not count toward the open-stream
+  limit.
+- v1 shares text files (Markdown or plain text). `share` on a `.canvas` file
+  is an error.
+- Reviewers can paste images. They are saved beside the file, as with
+  `pedit <file>`.
+
+#### The project
+
+serve finds the project as `pedit <file>` does: it looks for the nearest
+`.pedit/config.yaml` above the file's directory, up to the Git root, and reads
+it under the same ownership checks. Unlike `pedit <file>`, it never creates
+one. Without a config file, the project is the file's directory, or the Git
+root when there is one. The project gives:
+
+- where comments live (`<project>/.pedit/meta/`), so `pedit comments` and
+  `pedit <file>` see the same comments;
+- where kept records live, so `pedit rooms` lists the rooms serve keeps and
+  `pedit close` can end them;
+- the default relay (`server`). The `relay` of the share command overrides it,
+  and without either it is `https://edit.piconic.ai`.
+
+The project is read when sharing starts. Serving alone needs no project, as
+today.
+
+#### Commands (serve version 2)
+
+The app sends commands as kind 5 frames: on stream 0, one JSON object of at
+most 64 KiB. Each is answered by events on stream 0.
+
+- `{"cmd":"share","origins":["https://cms.example.com"],"keep":"1d","relay":"…"}`
+  - pedit creates the room, connects as its host and answers
+    `{"event":"shared","room":"<id>","links":{"edit":…,"comment":…,"read":…},"keptUntil":<ms>,"resumed":false}`.
+  - A link is `<room>.<fragment>` (see "Links"); the app puts its page URL in
+    front, with `#`.
+  - `origins` are checked as the relay checks `X-Pedit-Origins`: at most 4,
+    each `https://host[:port]`, or `http://localhost:<port>` or
+    `http://127.0.0.1:<port>`. They are sent as `X-Pedit-Origins` on the
+    host's first connection.
+  - `keep` works as `--keep` does: the default is 1 day, up to the relay's cap,
+    and `0` makes a live room.
 - `{"cmd":"unshare"}` leaves the room as `Ctrl+C` does: a kept room stays until
-  its deadline, a live room ends. `{"cmd":"close"}` ends a kept room for good, as
-  `pedit close` does: it takes the edits in, saves them, and asks the relay to
-  drop everything. Stdin closing is `unshare`.
-- Events while shared: `peers` (who is there, by name and access) and
-  `room_ended` when the relay ends the room (deadline, maintenance, closed
-  elsewhere).
-- Saving, external saves and the lock are unchanged: the room is one more client
-  of the document pedit already owns.
-- This needs a control channel from the app to pedit. Today the serve framing
-  carries pedit → app events only (kind 4 on stream 0); a command kind from the
-  app is added. That is a `serve` version bump (2).
-- The relay comes from the app (`relay` in the share command, default
-  `https://edit.piconic.ai`), not from `.pedit/config.yaml`: serve does not read
-  project configuration.
+  its deadline, a live room ends. Stdin closing is `unshare`.
+- `{"cmd":"close"}` ends a kept room for good, as `pedit close` does: it takes
+  the edits in, saves them and asks the relay to drop everything. It also works
+  on a room that is kept but not shared now: pedit resumes it first.
+- Events while shared:
+  - `{"event":"peers","peers":[{"name":…,"access":"edit"|"comment"|"read"}]}`
+    whenever someone joins, leaves or renames;
+  - `{"event":"room_ended","reason":"closed"|"expired"|"maintenance"}` when
+    the relay ends the room.
+- A command that is not valid JSON, or has an unknown `cmd` or bad fields, is
+  answered `{"event":"error","cmd":…,"message":…}` and does not end the child.
+  Only a frame that breaks the frame format ends the child, as today. One share
+  at a time: `share` while shared is an error.
+- Saving, external saves and the lock are unchanged: the room is one more
+  client of the document pedit already owns.
+
+#### Kept rooms keep one history
+
+A kept room's record (the one `pedit <file>` writes) also stores serve's
+generation and the room's origins. serve's state and the record then hold the
+same history, and they must not drift apart for no reason:
+
+- On start, serve resumes its state as today. If the state cannot be used
+  (missing, too old, of another version, damaged), but a kept record for the
+  file exists and its document fits the file by the same last-written check,
+  serve resumes from the record's document and generation instead.
+- While a kept record for the file exists, serve's state does not expire by
+  age.
+
+**Resuming.** When the app sends `share` for a file that has a record, pedit
+takes the room up again. The record is found by the file's path among the
+project's records. pedit applies what reviewers wrote meanwhile to the
+document as Yjs updates (it is the same history), then answers `shared` with
+`"resumed": true` and the same links. It does not apply them as a text diff,
+which would insert the app's edits a second time. A resumed room keeps the
+origins it was opened with: a `share` with a different list is an error.
+
+**When the histories differ anyway.** This happens when both serve's state and
+the record's document are unusable, or when the file changed so that neither
+fits it. Then `share` answers with a choice instead of `shared`:
+
+    {"event":"resume_choice","room":"<id>","choices":[
+      {"choice":"room","text":<chars>,"entries":<written while away>},
+      {"choice":"app","text":<chars>},
+      {"choice":"later"}]}
+
+The app (that is, the person using it) picks one and sends
+`{"cmd":"share","choice":"room"}`, with the same other fields as before:
+
+- `room` keeps the room. The app's text is merged into the room's document as a
+  text merge, and serve adopts that document under the record's generation.
+  App pages get `gone`; reviewers' links go on working.
+- `app` takes the reviewers' edits and comments into the app's document as a
+  text merge, then ends the room as `close` does. A new `share` gives new links.
+- `later` does nothing, and the room stays until its deadline.
+
+No choice loses an edit; they differ only in whose pages reload.
 
 Like `pedit resume` and `pedit close` today, kept rooms from `pedit serve` need
-Unix file permissions for the record; on Windows `share` with a keep is refused
+Unix file permissions for the record. On Windows, `share` with a keep is refused
 until the record is ported, and live rooms work.
 
 ### Links
