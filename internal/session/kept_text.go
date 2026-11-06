@@ -54,6 +54,9 @@ type KeptTextOptions struct {
 	// Saved is called after Source or Into has the edits, before the room is
 	// ended: the owner saves its file there. An error leaves the room open.
 	Saved func() error
+	// AppText is the text the app holds now. With Into it lets a retry see
+	// that the app already has what the room holds, and not hand it over twice.
+	AppText func() string
 }
 type keptTextState struct {
 	Project, Origin, Fragment, HostToken string
@@ -144,9 +147,10 @@ type keptTextHost struct {
 	source Source
 	// into and saved are KeptTextOptions' Into and Saved; base is the text
 	// file 0 had when the host opened, or when into last got it.
-	into  func(base, next string)
-	saved func() error
-	base  string
+	into    func(base, next string)
+	saved   func() error
+	appText func() string
+	base    string
 }
 
 // owns tells whether the host reads and writes the file itself.
@@ -170,20 +174,13 @@ func (h *keptTextHost) beginHandover() error {
 // handOver gives the owner of file 0 what the room holds, and has it saved.
 func (h *keptTextHost) handOver() error {
 	doc := h.files[0].doc
-	file := &h.state.Files[0]
 	switch {
 	case h.source != nil:
 		if err := h.source.Apply(crdt.EncodeStateAsUpdateV1(doc, nil)); err != nil {
 			return err
 		}
 	case h.into != nil:
-		next := doc.GetText("content").ToString()
-		h.into(h.base, next)
-		// The app has it, saved or not: a retry only has it saved again.
-		h.base, file.Handover = next, &next
-		if err := saveKeptState(h.path, h.state); err != nil {
-			return err
-		}
+		return h.handOverInto(doc.GetText("content").ToString())
 	default:
 		return nil
 	}
@@ -192,12 +189,42 @@ func (h *keptTextHost) handOver() error {
 			return err
 		}
 	}
+	return h.finishHandover()
+}
+
+// finishHandover notes that the owner of file 0 has saved what it was given.
+func (h *keptTextHost) finishHandover() error {
+	file := &h.state.Files[0]
 	// What the owner has is saved: nothing of file 0 is pending any more.
 	file.Handover = nil
 	if file.Pending != nil {
 		file.Text, file.Pending = *file.Pending, nil
 	}
 	return saveKeptState(h.path, h.state)
+}
+
+// handOverInto gives the app the change from the text it last received to
+// next, has it saved, and only then records that it has it. A crash after the
+// save and before that record leaves the app holding next with the record
+// still naming the older base: the retry sees the app's text is next and does
+// not hand it over again (the diff is not idempotent). An app edit landing in
+// that window, between the save and the record write, is not covered.
+// When the save fails the process is alive and the app holds the edit in
+// memory, so the record moves on at once: a retry only saves again.
+func (h *keptTextHost) handOverInto(next string) error {
+	file := &h.state.Files[0]
+	if h.appText == nil || h.appText() != next {
+		h.into(h.base, next)
+	}
+	h.base = next
+	if h.saved != nil {
+		if err := h.saved(); err != nil {
+			file.Handover = &next
+			_ = saveKeptState(h.path, h.state)
+			return err
+		}
+	}
+	return h.finishHandover()
 }
 
 // CloseKept takes in the edits of a room kept by the relay, writes them to the
