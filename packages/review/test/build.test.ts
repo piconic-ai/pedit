@@ -41,6 +41,12 @@ describe('the built element', () => {
     ])
   })
 
+  it('starts with a banner naming the package version', () => {
+    const { version } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+    expect(bundle.split('\n')[0]).toBe(`/*! @pedit/review ${version} */`)
+    expect(bundle.match(/@pedit\/review \d/g)).toHaveLength(1)
+  })
+
   it('imports nothing and loads no code, worker or font', () => {
     expect(bundle).not.toMatch(/^\s*import[\s{*"']/m)
     expect(bundle).not.toMatch(/\bimport\s*\(/)

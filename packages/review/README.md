@@ -90,6 +90,12 @@ response.headers.set('Content-Security-Policy', reviewCSP({ relay: 'https://edit
 `frameAncestors` is optional and left out by default. Put no other script on the page: anything that
 runs there can read the key in the link.
 
+## Which version is this page serving?
+
+`dist/pedit-review.js` starts with one line, `/*! @pedit/review <version> */`, and the element
+reports the same number as `customElements.get('pedit-review').version`. A page can be checked from
+its script URL alone: fetch it and read the first line. `pedit doctor <url>` does this.
+
 ## Build
 
 `pnpm --filter @pedit/review build` writes `dist/pedit-review.js` (one file: no chunks, workers, fonts

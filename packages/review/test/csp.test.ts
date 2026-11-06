@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { AVATAR_HOSTS } from '@pedit/protocol/avatar-hosts'
 import { describe, expect, it } from 'vitest'
 import { reviewCSP } from '../src/csp.ts'
@@ -59,5 +61,26 @@ describe('reviewCSP', () => {
       reviewCSP({ relay: 'https://r.test', frameAncestors: "'none'; script-src *" }),
     ).toThrow()
     expect(() => reviewCSP({ relay: 'https://r.test', frameAncestors: [] })).toThrow()
+  })
+})
+
+// Shared with the Go `pedit doctor`, which checks pages against the same vectors.
+const shared: {
+  vectors: { relay: string; frameAncestors?: string; csp: string }[]
+  invalid: { relay: string; frameAncestors?: string }[]
+} = JSON.parse(
+  readFileSync(resolve(import.meta.dirname, '../../testdata/review-csp-vectors.json'), 'utf8'),
+)
+
+describe('reviewCSP shared vectors', () => {
+  it('has vectors', () => {
+    expect(shared.vectors.length).toBeGreaterThan(0)
+    expect(shared.invalid.length).toBeGreaterThan(0)
+  })
+  it.each(shared.vectors)('writes the vector for $relay $frameAncestors', (v) => {
+    expect(reviewCSP({ relay: v.relay, frameAncestors: v.frameAncestors })).toBe(v.csp)
+  })
+  it.each(shared.invalid)('rejects $relay $frameAncestors', (v) => {
+    expect(() => reviewCSP({ relay: v.relay, frameAncestors: v.frameAncestors })).toThrow()
   })
 })

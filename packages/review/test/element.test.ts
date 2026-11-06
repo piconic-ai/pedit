@@ -77,6 +77,15 @@ const statuses = (events: { type: string; detail: Record<string, string> }[]) =>
   events.filter((e) => e.type === 'pedit-status').map((e) => e.detail.status)
 
 describe('<pedit-review>', () => {
+  it('reports the package version', async () => {
+    const { version } = (await import('../package.json', { with: { type: 'json' } })).default
+    const ctor = customElements.get('pedit-review') as typeof PeditReview
+    expect(ctor.version).toBe(version)
+    expect(() => {
+      ;(ctor as unknown as { version: string }).version = 'x'
+    }).toThrow()
+  })
+
   it('mounts into its shadow root only, and reports connecting then live', async () => {
     const { el, events, root } = place()
     await vi.waitFor(() => expect(statuses(events)).toEqual(['connecting', 'live']))

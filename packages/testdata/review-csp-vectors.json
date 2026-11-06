@@ -1,0 +1,56 @@
+{
+  "comment": "reviewCSP (packages/review/src/csp.ts) output for each input, and the inputs it rejects. packages/review/test/csp.test.ts checks them; the Go `pedit doctor` checks pages against the same vectors.",
+  "vectors": [
+    {
+      "relay": "https://edit.piconic.ai",
+      "csp": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: https://gravatar.com https://www.gravatar.com https://secure.gravatar.com https://avatars.githubusercontent.com https://lh3.googleusercontent.com; connect-src https://edit.piconic.ai wss://edit.piconic.ai; base-uri 'none'; form-action 'none'; object-src 'none'"
+    },
+    {
+      "relay": "https://relay.example.com:8443/pedit/",
+      "csp": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: https://gravatar.com https://www.gravatar.com https://secure.gravatar.com https://avatars.githubusercontent.com https://lh3.googleusercontent.com; connect-src https://relay.example.com:8443 wss://relay.example.com:8443; base-uri 'none'; form-action 'none'; object-src 'none'"
+    },
+    {
+      "relay": "http://127.0.0.1:8787",
+      "csp": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: https://gravatar.com https://www.gravatar.com https://secure.gravatar.com https://avatars.githubusercontent.com https://lh3.googleusercontent.com; connect-src http://127.0.0.1:8787 ws://127.0.0.1:8787; base-uri 'none'; form-action 'none'; object-src 'none'"
+    },
+    {
+      "relay": "http://localhost:8787",
+      "csp": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: https://gravatar.com https://www.gravatar.com https://secure.gravatar.com https://avatars.githubusercontent.com https://lh3.googleusercontent.com; connect-src http://localhost:8787 ws://localhost:8787; base-uri 'none'; form-action 'none'; object-src 'none'"
+    },
+    {
+      "relay": "https://edit.piconic.ai",
+      "frameAncestors": "'none'",
+      "csp": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: https://gravatar.com https://www.gravatar.com https://secure.gravatar.com https://avatars.githubusercontent.com https://lh3.googleusercontent.com; connect-src https://edit.piconic.ai wss://edit.piconic.ai; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'none'"
+    },
+    {
+      "relay": "https://relay.example.com:8443/pedit/",
+      "frameAncestors": "'self' https://cms.example.com",
+      "csp": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: https://gravatar.com https://www.gravatar.com https://secure.gravatar.com https://avatars.githubusercontent.com https://lh3.googleusercontent.com; connect-src https://relay.example.com:8443 wss://relay.example.com:8443; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'self' https://cms.example.com"
+    }
+  ],
+  "invalid": [
+    {
+      "relay": "https://user:pass@edit.piconic.ai"
+    },
+    {
+      "relay": "ftp://edit.piconic.ai"
+    },
+    {
+      "relay": "wss://edit.piconic.ai"
+    },
+    {
+      "relay": "edit.piconic.ai"
+    },
+    {
+      "relay": ""
+    },
+    {
+      "relay": "https://edit.piconic.ai",
+      "frameAncestors": "'none'; script-src *"
+    },
+    {
+      "relay": "https://edit.piconic.ai",
+      "frameAncestors": ""
+    }
+  ]
+}

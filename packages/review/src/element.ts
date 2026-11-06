@@ -42,6 +42,8 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return node
 }
 
+declare const __PEDIT_REVIEW_VERSION__: string
+
 /**
  * `<pedit-review relay="https://…">`: reviews the room whose link is in the
  * page's `#fragment`, inside a shadow root. The link goes nowhere but the
@@ -49,6 +51,11 @@ function el<K extends keyof HTMLElementTagNameMap>(
  * `pedit-status` (`detail.status`) and `pedit-error` (`detail.reason`, `detail.message`).
  */
 export class PeditReview extends HTMLElement {
+  /** The @pedit/review version this bundle was built from (also its first line, as a banner). */
+  static get version(): string {
+    return __PEDIT_REVIEW_VERSION__
+  }
+
   /** Test-only: the socket and fetch the room uses. Never read from the page. */
   static testing: ReviewTesting = {}
 

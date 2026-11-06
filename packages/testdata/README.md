@@ -49,3 +49,8 @@ TypeScript side seals and opens the same bytes.
 (`internal/protocol/origins.go`) accept them, with the result when duplicates
 are dropped. `packages/worker/test/origins-vectors.test.ts` and
 `internal/protocol/origins_test.go` both read it.
+
+`review-csp-vectors.json` lists relays (and optional `frameAncestors`) with the exact
+`reviewCSP` output (`packages/review/src/csp.ts`), and inputs it rejects. The TypeScript test in
+`packages/review/test/csp.test.ts` checks every one; the Go `pedit doctor` checks pages against the
+same vectors.
