@@ -96,6 +96,12 @@ type Options struct {
 	// Origins are the page origins the relay lets embed the room, sent with
 	// every connection of the host as X-Pedit-Origins.
 	Origins []string
+	// OnRoomAwareness is called with the awareness states of the room, and
+	// their removals, for a Source's pages to show, with the access each was
+	// heard with: one update holding one entry. It is not called for the
+	// source's own pages nor for the host. It must not block nor call into
+	// the Session.
+	OnRoomAwareness func(id uint64, access protocol.Access, update []byte)
 }
 
 type Session struct {
@@ -113,6 +119,8 @@ type Session struct {
 	watcher   *fsnotify.Watcher
 	watchDone chan struct{}
 	stopAlive func()
+	// srcAw bridges awareness with a Source (source_awareness.go).
+	srcAw sourceAwareness
 	// temp is the directory holding a joined copy that is removed on Stop.
 	temp string
 
@@ -328,6 +336,9 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 	s.hookContent(bound, initial)
 	aw.OnChange(func(awareness.ChangeEvent) { s.reportPeople(opts.OnPeople) })
 	s.stopAlive = keepAlive(aw)
+	if opts.Source != nil {
+		s.startSourceAwareness()
+	}
 	s.notices.start()
 	s.startMeta()
 	if err := s.keepOpen(&opts, room.HostToken, key, res); err != nil {
@@ -651,6 +662,9 @@ func (s *Session) Stop() error {
 			_ = s.project.Close()
 		}
 		s.stopAlive()
+		if s.srcAw.stop != nil {
+			s.srcAw.stop()
+		}
 		s.awareness.Destroy()
 		// Every change of the comments is told before Stop returns.
 		s.commentCalls.wait()

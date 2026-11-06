@@ -233,3 +233,47 @@ func TestARiseInAccessIsReported(t *testing.T) {
 		t.Fatalf("reported %v, access %s", raised, got)
 	}
 }
+
+// A host speaks for pages it does not run: an editor's state signed, a
+// reader's plain as a read link sends it. Peers show each at that access,
+// and neither breaks their order rules.
+func TestAHostSpeaksForPagesAtTheirAccess(t *testing.T) {
+	relay := prototest.NewRelay(false)
+	key := protocol.GenerateKey()
+	var errs errorLog
+	host := join(t, relay, key, joinOpts{state: map[string]any{"name": "host"}})
+	peer := join(t, relay, key, joinOpts{onError: errs.add})
+	prototest.WaitFor(t, wait, func() bool { return len(peer.aw.GetStates()) == 2 }, "the host")
+	state := func(id, clock uint64) []byte {
+		return protocol.EncodeState(id, clock, []byte(`{"name":"p"}`))
+	}
+	for _, c := range []struct {
+		id     uint64
+		access protocol.Access
+	}{{1001, protocol.AccessEdit}, {1002, protocol.AccessRead}} {
+		for clock := uint64(1); clock <= 3; clock++ {
+			if err := host.SendStateAt(state(c.id, clock), c.access); err != nil {
+				t.Fatal(err)
+			}
+		}
+		prototest.WaitFor(t, wait, func() bool { return peer.aw.GetStates()[c.id].Clock >= 3 }, "the page's last state")
+		if got, _ := peer.AccessOf(c.id); got != c.access {
+			t.Fatalf("page %d is shown with %s access, want %s", c.id, got, c.access)
+		}
+	}
+	if n := errs.len(); n != 0 {
+		t.Fatalf("the peer dropped %d frames", n)
+	}
+
+	// Not above its own access, nor for itself, nor at comment access.
+	reader := join(t, relay, key, joinOpts{link: lowerLink(t, key, protocol.AccessRead)})
+	if err := reader.SendStateAt(state(1003, 1), protocol.AccessEdit); err == nil {
+		t.Fatal("a client spoke above its access")
+	}
+	if err := host.SendStateAt(state(1004, 1), protocol.AccessComment); err == nil {
+		t.Fatal("comment access was allowed")
+	}
+	if err := host.SendStateAt(state(host.aw.ClientID(), 1), protocol.AccessEdit); err == nil {
+		t.Fatal("the client's own state was sent")
+	}
+}
