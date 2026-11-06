@@ -336,9 +336,7 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 	s.hookContent(bound, initial)
 	aw.OnChange(func(awareness.ChangeEvent) { s.reportPeople(opts.OnPeople) })
 	s.stopAlive = keepAlive(aw)
-	if opts.Source != nil {
-		s.startSourceAwareness()
-	}
+	s.startSourceAwareness()
 	s.notices.start()
 	s.startMeta()
 	if err := s.keepOpen(&opts, room.HostToken, key, res); err != nil {
@@ -662,9 +660,7 @@ func (s *Session) Stop() error {
 			_ = s.project.Close()
 		}
 		s.stopAlive()
-		if s.srcAw.stop != nil {
-			s.srcAw.stop()
-		}
+		s.stopSourceAwareness()
 		s.awareness.Destroy()
 		// Every change of the comments is told before Stop returns.
 		s.commentCalls.wait()

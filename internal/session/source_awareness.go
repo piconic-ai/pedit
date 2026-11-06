@@ -36,12 +36,28 @@ type sourceAwareness struct {
 	// for the removal that follows it.
 	heard map[uint64]protocol.Access
 	stop  func()
+	// every is the least time between the batches newcomers cause, as the
+	// Client spaces its own announcements; last is when the latest began,
+	// and timer sends the one batch that waits for the next slot.
+	every time.Duration
+	last  time.Time
+	timer *time.Timer
+	// batches counts the renewals of all the pages.
+	batches int
 }
+
+// A removed page keeps its last clock for as long as peers keep the
+// tombstone of its removal (outdatedTimeout) and a margin, so that the page
+// coming back at a clock of its own, lower than ours, is still applied.
+const goneFor = outdatedTimeout + 30*time.Second
 
 type pageState struct {
 	access protocol.Access
 	clock  uint64
 	state  []byte
+	// goneAt is when the page was removed, or zero. A removed page is not
+	// renewed.
+	goneAt time.Time
 }
 
 // FromSourceAwareness sends the state of one of the source's pages, whose
@@ -64,6 +80,7 @@ func (s *Session) FromSourceAwareness(id uint64, reader bool, update []byte) err
 	a := &s.srcAw
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.forgetGone()
 	p := a.pages[id]
 	if p == nil && removal {
 		return nil
@@ -76,15 +93,24 @@ func (s *Session) FromSourceAwareness(id uint64, reader bool, update []byte) err
 	if err := s.Client.SendStateAt(protocol.EncodeState(id, clock, state), access); err != nil {
 		return err
 	}
-	if removal {
-		delete(a.pages, id)
-		return nil
-	}
 	if a.pages == nil {
 		a.pages = map[uint64]*pageState{}
 	}
-	a.pages[id] = &pageState{access: access, clock: clock, state: state}
+	next := &pageState{access: access, clock: clock, state: state}
+	if removal {
+		next.goneAt = time.Now()
+	}
+	a.pages[id] = next
 	return nil
+}
+
+// forgetGone drops the clocks of pages removed long enough ago; under mu.
+func (a *sourceAwareness) forgetGone() {
+	for id, p := range a.pages {
+		if !p.goneAt.IsZero() && time.Since(p.goneAt) > goneFor {
+			delete(a.pages, id)
+		}
+	}
 }
 
 // renewPages sends every page's state again, at the next clock.
@@ -92,7 +118,12 @@ func (s *Session) renewPages() {
 	a := &s.srcAw
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.batches++
+	a.forgetGone()
 	for id, p := range a.pages {
+		if !p.goneAt.IsZero() {
+			continue
+		}
 		p.clock++
 		// A read state past the clocks peers take is not renewed: it times
 		// out, as the page's own would.
@@ -103,6 +134,10 @@ func (s *Session) renewPages() {
 // startSourceAwareness renews the pages' states, and hands the room's states
 // to opts.OnRoomAwareness.
 func (s *Session) startSourceAwareness() {
+	if s.opts.Source == nil {
+		return
+	}
+	s.srcAw.every = 2 * time.Second
 	ticker := time.NewTicker(renewInterval)
 	done := make(chan struct{})
 	go func() {
@@ -120,6 +155,44 @@ func (s *Session) startSourceAwareness() {
 		ticker.Stop()
 		close(done)
 		unsub()
+		s.srcAw.mu.Lock()
+		if s.srcAw.timer != nil {
+			s.srcAw.timer.Stop()
+		}
+		s.srcAw.mu.Unlock()
+	}
+}
+
+// stopSourceAwareness ends what startSourceAwareness began.
+func (s *Session) stopSourceAwareness() {
+	if s.srcAw.stop != nil {
+		s.srcAw.stop()
+	}
+}
+
+// renewSoon renews the pages for newcomers: at once for the first, then at
+// most one batch per a.every, so that clients that come and go cannot make
+// the host queue a batch for each.
+func (s *Session) renewSoon() {
+	a := &s.srcAw
+	a.mu.Lock()
+	wait := time.Until(a.last.Add(a.every))
+	switch {
+	case wait <= 0:
+		a.last = time.Now()
+		a.mu.Unlock()
+		s.renewPages()
+	case a.timer == nil:
+		a.timer = time.AfterFunc(wait, func() {
+			a.mu.Lock()
+			a.timer = nil
+			a.last = time.Now()
+			a.mu.Unlock()
+			s.renewPages()
+		})
+		a.mu.Unlock()
+	default:
+		a.mu.Unlock()
 	}
 }
 
@@ -130,7 +203,7 @@ func (s *Session) roomAwareness(ev awareness.UpdateEvent) {
 	// Heard from the room: not our own heartbeat, nor a state we only
 	// expired. Someone new gets the pages' states without waiting for renewal.
 	if ev.Origin == s.Client && len(ev.Added) > 0 {
-		s.renewPages()
+		s.renewSoon()
 	}
 	if s.opts.OnRoomAwareness == nil {
 		return

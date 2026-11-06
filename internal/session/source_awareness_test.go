@@ -224,3 +224,67 @@ func TestPagesAreNotListedAmongThePeople(t *testing.T) {
 		}
 	})
 }
+
+// Peers keep the clock of a removed state, so a page that comes back with
+// the clock of its own, behind ours, must still be applied.
+func TestAPageThatComesBackAtALowerClockIsApplied(t *testing.T) {
+	f, _ := shareSource(t, "x\n", setupOpts{})
+	g := joinAsGuest(t, f.relay, f.session.URL)
+	if err := f.session.FromSourceAwareness(pageID, true, pageUpdate(1, "rita")); err != nil {
+		t.Fatal(err)
+	}
+	g.sees(t, pageID, "the page")
+	for range 5 {
+		f.session.renewPages()
+	}
+	if err := f.session.FromSourceAwareness(pageID, true, protocol.EncodeState(pageID, 2, []byte("null"))); err != nil {
+		t.Fatal(err)
+	}
+	prototest.WaitFor(t, wait, func() bool { _, ok := g.aw.GetStates()[pageID]; return !ok }, "the page to go")
+	if err := f.session.FromSourceAwareness(pageID, true, pageUpdate(1, "rita again")); err != nil {
+		t.Fatal(err)
+	}
+	prototest.WaitFor(t, wait, func() bool {
+		st, ok := g.aw.GetStates()[pageID]
+		return ok && st.State["name"] == "rita again"
+	}, "the page to come back")
+}
+
+func TestGoneClocksAreForgottenInTime(t *testing.T) {
+	f, _ := shareSource(t, "x\n", setupOpts{})
+	s := f.session
+	_ = s.FromSourceAwareness(pageID, true, pageUpdate(1, "a"))
+	_ = s.FromSourceAwareness(pageID, true, protocol.EncodeState(pageID, 2, []byte("null")))
+	s.srcAw.mu.Lock()
+	s.srcAw.pages[pageID].goneAt = time.Now().Add(-goneFor - time.Second)
+	s.srcAw.mu.Unlock()
+	s.renewPages()
+	s.srcAw.mu.Lock()
+	defer s.srcAw.mu.Unlock()
+	if len(s.srcAw.pages) != 0 {
+		t.Fatal("a clock outlived its tombstone")
+	}
+}
+
+// Clients that come and go cannot make the host renew every page for each.
+func TestNewcomersCauseBoundedBatches(t *testing.T) {
+	f, _ := shareSource(t, "x\n", setupOpts{})
+	s := f.session
+	s.srcAw.mu.Lock()
+	s.srcAw.every = 300 * time.Millisecond
+	s.srcAw.last = time.Time{}
+	before := s.srcAw.batches
+	s.srcAw.mu.Unlock()
+	batches := func() int { s.srcAw.mu.Lock(); defer s.srcAw.mu.Unlock(); return s.srcAw.batches - before }
+	for i := range 200 {
+		s.roomAwareness(awareness.UpdateEvent{Added: []uint64{uint64(9000 + i)}, Origin: s.Client})
+	}
+	if n := batches(); n != 1 {
+		t.Fatalf("the first newcomer was served with %d batches", n)
+	}
+	prototest.WaitFor(t, wait, func() bool { return batches() == 2 }, "the trailing batch")
+	time.Sleep(400 * time.Millisecond)
+	if n := batches(); n != 2 {
+		t.Fatalf("a burst of 200 newcomers caused %d batches", n)
+	}
+}
