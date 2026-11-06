@@ -83,6 +83,7 @@ const extensions = [yCollab(conn.text, conn.awareness)] // plus basicSetup, Edit
 | Export | |
 | --- | --- |
 | `ServedFiles` | The layer below the routes: `acquire(path)` starts or reuses a child, `close()` ends all. |
+| `ServedFile.share(opts)`, `unshare()`, `close()` | Open a room for the file (needs pedit with `serve` 2; the child is not idle-stopped while shared). `share` resolves `{ type: 'shared', room, links, keptUntil, resumed }`, or `{ type: 'choice', room, choices }` when the file has a kept room of another history (share again with `choice`). A link is `<room>.<fragment>`: put your page URL and `#` before it. `onEvent` also gets `peers`, `room_ended` and `shared`. |
 | `resolvePedit({ bin, install })`, `MIN_PEDIT_VERSION` | Finds pedit, checks the binary and its version. With `install: true`, downloads it when none is usable (see above) and returns `installed`. |
 | `HeldError`, `LimitError`, `NoPeditError` | Another process serves the file; 32 files or 8 clients; pedit missing or too old. |
 

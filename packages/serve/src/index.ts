@@ -3,4 +3,13 @@ export { HeldError, LimitError, NoPeditError } from './errors.ts'
 export type { Installed, Verified } from './install.ts'
 export { MIN_PEDIT_VERSION, peditVersionOk, resolvePedit } from './resolve.ts'
 export { type ServedFile, ServedFiles, type ServedFilesOptions } from './served.ts'
-export type { Role, ServeEvent } from './types.ts'
+export type {
+  Peer,
+  Role,
+  ServeEvent,
+  ShareChoice,
+  ShareClosed,
+  Shared,
+  ShareOptions,
+  ShareResult,
+} from './types.ts'

@@ -137,7 +137,7 @@ export function peditRoutes<E extends Env = Env>(
             if (e.type === 'update_available') return emit(e)
             const id = (e.path !== null && idByPath.get(e.path)) || null
             if (e.type === 'error') emit({ type: 'error', id, message: e.message })
-            else if (id !== null) {
+            else if (id !== null && (e.type === 'started' || e.type === 'stopped')) {
               emit(
                 e.type === 'started'
                   ? {

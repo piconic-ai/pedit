@@ -164,19 +164,21 @@ most 64 KiB. Each is answered by events on stream 0.
   - `keep` works as `--keep` does: the default is 1 day, up to the relay's cap,
     and `0` makes a live room.
 - `{"cmd":"unshare"}` leaves the room as `Ctrl+C` does: a kept room stays until
-  its deadline, a live room ends. Stdin closing is `unshare`.
+  its deadline, a live room ends. It is answered `{"event":"unshared"}`. Stdin
+  closing is `unshare`.
 - `{"cmd":"close"}` ends a kept room for good, as `pedit close` does: it takes
   the edits in, saves them and asks the relay to drop everything. It also works
   on a room that is kept but not shared now: pedit resumes it first. It is
   answered `{"event":"room_ended","reason":"closed"}`. On a live room it is
-  `unshare`; with nothing shared or kept it is an error. A record of another
+  `unshare` (answered `unshared`); with nothing shared or kept it is an error. A record of another
   history is refused: the app sends `share` with `choice`. If the relay cannot
   end the room (HTTP 409: it is busy), `close` is an error telling the app to
   send it again; the room and its record stay, and a share that was running has
   ended.
 - Events while shared:
   - `{"event":"peers","peers":[{"name":…,"access":"edit"|"comment"|"read"}]}`
-    whenever someone joins, leaves or renames;
+    whenever someone joins, leaves or renames. At most 64 people are listed, names
+    cut to 64 bytes; `"more":N` counts those left out;
   - `{"event":"room_ended","reason":"closed"|"expired"|"maintenance"}` when
     the relay ends the room.
 - A command that is not valid JSON, or has an unknown `cmd` or bad fields, is

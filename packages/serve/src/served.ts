@@ -3,15 +3,18 @@ import { stat } from 'node:fs/promises'
 import type { Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute } from 'node:path'
-import { type Bridge, EVENT, FrameParser, Streams } from './bridge.ts'
+import { type Bridge, EVENT, FrameParser, MAX_COMMAND, Streams } from './bridge.ts'
 import { HeldError, LimitError, NoPeditError } from './errors.ts'
 import { nativeRealpath } from './paths.ts'
 import { peditEnv } from './resolve.ts'
-import type { Role, ServeEvent } from './types.ts'
+import type { Peer, Role, ServeEvent, Shared, ShareOptions, ShareResult } from './types.ts'
 
 const MAX_FILES = 32
 const MAX_CLIENTS = 8
-const MAX_EVENT = 4096
+const MAX_EVENT = 64 * 1024
+const MAX_PENDING = 16
+/** The first serve version that takes commands. */
+const SHARE_SERVE = 2
 const STDERR_KEEP = 1024
 const TERM_AFTER_MS = 5000
 
@@ -35,6 +38,25 @@ export interface ServedFile {
   readonly generation: string
   /** One stream to the child; at most 8 per file (LimitError). */
   dial(role: Role): Promise<Bridge>
+  /**
+   * Open a room for the file (serve >= 2). Resolves with the links, or with a `choice` when the
+   * file has a kept room of another history; rejects with pedit's error. While shared, the child
+   * is not stopped for idleness.
+   */
+  share(options?: ShareOptions): Promise<ShareResult>
+  /** Leave the room: a kept room stays kept, a live one ends. */
+  unshare(): Promise<void>
+  /** End the file's kept room for good (a live one is only left). Resolves once it is over. */
+  close(): Promise<void>
+}
+
+type Cmd = 'share' | 'unshare' | 'close'
+
+/** A command waiting for pedit's answer; pedit runs them one at a time, in order. */
+interface Pending {
+  cmd: Cmd
+  resolve: (event: Record<string, unknown>) => void
+  reject: (e: Error) => void
 }
 
 interface Entry {
@@ -44,6 +66,11 @@ interface Entry {
   ready: Promise<void>
   streams: Streams
   listening: boolean
+  /** The `serve` version of pedit's interface; 0 when it did not say. */
+  serve: number
+  /** A room is open, so reviewers may be in it with no app page. */
+  shared: boolean
+  pending: Pending[]
   generation: string
   clients: number
   idle: NodeJS.Timeout | undefined
@@ -66,6 +93,24 @@ async function inodeOf(real: string): Promise<string> {
   const st = await stat(real, { bigint: true })
   if (!st.isFile()) throw new Error('not a regular file')
   return st.ino === 0n ? '' : `${st.dev}:${st.ino}`
+}
+
+/** The events that answer each command. `close` on a live room is an unshare. */
+const ANSWERS: Record<Cmd, string[]> = {
+  share: ['shared', 'resume_choice', 'room_ended'],
+  unshare: ['unshared'],
+  close: ['room_ended', 'unshared'],
+}
+
+function sharedOf(ev: Record<string, unknown>): Shared {
+  const links = (ev.links ?? {}) as Shared['links']
+  return {
+    type: 'shared',
+    room: String(ev.room),
+    links: { edit: links.edit, read: links.read, ...(links.comment && { comment: links.comment }) },
+    keptUntil: Number(ev.keptUntil) || 0,
+    resumed: ev.resumed === true,
+  }
 }
 
 export class ServedFiles {
@@ -183,6 +228,9 @@ export class ServedFiles {
       ready,
       streams: new Streams(child.stdin),
       listening: false,
+      serve: 0,
+      shared: false,
+      pending: [],
       generation: '',
       clients: 0,
       idle: undefined,
@@ -210,6 +258,18 @@ export class ServedFiles {
           return entry.generation
         },
         dial: (role) => this.#dial(entry, role),
+        share: async (options) => {
+          if (entry.serve < SHARE_SERVE)
+            throw new Error(`sharing needs pedit serve ${SHARE_SERVE}; this pedit is older`)
+          const { choice, keep, origins, relay } = options ?? {}
+          const ev = await this.#command(entry, 'share', { origins, keep, relay, choice })
+          if (ev.event === 'resume_choice')
+            return { type: 'choice', room: String(ev.room), choices: ev.choices } as ShareResult
+          if (ev.event === 'room_ended') return { type: 'closed' } // choice "app" ended the room
+          return sharedOf(ev)
+        },
+        unshare: async () => void (await this.#command(entry, 'unshare')),
+        close: async () => void (await this.#command(entry, 'close')),
       },
     }
     this.#byPath.set(path, entry)
@@ -238,6 +298,7 @@ export class ServedFiles {
           return this.#terminate(entry)
         }
         entry.listening = true
+        entry.serve = typeof ev.serve === 'number' ? ev.serve : 0
         entry.generation = ev.generation
         this.#emit({
           type: 'started',
@@ -258,10 +319,37 @@ export class ServedFiles {
           url: url.slice(0, 512),
           security: security === true,
         })
+      } else if (ev.event === 'shared') {
+        entry.shared = true
+        clearTimeout(entry.idle)
+        this.#emit({ path, ...sharedOf(ev) })
+        this.#answer(entry, ev)
+      } else if (ev.event === 'resume_choice' || ev.event === 'unshared') {
+        if (ev.event === 'unshared') this.#left(entry)
+        this.#answer(entry, ev)
+      } else if (ev.event === 'room_ended') {
+        this.#left(entry)
+        this.#emit({ type: 'room_ended', path, reason: String(ev.reason).slice(0, 64) })
+        this.#answer(entry, ev)
+      } else if (ev.event === 'peers' && Array.isArray(ev.peers)) {
+        const peers = ev.peers.map(
+          (p: Peer): Peer => ({ name: String(p?.name), access: p?.access }),
+        )
+        this.#emit({
+          type: 'peers',
+          path,
+          peers,
+          ...(typeof ev.more === 'number' && { more: ev.more }),
+        })
       } else if (ev.event === 'held') {
         held = { pid: Number(ev.pid), ...(typeof ev.app === 'string' ? { app: ev.app } : {}) }
       } else if (ev.event === 'error' && typeof ev.message === 'string') {
         errorMessage = ev.message.slice(0, STDERR_KEEP)
+        const head = entry.pending[0]
+        if (head && ev.cmd === head.cmd) {
+          entry.pending.shift()
+          head.reject(new Error(errorMessage))
+        }
       }
     }
     let broken = false
@@ -304,6 +392,7 @@ export class ServedFiles {
   /** Drop an exited entry from the indexes and end what hangs off it. */
   #forget(entry: Entry) {
     entry.streams.abort()
+    for (const p of entry.pending.splice(0)) p.reject(new Error('the file is no longer served'))
     clearTimeout(entry.idle)
     if (this.#byPath.get(entry.path) === entry) this.#byPath.delete(entry.path)
     if (this.#byIno.get(entry.ino) === entry) this.#byIno.delete(entry.ino)
@@ -314,9 +403,37 @@ export class ServedFiles {
     setTimeout(() => entry.dead || overdue(), this.#options.graceMs ?? TERM_AFTER_MS).unref()
   }
 
+  /** Send a command; it is answered by the next event that fits it, in order. */
+  #command(entry: Entry, cmd: Cmd, fields: object = {}): Promise<Record<string, unknown>> {
+    if (entry.dead || entry.stopping || !entry.listening)
+      return Promise.reject(new Error('the file is no longer served'))
+    if (entry.pending.length >= MAX_PENDING)
+      return Promise.reject(new LimitError('too many commands'))
+    const json = JSON.stringify({ cmd, ...fields })
+    if (Buffer.byteLength(json) > MAX_COMMAND) return Promise.reject(new Error('command too large'))
+    return new Promise((resolve, reject) => {
+      entry.pending.push({ cmd, resolve, reject })
+      entry.streams.command(json)
+    })
+  }
+
+  /** Resolve the oldest command if `ev` is one of its answers. */
+  #answer(entry: Entry, ev: Record<string, unknown>) {
+    const head = entry.pending[0]
+    if (!head || !ANSWERS[head.cmd].includes(String(ev.event))) return
+    entry.pending.shift()
+    head.resolve(ev)
+  }
+
+  /** The room is gone: the child may idle out again. */
+  #left(entry: Entry) {
+    entry.shared = false
+    this.#armIdle(entry)
+  }
+
   #armIdle(entry: Entry) {
     clearTimeout(entry.idle)
-    if (entry.clients > 0 || entry.dead || entry.stopping) return
+    if (entry.clients > 0 || entry.shared || entry.dead || entry.stopping) return
     entry.idle = setTimeout(() => this.#stop(entry, 'idle'), this.#options.idleMs ?? 60_000)
     entry.idle.unref()
   }

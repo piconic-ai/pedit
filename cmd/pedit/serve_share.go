@@ -270,11 +270,39 @@ func (l *liveSharer) peers(ls *liveShare, people []session.Person) {
 		return
 	}
 	ls.last = people
-	out := make([]map[string]string, 0, len(people))
-	for _, p := range people {
-		out = append(out, map[string]string{"name": p.Name, "access": p.Access.String()})
+	l.st.Event("peers", peersEvent(people))
+}
+
+// The peers event must fit the app's event size limit (64 KiB): at most
+// maxPeers people, each name cut to maxPeerName bytes.
+const (
+	maxPeers    = 64
+	maxPeerName = 64
+)
+
+// peersEvent is the payload of the peers event; "more" counts the people left out.
+func peersEvent(people []session.Person) map[string]any {
+	n := min(len(people), maxPeers)
+	out := make([]map[string]string, 0, n)
+	for _, p := range people[:n] {
+		out = append(out, map[string]string{"name": truncateUTF8(p.Name, maxPeerName), "access": p.Access.String()})
 	}
-	l.st.Event("peers", map[string]any{"peers": out})
+	ev := map[string]any{"peers": out}
+	if len(people) > n {
+		ev["more"] = len(people) - n
+	}
+	return ev
+}
+
+// truncateUTF8 cuts s to at most n bytes without splitting a character.
+func truncateUTF8(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // ended is the relay ending the room: it is told, then torn down without
@@ -303,6 +331,7 @@ func (l *liveSharer) Unshare() error {
 		return errNotShared
 	}
 	l.leave()
+	l.st.Event("unshared", map[string]any{})
 	return nil
 }
 
@@ -316,6 +345,7 @@ func (l *liveSharer) Close(ctx context.Context) error {
 		kept := l.cur.kept
 		l.leave()
 		if !kept {
+			l.st.Event("unshared", map[string]any{})
 			return nil
 		}
 	}
