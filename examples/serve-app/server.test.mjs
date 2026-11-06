@@ -9,9 +9,9 @@ import { WebSocket } from 'ws'
 
 const skip = process.env.PEDIT ? false : 'set PEDIT to a pedit binary'
 
-function post(origin, path, headers) {
+function post(origin, path, headers, method = 'POST') {
   return new Promise((resolve, reject) => {
-    const req = request(new URL(path, origin), { method: 'POST', headers }, (res) => {
+    const req = request(new URL(path, origin), { method, headers }, (res) => {
       res.resume()
       resolve(res.statusCode)
     })
@@ -50,6 +50,32 @@ test('the app serves its page, guards the routes, and bridges the file', { skip 
     assert.equal(await post(origin, '/edit/demo/session', { ...ok, host: 'evil.test' }), 404)
     assert.equal(await post(origin, '/edit/demo/session', { origin: 'http://evil.test' }), 403)
     assert.equal(await post(origin, '/edit/nope/session', ok), 404)
+
+    // The share routes: wrong Origin or Host is refused, and so is a body that is not JSON.
+    const json = { ...ok, 'content-type': 'application/json' }
+    assert.equal(await post(origin, '/share', { origin: 'http://evil.test' }), 403)
+    assert.equal(await post(origin, '/share/unshare', { ...json, host: 'evil.test' }), 404)
+    assert.equal(await post(origin, '/share/close', { origin: 'http://evil.test' }), 403)
+    assert.equal(await post(origin, '/share', ok), 403)
+    assert.equal(await post(origin, '/share/events', { origin: 'http://evil.test' }, 'GET'), 403)
+    const events = await fetch(`${origin}/share/events`, { headers: ok })
+    assert.match(events.headers.get('content-type'), /^text\/event-stream/)
+    await events.body.cancel()
+
+    // A real share needs a relay (PEDIT_RELAY, e.g. a local worker); keep 0 leaves nothing behind.
+    if (process.env.PEDIT_RELAY) {
+      const relay = process.env.PEDIT_RELAY.replace(/\/+$/, '')
+      const shared = await fetch(`${origin}/share`, {
+        method: 'POST',
+        headers: json,
+        body: JSON.stringify({ keep: '0' }),
+      })
+      const result = await shared.json()
+      assert.equal(shared.status, 200, result.error)
+      assert.equal(result.type, 'shared')
+      assert.ok(result.links.edit.startsWith(`${relay}/r/`), result.links.edit)
+      assert.equal(await post(origin, '/share/unshare', json), 200)
+    }
 
     const session = await fetch(`${origin}/edit/demo/session`, { method: 'POST', headers: ok })
     assert.equal(session.status, 200)

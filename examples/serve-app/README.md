@@ -25,6 +25,22 @@ Open `http://127.0.0.1:3000/`; it edits `content/demo.md`. `PEDIT=... node --tes
 - `server.mjs`: Hono, `peditRoutes` (the id `demo` is the only file served) and the static page.
 - `page.mjs`: `connect` from `@pedit/serve/client`, CodeMirror 6 with `yCollab`, a status line.
 
+## Sharing
+
+The page has a share panel above the editor. The server owns the share and the page
+asks it: **Share** opens a room on the relay (keep `live`, `1h` or `1d`), and the panel
+shows the edit, comment and read links, who is in the room, and when a kept room expires.
+**Stop sharing** leaves the room; **End room** ends a kept one for good. If the file already
+has a kept room of another history, the panel asks which side to keep.
+
+- `PEDIT_RELAY=http://127.0.0.1:8787` uses another relay (default https://edit.piconic.ai).
+  With it set, `node --test` also shares for real.
+- Reviewers open the relay's own editor (`<relay>/r/<room>#<key>`) until a review
+  component exists.
+- Sharing needs pedit with `serve` version 2 (the next release) and the `@pedit/serve`
+  from it: the published 0.5.x has no `share`.
+- The `/share` routes are guarded like `/edit`: this origin, `127.0.0.1` as the Host, JSON only.
+
 ## Notes
 
 - pedit edits an existing file and never creates one: an app's "new document"

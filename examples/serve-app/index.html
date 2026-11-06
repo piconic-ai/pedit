@@ -8,7 +8,20 @@
   #editor { border: 1px solid #ccc; border-radius: 4px; }
   .cm-editor { min-height: 60vh; }
   .cm-ySelectionInfo { font-size: 0.7rem; padding: 1px 4px; color: #fff; }
+  #share { border: 1px solid #ccc; border-radius: 4px; margin-bottom: 1rem; padding: 0.5rem 0.75rem; font-size: 0.9rem; }
+  #share p, #share ul { margin: 0.4rem 0; }
+  #share input { width: 100%; box-sizing: border-box; }
 </style>
+<div id="share">
+  <div>
+    <button id="share-start">Share</button>
+    <label>keep <select id="share-keep"><option value="0">live</option><option value="1h">1h</option><option value="1d">1d</option></select></label>
+    <button id="share-stop" hidden>Stop sharing</button>
+    <button id="share-close" hidden>End room</button>
+  </div>
+  <div id="share-info"></div>
+  <div id="share-peers"></div>
+</div>
 <p id="status">connecting</p>
 <div id="editor"></div>
 <script type="module" src="page.js"></script>

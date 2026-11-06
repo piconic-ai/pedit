@@ -25,3 +25,100 @@ try {
 } catch (e) {
   status.textContent = `cannot open the file: ${e.code ?? e.message}`
 }
+
+// The share panel. The server owns the share; this page asks it and shows what it reports.
+const $ = (id) => document.getElementById(id)
+const el = (tag, text, props) =>
+  Object.assign(document.createElement(tag), { textContent: text, ...props })
+const info = $('share-info')
+const peersBox = $('share-peers')
+
+async function ask(path, body = {}) {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
+  return data
+}
+
+function showShared(s) {
+  const link = (kind, url) =>
+    el('li', `${kind}: `).appendChild(
+      el('a', url, { href: url, target: '_blank', rel: 'noopener' }),
+    ).parentNode
+  const until =
+    s.keptUntil > 0 ? `kept until ${new Date(s.keptUntil).toLocaleString()}` : 'live room'
+  info.replaceChildren(
+    el('p', `Shared (room ${s.room}), ${until}${s.resumed ? ', resumed' : ''}`),
+    el('ul'),
+  )
+  info.lastChild.replaceChildren(...Object.entries(s.links).map(([k, u]) => link(k, u)))
+  $('share-start').hidden = true
+  $('share-stop').hidden = false
+  $('share-close').hidden = s.keptUntil <= 0
+}
+
+function showNotShared(message) {
+  info.replaceChildren(...(message ? [el('p', message)] : []))
+  peersBox.replaceChildren()
+  $('share-start').hidden = false
+  $('share-stop').hidden = true
+  $('share-close').hidden = true
+}
+
+function showChoice(r) {
+  const labels = { room: 'Keep the room', app: 'Keep this file', later: 'Decide later' }
+  info.replaceChildren(
+    el('p', `Room ${r.room} already has content from another history. Which one do you keep?`),
+    ...r.choices.map((c) =>
+      el(
+        'button',
+        c.text === undefined ? labels[c.choice] : `${labels[c.choice]} (${c.text} characters)`,
+        {
+          onclick: () => share(c.choice),
+        },
+      ),
+    ),
+  )
+}
+
+async function share(choice) {
+  try {
+    const r = await ask('/share', { keep: $('share-keep').value, choice })
+    if (r.type === 'shared') showShared(r)
+    else if (r.type === 'choice') showChoice(r)
+    else showNotShared('The kept room was ended. Nothing is shared.')
+  } catch (e) {
+    info.replaceChildren(el('p', `cannot share: ${e.message}`))
+  }
+}
+
+async function stop(path) {
+  try {
+    await ask(path)
+    showNotShared()
+  } catch (e) {
+    info.replaceChildren(el('p', `failed: ${e.message}`))
+  }
+}
+
+$('share-start').onclick = () => share()
+$('share-stop').onclick = () => stop('/share/unshare')
+$('share-close').onclick = () => stop('/share/close')
+
+const events = new EventSource('/share/events')
+const on = (type, fn) => events.addEventListener(type, (e) => fn(JSON.parse(e.data)))
+on('shared', showShared)
+on('unshared', () => showNotShared())
+on('room_ended', (e) => showNotShared(`The room ended: ${e.reason}`))
+on('peers', (e) => {
+  peersBox.replaceChildren(
+    el(
+      'p',
+      `In the room: ${e.peers.map((p) => `${p.name} (${p.access})`).join(', ') || 'nobody'}${e.more ? ` +${e.more} more` : ''}`,
+    ),
+  )
+})
