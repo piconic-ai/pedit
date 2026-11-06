@@ -172,8 +172,9 @@ func checkElement(pg *page) (Check, string) {
 }
 
 func checkCSP(h http.Header, pg *page, relay, pageOrigin string) Check {
-	values := h.Values("Content-Security-Policy")
-	if len(values) == 0 {
+	policies := splitPolicies(h.Values("Content-Security-Policy"))
+	if len(policies) == 0 {
+		// No header, or one with no policy in it (such as ","): none is enforced.
 		fix := "send the Content-Security-Policy that reviewCSP({ relay }) from @pedit/review gives, as a response header"
 		if len(pg.MetaCSP) > 0 {
 			return Check{ID: "csp", Status: Fail, Message: "the policy is in a <meta> tag only; send it as a response header", Fix: fix}
@@ -185,7 +186,6 @@ func checkCSP(h http.Header, pg *page, relay, pageOrigin string) Check {
 		return Check{ID: "csp", Status: Fail, Message: "cannot be compared with the expected policy: no valid relay",
 			Fix: "fix the <pedit-review> element first"}
 	}
-	policies := splitPolicies(values)
 	problems, best := bestPolicy(policies, parseCSP(expectedText), pageOrigin)
 	if len(problems) > 0 {
 		return Check{ID: "csp", Status: Fail, Message: "the policy is looser than reviewCSP's: " + strings.Join(problems, "; "),
@@ -271,7 +271,7 @@ const maxScriptFetches = 8
 func scriptURLs(base *url.URL, pg *page) (same []*url.URL, cross *url.URL) {
 	for _, s := range pg.Scripts {
 		u, err := base.Parse(s.Src)
-		if s.Inline || badSrc(s.Src) || err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		if s.Inline || badSrc(s.Src) || err != nil || u.User != nil || (u.Scheme != "http" && u.Scheme != "https") {
 			continue
 		}
 		switch {
@@ -294,10 +294,14 @@ func findComponent(ctx context.Context, client *http.Client, base *url.URL, pg *
 		if err != nil {
 			continue
 		}
+		// Browsers refuse a module script by its MIME type, banner or not.
+		if !isJavaScript(resp.Header.Get("Content-Type")) {
+			continue
+		}
 		if m := banner.FindSubmatch(firstLine(resp.Body)); m != nil {
 			return component{src: u.String(), version: string(m[1])}
 		}
-		if len(pg.Scripts) == 1 && isJavaScript(resp.Header.Get("Content-Type")) {
+		if len(pg.Scripts) == 1 {
 			return component{src: u.String()}
 		}
 	}
@@ -343,7 +347,9 @@ func checkScripts(base *url.URL, pg *page, comp component) Check {
 			problems = append(problems, "an inline script")
 		} else if badSrc(s.Src) {
 			problems = append(problems, fmt.Sprintf("the script src %q has a backslash, space or control character: browsers read it differently from other tools", s.Src))
-		} else if u, err := base.Parse(s.Src); comp.src == "" || err != nil || u.String() != comp.src {
+		} else if u, err := base.Parse(s.Src); err == nil && u.User != nil {
+			problems = append(problems, "a script src carries credentials (user:password@): they are never sent, and a script needs none")
+		} else if comp.src == "" || err != nil || u.String() != comp.src {
 			problems = append(problems, notComponent(base, s.Src))
 		}
 	}
@@ -394,17 +400,36 @@ func checkVersion(comp component, opts Options) Check {
 	return ok("version", "component "+comp.version+" is newer than this pedit "+mine+" (note: update pedit)")
 }
 
+// referrerPolicies are the tokens browsers recognise, with the legacy ones.
+var referrerPolicies = map[string]bool{
+	"no-referrer": true, "no-referrer-when-downgrade": true, "same-origin": true, "origin": true,
+	"strict-origin": true, "origin-when-cross-origin": true, "strict-origin-when-cross-origin": true,
+	"unsafe-url": true, "never": true, "default": true, "always": true, "origin-when-crossorigin": true,
+}
+
+// lastPolicy applies the last recognised token of the comma-separated values
+// to policy, and leaves it when there is none.
+func lastPolicy(policy string, values ...string) string {
+	for _, v := range values {
+		for tok := range strings.SplitSeq(v, ",") {
+			if tok = strings.ToLower(strings.TrimSpace(tok)); referrerPolicies[tok] {
+				policy = tok
+			}
+		}
+	}
+	return policy
+}
+
+// checkReferrer follows the browser: the response header sets the policy, and
+// each <meta name="referrer"> after it overrides that.
 func checkReferrer(h http.Header, pg *page) Check {
 	fix := "send Referrer-Policy: no-referrer, so the page's URL is never passed on"
-	policy := ""
-	if v := h.Get("Referrer-Policy"); v != "" {
-		parts := strings.Split(v, ",")
-		policy = strings.ToLower(strings.TrimSpace(parts[len(parts)-1]))
-	} else if n := len(pg.MetaReferrer); n > 0 {
-		policy = pg.MetaReferrer[n-1]
+	policy := lastPolicy("", h.Values("Referrer-Policy")...)
+	for _, m := range pg.MetaReferrer {
+		policy = lastPolicy(policy, m)
 	}
 	switch policy {
-	case "no-referrer":
+	case "no-referrer", "never":
 		return ok("referrer", "Referrer-Policy is no-referrer")
 	case "":
 		return Check{ID: "referrer", Status: Warn, Message: "no Referrer-Policy", Fix: fix}

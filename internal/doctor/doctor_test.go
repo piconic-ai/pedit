@@ -2,8 +2,10 @@ package doctor
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -230,6 +232,7 @@ func TestRedirects(t *testing.T) {
 			http.Redirect(w, r, "/review", http.StatusFound)
 			return
 		}
+		w.Header().Set("Content-Type", "text/javascript")
 		_, _ = w.Write([]byte(bundle("0.6.0")))
 	}
 	same, _ := serve(t, s)
@@ -479,5 +482,159 @@ func TestDataImageIsNotAScriptURL(t *testing.T) {
 	base, _ := serve(t, s)
 	if got := status(run(t, base+"/review"), "scripts"); got != OK {
 		t.Errorf("scripts: %s", got)
+	}
+}
+
+func TestEmptyCSPPolicyFails(t *testing.T) {
+	for _, v := range []string{",", " , ,"} {
+		s := good()
+		s.csp = v
+		base, _ := serve(t, s)
+		if got := status(run(t, base+"/review"), "csp"); got != Fail {
+			t.Errorf("header %q: csp %s", v, got)
+		}
+	}
+	s := good()
+	s.csp = "-"
+	s.html = `<meta http-equiv="Content-Security-Policy" content=",">` + goodPage(componentTag)
+	base, _ := serve(t, s)
+	if got := status(run(t, base+"/review"), "csp"); got != Fail {
+		t.Errorf("meta only: csp %s", got)
+	}
+}
+
+func noAuth(t *testing.T, log *seen) {
+	t.Helper()
+	log.mu.Lock()
+	defer log.mu.Unlock()
+	for _, r := range log.reqs {
+		if r.Header.Get("Authorization") != "" {
+			t.Errorf("%s was sent an Authorization header", r.URL.Path)
+		}
+	}
+}
+
+func withUser(t *testing.T, base string) string {
+	t.Helper()
+	u, err := url.Parse(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u.User = url.UserPassword("user", "pw")
+	return u.String()
+}
+
+func TestRedirectWithCredentialsRefused(t *testing.T) {
+	s := good()
+	var target string
+	s.extra = func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/old" {
+			http.Redirect(w, r, target+"/review", http.StatusFound)
+		}
+	}
+	base, log := serve(t, s)
+	target = withUser(t, base)
+	rep := run(t, base+"/old")
+	if status(rep, "fetch") != Fail {
+		t.Errorf("redirect to userinfo URL: %+v", rep.Checks)
+	}
+	if strings.Contains(find(rep, "fetch").Message, "pw") {
+		t.Error("message echoes the password")
+	}
+	noAuth(t, log)
+}
+
+func TestScriptWithCredentialsNotFetched(t *testing.T) {
+	s := good()
+	s.extra = func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/p" {
+			// Same origin, with userinfo.
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte(goodPage(`<script type="module" src="http://user:pw@` + r.Host + `/assets/review.js"></script>`)))
+			return
+		}
+		w.Header().Set("Content-Type", "text/javascript")
+		_, _ = w.Write([]byte(bundle("0.6.0")))
+	}
+	base, log := serve(t, s)
+	rep := run(t, base+"/p")
+	if c := find(rep, "scripts"); c.Status != Fail || strings.Contains(c.Message, "pw") || !strings.Contains(c.Message, "credentials") {
+		t.Errorf("scripts: %+v", c)
+	}
+	noAuth(t, log)
+	log.mu.Lock()
+	defer log.mu.Unlock()
+	for _, r := range log.reqs {
+		if r.URL.Path == "/assets/review.js" {
+			t.Error("the script with credentials was fetched")
+		}
+	}
+}
+
+func TestBanneredScriptNeedsJavaScriptType(t *testing.T) {
+	s := good()
+	s.extra = func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte(bundle("0.6.0")))
+	}
+	base, _ := serve(t, s)
+	rep := run(t, base+"/review")
+	if status(rep, "scripts") != Fail {
+		t.Errorf("scripts: %+v", rep.Checks)
+	}
+	// Not taken as the component, so its version is unknown, as for any script.
+	if rep.Component.Src != "" || status(rep, "version") != Warn {
+		t.Errorf("component %+v, version %s", rep.Component, status(rep, "version"))
+	}
+}
+
+func TestReferrerHeaderAndMeta(t *testing.T) {
+	meta := func(v string) string { return `<meta name="referrer" content="` + v + `">` + goodPage(componentTag) }
+	cases := []struct {
+		name   string
+		header []string // Referrer-Policy header lines; nil for none
+		html   string
+		want   string
+	}{
+		{"header no-referrer, meta unsafe-url", []string{"no-referrer"}, meta("unsafe-url"), Warn},
+		{"header unsafe-url, meta no-referrer", []string{"unsafe-url"}, meta("no-referrer"), OK},
+		{"last header line wins", []string{"unsafe-url", "no-referrer"}, goodPage(componentTag), OK},
+		{"last header line loses", []string{"no-referrer", "origin"}, goodPage(componentTag), Warn},
+		{"last token of a list", []string{"unsafe-url, no-referrer"}, goodPage(componentTag), OK},
+		{"unknown header token ignored", []string{"no-referrer, bogus"}, goodPage(componentTag), OK},
+		{"unknown meta ignored", []string{"no-referrer"}, meta("bogus"), OK},
+		{"only unknown", nil, meta("bogus"), Warn},
+		{"last meta wins", nil, meta("no-referrer") + meta("origin"), Warn},
+	}
+	for _, c := range cases {
+		s := good()
+		s.html = c.html
+		s.headers = map[string]string{"Referrer-Policy": ""}
+		base, log := serve(t, s)
+		_ = log
+		if c.header != nil {
+			// The test server sets one value; use a wrapper for several lines.
+			inner := base
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				req, _ := http.NewRequest(http.MethodGet, inner+r.URL.Path, nil)
+				resp, err := http.DefaultClient.Do(req)
+				if err != nil {
+					return
+				}
+				defer resp.Body.Close()
+				for k, v := range resp.Header {
+					w.Header()[k] = v
+				}
+				for _, h := range c.header {
+					w.Header().Add("Referrer-Policy", h)
+				}
+				_, _ = io.Copy(w, resp.Body)
+			}))
+			defer srv.Close()
+			base = srv.URL
+		}
+		if got := status(run(t, base+"/review"), "referrer"); got != c.want {
+			t.Errorf("%s: %s, want %s", c.name, got, c.want)
+		}
 	}
 }

@@ -18,7 +18,10 @@ const (
 	scriptLimit  = 4 << 20
 )
 
-var errOffOrigin = errors.New("redirects to another origin")
+var (
+	errOffOrigin   = errors.New("redirects to another origin")
+	errCredentials = errors.New("the URL carries credentials (user:password@), which doctor never sends")
+)
 
 // origin is scheme://host[:port] of u, in lower case.
 func origin(u *url.URL) string {
@@ -49,6 +52,10 @@ func newClient() *http.Client {
 			if origin(req.URL) != origin(via[0].URL) {
 				return errOffOrigin
 			}
+			if req.URL.User != nil {
+				return errCredentials
+			}
+			req.Header.Del("Authorization")
 			// Go sets Referer on a redirect; the page's URL may be private.
 			req.Header.Del("Referer")
 			return nil
@@ -64,6 +71,9 @@ type response struct {
 }
 
 func fetch(ctx context.Context, client *http.Client, u *url.URL, limit int64, version string) (*response, error) {
+	if u.User != nil {
+		return nil, errCredentials
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
