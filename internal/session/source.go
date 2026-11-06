@@ -38,8 +38,8 @@ func checkSource(opts *Options) error {
 	switch {
 	case isCanvas(opts.File):
 		return errors.New("only text files can be shared from a source, not a canvas")
-	case opts.Keep > 0 || opts.Resume != "":
-		return errors.New("a room shared from a source cannot be kept or resumed")
+	case opts.Resume != "":
+		return errors.New("a room shared from a source cannot be resumed yet")
 	case len(opts.More) > 0:
 		return errors.New("a room shared from a source shares one file")
 	}
@@ -58,7 +58,10 @@ func newSourceContent(doc *crdt.Doc, file string, state []byte) (*textContent, e
 }
 
 // FromSource applies an update the source made to the room's doc. It reaches
-// the room and is not handed back to the source.
+// the room and is not handed back to the source. It returns with the update in
+// the doc, so the last snapshot of a kept room (Stop) holds every update whose
+// FromSource has returned: the caller stops feeding the session first, then
+// calls Stop.
 func (s *Session) FromSource(update []byte) error {
 	var err error
 	s.Client.Do(func() {

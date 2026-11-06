@@ -26,6 +26,8 @@ import (
 
 const shareWait = 5 * time.Second
 
+var shareRooms atomic.Int32
+
 // shareEnv is a relay for serve to share to: room creation over HTTP, and the
 // WebSocket side in memory.
 type shareEnv struct {
@@ -36,7 +38,8 @@ type shareEnv struct {
 func newShareEnv(t *testing.T) *shareEnv {
 	t.Helper()
 	e := &shareEnv{relay: prototest.NewRelay(true)}
-	var rooms atomic.Int32
+	// Room ids are unique across tests: kept records outlive a test's relay.
+	rooms := &shareRooms
 	e.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]string{"id": fmt.Sprintf("%022d", rooms.Add(1)), "hostToken": "host-token"})
@@ -299,9 +302,8 @@ func TestServeShareRefusalsKeepServing(t *testing.T) {
 	if e := a.event("error", 1); e["cmd"] != "unshare" || !strings.Contains(e["message"].(string), "not shared") {
 		t.Fatalf("%v", e)
 	}
-	// Kept rooms are not built yet; the default keep is one.
-	a.command(fmt.Sprintf(`{"cmd":"share","relay":%q}`, env.server.URL))
-	if e := a.event("error", 2); e["cmd"] != "share" || !strings.Contains(e["message"].(string), "not available yet") {
+	a.command(`{"cmd":"close"}`)
+	if e := a.event("error", 2); e["cmd"] != "close" || !strings.Contains(e["message"].(string), "not available yet") {
 		t.Fatalf("%v", e)
 	}
 	a.command(`{"cmd":"share","keep":"0","relay":"http://127.0.0.1:1"}`)

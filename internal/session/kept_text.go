@@ -57,6 +57,11 @@ type keptTextState struct {
 	// (protocol version 8). An older pedit would skip and lose them, so it
 	// refuses the record: it fails the strict decode of the unknown field.
 	CommentEntries bool `json:",omitempty"`
+	// Generation and Origins mark a room shared from `pedit serve`: the
+	// generation of its document, and the page origins the relay admits. Like
+	// CommentEntries they make an older pedit refuse the record.
+	Generation string   `json:",omitempty"`
+	Origins    []string `json:",omitempty"`
 }
 type keptTextFileState struct {
 	ID         uint32

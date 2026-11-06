@@ -104,7 +104,7 @@ func (s *Session) startAway(hostToken, fragment string, res *resumed) error {
 
 // newRecord lists the files a new kept room starts with.
 func (a *keepAway) newRecord(project, fragment, hostToken string) (keptTextState, error) {
-	state := keptTextState{Project: project, Origin: a.s.server, Fragment: fragment, HostToken: hostToken, Socket: true, CommentEntries: true, Keep: int64(a.s.opts.Keep / time.Second)}
+	state := keptTextState{Project: project, Origin: a.s.server, Fragment: fragment, HostToken: hostToken, Socket: true, CommentEntries: true, Keep: int64(a.s.opts.Keep / time.Second), Generation: a.s.opts.Generation, Origins: a.s.opts.Origins}
 	for i, f := range a.files {
 		path, err := keptPath(project, f.file, len(a.files) > 1)
 		if err != nil {
@@ -216,12 +216,21 @@ func (a *keepAway) saveRecord(leaving bool) error {
 	}
 	state := a.h.state
 	state.Files = append([]keptTextFileState{}, state.Files...)
+	if hook := a.s.opts.BeforeRecord; hook != nil && a.s.opts.Source != nil {
+		hook()
+	}
+	incomplete := false
 	a.s.Client.Do(func() {
 		for i := range state.Files {
 			file := &state.Files[i]
 			live := a.h.files[file.ID].doc
-			if disk, ok := a.files[i].bound.Read(); ok && a.h.files[file.ID].matches(disk) {
+			if disk, ok := a.files[i].onDisk(); ok && a.h.files[file.ID].matches(disk) {
 				file.State, file.Text, file.Pending = crdt.EncodeStateAsUpdateV1(live, nil), disk, nil
+			}
+			if a.s.opts.Source != nil && len(file.State) == 0 {
+				// A source's file that the source has not written yet: there
+				// is no state to check against the file.
+				incomplete = true
 			}
 			if m := file.Meta; m != nil && a.h.files[m.ID] != nil {
 				meta := *m
@@ -231,6 +240,10 @@ func (a *keepAway) saveRecord(leaving bool) error {
 			}
 		}
 	})
+	if incomplete {
+		a.report(errors.New("the kept room has no record yet: the file does not match the document"))
+		return nil
+	}
 	state.Keep, state.After, state.Initialized = granted, after, true
 	// While the host is here the deadline is unknown: if it dies without
 	// leaving, the relay starts a fresh keep period, so an old deadline would

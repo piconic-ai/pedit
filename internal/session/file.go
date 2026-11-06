@@ -80,6 +80,15 @@ func (f *sharedFile) scheduleSyncFromDisk() {
 	})
 }
 
+// onDisk is the file's text now. A source's file has no bound handle (the
+// source writes it), so it is read by name.
+func (f *sharedFile) onDisk() (string, bool) {
+	if f.bound == nil {
+		return filewriter.ReadFile(f.file)
+	}
+	return f.bound.Read()
+}
+
 // close lets go of the file and its metadata, once the session is over.
 func (f *sharedFile) close() error {
 	if f.meta != nil {

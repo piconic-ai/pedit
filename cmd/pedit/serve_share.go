@@ -7,7 +7,9 @@ import (
 	"io"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sync"
+	"time"
 
 	"github.com/piconic-ai/pedit/internal/access"
 	"github.com/piconic-ai/pedit/internal/protocol"
@@ -20,7 +22,7 @@ var serveDial protocol.Dialer
 
 // liveSharer shares the served file in a live room (docs/design/embedding.md
 // "Share from `pedit serve`"): the room is one more client of serve's
-// document. Kept rooms are not built yet.
+// document. A kept room is left kept by unshare; resuming it is not built yet.
 type liveSharer struct {
 	srv    *serve.Server
 	st     *serve.Stdio
@@ -49,7 +51,8 @@ func newLiveSharer(srv *serve.Server, st *serve.Stdio, stderr io.Writer) *liveSh
 var (
 	errAlreadyShared = errors.New("already shared; send unshare first")
 	errNotShared     = errors.New("not shared")
-	errKeptNotYet    = errors.New(`kept rooms from pedit serve are not available yet; send keep "0"`)
+	errCloseNotYet   = errors.New("close is not available yet")
+	errKeptWindows   = errors.New(`kept rooms need Unix file permissions and are not available on Windows; send keep "0" for a live room`)
 	errChoiceNotYet  = errors.New("choice is not available yet")
 )
 
@@ -59,8 +62,8 @@ func (l *liveSharer) Share(ctx context.Context, req shareRequest) error {
 	switch {
 	case l.cur != nil:
 		return errAlreadyShared
-	case req.Keep > 0:
-		return errKeptNotYet
+	case req.Keep > 0 && runtime.GOOS == "windows":
+		return errKeptWindows
 	case req.Choice != "":
 		return errChoiceNotYet
 	}
@@ -72,6 +75,11 @@ func (l *liveSharer) Share(ctx context.Context, req shareRequest) error {
 	server := cfg.Server
 	if req.Relay != "" {
 		server = req.Relay
+	}
+	if req.Keep > 0 {
+		if err := l.checkNotKept(cfg.root); err != nil {
+			return err
+		}
 	}
 	ls := &liveShare{bridge: &bridge{onError: func(err error) { fmt.Fprintln(l.stderr, "pedit:", err) }}}
 	ls.peer, err = l.srv.AttachPeer(serve.PeerHandler{
@@ -88,6 +96,7 @@ func (l *liveSharer) Share(ctx context.Context, req shareRequest) error {
 	cloudflared := &access.Cloudflared{OnSignIn: func(url string) {
 		fmt.Fprintf(l.stderr, "pedit: %s is behind Cloudflare Access; sign in at %s\n", hostOf(server), url)
 	}}
+	kept := make(chan int64, 1)
 	signIn := func(ctx context.Context, app string) (string, error) {
 		return withSignInLimit(ctx, signInLimit, app, cloudflared.Token)
 	}
@@ -99,12 +108,22 @@ func (l *liveSharer) Share(ctx context.Context, req shareRequest) error {
 		// one from the account, with no avatar unless Access gives one.
 		Name:    nameOf(commandArgs{}),
 		Origins: req.Origins,
-		Source:  peerSource{ls.peer},
-		Dial:    serveDial,
-		OnError: func(err error) { fmt.Fprintln(l.stderr, "pedit:", err) },
+		Keep:    req.Keep,
+		// Names the document the record belongs to.
+		Generation:   l.srv.Generation(),
+		BeforeRecord: l.flush,
+		Source:       peerSource{ls.peer},
+		Dial:         serveDial,
+		OnError:      func(err error) { fmt.Fprintln(l.stderr, "pedit:", err) },
 		OnStatus: func(st protocol.Status) {
 			if st.Final() {
 				go l.ended(ls, st)
+			}
+		},
+		OnKeep: func(seconds int64) {
+			select {
+			case kept <- seconds:
+			default:
 			}
 		},
 		OnPeers:         func(p []session.Person) { l.peers(ls, p) },
@@ -124,7 +143,53 @@ func (l *liveSharer) Share(ctx context.Context, req shareRequest) error {
 	if comment != "" {
 		links["comment"] = room + "." + comment
 	}
-	l.st.Event("shared", map[string]any{"room": room, "links": links, "keptUntil": 0, "resumed": false})
+	l.st.Event("shared", map[string]any{"room": room, "links": links, "keptUntil": keptUntil(ctx, s, req, kept), "resumed": false})
+	return nil
+}
+
+// keepWait is how long a share waits for the relay's word on the keep. A relay
+// that keeps nothing says so on connecting too.
+var keepWait = 5 * time.Second
+
+// keptUntil is when the relay ends the room once the host leaves, in Unix ms
+// as far as the session knows, or 0 when the relay keeps nothing.
+func keptUntil(ctx context.Context, s *session.Session, req shareRequest, kept <-chan int64) int64 {
+	if req.Keep <= 0 {
+		return 0
+	}
+	select {
+	case seconds := <-kept:
+		if seconds > 0 {
+			return s.KeptUntil().UnixMilli()
+		}
+	case <-ctx.Done():
+	case <-time.After(keepWait):
+	}
+	return 0
+}
+
+// checkNotKept refuses a share of a file that has a kept room. Resuming it is
+// not available yet, and a second room would leave two records for the file.
+func (l *liveSharer) checkNotKept(project string) error {
+	file, err := filepath.Abs(l.srv.Path())
+	if err != nil {
+		return err
+	}
+	records, err := session.ListKeptText(project)
+	if err != nil {
+		return err
+	}
+	for _, r := range records {
+		// An unknown deadline (0) may still be a live room.
+		if r.Until != 0 && r.Until <= time.Now().UnixMilli() {
+			continue
+		}
+		for _, f := range r.Files {
+			if f == file {
+				return fmt.Errorf("this file has a kept room %s; resuming it from pedit serve is not available yet", r.Room)
+			}
+		}
+	}
 	return nil
 }
 
@@ -172,19 +237,31 @@ func (l *liveSharer) Unshare() error {
 	return nil
 }
 
-// Close ends a kept room, which comes with kept rooms.
-func (l *liveSharer) Close(context.Context) error { return errKeptNotYet }
+// Close ends a kept room, which comes with resuming one.
+func (l *liveSharer) Close(context.Context) error { return errCloseNotYet }
 
-// leave stops the session, so the room ends and nothing more is sent, then
-// detaches the peer. The caller holds mu.
+// leave stops the session, so a live room ends and nothing more is sent, and a
+// kept room stays kept with its record, then detaches the peer. The bridge
+// stops feeding the session first, so the last snapshot holds every update
+// that was handed over. The caller holds mu.
 func (l *liveSharer) leave() {
 	ls := l.cur
 	l.cur = nil
 	ls.bridge.close()
+	// Serve saves the file before the last record is written.
+	l.flush()
 	if err := ls.session.Stop(); err != nil {
 		fmt.Fprintln(l.stderr, "pedit:", err)
 	}
 	ls.peer.Close()
+}
+
+// flush has serve save the file now, so a kept room's record starts from a
+// state the file matches.
+func (l *liveSharer) flush() {
+	if err := l.srv.Flush(); err != nil {
+		fmt.Fprintln(l.stderr, "pedit:", err)
+	}
 }
 
 // peerSource is serve's peer as the room's source.
