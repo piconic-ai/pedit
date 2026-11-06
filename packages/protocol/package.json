@@ -16,6 +16,7 @@
     ".": "./src/index.ts",
     "./kept-text": "./src/kept-text.ts",
     "./admission": "./src/admission.ts",
+    "./avatar-hosts": "./src/avatar-hosts.ts",
     "./close": "./src/close.ts",
     "./csp": "./src/csp.ts",
     "./embeds/define": "./src/embeds/define.ts",

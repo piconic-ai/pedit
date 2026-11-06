@@ -5,6 +5,7 @@
 // embed providers (embeds/index.ts), which both are built with.
 // This is not part of the wire format, so internal/protocol has no mirror.
 
+import { AVATAR_HOSTS } from './avatar-hosts.ts'
 import {
   ALLOW_FEATURES,
   isFetchProvider,
@@ -23,14 +24,7 @@ export { PROVIDERS }
 /** The id of one of those providers, as "Always load" remembers it. */
 export type ProviderId = keyof typeof PROVIDERS
 
-/** Hosts an avatar may come from. Awareness state is written by anyone with the link. */
-export const AVATAR_HOSTS = [
-  'gravatar.com',
-  'www.gravatar.com',
-  'secure.gravatar.com',
-  'avatars.githubusercontent.com',
-  'lh3.googleusercontent.com',
-] as const
+export { AVATAR_HOSTS }
 
 /** The <meta name> through which the Worker tells the editor the allowed media sources. */
 export const MEDIA_META = 'pedit-media-sources'
