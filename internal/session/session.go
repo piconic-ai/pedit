@@ -193,10 +193,8 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 		return nil, err
 	}
 	opts.Root = root
-	if opts.Source != nil {
-		if err := checkSource(opts); err != nil {
-			return nil, err
-		}
+	if err := checkSource(&opts); err != nil {
+		return nil, err
 	}
 	res, err := beginKeep(ctx, &opts)
 	if err != nil {
@@ -280,15 +278,6 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 		resumed:   res,
 	}
 	s.opts.OnError = onError
-	if opts.Source == nil {
-		s.Writer = filewriter.New(opts.File, initial, filewriter.Options{
-			Bound:            bound,
-			Delay:            opts.WriteDelay,
-			OnError:          s.notices.saveError,
-			OnWritten:        s.notices.written,
-			OnExternalChange: s.scheduleSyncFromDisk,
-		})
-	}
 	header, dial := hostHeader(opts, room.HostToken, res)
 	s.Client, err = protocol.NewClient(protocol.ClientOptions{
 		URL:       wsURL,
@@ -336,19 +325,7 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 		OnError:     onError,
 	})
 
-	doc.OnUpdate(func(update []byte, origin any) {
-		// Both come in under the client's lock, so the doc can be read here.
-		if opts.Source != nil {
-			// Room edits go to the source, which writes the file.
-			if origin == s.Client {
-				if err := opts.Source.Apply(update); err != nil {
-					onError(err)
-				}
-			}
-		} else if origin == s.Client || origin == editOrigin {
-			s.Writer.Schedule(s.content.render())
-		}
-	})
+	s.hookContent(bound, initial)
 	aw.OnChange(func(awareness.ChangeEvent) { s.reportPeople(opts.OnPeople) })
 	s.stopAlive = keepAlive(aw)
 	s.notices.start()
@@ -359,7 +336,7 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 	}
 	s.Client.Connect()
 
-	if opts.Watch && opts.Source == nil {
+	if opts.Watch {
 		if err := s.watch(); err != nil {
 			_ = s.Stop()
 			return nil, err
@@ -638,11 +615,7 @@ func (s *Session) Stop() error {
 		// and save right away: leaving can take a while, and a second Ctrl+C
 		// exits.
 		for _, f := range files {
-			if s.opts.Source == nil {
-				f.syncFromDisk()
-				f.Writer.Schedule(f.render())
-				_ = f.Writer.Flush()
-			}
+			s.flushFile(f)
 			if f.meta != nil {
 				// Before leaving, as the file is.
 				f.meta.stop()

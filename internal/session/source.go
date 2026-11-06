@@ -28,8 +28,13 @@ type Source interface {
 // are never handed back to Source.Apply.
 const sourceOrigin = "source"
 
-// checkSource refuses what a Source cannot do yet.
-func checkSource(opts Options) error {
+// checkSource refuses what a Source cannot do yet, and turns off watching the
+// file, which the source owns. It does nothing without a Source.
+func checkSource(opts *Options) error {
+	if opts.Source == nil {
+		return nil
+	}
+	opts.Watch = false
 	switch {
 	case isCanvas(opts.File):
 		return errors.New("only text files can be shared from a source, not a canvas")
@@ -56,8 +61,56 @@ func newSourceContent(doc *crdt.Doc, file string, state []byte) (*textContent, e
 // the room and is not handed back to the source.
 func (s *Session) FromSource(update []byte) error {
 	var err error
-	s.Client.Do(func() { err = crdt.ApplyUpdateV1(s.Doc, update, sourceOrigin) })
+	s.Client.Do(func() {
+		before := s.Text.ToString()
+		if err = crdt.ApplyUpdateV1(s.Doc, update, sourceOrigin); err == nil {
+			// Only references the source introduced may be uploaded, as for
+			// a local edit of an owned file.
+			s.attachments.AllowLocalChanges(before, s.Text.ToString())
+		}
+	})
 	return err
+}
+
+// hookContent saves what the room edits: to the file through a writer, or, for
+// a source, to the source, which writes the file. The doc calls it under the
+// client's lock, so the doc can be read there.
+func (s *Session) hookContent(bound *filewriter.BoundFile, initial string) {
+	opts := s.opts
+	if opts.Source != nil {
+		s.Doc.OnUpdate(func(update []byte, origin any) {
+			if origin != s.Client {
+				return
+			}
+			if err := opts.Source.Apply(update); err != nil {
+				opts.OnError(err)
+			}
+		})
+		return
+	}
+	s.Writer = filewriter.New(opts.File, initial, filewriter.Options{
+		Bound:            bound,
+		Delay:            opts.WriteDelay,
+		OnError:          s.notices.saveError,
+		OnWritten:        s.notices.written,
+		OnExternalChange: s.scheduleSyncFromDisk,
+	})
+	s.Doc.OnUpdate(func(_ []byte, origin any) {
+		if origin == s.Client || origin == editOrigin {
+			s.Writer.Schedule(s.content.render())
+		}
+	})
+}
+
+// flushFile merges last-second external edits into f and saves it right away.
+// A source's file is the source's to save.
+func (s *Session) flushFile(f *sharedFile) {
+	if s.opts.Source != nil {
+		return
+	}
+	f.syncFromDisk()
+	f.Writer.Schedule(f.render())
+	_ = f.Writer.Flush()
 }
 
 // Fragments are the room's id and the fragments of its links, as they follow
