@@ -605,6 +605,11 @@ func TestReferrerHeaderAndMeta(t *testing.T) {
 		{"unknown meta ignored", []string{"no-referrer"}, meta("bogus"), OK},
 		{"only unknown", nil, meta("bogus"), Warn},
 		{"last meta wins", nil, meta("no-referrer") + meta("origin"), Warn},
+		{"legacy meta never", []string{"unsafe-url"}, meta("never"), OK},
+		{"legacy meta always", []string{"no-referrer"}, meta("always"), Warn},
+		{"legacy token not in the header", []string{"no-referrer, never"}, goodPage(componentTag), OK},
+		{"legacy header token alone ignored", []string{"never"}, goodPage(componentTag), Warn},
+		{"meta list is not a policy", []string{"unsafe-url"}, meta("origin, no-referrer"), Warn},
 	}
 	for _, c := range cases {
 		s := good()

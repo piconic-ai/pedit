@@ -400,16 +400,24 @@ func checkVersion(comp component, opts Options) Check {
 	return ok("version", "component "+comp.version+" is newer than this pedit "+mine+" (note: update pedit)")
 }
 
-// referrerPolicies are the tokens browsers recognise, with the legacy ones.
+// referrerPolicies are the tokens of the Referrer Policy spec.
 var referrerPolicies = map[string]bool{
 	"no-referrer": true, "no-referrer-when-downgrade": true, "same-origin": true, "origin": true,
 	"strict-origin": true, "origin-when-cross-origin": true, "strict-origin-when-cross-origin": true,
-	"unsafe-url": true, "never": true, "default": true, "always": true, "origin-when-crossorigin": true,
+	"unsafe-url": true,
 }
 
-// lastPolicy applies the last recognised token of the comma-separated values
-// to policy, and leaves it when there is none.
-func lastPolicy(policy string, values ...string) string {
+// legacyMetaPolicies are the old values HTML still maps in <meta name="referrer">
+// (only there, not in the header).
+var legacyMetaPolicies = map[string]string{
+	"never": "no-referrer", "default": "strict-origin-when-cross-origin",
+	"always": "unsafe-url", "origin-when-crossorigin": "origin-when-cross-origin",
+}
+
+// headerPolicy is the last recognised token of the Referrer-Policy header
+// lines, or "" when there is none.
+func headerPolicy(values []string) string {
+	policy := ""
 	for _, v := range values {
 		for tok := range strings.SplitSeq(v, ",") {
 			if tok = strings.ToLower(strings.TrimSpace(tok)); referrerPolicies[tok] {
@@ -421,15 +429,21 @@ func lastPolicy(policy string, values ...string) string {
 }
 
 // checkReferrer follows the browser: the response header sets the policy, and
-// each <meta name="referrer"> after it overrides that.
+// each <meta name="referrer"> after it whose content is one policy (a single
+// token, not a list) overrides that.
 func checkReferrer(h http.Header, pg *page) Check {
 	fix := "send Referrer-Policy: no-referrer, so the page's URL is never passed on"
-	policy := lastPolicy("", h.Values("Referrer-Policy")...)
+	policy := headerPolicy(h.Values("Referrer-Policy"))
 	for _, m := range pg.MetaReferrer {
-		policy = lastPolicy(policy, m)
+		if v, ok := legacyMetaPolicies[m]; ok {
+			m = v
+		}
+		if referrerPolicies[m] {
+			policy = m
+		}
 	}
 	switch policy {
-	case "no-referrer", "never":
+	case "no-referrer":
 		return ok("referrer", "Referrer-Policy is no-referrer")
 	case "":
 		return Check{ID: "referrer", Status: Warn, Message: "no Referrer-Policy", Fix: fix}
