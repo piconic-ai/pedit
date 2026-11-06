@@ -1,0 +1,20 @@
+@media (max-width: 720px) {
+  header {
+    gap: 8px;
+  }
+  .brand {
+    display: none;
+  }
+  .file {
+    flex-basis: 0;
+    min-width: 3ch;
+  }
+  .status span:last-child {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}

@@ -1,0 +1,168 @@
+header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  padding-top: max(8px, env(safe-area-inset-top));
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-right: max(16px, env(safe-area-inset-right));
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  flex-wrap: wrap;
+}
+.file-tabs {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  padding: 0 16px;
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-right: max(16px, env(safe-area-inset-right));
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  scrollbar-width: thin;
+}
+.file-tabs[hidden] {
+  display: none;
+}
+.file-tabs button {
+  flex: none;
+  max-width: 24ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 6px 10px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.file-tabs button[aria-current="page"] {
+  color: inherit;
+  border-bottom-color: var(--accent);
+}
+.brand {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: inherit;
+  text-decoration: none;
+}
+.file {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 96px;
+}
+.status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.room-status {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+.room-status .status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: help;
+}
+.room-status .status:hover,
+.room-status .status:focus-visible {
+  border-color: var(--line);
+  color: var(--ink);
+}
+.room-status .dot {
+  width: 18px;
+  height: 18px;
+  background: none;
+}
+.room-status .host-dot {
+  fill: var(--muted);
+  stroke: var(--panel);
+  stroke-width: 2px;
+}
+.room-status [data-host="online"] .host-dot {
+  fill: var(--pedit-green);
+}
+.room-status [data-icon="spinner"] svg {
+  animation: room-status-spin 1s linear infinite;
+}
+.status-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.status-tooltip {
+  position: fixed;
+  z-index: 100;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 16px));
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 4px 16px #0002;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  white-space: normal;
+  visibility: hidden;
+}
+/* Keep the hover path continuous across the gap below the status button. */
+.status-tooltip::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -8px;
+  height: 8px;
+}
+.room-status[data-open="true"] .status-tooltip {
+  visibility: visible;
+}
+@keyframes room-status-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .room-status [data-icon="spinner"] svg {
+    animation: none;
+  }
+}
+@media (pointer: coarse) {
+  .room-status .status {
+    width: 44px;
+    height: 44px;
+  }
+}

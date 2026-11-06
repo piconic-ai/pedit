@@ -1,0 +1,15 @@
+/* The review core's CSS. style.css imports each part from where its rules sit in the page's
+   cascade; this file lists the same parts in the same order, for a host that takes the core
+   alone. No :root, html, body, #app or * rules and no custom property defaults here: the page
+   (style.css, palette.ts) or the host defines those. */
+@import "./css/wrappers.css";
+@import "./css/people.css";
+@import "./css/avatar-banner.css";
+@import "./css/people-narrow.css";
+@import "./css/coarse.css";
+@import "./css/editor.css";
+@import "./css/context-menu.css";
+@import "./css/vim.css";
+@import "./css/visually-hidden.css";
+@import "./css/comments.css";
+@import "./css/access.css";

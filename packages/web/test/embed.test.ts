@@ -1,6 +1,4 @@
 // @vitest-environment jsdom
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 import { PROVIDERS } from '@pedit/protocol/csp'
 import { allowOf, sandboxOf } from '@pedit/protocol/embeds/define'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -17,6 +15,7 @@ import {
   sizeHint,
   snippetFor,
 } from '../src/embed.ts'
+import { pageStylesheet } from './support/stylesheet.ts'
 
 const PLAYER = {
   sandbox: 'allow-scripts allow-same-origin allow-popups allow-presentation',
@@ -635,7 +634,7 @@ describe('embed sizes', () => {
 
 // jsdom does no layout, so this holds the rule that keeps a box's ratio in place.
 describe('the embed box in style.css', () => {
-  const css = readFileSync(resolve(import.meta.dirname, '../src/style.css'), 'utf8')
+  const css = pageStylesheet()
   const rule =
     /\n\.preview \.embed \{([^}]*aspect-ratio[^}]*)\}/.exec(css)?.[1]?.replace(/\s+/g, ' ') ?? ''
 

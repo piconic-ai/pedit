@@ -1,0 +1,379 @@
+.landing a {
+  display: inline-flex;
+  margin-top: 32px;
+  padding: 6px;
+  border-radius: 999px;
+  color: var(--muted);
+  transition: color 0.15s ease;
+}
+.landing a:hover {
+  color: var(--ink);
+}
+.landing a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.card {
+  width: min(420px, 100%);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 20px;
+}
+.card h1 {
+  font-size: 1.3rem;
+  margin: 0 0 8px;
+}
+.card p {
+  color: var(--muted);
+  margin: 0 0 12px;
+  line-height: 1.6;
+}
+.card code {
+  font-family: var(--mono);
+  background: var(--bg);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--ink);
+}
+.card form {
+  display: flex;
+  gap: 8px;
+}
+.card input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 16px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+}
+.card button {
+  font: inherit;
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--panel);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/*
+ * The canvas board (board.ts, CanvasBoard.tsx). @barefootjs/xyflow injects
+ * default styles after this sheet, so rules here are scoped under
+ * .canvas-view to win. Its variables take the page's colours.
+ */
+.canvas-view {
+  --foreground: var(--ink);
+  --muted-foreground: var(--muted);
+  --card: var(--panel);
+  --card-foreground: var(--ink);
+  --ring: var(--accent);
+  --bf-resize-color: var(--muted);
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  background: var(--bg);
+  font-family: var(--sans);
+}
+.canvas-board {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+}
+
+/* The JSON back door (jsonpane.ts): beside the board while shown. */
+.canvas-json {
+  display: none;
+  flex: 0 0 40%;
+  min-width: 0;
+  flex-direction: column;
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+}
+.canvas-view[data-json] .canvas-json {
+  display: flex;
+}
+.canvas-json-editor {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.canvas-json-editor .cm-editor {
+  flex: 1;
+  min-width: 0;
+}
+.canvas-json-status {
+  margin: 0;
+  padding: 6px 12px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 13px;
+  white-space: pre-wrap;
+  max-height: 30%;
+  overflow: auto;
+}
+.canvas-json-status[data-kind="invalid"],
+.canvas-json-status[data-kind="rejected"],
+.canvas-json-status[data-kind="too-large"] {
+  background: var(--warn-bg);
+  color: var(--warn-ink);
+}
+.canvas-json-status[data-kind="rejected"] {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.canvas-json-toggle {
+  position: absolute;
+  right: 12px;
+  bottom: max(12px, env(safe-area-inset-bottom));
+  z-index: 5;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12px;
+  cursor: pointer;
+}
+.canvas-json-toggle:hover,
+.canvas-json-toggle[aria-pressed="true"] {
+  color: var(--ink);
+  border-color: var(--muted);
+}
+/* Two panes do not fit a narrow screen, and the JSON is for rare fixes. */
+@media (max-width: 720px) {
+  .canvas-json-toggle,
+  .canvas-view[data-json] .canvas-json {
+    display: none;
+  }
+}
+.canvas-markers {
+  position: absolute;
+}
+.canvas-markers path {
+  fill: var(--muted);
+}
+.canvas-hint {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  margin: 0;
+  transform: translate(-50%, -50%);
+  color: var(--muted);
+  pointer-events: none;
+}
+.canvas-hint[hidden] {
+  display: none;
+}
+/* JSON Canvas's colour presets: red, orange, yellow, green, cyan, purple. */
+.canvas-card,
+.canvas-edge {
+  --card-color: var(--line);
+}
+.canvas-card[data-color="1"],
+.canvas-view [data-color="1"] {
+  --card-color: #e5484d;
+}
+.canvas-card[data-color="2"],
+.canvas-view [data-color="2"] {
+  --card-color: #f76b15;
+}
+.canvas-card[data-color="3"],
+.canvas-view [data-color="3"] {
+  --card-color: #d9a200;
+}
+.canvas-card[data-color="4"],
+.canvas-view [data-color="4"] {
+  --card-color: #30a46c;
+}
+.canvas-card[data-color="5"],
+.canvas-view [data-color="5"] {
+  --card-color: #12a5b8;
+}
+.canvas-card[data-color="6"],
+.canvas-view [data-color="6"] {
+  --card-color: #8e4ec6;
+}
+.canvas-card {
+  box-sizing: border-box;
+  position: relative;
+  border: 2px solid var(--card-color);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: calc(var(--editor-font-size) - 1px);
+  font-weight: normal;
+  line-height: 1.5;
+  text-align: left;
+  cursor: grab;
+}
+.canvas-card--group {
+  background: color-mix(in srgb, var(--card-color) 8%, transparent);
+  border-style: dashed;
+}
+.canvas-view .bf-flow__node--selected .canvas-card {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.canvas-body,
+.canvas-link,
+.canvas-editor {
+  box-sizing: border-box;
+  height: 100%;
+  padding: 8px 12px;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.canvas-body {
+  white-space: pre-wrap;
+}
+/*
+ * A text card's Markdown, in the preview's styles (.preview) so it reads as a
+ * Markdown file does, at the card's size and in its colours rather than the
+ * preview pane's.
+ */
+.canvas-markdown.preview {
+  flex: none;
+  min-width: 0;
+  overflow: visible;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+  white-space: normal;
+}
+.canvas-plain {
+  white-space: pre-wrap;
+}
+.canvas-card--link .canvas-body,
+.canvas-card:not(.canvas-card--link) .canvas-link {
+  display: none;
+}
+.canvas-card:not(.canvas-card--text, .canvas-card--group) .canvas-body {
+  color: var(--muted);
+  font-family: var(--mono);
+}
+.canvas-link {
+  display: block;
+  color: var(--accent);
+}
+/* Above the group's frame, as Obsidian shows it, clear of the nodes inside. */
+.canvas-card--group .canvas-body {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  height: auto;
+  overflow: visible;
+  padding: 0 2px 4px;
+  color: var(--muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.canvas-editor {
+  padding: 0;
+  cursor: text;
+}
+.canvas-card:not([data-editing]) .canvas-editor,
+.canvas-card[data-editing] .canvas-body {
+  display: none;
+}
+.canvas-editor .cm-editor {
+  height: 100%;
+  background: transparent;
+}
+.canvas-editor .cm-content {
+  padding: 8px 12px;
+}
+
+/* Handles show on a node under the pointer, and are there to drag from. */
+.canvas-view .bf-flow__handle {
+  width: 10px !important;
+  height: 10px !important;
+  background: var(--panel) !important;
+  border: 2px solid var(--muted) !important;
+  opacity: 0;
+}
+.canvas-view .bf-flow__node:hover .bf-flow__handle,
+.canvas-view .bf-flow__handle.valid {
+  opacity: 1;
+}
+.canvas-view .bf-flow__handle.valid {
+  border-color: var(--accent) !important;
+}
+.canvas-view .bf-flow__node:not(.bf-flow__node--selected) .bf-flow__node-resizer {
+  display: none;
+}
+
+/* Edges (edges.ts): a wide invisible path to click, the line, the label. */
+.canvas-edge-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 20;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+.canvas-edge-line {
+  fill: none;
+  stroke: var(--card-color);
+  stroke-width: 2;
+}
+.canvas-edge:not([data-color], [style]) .canvas-edge-line {
+  stroke: var(--muted);
+}
+.canvas-edge[data-selected] .canvas-edge-line {
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+.canvas-edge-label {
+  fill: var(--ink);
+  font-size: 12px;
+  text-anchor: middle;
+  dominant-baseline: middle;
+  paint-order: stroke;
+  stroke: var(--bg);
+  stroke-width: 4px;
+  pointer-events: none;
+}
+
+/* Others on the canvas (presence.ts): their colour around the nodes they are
+   on, with their names; a dashed ghost where they are dragging one. */
+.canvas-card[data-peer] {
+  box-shadow: 0 0 0 2px var(--peer-color);
+}
+.canvas-peer {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  transform: translateY(-100%);
+  max-width: 100%;
+  padding: 1px 6px;
+  border-radius: 4px 4px 0 0;
+  background: var(--peer-color);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+.canvas-peer:empty {
+  display: none;
+}
+.canvas-ghost rect {
+  fill: color-mix(in srgb, var(--peer-color) 10%, transparent);
+  stroke: var(--peer-color);
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+  rx: 8px;
+}
+.canvas-ghost text {
+  fill: var(--peer-color);
+  font-size: 12px;
+  font-weight: 600;
+}

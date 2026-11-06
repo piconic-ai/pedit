@@ -1,0 +1,21 @@
+/* The editor lies over the cell's hidden text (.cell-mirror), so editing
+   looks like the selected cell and the column keeps its width. */
+.cell-mirror {
+  visibility: hidden;
+}
+.cell-editor {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: inherit;
+  border: 0;
+  overflow: hidden;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+}

@@ -1,0 +1,21 @@
+/* Colours and text metrics come from the editor theme (themes.ts). */
+main.editor .cm-editor {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+main.editor .cm-scroller {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+main.editor .cm-content {
+  max-width: 820px;
+  padding: 16px 0;
+}
+.cm-focused {
+  outline: none !important;
+}
+main.editor .source {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}

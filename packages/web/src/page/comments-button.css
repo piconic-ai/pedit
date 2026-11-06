@@ -1,0 +1,6 @@
+.comments-button[aria-pressed="true"] {
+  color: var(--accent);
+}
+.comments-button[hidden] {
+  display: none;
+}

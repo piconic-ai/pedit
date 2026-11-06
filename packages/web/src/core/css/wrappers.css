@@ -1,0 +1,8 @@
+/* Mount points the core renders into: they add no box of their own. */
+.banner-slot,
+.notice-slot,
+.comments-host,
+.menu-slot,
+.menu-host {
+  display: contents;
+}
