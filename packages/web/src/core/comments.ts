@@ -852,15 +852,21 @@ export class CommentsPanelState {
   readonly open: Store<boolean>
   readonly #focus: Store<string | null>
   readonly #keep: (open: boolean) => void
+  readonly #stop: () => void
 
   /** `keep` is told each choice the reader makes, to remember it. */
   constructor(focus: Store<string | null>, open: boolean, keep: (open: boolean) => void) {
     this.open = new Store(open)
     this.#focus = focus
     this.#keep = keep
-    focus.subscribe((id) => {
+    this.#stop = focus.subscribe((id) => {
       if (id !== null) this.open.set(true)
     })
+  }
+
+  /** Stops following the thread in focus. */
+  dispose(): void {
+    this.#stop()
   }
 
   /** Opens or closes the panel, as the reader asks. */
