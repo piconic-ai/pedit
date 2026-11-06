@@ -2,9 +2,9 @@
 
 import { createSignal, onCleanup } from '@barefootjs/client'
 import { MAX_FRAME_BYTES, type RoomStatus } from '@pedit/protocol'
-import { copyText } from '../copy.ts'
-import type { Readable } from '../store.ts'
-import { timeLimitText } from '../timelimit.ts'
+import { copyText } from '../core/copy.ts'
+import type { Readable } from '../core/store.ts'
+import { timeLimitText } from '../core/timelimit.ts'
 
 const RESET_MS = 2000
 

@@ -26,10 +26,8 @@ import {
   resolveTheme,
   saveAppearance,
 } from './appearance.ts'
-import { Attachments, hostAttachments, whyNoImages } from './attachments.ts'
-import { BoardView } from './board.ts'
+import { BoardView, setCanvasStatus } from './board.ts'
 import { read as readCanvas, toJSON } from './canvas.ts'
-import { CommentDocs } from './commentdocs.ts'
 import { commentMarks } from './commentmarks.ts'
 import {
   CommentsPanelState,
@@ -45,33 +43,35 @@ import {
   type ThreadList,
   textTarget,
 } from './comments.ts'
-import { copyText } from './copy.ts'
+import { Attachments, hostAttachments, whyNoImages } from './core/attachments.ts'
+import { CommentDocs } from './core/commentdocs.ts'
+import { copyText } from './core/copy.ts'
+import { keepAlive } from './core/expiry.ts'
+import { NoticeBoard } from './core/notice.ts'
+import { imagePaste, textAnchor } from './core/paste.ts'
+import {
+  colorFor,
+  colorsByName,
+  type Participant,
+  participants,
+  roomSocketUrl,
+  sanitizeUser,
+  selectionTint,
+} from './core/room.ts'
+import { Store } from './core/store.ts'
 import { delimiterFor } from './csv.ts'
-import { keepAlive } from './expiry.ts'
 import { avatarFor, fetchIdentity } from './identity.ts'
 import { infoLinks } from './info.ts'
 import { JsonPane } from './jsonpane.ts'
 import { resolveLanguage } from './language.ts'
 import { ContextMenu, isMac } from './menu.ts'
-import { NoticeBoard } from './notice.ts'
 import { applyPalette } from './palette.ts'
 import { PreviewPane } from './pane.ts'
-import { imagePaste, textAnchor } from './paste.ts'
-import {
-  colorFor,
-  colorsByName,
-  type Participant,
-  parseRoomLocation,
-  participants,
-  roomSocketUrl,
-  sanitizeUser,
-  selectionTint,
-} from './room.ts'
+import { parseRoomLocation } from './room.ts'
 import { cleanName } from './settings.ts'
 import { lineWrapping, settingsModel } from './settings-model.ts'
 import { COPIED, shareLinks } from './share.ts'
 import { Splitter } from './splitter.ts'
-import { Store } from './store.ts'
 import { describeError, TableErrors, TableView } from './table.ts'
 import { fallbackTheme, loadTheme, readerTheme, ThemeSwitcher } from './themes.ts'
 import { NARROW_QUERY, type ViewMode, ViewSwitch } from './view.ts'
@@ -85,8 +85,8 @@ import './components/Header.tsx'
 import './components/Layout.tsx'
 import './components/Notice.tsx'
 import type { LayoutParts } from './components/Layout.tsx'
-import { AwayView, commentsLockedFor, isLocked, keptKindFor, setCanvasStatus } from './keptaway.ts'
-import { lockedUndo } from './lockedundo.ts'
+import { AwayView, commentsLockedFor, isLocked, keptKindFor } from './core/keptaway.ts'
+import { lockedUndo } from './core/lockedundo.ts'
 import './style.css'
 
 const NAME_KEY = 'pedit:name'

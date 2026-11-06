@@ -1,6 +1,6 @@
 import { createEffect, createRoot } from '@barefootjs/client'
 import { describe, expect, it, vi } from 'vitest'
-import { Store } from '../src/store.ts'
+import { Store } from '../../src/core/store.ts'
 
 describe('Store', () => {
   it('tells subscribers about each new value, until they stop', () => {

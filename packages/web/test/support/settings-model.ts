@@ -1,6 +1,6 @@
 import type { ProviderId } from '@pedit/protocol/csp'
+import { Store } from '../../src/core/store.ts'
 import { cleanName, type Range, type SettingsModel } from '../../src/settings.ts'
-import { Store } from '../../src/store.ts'
 import { THEMES } from '../../src/themes.ts'
 
 /** A settings model backed by plain stores, recording what each control asked for. */

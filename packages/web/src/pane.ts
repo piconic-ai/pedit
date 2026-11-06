@@ -1,7 +1,7 @@
 import type { EditorView } from '@codemirror/view'
 import type * as Y from 'yjs'
 import type { AlwaysLoad } from './alwaysload.ts'
-import type { ImageResolver } from './attachments.ts'
+import type { ImageResolver } from './core/attachments.ts'
 
 export type Renderer = Pick<
   typeof import('./preview.ts'),

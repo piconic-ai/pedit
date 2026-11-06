@@ -5,7 +5,7 @@ import { type CanvasMessage, MAX_CANVAS_EDIT_BYTES } from '@pedit/protocol'
 import { basicSetup } from 'codemirror'
 import type * as Y from 'yjs'
 import { EDGES, NODES, newId, read, toJSON } from './canvas.ts'
-import { Store } from './store.ts'
+import { Store } from './core/store.ts'
 
 /** What the pane says under the JSON. */
 export type JsonStatus =

@@ -1,7 +1,7 @@
 'use client'
 
 import type { FileEntry } from '@pedit/protocol'
-import type { Readable } from '../store.ts'
+import type { Readable } from '../core/store.ts'
 
 export interface FileTabsProps {
   /** The files the room shares, as the host listed them; file 0 first. */

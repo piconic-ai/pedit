@@ -3,7 +3,7 @@ import { EditorSelection, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as Y from 'yjs'
-import { imageMarkdown, imagePaste, textAnchor } from '../src/paste.ts'
+import { imageMarkdown, imagePaste, textAnchor } from '../../src/core/paste.ts'
 
 const views: EditorView[] = []
 afterEach(() => {

@@ -3,7 +3,7 @@ import { render } from '@barefootjs/client/runtime'
 import { afterEach, expect, it } from 'vitest'
 import type { HeaderStatus } from '../src/components/RoomStatusIndicator.tsx'
 import '../src/components/RoomStatusIndicator.tsx'
-import { Store } from '../src/store.ts'
+import { Store } from '../src/core/store.ts'
 
 const mounted: HTMLElement[] = []
 afterEach(() => {

@@ -11,7 +11,7 @@ import { editKeys, Relay } from '@pedit/protocol/testing'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Awareness } from 'y-protocols/awareness'
 import * as Y from 'yjs'
-import { CommentDocs } from '../src/commentdocs.ts'
+import { CommentDocs } from '../../src/core/commentdocs.ts'
 
 const clients: RoomClient[] = []
 afterEach(async () => {

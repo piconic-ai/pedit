@@ -1,4 +1,4 @@
-import { participants } from './room.ts'
+import { participants } from './core/room.ts'
 
 /**
  * Where someone is on a canvas, as each browser shares it in its awareness

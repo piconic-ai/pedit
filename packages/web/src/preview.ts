@@ -3,7 +3,7 @@ import DOMPurify from 'dompurify'
 import MarkdownIt from 'markdown-it'
 import { parseDocument } from 'yaml'
 import { type ProviderId, providerLabel } from './alwaysload.ts'
-import type { ImageResolver } from './attachments.ts'
+import type { ImageResolver } from './core/attachments.ts'
 import {
   boxStyle,
   checkBoxStyle,

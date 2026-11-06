@@ -1,6 +1,6 @@
 import type * as Y from 'yjs'
+import { Store } from '../src/core/store.ts'
 import { CsvError, type Table, tryParse } from '../src/csv.ts'
-import { Store } from '../src/store.ts'
 
 /** The text parsed as a table, as TableView.parsed keeps it, for tests. */
 export function parsedAs(text: Y.Text, delimiter: string | null): Store<Table | null> {

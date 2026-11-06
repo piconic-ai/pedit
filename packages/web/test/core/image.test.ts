@@ -6,7 +6,7 @@ import {
   type Shrink,
   sniff,
   stripMetadata,
-} from '../src/image.ts'
+} from '../../src/core/image.ts'
 
 const bytes = (...parts: (number[] | string | Uint8Array)[]) => {
   const flat: number[] = []

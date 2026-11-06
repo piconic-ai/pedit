@@ -1,6 +1,6 @@
 import { render } from '@barefootjs/client/runtime'
+import { Store as Value } from './core/store.ts'
 import { defaultStore, type Store } from './storage.ts'
-import { Store as Value } from './store.ts'
 import './components/SplitterBar.tsx'
 
 export const SPLIT_KEY = 'pedit:split'

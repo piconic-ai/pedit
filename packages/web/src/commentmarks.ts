@@ -1,7 +1,7 @@
 import { type Extension, RangeSetBuilder, StateEffect, StateField } from '@codemirror/state'
 import { Decoration, type DecorationSet, EditorView, ViewPlugin } from '@codemirror/view'
 import type { ShownThread } from './comments.ts'
-import type { Readable, Store } from './store.ts'
+import type { Readable, Store } from './core/store.ts'
 
 const setMarks = StateEffect.define<DecorationSet>()
 

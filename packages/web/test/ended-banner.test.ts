@@ -3,7 +3,7 @@ import { render } from '@barefootjs/client/runtime'
 import type { RoomStatus } from '@pedit/protocol'
 import { describe, expect, it, vi } from 'vitest'
 import '../src/components/EndedBanner.tsx'
-import { Store } from '../src/store.ts'
+import { Store } from '../src/core/store.ts'
 
 function mount(props: Record<string, unknown> = {}) {
   const status = new Store<RoomStatus>('connected')

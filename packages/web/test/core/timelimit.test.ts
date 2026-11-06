@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { timeLimitText } from '../src/timelimit.ts'
+import { timeLimitText } from '../../src/core/timelimit.ts'
 
 describe('timeLimitText', () => {
   it('names the limit in the largest whole unit', () => {

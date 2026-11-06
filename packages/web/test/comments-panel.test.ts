@@ -11,9 +11,9 @@ import {
   type ThreadList,
 } from '../src/comments.ts'
 import '../src/components/CommentsPanel.tsx'
+import { colorOf, colorsByName } from '../src/core/room.ts'
+import { Store } from '../src/core/store.ts'
 import { ContextMenu } from '../src/menu.ts'
-import { colorOf, colorsByName } from '../src/room.ts'
-import { Store } from '../src/store.ts'
 import { parsedAs } from './parsed.ts'
 
 function mount(text = 'hello world!\n', delimiter: string | null = null) {

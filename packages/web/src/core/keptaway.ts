@@ -1,8 +1,15 @@
 import { isFinalStatus, type RoomStatus } from '@pedit/protocol'
-import type { BoardView } from './board.ts'
-import type { HeaderStatus } from './components/RoomStatusIndicator.tsx'
-import type { JsonPane } from './jsonpane.ts'
 import { Store } from './store.ts'
+
+export type KeptSyncStatus =
+  | 'connecting'
+  | 'saving'
+  | 'kept'
+  | 'synced'
+  | 'retrying'
+  | 'expired'
+  | 'host-closed'
+export type HeaderStatus = RoomStatus | KeptSyncStatus
 
 /**
  * Whether nobody edits in this status: while the host is away and the relay
@@ -44,20 +51,6 @@ export const keptKindFor = (
   writesComments: boolean,
   keptComments: boolean,
 ): KeptKind => (writesFile ? 'edits' : writesComments && keptComments ? 'comments' : null)
-
-/** Applies the room's write permissions to the board and its host-validated JSON pane. */
-export function setCanvasStatus(
-  board: BoardView,
-  json: JsonPane,
-  status: RoomStatus,
-  canWrite: boolean,
-): void {
-  if (!canWrite || isFinalStatus(status)) board.readOnly = true
-  else {
-    board.paused = isLocked(status)
-    json.readOnly = isHostAway(status)
-  }
-}
 
 /**
  * What the page says of a room whose host may be away: the header's status,

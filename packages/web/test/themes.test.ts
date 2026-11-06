@@ -9,8 +9,8 @@ import { yCollab } from 'y-codemirror.next'
 import { Awareness } from 'y-protocols/awareness'
 import * as Y from 'yjs'
 import { composite, contrast } from '../src/contrast.ts'
+import { COLORS, selectionTint } from '../src/core/room.ts'
 import { PALETTE_VARS, type PagePalette } from '../src/palette.ts'
-import { COLORS, selectionTint } from '../src/room.ts'
 import {
   CARET_HALO,
   DEFAULT_THEME,

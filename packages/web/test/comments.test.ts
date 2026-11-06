@@ -17,6 +17,7 @@ import {
   saveCommentsOpen,
   TextIndex,
 } from '../src/comments.ts'
+import { Store } from '../src/core/store.ts'
 import {
   deleteColumn,
   deleteRow,
@@ -26,7 +27,6 @@ import {
   parse,
   setCell,
 } from '../src/csv.ts'
-import { Store } from '../src/store.ts'
 import { parsedAs } from './parsed.ts'
 
 function setup(text: string, delimiter: string | null = null) {

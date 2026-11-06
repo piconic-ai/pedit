@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next'
 import { Awareness } from 'y-protocols/awareness'
 import * as Y from 'yjs'
-import { lockedUndo } from '../src/lockedundo.ts'
+import { lockedUndo } from '../../src/core/lockedundo.ts'
 
 const views: EditorView[] = []
 afterEach(() => {

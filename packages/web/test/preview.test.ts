@@ -4,7 +4,7 @@ import { PROVIDERS, type ProviderId } from '@pedit/protocol/csp'
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
 import * as Y from 'yjs'
 import { ALWAYS_LOAD_KEY, AlwaysLoad } from '../src/alwaysload.ts'
-import type { ImageResolver } from '../src/attachments.ts'
+import type { ImageResolver } from '../src/core/attachments.ts'
 import { MAX_REMEMBERED_SNIPPETS, PreviewPane } from '../src/pane.ts'
 import * as preview from '../src/preview.ts'
 import {

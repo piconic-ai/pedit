@@ -2,11 +2,17 @@
 import { render } from '@barefootjs/client/runtime'
 import type { RoomStatus } from '@pedit/protocol'
 import { describe, expect, it } from 'vitest'
-import '../src/components/EndedBanner.tsx'
-import '../src/components/RoomStatusIndicator.tsx'
-import { whyNoImages } from '../src/attachments.ts'
-import { AwayView, commentsLockedFor, isHostAway, isLocked, keptKindFor } from '../src/keptaway.ts'
-import { Store } from '../src/store.ts'
+import '../../src/components/EndedBanner.tsx'
+import '../../src/components/RoomStatusIndicator.tsx'
+import { whyNoImages } from '../../src/core/attachments.ts'
+import {
+  AwayView,
+  commentsLockedFor,
+  isHostAway,
+  isLocked,
+  keptKindFor,
+} from '../../src/core/keptaway.ts'
+import { Store } from '../../src/core/store.ts'
 
 const UNTIL = Date.UTC(2030, 0, 2, 3, 4, 5)
 

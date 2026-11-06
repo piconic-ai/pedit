@@ -7,11 +7,11 @@ import { markdown } from '@codemirror/lang-markdown'
 import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import type { Extension } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
+import { isFinalStatus, type RoomStatus } from '@pedit/protocol'
 import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next'
 import type { Awareness } from 'y-protocols/awareness'
 import * as Y from 'yjs'
 import type { AlwaysLoad } from './alwaysload.ts'
-import type { ImageResolver } from './attachments.ts'
 import {
   addEdge,
   addNode,
@@ -29,12 +29,14 @@ import {
   type Side,
   textOf,
 } from './canvas.ts'
+import type { ImageResolver } from './core/attachments.ts'
+import { isHostAway, isLocked } from './core/keptaway.ts'
+import { type ImagePasteOptions, imagePaste, textAnchor } from './core/paste.ts'
+import { Store } from './core/store.ts'
 import { type Box, EdgeLayer, shapesOf } from './edges.ts'
 import type { JsonPane } from './jsonpane.ts'
 import { loadRemembered, onEmbedControl, type Renderer } from './pane.ts'
-import { type ImagePasteOptions, imagePaste, textAnchor } from './paste.ts'
 import { type NodePeers, type Presence, peersOf, sameNodePeers, samePresence } from './presence.ts'
-import { Store } from './store.ts'
 import './components/CanvasBoard.tsx'
 
 /**
@@ -811,5 +813,19 @@ export class BoardView {
       e.preventDefault()
       this.#undo.redo()
     }
+  }
+}
+
+/** Applies the room's write permissions to the board and its host-validated JSON pane. */
+export function setCanvasStatus(
+  board: BoardView,
+  json: JsonPane,
+  status: RoomStatus,
+  canWrite: boolean,
+): void {
+  if (!canWrite || isFinalStatus(status)) board.readOnly = true
+  else {
+    board.paused = isLocked(status)
+    json.readOnly = isHostAway(status)
   }
 }
