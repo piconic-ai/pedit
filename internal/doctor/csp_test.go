@@ -86,6 +86,48 @@ func TestCSPProblems(t *testing.T) {
 	}
 }
 
+func TestCSPFetchDirectiveFallbacks(t *testing.T) {
+	want, _ := ReviewCSP("https://edit.piconic.ai", nil)
+	expected := parseCSP(want)
+	for _, extra := range []string{
+		"style-src-elem https://evil.example", "child-src https://evil.example", "font-src https://evil.example",
+		"frame-src *", "worker-src blob:", "media-src https:", "manifest-src *", "script-src-attr 'unsafe-inline'",
+	} {
+		if p := cspProblems(parseCSP(want+"; "+extra), expected, ""); len(p) == 0 {
+			t.Errorf("%s passes", extra)
+		}
+	}
+	for _, ok := range []string{"font-src 'none'", "worker-src 'self'", "child-src 'none'", "frame-src 'none'", "style-src-elem 'self'", "worker-src 'none'"} {
+		if p := cspProblems(parseCSP(want+"; "+ok), expected, ""); len(p) != 0 {
+			t.Errorf("%s: %v", ok, p)
+		}
+	}
+}
+
+func TestRelayForms(t *testing.T) {
+	for relay, origin := range map[string]string{
+		"http://0x.1":                 "http://0.0.0.1",
+		"http://1.2.3.0x":             "http://1.2.3.0",
+		"http://1.2.3.4.:80":          "http://1.2.3.4",
+		"http://2130706433:1":         "http://127.0.0.1:1",
+		"http://relay.example:":       "http://relay.example",
+		"https://relay.example:65535": "https://relay.example:65535",
+		"HTTPS:\\\\Relay.example:443": "https://relay.example",
+		"https://@relay.example":      "https://relay.example",
+		"https://a_b.example":         "https://a_b.example",
+	} {
+		got, err := parseRelay(relay)
+		if err != nil || got.Origin != origin {
+			t.Errorf("%s: %v %v", relay, got, err)
+		}
+	}
+	for _, relay := range []string{"https://relay.example:65536", "http://1.2.3.4.5", "http://08.1", "http://256.1.1.1", "https://u@relay.example", "https://relay.example:80a", "http://[::1", "https:///", "http://a b"} {
+		if got, err := parseRelay(relay); err == nil {
+			t.Errorf("%s accepted as %v", relay, got)
+		}
+	}
+}
+
 func TestCSPPageOrigin(t *testing.T) {
 	expected := parseCSP("script-src 'self'; connect-src https://edit.piconic.ai")
 	policy := parseCSP("script-src 'self' https://cms.example.com; connect-src https://edit.piconic.ai https://cms.example.com")

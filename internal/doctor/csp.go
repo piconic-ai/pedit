@@ -2,8 +2,6 @@ package doctor
 
 import (
 	"errors"
-	"net"
-	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -22,33 +20,6 @@ var avatarHosts = []string{
 // ancestorSource is one source expression of frame-ancestors, as csp.ts
 // accepts it: no quote, ';' or ',' beyond the two keywords.
 var ancestorSource = regexp.MustCompile(`^(?:'self'|'none'|[A-Za-z0-9*.:/_-]+)$`)
-
-// relayParts is a relay URL broken into what the policy needs.
-type relayParts struct {
-	Origin string // https://host[:port]
-	Socket string // wss://host[:port]
-}
-
-// parseRelay accepts what parseRelayUrl in packages/review/src/relay.ts does:
-// an http(s) URL without credentials.
-func parseRelay(value string) (relayParts, error) {
-	u, err := url.Parse(value)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil {
-		return relayParts{}, errors.New("relay must be an http(s) URL without credentials")
-	}
-	host := strings.ToLower(u.Hostname())
-	if strings.Contains(host, ":") {
-		host = "[" + host + "]"
-	}
-	if port := u.Port(); port != "" && !(u.Scheme == "https" && port == "443") && !(u.Scheme == "http" && port == "80") {
-		host = net.JoinHostPort(strings.Trim(host, "[]"), port)
-	}
-	socket := "ws"
-	if u.Scheme == "https" {
-		socket = "wss"
-	}
-	return relayParts{Origin: u.Scheme + "://" + host, Socket: socket + "://" + host}, nil
-}
 
 // ReviewCSP is the Go twin of reviewCSP in packages/review/src/csp.ts: the
 // policy a review page for relay must send. frameAncestors, when not nil, adds
@@ -161,37 +132,71 @@ func extraSources(got, want []string, pageOrigin string) []string {
 	return extra
 }
 
-// looseDirectives are not in the expected policy, but can let more run or
-// load than script-src says.
-var looseDirectives = []string{"script-src-elem", "script-src-attr", "worker-src"}
+// fallbacks is, for each fetch directive, the directives a browser consults
+// when the policy does not name it, nearest first.
+var fallbacks = map[string][]string{
+	"default-src":      nil,
+	"script-src":       {"default-src"},
+	"script-src-elem":  {"script-src", "default-src"},
+	"script-src-attr":  {"script-src", "default-src"},
+	"style-src":        {"default-src"},
+	"style-src-elem":   {"style-src", "default-src"},
+	"style-src-attr":   {"style-src", "default-src"},
+	"img-src":          {"default-src"},
+	"font-src":         {"default-src"},
+	"connect-src":      {"default-src"},
+	"media-src":        {"default-src"},
+	"object-src":       {"default-src"},
+	"manifest-src":     {"default-src"},
+	"prefetch-src":     {"default-src"},
+	"fenced-frame-src": {"default-src"},
+	"child-src":        {"default-src"},
+	"frame-src":        {"child-src", "default-src"},
+	"worker-src":       {"child-src", "script-src", "default-src"},
+}
+
+// effectiveSources is what the expected policy allows for the fetch directive
+// name, through the fallback chain.
+func effectiveSources(expected []directive, name string) []string {
+	for _, n := range append([]string{name}, fallbacks[name]...) {
+		if d, ok := findDirective(expected, n); ok {
+			return d.sources
+		}
+	}
+	return nil
+}
 
 // cspProblems lists what policy allows beyond, or lacks of, the expected one.
-// A directive may allow less than expected, never more, in any of its copies.
-// pageOrigin (scheme://host[:port], or "") is what 'self' means.
+// Every fetch directive of the page, in any copy, may allow what the expected
+// policy allows for it (its own directive or the one it falls back to), and
+// less, never more. pageOrigin (scheme://host[:port], or "") is what 'self' means.
 func cspProblems(policy, expected []directive, pageOrigin string) []string {
 	var problems []string
 	for _, want := range expected {
 		problems = append(problems, directiveProblems(policy, want, pageOrigin)...)
 	}
-	for _, name := range looseDirectives {
-		want := directive{name, []string{"'self'", "'none'"}}
-		for _, d := range policy {
-			if d.name == name {
-				problems = append(problems, sourceProblems(d, want, pageOrigin)...)
-			}
+	for _, d := range policy {
+		if _, fetch := fallbacks[d.name]; fetch {
+			problems = append(problems, sourceProblems(d, directive{d.name, effectiveSources(expected, d.name)}, pageOrigin)...)
 		}
 	}
 	return append(problems, evalProblems(policy)...)
 }
 
-// directiveProblems checks every copy of want's directive in policy. A missing
-// one is a problem, except object-src, which falls back to default-src.
+// directiveProblems wants every directive of the expected policy in the page's.
+// A missing one is a problem, except object-src, which falls back to
+// default-src. Directives that are not fetch directives (base-uri, form-action)
+// are compared here, in every copy.
 func directiveProblems(policy []directive, want directive, pageOrigin string) []string {
 	var problems []string
 	found := false
+	_, fetch := fallbacks[want.name]
 	for _, d := range policy {
-		if d.name == want.name {
-			found = true
+		if d.name != want.name {
+			continue
+		}
+		found = true
+		if !fetch {
 			problems = append(problems, sourceProblems(d, want, pageOrigin)...)
 		}
 	}
