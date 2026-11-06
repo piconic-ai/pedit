@@ -242,16 +242,16 @@ func sameSet(a, b []string) bool {
 
 // serveRecordFor is serve's view of the kept room of a file: its generation,
 // document and the text it matched. The project is looked up as share does.
-func serveRecordFor(file string) (generation string, doc []byte, text string, ok bool) {
+func serveRecordFor(file string) (generation string, doc []byte, text string, pending *string, ok bool) {
 	cfg, err := loadProject(filepath.Dir(file))
 	if err != nil {
-		return "", nil, "", false
+		return "", nil, "", nil, false
 	}
 	rec, err := keptRecordOf(cfg.root, file)
 	if err != nil || rec == nil || rec.Generation == "" || len(rec.State) == 0 {
-		return "", nil, "", false
+		return "", nil, "", nil, false
 	}
-	return rec.Generation, rec.State, rec.Text, true
+	return rec.Generation, rec.State, rec.Text, rec.Pending, true
 }
 
 // peers tells the app who is in the room, when that changed.

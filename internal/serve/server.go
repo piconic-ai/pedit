@@ -61,7 +61,8 @@ type Options struct {
 	// known to hold. serve then does not let its own state of that generation
 	// expire, and starts from the record when the state cannot be used. It
 	// may be nil. It is called while serve opens, and must be cheap.
-	RecordFor func(file string) (generation string, doc []byte, text string, ok bool)
+	// pending, when set, is a text the file may hold instead of text.
+	RecordFor func(file string) (generation string, doc []byte, text string, pending *string, ok bool)
 	// FrameRate and Step1Rate are the most frames, and the most sync step 1
 	// messages, per second one connection may send: 1000 and 10 by default.
 	FrameRate, Step1Rate int

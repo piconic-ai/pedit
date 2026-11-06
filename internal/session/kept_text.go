@@ -308,13 +308,16 @@ func (h *keptTextHost) persist(ctx context.Context) ([]byte, error) {
 	}
 	for i := range h.state.Files {
 		file := &h.state.Files[i]
-		if h.owns(file) {
-			next := h.files[file.ID].render(file.Text)
-			if !utf8.ValidString(next) {
-				return nil, errors.New("invalid kept UTF-8 text")
-			}
-			file.State, file.Pending = crdt.EncodeStateAsUpdateV1(h.files[file.ID].doc, nil), &next
+		// A source's file is journaled as a write in doubt too: Text stays what
+		// the file is known to hold, Pending is the merge, which the source
+		// writes. The next record that the file matches clears it. Without
+		// this a crash before the source has the merge would leave the saved
+		// cursor with the old document.
+		next := h.files[file.ID].render(file.Text)
+		if !utf8.ValidString(next) {
+			return nil, errors.New("invalid kept UTF-8 text")
 		}
+		file.State, file.Pending = crdt.EncodeStateAsUpdateV1(h.files[file.ID].doc, nil), &next
 		if e := h.syncMeta(file); e != nil {
 			return nil, e
 		}
@@ -765,6 +768,8 @@ type KeptTextRecord struct {
 	Origins    []string
 	State      []byte
 	Text       string
+	// Pending is a text the file may hold instead of Text: a write in doubt.
+	Pending *string
 }
 
 // ListKeptText returns the resume records of project, soonest deadline first.
@@ -789,7 +794,7 @@ func ListKeptText(project string) ([]KeptTextRecord, error) {
 		}
 		r := KeptTextRecord{Room: room, Until: s.Until, Generation: s.Generation, Origins: s.Origins}
 		if len(s.Files) > 0 {
-			r.State, r.Text = s.Files[0].State, s.Files[0].Text
+			r.State, r.Text, r.Pending = s.Files[0].State, s.Files[0].Text, s.Files[0].Pending
 		}
 		for _, f := range s.Files {
 			r.Paths = append(r.Paths, f.Path)

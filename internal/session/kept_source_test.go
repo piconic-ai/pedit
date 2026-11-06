@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -142,7 +143,7 @@ func leaveKeptSource(t *testing.T, a *awayRoom, src *testSource) *guestDoc {
 	return guest
 }
 
-func resumeOptions(a *awayRoom, src *testSource, generation string) Options {
+func resumeOptions(a *awayRoom, src Source, generation string) Options {
 	opts := a.options()
 	opts.Resume, opts.Source, opts.Generation = a.id, src, generation
 	opts.File, opts.Server = "", ""
@@ -182,12 +183,14 @@ func TestResumeWithASourceMergesItsStateAndWritesNothingToFileZero(t *testing.T)
 	if src.appliedCount() == applied {
 		t.Fatal("the merged doc did not reach Source.Apply")
 	}
-	// File 0 is the source's: not written, and nothing journaled for it.
+	// File 0 is the source's: never written here. The record journals the
+	// merge as a write in doubt: Text is what the file holds, Pending the merge.
 	if disk := readText(t, a.file); disk != "notes\n" {
 		t.Fatalf("file = %q", disk)
 	}
 	rec := a.record()
-	if rec.Files[0].Pending != nil || rec.Files[0].Text != "notes\n" || !slices.Equal(rec.Files[0].State, before.Files[0].State) {
+	if rec.Files[0].Pending == nil || *rec.Files[0].Pending != got || rec.Files[0].Text != "notes\n" ||
+		slices.Equal(rec.Files[0].State, before.Files[0].State) || stateText(t, rec.Files[0].State) != got {
 		t.Fatalf("record file = %+v", rec.Files[0])
 	}
 	// The checkpoint holds the merge, and the relay's log is cut.
@@ -211,6 +214,42 @@ func TestResumeWithASourceRefusesAnotherHistory(t *testing.T) {
 	}
 	if n := len(a.relay.Conns()); n != connections {
 		t.Fatalf("%d connections before the refusal", n-connections)
+	}
+}
+
+// deadSource stands for a process that dies before its document has the merge.
+type deadSource struct{ *testSource }
+
+func (deadSource) Apply([]byte) error { return errors.New("the process died") }
+
+func TestResumeWithASourceSurvivesDyingBeforeTheSourceHasTheMerge(t *testing.T) {
+	a := newAwayRoom(t, "notes\n")
+	src := newTestSource("notes\n")
+	guest := leaveKeptSource(t, a, src)
+	first := guest.insert(0, "guest ")
+	a.script(1, protocol.EncodeLogged(1, first), protocol.EncodeLogEnd(1))
+
+	// The checkpoint is acknowledged, then the source never gets the merge.
+	if s, err := Start(context.Background(), resumeOptions(a, deadSource{src}, "gen-1")); err == nil {
+		_ = s.Stop()
+		t.Fatal("started although the source refused the merge")
+	}
+	prototest.WaitFor(t, wait, func() bool { return a.record().After == 1 }, "the cursor")
+	rec := a.record()
+	if rec.Files[0].Pending == nil || rec.Files[0].Text != "notes\n" || stateText(t, rec.Files[0].State) != "guest notes\n" {
+		t.Fatalf("record file = %+v", rec.Files[0])
+	}
+
+	// Resume again from the unchanged source with the saved cursor: the log
+	// is not replayed, and the guest's edit still comes back.
+	a.script(1, protocol.EncodeLogEnd(1))
+	s, err := Start(context.Background(), resumeOptions(a, src, "gen-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Stop() })
+	if got := src.String(); got != "guest notes\n" || s.Text.ToString() != got {
+		t.Fatalf("source %q, session %q", got, s.Text.ToString())
 	}
 }
 

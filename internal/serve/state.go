@@ -150,14 +150,14 @@ func writeState(path string, rec stateRecord) error {
 func (s *Server) seed(initial string) {
 	s.doc = crdt.New()
 	s.text = s.doc.GetText("content")
-	record := func() (generation string, doc []byte, text string, ok bool) {
+	record := func() (generation string, doc []byte, text string, pending *string, ok bool) {
 		if s.opts.RecordFor == nil {
-			return "", nil, "", false
+			return "", nil, "", nil, false
 		}
-		generation, doc, text, ok = s.opts.RecordFor(s.file)
-		return generation, doc, text, ok && generation != ""
+		generation, doc, text, pending, ok = s.opts.RecordFor(s.file)
+		return generation, doc, text, pending, ok && generation != ""
 	}
-	keep := func(generation string) bool { g, _, _, ok := record(); return ok && g == generation }
+	keep := func(generation string) bool { g, _, _, _, ok := record(); return ok && g == generation }
 	if rec := readStateKeeping(s.statePath, keep); rec != nil && s.restore(rec, initial) {
 		s.generation = rec.Generation
 		return
@@ -166,7 +166,7 @@ func (s *Server) seed(initial string) {
 	s.text = s.doc.GetText("content")
 	// The state cannot be used: a kept room's record of the same document may
 	// still fit the file, and then it is the same history to go on with.
-	if g, doc, text, ok := record(); ok && s.restore(&stateRecord{Generation: g, Written: text, Doc: doc}, initial) {
+	if g, doc, text, pending, ok := record(); ok && s.restore(&stateRecord{Generation: g, Written: text, Pending: pending, Doc: doc}, initial) {
 		s.generation = g
 		return
 	}

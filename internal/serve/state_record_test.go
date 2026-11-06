@@ -10,7 +10,7 @@ import (
 )
 
 // openWith serves the file with the kept room's record that rf gives.
-func (r *restarter) openWith(rf func(file string) (string, []byte, string, bool)) *Server {
+func (r *restarter) openWith(rf func(file string) (string, []byte, string, *string, bool)) *Server {
 	r.t.Helper()
 	s, err := Open(r.file, Options{
 		App:        "test",
@@ -25,8 +25,8 @@ func (r *restarter) openWith(rf func(file string) (string, []byte, string, bool)
 	return s
 }
 
-func recordOf(generation string, doc []byte, text string) func(string) (string, []byte, string, bool) {
-	return func(string) (string, []byte, string, bool) { return generation, doc, text, true }
+func recordOf(generation string, doc []byte, text string) func(string) (string, []byte, string, *string, bool) {
+	return func(string) (string, []byte, string, *string, bool) { return generation, doc, text, nil, true }
 }
 
 // closedWithState serves the file once and returns its state, saved at close.
@@ -89,6 +89,27 @@ func TestARecordThatDoesNotFitItsFileStartsAfresh(t *testing.T) {
 	s := r.openWith(recordOf("kept-gen", rec.Doc, "other\n"))
 	defer s.Close()
 	if s.Generation() == "kept-gen" || s.render() != "hello\n" {
+		t.Fatalf("generation %q, doc %q", s.Generation(), s.render())
+	}
+}
+
+// A kept record whose document is ahead of its file (a write in doubt) is
+// used, and the file gets the document.
+func TestARecordWithAPendingTextStartsAheadOfTheFile(t *testing.T) {
+	r := newRestarter(t, "hello\n")
+	_, path := closedWithState(t, r)
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	doc := crdt.New()
+	text := doc.GetText("content")
+	doc.Transact(func(txn *crdt.Transaction) { text.Insert(txn, 0, "hello world\n", nil) })
+	pending := "hello world\n"
+	s := r.openWith(func(string) (string, []byte, string, *string, bool) {
+		return "kept-gen", crdt.EncodeStateAsUpdateV1(doc, nil), "hello\n", &pending, true
+	})
+	defer s.Close()
+	if s.Generation() != "kept-gen" || s.render() != "hello world\n" {
 		t.Fatalf("generation %q, doc %q", s.Generation(), s.render())
 	}
 }

@@ -58,19 +58,28 @@ func (h *keptTextHost) openFiles() error {
 				return errors.New("duplicate saved kept source")
 			}
 		}
-		var bound *filewriter.BoundFile
-		if h.owns(&file) {
-			var e error
-			if bound, e = filewriter.OpenBound(file.File); e != nil {
-				h.closeFiles()
-				return errors.New("cannot open kept file")
-			}
+		bound, e := h.openBound(&file)
+		if e != nil {
+			h.closeFiles()
+			return e
 		}
 		h.files[file.ID] = &keptTextDocument{doc: crdt.New(crdt.WithGC(false)), bound: bound, root: keptRoot(file.Path)}
 		paths[protocol.PathKey(file.Path)] = true
 		infos = append(infos, info)
 	}
 	return h.openMetas()
+}
+
+// openBound opens the file the host writes; a source's file is not opened.
+func (h *keptTextHost) openBound(file *keptTextFileState) (*filewriter.BoundFile, error) {
+	if !h.owns(file) {
+		return nil, nil
+	}
+	bound, e := filewriter.OpenBound(file.File)
+	if e != nil {
+		return nil, errors.New("cannot open kept file")
+	}
+	return bound, nil
 }
 
 // openMetas makes the comments docs paired with the files, and opens the
