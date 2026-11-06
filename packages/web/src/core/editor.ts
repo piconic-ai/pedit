@@ -66,7 +66,9 @@ export function mountTextEditor(opts: TextEditorOptions): TextEditor {
       // Undo only this browser's edits, not everyone's.
       Prec.high(keymap.of(lockedUndo(yUndoManagerKeymap, room.fileLocked))),
       ...(extra.after ?? []),
-      editable.of(held(editable, room.writesFile ? [] : readOnly)),
+      // From the link and the room as they are now: a page can mount into a
+      // room that is already locked or has ended.
+      editable.of(held(editable, room.fileLocked() ? readOnly : [])),
       yCollab(file.text, room.awareness, { undoManager: file.undo }),
       commentMarks(files.threads, files.focus),
       EditorView.updateListener.of((u) => {
@@ -92,6 +94,8 @@ export function mountTextEditor(opts: TextEditorOptions): TextEditor {
     parent: host,
     root:
       opts.root ?? (found instanceof ShadowRoot || found instanceof Document ? found : undefined),
+    // yCollab follows later changes only: start from the text as it is.
+    doc: first.text.toString(),
     extensions: extensions(first),
   })
 

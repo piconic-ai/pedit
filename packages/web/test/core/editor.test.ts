@@ -28,6 +28,7 @@ async function setup(
   root?: ShadowRoot,
   parent?: HTMLElement,
   extra?: Parameters<typeof mountTextEditor>[0]['extra'],
+  before?: (room: Room) => void,
 ) {
   const keys: RoomKeys = await editKeys()
   const room = await openRoom({
@@ -39,6 +40,7 @@ async function setup(
   })
   rooms.push(room)
   const files = new FileSet(room, { name: 'Guest' })
+  before?.(room)
   const host = parent ?? document.body.appendChild(document.createElement('div'))
   const editor = mountTextEditor({ room, files, parent: host, root, extra })
   editors.push(editor)
@@ -55,6 +57,30 @@ function go(room: Room, s: RoomStatus) {
 const editable = (e: TextEditor) => e.view.state.facet(EditorView.editable)
 
 describe('mountTextEditor', () => {
+  it('starts from the text the file already has', async () => {
+    const { room, editor } = await setup('edit', undefined, undefined, undefined, (r) =>
+      r.text.insert(0, 'already here'),
+    )
+    expect(editor.view.state.doc.toString()).toBe('already here')
+    // And stays in step with it.
+    room.text.insert(room.text.length, '!')
+    expect(editor.view.state.doc.toString()).toBe('already here!')
+  })
+
+  it('mounts read-only into a room that is already locked or has ended', async () => {
+    for (const s of ['waiting', 'log-full', 'closed'] as RoomStatus[]) {
+      const { editor } = await setup('edit', undefined, undefined, undefined, (r) =>
+        r.status.set(s),
+      )
+      expect(editor.view.state.readOnly).toBe(true)
+      expect(editable(editor)).toBe(false)
+    }
+    const { editor } = await setup('edit', undefined, undefined, undefined, (r) =>
+      r.status.set('kept'),
+    )
+    expect(editor.view.state.readOnly).toBe(false)
+  })
+
   it('mounts read-only for a read link and editable for an edit link', async () => {
     expect((await setup('read')).editor.view.state.readOnly).toBe(true)
     const { editor } = await setup('edit')
