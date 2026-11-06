@@ -250,20 +250,49 @@ func TestAPageThatComesBackAtALowerClockIsApplied(t *testing.T) {
 	}, "the page to come back")
 }
 
-func TestGoneClocksAreForgottenInTime(t *testing.T) {
+// Browsers keep a removed ID's clock for good, so a page back after any
+// absence is applied whatever the others sent meanwhile, with no memory of
+// the page in the host.
+func TestAPageBackAfterALongAbsenceIsApplied(t *testing.T) {
 	f, _ := shareSource(t, "x\n", setupOpts{})
 	s := f.session
+	g := joinAsGuest(t, f.relay, s.URL)
+	other := uint64(pageID + 1)
+	_ = s.FromSourceAwareness(other, true, protocol.EncodeState(other, 1, []byte(`{"name":"o"}`)))
 	_ = s.FromSourceAwareness(pageID, true, pageUpdate(1, "a"))
+	g.sees(t, pageID, "the page")
 	_ = s.FromSourceAwareness(pageID, true, protocol.EncodeState(pageID, 2, []byte("null")))
-	s.srcAw.mu.Lock()
-	s.srcAw.pages[pageID].goneAt = time.Now().Add(-goneFor - time.Second)
-	s.srcAw.mu.Unlock()
-	s.renewPages()
-	s.srcAw.mu.Lock()
-	defer s.srcAw.mu.Unlock()
-	if len(s.srcAw.pages) != 0 {
-		t.Fatal("a clock outlived its tombstone")
+	for range 50 {
+		s.renewPages()
 	}
+	s.srcAw.mu.Lock()
+	_, remembered := s.srcAw.pages[pageID]
+	s.srcAw.mu.Unlock()
+	if remembered {
+		t.Fatal("the host remembers a removed page")
+	}
+	if err := s.FromSourceAwareness(pageID, true, pageUpdate(1, "back")); err != nil {
+		t.Fatal(err)
+	}
+	prototest.WaitFor(t, wait, func() bool {
+		st, ok := g.aw.GetStates()[pageID]
+		return ok && st.State["name"] == "back"
+	}, "the page to come back")
+}
+
+func TestClocksStopBeforeWhatPeersTake(t *testing.T) {
+	f, _ := shareSource(t, "x\n", setupOpts{})
+	s := f.session
+	s.srcAw.mu.Lock()
+	s.srcAw.next = maxPageClock
+	s.srcAw.mu.Unlock()
+	if err := s.FromSourceAwareness(pageID, true, pageUpdate(1, "last")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FromSourceAwareness(pageID, true, pageUpdate(1, "over")); err == nil {
+		t.Fatal("a clock past the bound was sent")
+	}
+	s.renewPages() // refused, and without a panic
 }
 
 // Clients that come and go cannot make the host renew every page for each.

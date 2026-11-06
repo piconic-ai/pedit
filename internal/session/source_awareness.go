@@ -44,21 +44,41 @@ type sourceAwareness struct {
 	timer *time.Timer
 	// batches counts the renewals of all the pages.
 	batches int
+	// next is the least clock the next state sent for any page may have.
+	next uint64
 }
 
-// A removed page keeps its last clock for as long as peers keep the
-// tombstone of its removal (outdatedTimeout) and a margin, so that the page
-// coming back at a clock of its own, lower than ours, is still applied.
-const goneFor = outdatedTimeout + 30*time.Second
+// maxPageClock is the highest clock a read state may have: peers drop one
+// above it (protocol.SendStateAt).
+const maxPageClock = 1 << 32
 
 type pageState struct {
 	access protocol.Access
-	clock  uint64
 	state  []byte
-	// goneAt is when the page was removed, or zero. A removed page is not
-	// renewed.
-	goneAt time.Time
 }
+
+// send sends a page's state at a clock above every one sent for any page
+// before, and not below the source's own; under mu. Peers keep the clock of
+// a removed ID for good, a browser in its awareness meta, so a clock that
+// only rises, shared by all pages, needs no memory of each ID to stay above
+// what was sent for it. When the clock would pass maxPageClock, nothing is
+// sent: the state is refused with errClockSpent, and renewals stop (the
+// states time out), rather than wrap around or be dropped by peers. At one
+// renewal per page every 15 s that takes thousands of years.
+func (s *Session) send(id, clock uint64, state []byte, access protocol.Access) error {
+	a := &s.srcAw
+	clock = max(clock, a.next)
+	if clock > maxPageClock {
+		return errClockSpent
+	}
+	if err := s.Client.SendStateAt(protocol.EncodeState(id, clock, state), access); err != nil {
+		return err
+	}
+	a.next = clock + 1
+	return nil
+}
+
+var errClockSpent = errors.New("the clocks of the pages' awareness states are used up")
 
 // FromSourceAwareness sends the state of one of the source's pages, whose
 // awareness client ID is id, to the room. update holds that one entry; a
@@ -80,37 +100,21 @@ func (s *Session) FromSourceAwareness(id uint64, reader bool, update []byte) err
 	a := &s.srcAw
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.forgetGone()
-	p := a.pages[id]
-	if p == nil && removal {
+	if _, known := a.pages[id]; !known && removal {
 		return nil
 	}
-	// Peers apply states at rising clocks only, and a page's own may fall
-	// behind ours, which renewals raised.
-	if p != nil && clock <= p.clock {
-		clock = p.clock + 1
-	}
-	if err := s.Client.SendStateAt(protocol.EncodeState(id, clock, state), access); err != nil {
+	if err := s.send(id, clock, state, access); err != nil {
 		return err
+	}
+	if removal {
+		delete(a.pages, id)
+		return nil
 	}
 	if a.pages == nil {
 		a.pages = map[uint64]*pageState{}
 	}
-	next := &pageState{access: access, clock: clock, state: state}
-	if removal {
-		next.goneAt = time.Now()
-	}
-	a.pages[id] = next
+	a.pages[id] = &pageState{access: access, state: state}
 	return nil
-}
-
-// forgetGone drops the clocks of pages removed long enough ago; under mu.
-func (a *sourceAwareness) forgetGone() {
-	for id, p := range a.pages {
-		if !p.goneAt.IsZero() && time.Since(p.goneAt) > goneFor {
-			delete(a.pages, id)
-		}
-	}
 }
 
 // renewPages sends every page's state again, at the next clock.
@@ -119,15 +123,8 @@ func (s *Session) renewPages() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.batches++
-	a.forgetGone()
 	for id, p := range a.pages {
-		if !p.goneAt.IsZero() {
-			continue
-		}
-		p.clock++
-		// A read state past the clocks peers take is not renewed: it times
-		// out, as the page's own would.
-		_ = s.Client.SendStateAt(protocol.EncodeState(id, p.clock, p.state), p.access)
+		_ = s.send(id, 0, p.state, p.access)
 	}
 }
 
