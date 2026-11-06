@@ -82,6 +82,8 @@ type Server struct {
 	text    *crdt.YText
 	aw      *awareness.Awareness
 	clients map[*client]struct{}
+	// peer is the in-process client, if any (peer.go).
+	peer *Peer
 	// closing: Close has begun, and no client is taken in.
 	closing bool
 
@@ -220,8 +222,19 @@ func sameDir(bound *filewriter.BoundFile, dir string) error {
 	return nil
 }
 
+// Path is the resolved path of the file Open bound.
+func (s *Server) Path() string { return s.file }
+
 // Close writes the file one last time, then removes the lock.
 func (s *Server) Close() error {
+	// The peer goes first, so that no handler call runs after Close returns.
+	s.mu.Lock()
+	s.closing = true
+	peer := s.peer
+	s.mu.Unlock()
+	if peer != nil {
+		peer.Close()
+	}
 	s.tmu.Lock()
 	s.stopped = true
 	if s.timer != nil {
@@ -270,6 +283,9 @@ func (s *Server) render() string {
 
 // onUpdate runs inside every transaction on the doc, with s.mu held.
 func (s *Server) onUpdate(update []byte, origin any) {
+	if s.peer != nil && origin != s.peer {
+		s.peer.push(peerMsg{update: update})
+	}
 	s.broadcast(frame(msgSync, ysync.EncodeUpdate(update)), origin)
 	s.writer.Schedule(s.fileText())
 }
