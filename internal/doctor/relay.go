@@ -184,8 +184,12 @@ func endsInNumber(host string) bool {
 	if last != "" && strings.Trim(last, "0123456789") == "" {
 		return true
 	}
-	_, ok := ipv4Number(last)
-	return ok && (strings.HasPrefix(last, "0x") || strings.HasPrefix(last, "0X"))
+	// By its form, not its value: a 0x number too large for IPv4 still makes the
+	// host IPv4, and so an invalid one (as `new URL` rejects it).
+	if len(last) < 2 || (last[:2] != "0x" && last[:2] != "0X") {
+		return false
+	}
+	return strings.Trim(last[2:], "0123456789abcdefABCDEF") == ""
 }
 
 // ipv4Number parses one part: 0x hex, a leading 0 octal, else decimal.

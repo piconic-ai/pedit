@@ -121,7 +121,7 @@ func TestRelayForms(t *testing.T) {
 			t.Errorf("%s: %v %v", relay, got, err)
 		}
 	}
-	for _, relay := range []string{"https://relay.example:65536", "http://1.2.3.4.5", "http://08.1", "http://256.1.1.1", "https://u@relay.example", "https://relay.example:80a", "http://[::1", "https:///", "http://a b"} {
+	for _, relay := range []string{"https://relay.example:65536", "http://1.2.3.4.5", "http://08.1", "http://256.1.1.1", "https://u@relay.example", "https://relay.example:80a", "http://[::1", "https:///", "http://a b", "http://0xffffffffffffffffffff", "http://1.0xffffffffffffffffff"} {
 		if got, err := parseRelay(relay); err == nil {
 			t.Errorf("%s accepted as %v", relay, got)
 		}
