@@ -10,6 +10,9 @@ export const OPEN = 1
 export const DATA = 2
 export const CLOSE = 3
 export const EVENT = 4
+export const COMMAND = 5
+/** The most pedit takes in one command frame (docs/design/embedding.md "Commands"). */
+export const MAX_COMMAND = 64 * 1024
 
 export interface Bridge {
   /** page -> pedit. A frame over 16 MiB closes the bridge. */
@@ -147,6 +150,11 @@ export class Streams {
 
   #write(frame: Buffer, flushed?: () => void) {
     if (this.#stdin.writable && !this.#stdin.destroyed) this.#stdin.write(frame, flushed)
+  }
+
+  /** A command to pedit: one JSON object on stream 0. */
+  command(json: string) {
+    this.#write(encodeFrame(COMMAND, 0, Buffer.from(json)))
   }
 
   /** Open a stream. `onGone` is called once, when it ends. */

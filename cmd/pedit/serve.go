@@ -41,9 +41,16 @@ room, in Unix ms, or 0 if it keeps nothing (an old relay). A file whose kept
 room has another history (one pedit <file> made) is answered with a
 resume_choice event; send share again with "choice": "room", "app" or "later".
 The project is found as for pedit <file>, without creating a configuration.
-unshare ends a live room and leaves a kept one kept. close takes in the edits
+unshare ends a live room and leaves a kept one kept, and is answered with an
+unshared event. A command may carry "id": a string of at most 64 bytes. Every
+event that answers it (shared, resume_choice, unshared, room_ended for close or
+choice "app", and error) carries the same id; events nobody asked for (peers,
+a room_ended of the relay's) carry none. When close leaves a share that was
+running and then fails, an unshared event without an id comes first, then the
+error. close takes in the edits
 of a kept room, saves them and ends it for good, shared now or not, and is
-answered with a room_ended event of reason closed; on a live room it is unshare.
+answered with a room_ended event of reason closed; on a live room it is unshare
+(an unshared event).
 A bad command is answered with an error event and does not end pedit. Stream
 ids start at 1 and only increase; at most 8 are open at once. See
 docs/design/serve.md.
@@ -81,8 +88,12 @@ Events (JSON in event frames):
                                               page URL and "#" before a link.
                                               comment is left out when the room
                                               offers no comments
-  {"event":"peers","peers":[{"name":"…","access":"edit"|"comment"|"read"}]}
-                                            who is in the room, when it changed
+  {"event":"peers","peers":[{"name":"…","access":"edit"|"comment"|"read"}],"more":N}
+                                            who is in the room, when it changed;
+                                              at most 64 people, names cut to
+                                              64 bytes, more counts the rest
+  {"event":"unshared"}                      unshare (or close on a live room)
+                                              left the room
   {"event":"room_ended","reason":"closed"|"expired"|"maintenance"}
                                             the relay ended the room, or
                                               close did; share again to open

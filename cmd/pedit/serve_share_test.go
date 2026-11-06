@@ -298,6 +298,7 @@ func TestServeShareRoomEndToEnd(t *testing.T) {
 
 	// unshare ends the room for the guest, and a second share opens another.
 	a.command(`{"cmd":"unshare"}`)
+	a.event("unshared", 1)
 	eventually(t, "the guest sees the host leave", func() bool { return g.Client.Status() == protocol.StatusClosed })
 	second := a.share(fmt.Sprintf(`,"relay":%q`, env.server.URL))
 	if second["room"] == shared["room"] {

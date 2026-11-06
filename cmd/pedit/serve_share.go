@@ -164,7 +164,7 @@ func (l *liveSharer) Share(ctx context.Context, req shareRequest) error {
 	if comment != "" {
 		links["comment"] = room + "." + comment
 	}
-	l.st.Event("shared", map[string]any{"room": room, "links": links, "keptUntil": keptUntil(ctx, s, req, kept), "resumed": resume != ""})
+	l.st.Event("shared", answerWith(ctx, map[string]any{"room": room, "links": links, "keptUntil": keptUntil(ctx, s, req, kept), "resumed": resume != ""}))
 	return nil
 }
 
@@ -270,11 +270,39 @@ func (l *liveSharer) peers(ls *liveShare, people []session.Person) {
 		return
 	}
 	ls.last = people
-	out := make([]map[string]string, 0, len(people))
-	for _, p := range people {
-		out = append(out, map[string]string{"name": p.Name, "access": p.Access.String()})
+	l.st.Event("peers", peersEvent(people))
+}
+
+// The peers event must fit the app's event size limit (64 KiB): at most
+// maxPeers people, each name cut to maxPeerName bytes.
+const (
+	maxPeers    = 64
+	maxPeerName = 64
+)
+
+// peersEvent is the payload of the peers event; "more" counts the people left out.
+func peersEvent(people []session.Person) map[string]any {
+	n := min(len(people), maxPeers)
+	out := make([]map[string]string, 0, n)
+	for _, p := range people[:n] {
+		out = append(out, map[string]string{"name": truncateUTF8(p.Name, maxPeerName), "access": p.Access.String()})
 	}
-	l.st.Event("peers", map[string]any{"peers": out})
+	ev := map[string]any{"peers": out}
+	if len(people) > n {
+		ev["more"] = len(people) - n
+	}
+	return ev
+}
+
+// truncateUTF8 cuts s to at most n bytes without splitting a character.
+func truncateUTF8(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // ended is the relay ending the room: it is told, then torn down without
@@ -316,8 +344,12 @@ func (l *liveSharer) Close(ctx context.Context) error {
 		kept := l.cur.kept
 		l.leave()
 		if !kept {
+			l.st.Event("unshared", answerWith(ctx, map[string]any{}))
 			return nil
 		}
+		// The share is over whatever the relay says next: tell the app now, with
+		// no id, so that a failed close does not leave it thinking it is shared.
+		l.st.Event("unshared", map[string]any{})
 	}
 	cfg, err := loadProject(filepath.Dir(l.srv.Path()))
 	if err != nil {
@@ -359,7 +391,7 @@ func (l *liveSharer) closeRoom(ctx context.Context, project string, rec *session
 	if err := session.CloseKept(ctx, opts); err != nil {
 		return fmt.Errorf("could not close the room, which stays kept: %w; send close to try again", err)
 	}
-	l.st.Event("room_ended", map[string]any{"reason": "closed"})
+	l.st.Event("room_ended", answerWith(ctx, map[string]any{"reason": "closed"}))
 	return nil
 }
 
@@ -377,11 +409,11 @@ func (l *liveSharer) settle(ctx context.Context, project string, rec *session.Ke
 		if rec.Pending != nil {
 			room = *rec.Pending
 		}
-		l.st.Event("resume_choice", map[string]any{"room": rec.Room, "choices": []map[string]any{
+		l.st.Event("resume_choice", answerWith(ctx, map[string]any{"room": rec.Room, "choices": []map[string]any{
 			{"choice": "room", "text": utf8.RuneCountInString(room)},
 			{"choice": "app", "text": utf8.RuneCountInString(l.srv.Text())},
 			{"choice": "later"},
-		}})
+		}}))
 		return true, nil
 	case "later":
 		return true, errChoiceLater

@@ -9,7 +9,7 @@ import { HeldError } from './errors.ts'
 import { nativeRealpath, nativeRealpathSync } from './paths.ts'
 import { resolvePedit } from './resolve.ts'
 import { ServedFiles } from './served.ts'
-import type { Role } from './types.ts'
+import type { Peer, Role, Shared, ShareOptions, ShareResult } from './types.ts'
 
 export type { Role }
 
@@ -37,7 +37,22 @@ export type PeditEvent =
   | { type: 'started'; id: string; path: string; version?: string; serve?: number }
   | { type: 'stopped'; id: string; path: string; reason: 'idle' | 'exited' | 'shutdown' }
   | { type: 'error'; id: string | null; message: string }
+  /** The room events: `id` is the one the routes last served the path under, or null. */
+  | ({ type: 'shared'; id: string | null; path: string } & Omit<Shared, 'type'>)
+  | { type: 'peers'; id: string | null; path: string; peers: Peer[]; more?: number }
+  | { type: 'room_ended'; id: string | null; path: string; reason: string }
+  | { type: 'unshared'; id: string | null; path: string }
   | { type: 'update_available'; version: string; url: string; security: boolean }
+
+/** What `peditRoutes` adds to the Hono app. Paths are absolute and must be files under `root`. */
+export interface PeditRoutes {
+  /** Open a room for a file under `root`. The child stays up while it is shared. */
+  share(path: string, opts?: ShareOptions): Promise<ShareResult>
+  /** Leave the room: a kept room stays kept, a live one ends. */
+  unshare(path: string): Promise<void>
+  /** With a path: end that file's kept room for good. Without: stop every child. */
+  close(path?: string): Promise<void>
+}
 
 const ID = /^[A-Za-z0-9_-]{1,128}$/
 const TOKEN_TTL_MS = 60_000
@@ -113,9 +128,7 @@ interface Grant {
   expires: number
 }
 
-export function peditRoutes<E extends Env = Env>(
-  options: PeditOptions<E>,
-): Hono<E> & { close(): Promise<void> } {
+export function peditRoutes<E extends Env = Env>(options: PeditOptions<E>): Hono<E> & PeditRoutes {
   const { root, hosts, origins } = validate(options)
   const idByPath = new Map<string, string>()
   const emit = (event: PeditEvent) => {
@@ -137,7 +150,14 @@ export function peditRoutes<E extends Env = Env>(
             if (e.type === 'update_available') return emit(e)
             const id = (e.path !== null && idByPath.get(e.path)) || null
             if (e.type === 'error') emit({ type: 'error', id, message: e.message })
-            else if (id !== null) {
+            else if (
+              e.type === 'shared' ||
+              e.type === 'peers' ||
+              e.type === 'room_ended' ||
+              e.type === 'unshared'
+            )
+              emit({ ...e, id })
+            else if (id !== null && (e.type === 'started' || e.type === 'stopped')) {
               emit(
                 e.type === 'started'
                   ? {
@@ -187,6 +207,19 @@ export function peditRoutes<E extends Env = Env>(
     } catch {
       return null
     }
+  }
+
+  /** A path for the share API: under root, a regular file, as the routes' lookup demands. */
+  async function sharable(path: string) {
+    if (typeof path !== 'string' || !isAbsolute(path)) throw new TypeError('path must be absolute')
+    let real: string
+    try {
+      real = await nativeRealpath(path)
+      if (!inside(root, real) || !(await stat(real)).isFile()) throw new Error()
+    } catch {
+      throw new Error('file not found')
+    }
+    return (await getFiles()).acquire(real)
   }
 
   async function open(id: string, found: { real: string; role: Role }) {
@@ -330,7 +363,13 @@ export function peditRoutes<E extends Env = Env>(
   app.notFound((c) => c.body(null, 404))
 
   return Object.assign(app, {
-    close: async () => {
+    /** Open a room for a file under `root`. The child stays up while it is shared. */
+    share: async (path: string, opts?: ShareOptions): Promise<ShareResult> =>
+      (await sharable(path)).share(opts),
+    unshare: async (path: string) => (await sharable(path)).unshare(),
+    /** With a path: end that file's kept room for good. Without: stop every child. */
+    close: async (path?: string): Promise<void> => {
+      if (path !== undefined) return (await sharable(path)).close()
       await (await filesP?.catch(() => undefined))?.close()
     },
   })

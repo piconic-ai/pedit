@@ -30,7 +30,9 @@ const commandQueue = 16
 // command is one JSON object of a kind 5 frame. Fields other than cmd belong
 // to share.
 type command struct {
-	Cmd     string   `json:"cmd"`
+	Cmd string `json:"cmd"`
+	// ID names the command; every event that answers it carries the same id.
+	ID      *string  `json:"id"`
 	Origins []string `json:"origins"`
 	Keep    *string  `json:"keep"`
 	Relay   *string  `json:"relay"`
@@ -46,6 +48,20 @@ type shareRequest struct {
 	Relay string
 	// Choice is what the app's user chose: "room", "app", "later" or "".
 	Choice string
+}
+
+// maxCommandID is the longest id a command may carry, in bytes.
+const maxCommandID = 64
+
+type cmdIDKey struct{}
+
+// answerWith adds the id of the command ctx runs, if it has one, to an event
+// that answers it. Events nobody asked for carry none.
+func answerWith(ctx context.Context, fields map[string]any) map[string]any {
+	if id, ok := ctx.Value(cmdIDKey{}).(string); ok {
+		fields["id"] = id
+	}
+	return fields
 }
 
 // sharer is what the commands act on. Its errors are answered as error events.
@@ -68,6 +84,7 @@ func (noSharer) Close(context.Context) error               { return errNoSharing
 // that is one pedit knows.
 type commandError struct {
 	cmd string
+	id  *string
 	err error
 }
 
@@ -80,13 +97,16 @@ func parseCommand(payload []byte) (command, *shareRequest, error) {
 	dec := json.NewDecoder(bytes.NewReader(payload))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&c); err != nil {
-		return c, nil, &commandError{knownCmd(payload), fmt.Errorf("not a command: %w", err)}
+		return c, nil, &commandError{knownCmd(payload), knownID(payload), fmt.Errorf("not a command: %w", err)}
 	}
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
-		return c, nil, &commandError{knownCmd(payload), errors.New("not a command: data after the JSON object")}
+		return c, nil, &commandError{knownCmd(payload), knownID(payload), errors.New("not a command: data after the JSON object")}
 	}
 	fail := func(format string, args ...any) error {
-		return &commandError{knownCmd(payload), fmt.Errorf(format, args...)}
+		return &commandError{knownCmd(payload), c.ID, fmt.Errorf(format, args...)}
+	}
+	if c.ID != nil && len(*c.ID) > maxCommandID {
+		return c, nil, fail("id is longer than %d bytes", maxCommandID)
 	}
 	switch c.Cmd {
 	case cmdShare:
@@ -96,7 +116,7 @@ func parseCommand(payload []byte) (command, *shareRequest, error) {
 		}
 		return c, nil, nil
 	default:
-		return c, nil, &commandError{"", errors.New("unknown cmd")}
+		return c, nil, &commandError{"", c.ID, errors.New("unknown cmd")}
 	}
 	req := &shareRequest{Keep: defaultKeep}
 	origins, err := protocol.ParseOrigins(c.Origins)
@@ -142,6 +162,19 @@ func knownCmd(payload []byte) string {
 	return ""
 }
 
+// knownID is the id of a payload if it has a short string one, so that an error
+// can say which command it answers; nil otherwise.
+func knownID(payload []byte) *string {
+	var c struct {
+		ID *string `json:"id"`
+	}
+	_ = json.NewDecoder(bytes.NewReader(payload)).Decode(&c)
+	if c.ID == nil || len(*c.ID) > maxCommandID {
+		return nil
+	}
+	return c.ID
+}
+
 // checkRelay accepts an absolute https URL, or http on this machine, with no
 // path beyond "/", no credentials, no query and no fragment.
 func checkRelay(relay string) error {
@@ -179,7 +212,7 @@ func (c *commands) Enqueue(payload []byte) {
 	select {
 	case c.queue <- payload:
 	default:
-		c.fail("", errors.New("too many commands waiting; wait for the answers"))
+		c.fail("", knownID(payload), errors.New("too many commands waiting; wait for the answers"))
 	}
 }
 
@@ -195,28 +228,37 @@ func (c *commands) Run(ctx context.Context) {
 	}
 }
 
-func (c *commands) fail(cmd string, err error) {
-	c.st.Event("error", map[string]any{"cmd": cmd, "message": strings.Join(strings.Fields(err.Error()), " ")})
+func (c *commands) fail(cmd string, id *string, err error) {
+	ev := map[string]any{"cmd": cmd, "message": strings.Join(strings.Fields(err.Error()), " ")}
+	if id != nil {
+		ev["id"] = *id
+	}
+	c.st.Event("error", ev)
 }
 
 func (c *commands) handle(ctx context.Context, payload []byte) {
 	cmd, req, err := parseCommand(payload)
 	if err == nil {
+		if cmd.ID != nil {
+			ctx = context.WithValue(ctx, cmdIDKey{}, *cmd.ID)
+		}
 		switch cmd.Cmd {
 		case cmdShare:
 			err = c.sharer.Share(ctx, *req)
 		case cmdUnshare:
-			err = c.sharer.Unshare()
+			if err = c.sharer.Unshare(); err == nil {
+				c.st.Event("unshared", answerWith(ctx, map[string]any{}))
+			}
 		case cmdClose:
 			err = c.sharer.Close(ctx)
 		}
 		if err != nil {
-			err = &commandError{cmd.Cmd, err}
+			err = &commandError{cmd.Cmd, cmd.ID, err}
 		}
 	}
 	if err != nil {
 		var ce *commandError
 		errors.As(err, &ce)
-		c.fail(ce.cmd, ce.err)
+		c.fail(ce.cmd, ce.id, ce.err)
 	}
 }

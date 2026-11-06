@@ -136,8 +136,15 @@ func TestServeCloseKeepsTheRecordWhenTheRelayIsBusy(t *testing.T) {
 	eventually(t, "the guest's text", func() bool { return guestText(g) == "hello\n" })
 
 	env.busy.Store(409)
-	a.command(`{"cmd":"close"}`)
+	a.command(`{"cmd":"close","id":"c1"}`)
 	e := a.event("error", 1)
+	// The share ended before the relay refused: an unshared with no id, then the error with it.
+	if u := a.event("unshared", 1); u["id"] != nil {
+		t.Fatalf("%v", u)
+	}
+	if e["id"] != "c1" {
+		t.Fatalf("%v", e)
+	}
 	if e["cmd"] != "close" || !strings.Contains(e["message"].(string), "try again") {
 		t.Fatalf("%v", e)
 	}
