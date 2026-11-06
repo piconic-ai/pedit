@@ -1,5 +1,5 @@
 {
-  "comment": "reviewCSP (packages/review/src/csp.ts) output for each input, and the inputs it rejects. packages/review/test/csp.test.ts checks them; the Go `pedit doctor` checks pages against the same vectors.",
+  "comment": "reviewCSP (packages/review/src/csp.ts) output for each input, and the inputs it rejects. packages/review/test/csp.test.ts checks them; the Go `pedit doctor` checks pages against the same vectors. Hosts are normalised as WHATWG `new URL` does (IDNA, default and leading-zero ports, IPv4 forms, IPv6 compression), so both sides agree on what the policy admits.",
   "vectors": [
     {
       "relay": "https://edit.piconic.ai",
@@ -26,6 +26,58 @@
       "relay": "https://relay.example.com:8443/pedit/",
       "frameAncestors": "'self' https://cms.example.com",
       "csp": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: https://gravatar.com https://www.gravatar.com https://secure.gravatar.com https://avatars.githubusercontent.com https://lh3.googleusercontent.com; connect-src https://relay.example.com:8443 wss://relay.example.com:8443; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'self' https://cms.example.com"
+    },
+    {
+      "relay": "https://例え.jp",
+      "csp": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: https://gravatar.com https://www.gravatar.com https://secure.gravatar.com https://avatars.githubusercontent.com https://lh3.googleusercontent.com; connect-src https://xn--r8jz45g.jp wss://xn--r8jz45g.jp; base-uri 'none'; form-action 'none'; object-src 'none'"
+    },
+    {
+      "relay": "http://127.1:8787",
+      "csp": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: https://gravatar.com https://www.gravatar.com https://secure.gravatar.com https://avatars.githubusercontent.com https://lh3.googleusercontent.com; connect-src http://127.0.0.1:8787 ws://127.0.0.1:8787; base-uri 'none'; form-action 'none'; object-src 'none'"
+    },
+    {
+      "relay": "https://relay.example:0443",
+      "csp": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: https://gravatar.com https://www.gravatar.com https://secure.gravatar.com https://avatars.githubusercontent.com https://lh3.googleusercontent.com; connect-src https://relay.example wss://relay.example; base-uri 'none'; form-action 'none'; object-src 'none'"
+    },
+    {
+      "relay": "http://0x7f.1:80",
+      "csp": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: https://gravatar.com https://www.gravatar.com https://secure.gravatar.com https://avatars.githubusercontent.com https://lh3.googleusercontent.com; connect-src http://127.0.0.1 ws://127.0.0.1; base-uri 'none'; form-action 'none'; object-src 'none'"
+    },
+    {
+      "relay": "http://0177.0.0.1:8787",
+      "csp": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: https://gravatar.com https://www.gravatar.com https://secure.gravatar.com https://avatars.githubusercontent.com https://lh3.googleusercontent.com; connect-src http://127.0.0.1:8787 ws://127.0.0.1:8787; base-uri 'none'; form-action 'none'; object-src 'none'"
+    },
+    {
+      "relay": "http://[0:0::1]:8787",
+      "csp": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: https://gravatar.com https://www.gravatar.com https://secure.gravatar.com https://avatars.githubusercontent.com https://lh3.googleusercontent.com; connect-src http://[::1]:8787 ws://[::1]:8787; base-uri 'none'; form-action 'none'; object-src 'none'"
+    },
+    {
+      "relay": "https://relay.example.:443",
+      "csp": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: https://gravatar.com https://www.gravatar.com https://secure.gravatar.com https://avatars.githubusercontent.com https://lh3.googleusercontent.com; connect-src https://relay.example. wss://relay.example.; base-uri 'none'; form-action 'none'; object-src 'none'"
+    },
+    {
+      "relay": "http://0x7f000001",
+      "csp": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: https://gravatar.com https://www.gravatar.com https://secure.gravatar.com https://avatars.githubusercontent.com https://lh3.googleusercontent.com; connect-src http://127.0.0.1 ws://127.0.0.1; base-uri 'none'; form-action 'none'; object-src 'none'"
+    },
+    {
+      "relay": "http://１２７.0.0.1:9",
+      "csp": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: https://gravatar.com https://www.gravatar.com https://secure.gravatar.com https://avatars.githubusercontent.com https://lh3.googleusercontent.com; connect-src http://127.0.0.1:9 ws://127.0.0.1:9; base-uri 'none'; form-action 'none'; object-src 'none'"
+    },
+    {
+      "relay": "https://Relay.Example:443/x",
+      "csp": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: https://gravatar.com https://www.gravatar.com https://secure.gravatar.com https://avatars.githubusercontent.com https://lh3.googleusercontent.com; connect-src https://relay.example wss://relay.example; base-uri 'none'; form-action 'none'; object-src 'none'"
+    },
+    {
+      "relay": "http://[::ffff:1.2.3.4]:80",
+      "csp": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: https://gravatar.com https://www.gravatar.com https://secure.gravatar.com https://avatars.githubusercontent.com https://lh3.googleusercontent.com; connect-src http://[::ffff:102:304] ws://[::ffff:102:304]; base-uri 'none'; form-action 'none'; object-src 'none'"
+    },
+    {
+      "relay": "http://[2001:db8:0:0:1:0:0:1]:81",
+      "csp": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: https://gravatar.com https://www.gravatar.com https://secure.gravatar.com https://avatars.githubusercontent.com https://lh3.googleusercontent.com; connect-src http://[2001:db8::1:0:0:1]:81 ws://[2001:db8::1:0:0:1]:81; base-uri 'none'; form-action 'none'; object-src 'none'"
+    },
+    {
+      "relay": "https://a_b.example",
+      "csp": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: https://gravatar.com https://www.gravatar.com https://secure.gravatar.com https://avatars.githubusercontent.com https://lh3.googleusercontent.com; connect-src https://a_b.example wss://a_b.example; base-uri 'none'; form-action 'none'; object-src 'none'"
     }
   ],
   "invalid": [
@@ -51,6 +103,24 @@
     {
       "relay": "https://edit.piconic.ai",
       "frameAncestors": ""
+    },
+    {
+      "relay": "https://relay.example:99999"
+    },
+    {
+      "relay": "http://1.2.3.4.5"
+    },
+    {
+      "relay": "http://256.1.1.1"
+    },
+    {
+      "relay": "http://08.1"
+    },
+    {
+      "relay": "https://relay.example:65536"
+    },
+    {
+      "relay": "http://0xffffffffffffffffffff"
     }
   ]
 }
