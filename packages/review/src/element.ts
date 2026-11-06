@@ -149,16 +149,7 @@ export class PeditReview extends HTMLElement {
       this.getAttribute('labels'),
     )
     const root = this.#root()
-    // Keeps the adopted or style sheets; only the content goes.
-    for (const child of [...root.children]) if (child.localName !== 'style') child.remove()
-    // The branding shows in every state, before joining too.
-    const header = el(this.ownerDocument, 'header', 'review-header')
-    for (const name of ['logo', 'title']) {
-      const slot = el(this.ownerDocument, 'slot')
-      slot.name = name
-      header.append(slot)
-    }
-    root.append(header)
+    const header = this.#clear(root)
 
     const relay = parseRelayUrl(this.getAttribute('relay'))
     if (!relay) {
@@ -182,6 +173,26 @@ export class PeditReview extends HTMLElement {
       return
     }
 
+    const room = await this.#open(relay, link, name, generation)
+    if (room) this.#mount(root, header, room, name, link)
+  }
+
+  /** Empties the shadow root but its styles, and puts back the header with its slots. */
+  #clear(root: ShadowRoot): HTMLElement {
+    for (const child of [...root.children]) if (child.localName !== 'style') child.remove()
+    // The branding shows in every state, before joining too.
+    const header = el(this.ownerDocument, 'header', 'review-header')
+    for (const name of ['logo', 'title']) {
+      const slot = el(this.ownerDocument, 'slot')
+      slot.name = name
+      header.append(slot)
+    }
+    root.append(header)
+    return header
+  }
+
+  /** The opened room, or null when it failed (said on the page) or a newer mount took over. */
+  async #open(relay: URL, link: Link, name: string, generation: number): Promise<Room | null> {
     let room: Room
     try {
       room = await openRoom({
@@ -194,19 +205,19 @@ export class PeditReview extends HTMLElement {
       })
     } catch (e) {
       // A mount left behind by a newer one says nothing, whatever went wrong.
-      if (generation !== this.#generation) return
+      if (generation !== this.#generation) return null
       this.#current = undefined
       // Fixed words: an error's own text is never shown or sent on.
       if (e instanceof RoomOpenError)
         this.#fail(e.reason, e.reason === 'bad-link' ? 'badLink' : 'unsupportedBrowser')
       else this.#fail('open-failed', 'openFailed')
-      return
+      return null
     }
     if (generation !== this.#generation) {
       await room.dispose()
-      return
+      return null
     }
-    this.#mount(root, header, room, name, link)
+    return room
   }
 
   #askName(generation: number, done: (name: string) => void): void {
