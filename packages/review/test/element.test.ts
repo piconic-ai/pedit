@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 
-import { deriveRoomKeys, generateEditSecret, parseFragment } from '@pedit/protocol'
+import {
+  CLIENT_OUTDATED,
+  deriveRoomKeys,
+  generateEditSecret,
+  parseFragment,
+  RELAY_MAINTENANCE,
+} from '@pedit/protocol'
 import { Relay } from '@pedit/protocol/testing'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ContextMenu } from '../../web/src/core/menu.ts'
@@ -194,6 +200,46 @@ describe('<pedit-review>', () => {
     await new Promise((r) => setTimeout(r, 20))
     expect(relay.urls.length).toBe(sockets)
     expect(events.filter((e) => e.type === 'pedit-error')).toEqual([])
+  })
+
+  it('reconnects to the open room after the hash became an in-page anchor', async () => {
+    const { events, root } = place()
+    await vi.waitFor(() => expect(statuses(events)).toContain('live'))
+    const sockets = relay.urls.length
+    location.hash = '#section'
+    window.dispatchEvent(new HashChangeEvent('hashchange'))
+    relay.closeAll(RELAY_MAINTENANCE)
+    const button = await vi.waitFor(() => {
+      const b = [...root.querySelectorAll<HTMLButtonElement>('.banner button')].find(
+        (x) => x.textContent?.trim() === 'Reconnect',
+      )
+      expect(b).toBeDefined()
+      return b as HTMLButtonElement
+    })
+    button.click()
+    await vi.waitFor(() => expect(relay.urls.length).toBe(sockets + 1))
+    expect(relay.urls.at(-1)).toBe(`wss://relay.test/api/rooms/${ID}/ws`)
+    expect(events.filter((e) => e.type === 'pedit-error')).toEqual([])
+  })
+
+  it('reloads the page, not the room, when the page is out of date', async () => {
+    const reload = vi.fn()
+    ;(customElements.get('pedit-review') as typeof PeditReview).testing.reload = reload
+    const { events, root } = place()
+    await vi.waitFor(() => expect(statuses(events)).toContain('live'))
+    const sockets = relay.urls.length
+    relay.closeAll(CLIENT_OUTDATED)
+    const button = await vi.waitFor(() => {
+      const b = [...root.querySelectorAll<HTMLButtonElement>('.banner button')].find(
+        (x) => x.textContent?.trim() === 'Reload',
+      )
+      expect(b).toBeDefined()
+      return b as HTMLButtonElement
+    })
+    button.click()
+    expect(reload).toHaveBeenCalledTimes(1)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(relay.urls.length).toBe(sockets)
   })
 
   it('opens a valid link that arrives after a bad one', async () => {
