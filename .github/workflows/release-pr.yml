@@ -38,6 +38,9 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      # The head as it is now must not stay green while tagpr updates it.
+      - name: Mark the release PR pending
+        run: bash scripts/check-release-pr.sh "${{ github.event.pull_request.number }}" pending
       - name: Rerun tagpr on main and wait for it
         run: |
           set -euo pipefail
