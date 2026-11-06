@@ -35,8 +35,11 @@ has a kept room of another history, the panel asks which side to keep.
 
 - `PEDIT_RELAY=http://127.0.0.1:8787` uses another relay (default https://edit.piconic.ai).
   With it set, `node --test` also shares for real.
-- Reviewers open the relay's own editor (`<relay>/r/<room>#<key>`) until a review
-  component exists.
+- Reviewers open the relay's own editor (`<relay>/r/<room>#<key>`), or the review page
+  when `REVIEW_PAGE` is set.
+- `REVIEW_PAGE=http://127.0.0.1:3001/` shares to a page that holds `<pedit-review>` (see
+  [review-page](../review-page/README.md)): the share passes that page's origin as
+  `origins`, and the links become `<REVIEW_PAGE>#<room>.<key>`.
 - Sharing needs pedit 0.6.0 or later (`serve` version 2); an older pedit still
   edits, and the Share button reports why it cannot share.
 - The `/share` routes need `127.0.0.1` as the Host, this origin (a same-origin `EventSource` may send none) and JSON bodies.

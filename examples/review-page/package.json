@@ -1,0 +1,14 @@
+{
+  "name": "pedit-review-page",
+  "private": true,
+  "type": "module",
+  "description": "A sample review page: one static page that holds <pedit-review> and sends its Content-Security-Policy",
+  "scripts": {
+    "build": "mkdir -p public/assets && cp ../../packages/review/dist/pedit-review.js public/assets/pedit-review.js",
+    "start": "node server.mjs",
+    "test": "npm run build && node --test"
+  },
+  "engines": {
+    "node": ">=22.18"
+  }
+}
