@@ -1,4 +1,3 @@
-import { render } from '@barefootjs/client/runtime'
 import type { EditorView } from '@codemirror/view'
 import {
   CommentsPanelState,
@@ -12,6 +11,7 @@ import type { FileSet } from './files.ts'
 import { ContextMenu, isMac } from './menu.ts'
 import type { Room } from './open-room.ts'
 import type { Prefs } from './prefs.ts'
+import { mountComponent } from './render.ts'
 import type { Readable, Store } from './store.ts'
 
 export interface CommentsMountOptions {
@@ -50,7 +50,7 @@ export function mountComments(opts: CommentsMountOptions): CommentsMount {
       if (!narrow.get()) saveCommentsOpen(open, prefs)
     },
   )
-  render(parent, 'CommentsPanel', {
+  const unmount = mountComponent(parent, 'CommentsPanel', {
     comments: files.comments,
     target: files.target,
     locked: room.locked,
@@ -88,7 +88,8 @@ export function mountComments(opts: CommentsMountOptions): CommentsMount {
     toggle: () => panel.toggle(),
     dispose() {
       keyTarget.removeEventListener('keydown', onKey)
-      parent.replaceChildren()
+      panel.dispose()
+      unmount()
     },
   }
 }

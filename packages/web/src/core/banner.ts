@@ -1,5 +1,5 @@
-import { render } from '@barefootjs/client/runtime'
 import type { Room } from './open-room.ts'
+import { mountComponent } from './render.ts'
 import './components/EndedBanner.tsx'
 import './components/Notice.tsx'
 
@@ -11,9 +11,9 @@ export interface BannerOptions {
 }
 
 /** The banner for a room that is closed, full, out of time, or waiting for its host. */
-export function mountBanner(parent: HTMLElement, room: Room, opts: BannerOptions): void {
+export function mountBanner(parent: HTMLElement, room: Room, opts: BannerOptions): () => void {
   const { away } = room
-  render(parent, 'EndedBanner', {
+  return mountComponent(parent, 'EndedBanner', {
     status: room.status,
     timeLimit: room.timeLimit,
     text: opts.text ?? (() => room.text.toString()),
@@ -26,8 +26,8 @@ export function mountBanner(parent: HTMLElement, room: Room, opts: BannerOptions
 }
 
 /** The line under the header: images being added, or what just went wrong. */
-export function mountNotice(parent: HTMLElement, room: Room): void {
-  render(parent, 'Notice', {
+export function mountNotice(parent: HTMLElement, room: Room): () => void {
+  return mountComponent(parent, 'Notice', {
     message: room.notices.message,
     uploading: room.attachments.uploading,
     onDismiss: () => room.notices.dismiss(),
