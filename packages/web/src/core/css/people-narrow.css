@@ -1,0 +1,37 @@
+/* Narrow screens: one header row. Participants show as overlapping faces,
+   and a tap on them shows the names (components/Header.tsx). */
+@media (max-width: 720px) {
+  .people:not([data-expanded]) li > span:last-child,
+  /* Keep in step with MAX_FACES in components/Header.tsx. */
+  .people:not([data-expanded]) li:nth-child(n + 4) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .people {
+    flex-wrap: nowrap;
+    cursor: pointer;
+  }
+  .people:not([data-expanded]) li {
+    padding: 2px;
+    box-shadow: 0 0 0 2px var(--panel);
+  }
+  .people:not([data-expanded]) li + li {
+    margin-left: -10px;
+  }
+  .people:not([data-expanded])[data-more]::after {
+    content: attr(data-more);
+    align-self: center;
+    margin-left: 4px;
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
+  .people[data-expanded] {
+    order: 1;
+    flex: 1 0 100%;
+    flex-wrap: wrap;
+  }
+}

@@ -1,0 +1,16 @@
+/* Opens the menu of links this browser can hand out. */
+.share-button {
+  font: inherit;
+  font-size: 0.8rem;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.share-button:hover,
+.share-button:focus-visible {
+  color: var(--ink);
+}

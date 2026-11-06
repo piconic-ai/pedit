@@ -1,6 +1,4 @@
 // @vitest-environment jsdom
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 import { Compartment, EditorSelection, type Extension } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { basicSetup } from 'codemirror'
@@ -22,6 +20,7 @@ import {
   themeInfo,
   themeOrDefault,
 } from '../src/themes.ts'
+import { pageStylesheet } from './support/stylesheet.ts'
 
 const views: EditorView[] = []
 afterEach(() => {
@@ -68,7 +67,7 @@ describe('theme registry', () => {
 })
 
 describe('default themes', () => {
-  const css = readFileSync(resolve(import.meta.dirname, '../src/style.css'), 'utf8')
+  const css = pageStylesheet()
   // `--panel: light-dark(#ffffff, #0d1117);` and so on.
   const fromCss = (name: string) => {
     const hex = '(#[0-9a-f]{6}(?:[0-9a-f]{2})?)'

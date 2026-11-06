@@ -1,0 +1,9 @@
+/* What a link below edit lets this browser do (#122), beside the status. */
+.access {
+  font-size: 0.75rem;
+  padding: 1px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  white-space: nowrap;
+}

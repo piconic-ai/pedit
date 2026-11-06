@@ -1,0 +1,11 @@
+/* Touch screens: controls at least 44px across, the size fingers need. */
+@media (pointer: coarse) {
+  .view-switch button {
+    min-height: 44px;
+    padding: 0 14px;
+  }
+  .icon {
+    width: 44px;
+    height: 44px;
+  }
+}

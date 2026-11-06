@@ -1,0 +1,52 @@
+/* The row and column menu (menu.ts), opened by a right-click or long press. */
+.context-menu {
+  position: fixed;
+  z-index: 20;
+  min-width: 14em;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  font-family: var(--sans);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
+}
+.context-menu[hidden] {
+  display: none;
+}
+.context-menu [role="menuitem"] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+}
+.context-menu [role="menuitem"]:hover,
+.context-menu [role="menuitem"]:focus-visible {
+  outline: none;
+  background: var(--bg);
+}
+.context-menu [role="menuitem"]:disabled {
+  color: var(--muted);
+  cursor: default;
+  background: transparent;
+}
+.context-menu kbd {
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 0.75rem;
+}
+.context-menu-separator {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--line);
+}

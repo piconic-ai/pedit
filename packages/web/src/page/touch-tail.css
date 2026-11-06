@@ -1,0 +1,35 @@
+@media (pointer: coarse) {
+  .card button,
+  .card input {
+    min-height: 44px;
+  }
+  .settings-row,
+  .settings-nav {
+    min-height: 44px;
+    align-items: center;
+  }
+  .settings-back {
+    width: 44px;
+    height: 44px;
+  }
+  .settings-row input {
+    margin-top: 0;
+  }
+}
+/* Phones: a little narrower, so the header still fits one row at 360px. */
+@media (max-width: 720px) and (pointer: coarse) {
+  .view-switch button {
+    padding: 0 10px;
+  }
+  .icon {
+    width: 40px;
+  }
+}
+
+main.editor {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
