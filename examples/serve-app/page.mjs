@@ -44,7 +44,10 @@ async function ask(path, body = {}) {
   return data
 }
 
+let shownKeptUntil = 0
+
 function showShared(s) {
+  shownKeptUntil = s.keptUntil
   const link = (kind, url) =>
     el('li', `${kind}: `).appendChild(
       el('a', url, { href: url, target: '_blank', rel: 'noopener' }),
@@ -96,10 +99,16 @@ async function share(choice) {
   }
 }
 
+// What leaving says: a kept room waits for the next share; close or a live room ended it.
 async function stop(path) {
+  const keptUntil = shownKeptUntil
   try {
     await ask(path)
-    showNotShared()
+    showNotShared(
+      path === '/share/unshare' && keptUntil > 0
+        ? `Not shared. The relay keeps the room until ${new Date(keptUntil).toLocaleString()}; Share resumes it.`
+        : 'The room ended.',
+    )
   } catch (e) {
     info.replaceChildren(el('p', `failed: ${e.message}`))
   }
@@ -112,8 +121,8 @@ $('share-close').onclick = () => stop('/share/close')
 const events = new EventSource('/share/events')
 const on = (type, fn) => events.addEventListener(type, (e) => fn(JSON.parse(e.data)))
 on('shared', showShared)
-on('unshared', () => showNotShared())
-on('room_ended', (e) => showNotShared(`The room ended: ${e.reason}`))
+on('unshared', () => info.querySelector('ul') && showNotShared())
+on('room_ended', (e) => showNotShared(`The room ended (${e.reason}).`))
 on('peers', (e) => {
   peersBox.replaceChildren(
     el(
