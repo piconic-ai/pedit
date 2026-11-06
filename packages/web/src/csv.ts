@@ -4,33 +4,9 @@
  * text edit, so sync, undo and the host's file stay as they are.
  */
 
-export interface Cell {
-  /** The cell's raw text in the file, quotes included: [from, to). */
-  from: number
-  to: number
-  value: string
-  quoted: boolean
-}
+import type { Cell, Row, Table } from './core/anchors.ts'
 
-export interface Row {
-  /** Where the row starts, and where its content ends before the line break. */
-  from: number
-  to: number
-  /** After the line break, or `to` for a last row without one. */
-  end: number
-  cells: Cell[]
-}
-
-export interface Table {
-  delimiter: string
-  /** The line break new rows use: the file's first one, or \n. */
-  eol: string
-  rows: Row[]
-  /** The widest row. */
-  columns: number
-  /** The text this table was parsed from. */
-  text: string
-}
+export type { Cell, Row, Table }
 
 export class CsvError extends Error {
   constructor(

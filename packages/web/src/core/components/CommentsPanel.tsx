@@ -1,6 +1,7 @@
 'use client'
 
 import { createMemo, createSignal } from '@barefootjs/client'
+import { initials } from '../avatar.ts'
 import {
   COMMENT_LIMITS,
   type CommentsView,
@@ -11,10 +12,9 @@ import {
   shortTime,
   type ThreadList,
 } from '../comments.ts'
-import { initials } from '../core/avatar.ts'
-import { colorOf } from '../core/room.ts'
-import type { Readable, Store } from '../core/store.ts'
 import type { ContextMenu } from '../menu.ts'
+import { colorOf } from '../room.ts'
+import type { Readable, Store } from '../store.ts'
 
 export interface CommentsPanelProps {
   /** The comments of the file on screen, or null when it has none. */

@@ -1,10 +1,8 @@
 import { META_LIMITS, metaUse, randomBase64Url } from '@pedit/protocol'
 import * as Y from 'yjs'
-import { nodeText, read as readCanvas } from './canvas.ts'
-import { type Readable, Store } from './core/store.ts'
-import type { Cell, Table } from './csv.ts'
-import { defaultStore, type Store as Prefs } from './storage.ts'
-import type { Position } from './table.ts'
+import type { Cell, Position, Table } from './anchors.ts'
+import type { Prefs } from './prefs.ts'
+import { type Readable, Store } from './store.ts'
 
 /**
  * The comments on one file (#121), from the metadata doc the host shares
@@ -93,10 +91,13 @@ export interface CommentsOptions {
   delayMs?: number
   /** Whether the room takes no changes now: it has ended, or waits for the host. */
   locked?: () => boolean
-  /** The file parsed as a table, when it is CSV or TSV, so threads can go on cells. */
-  table?: Readable<Table | null>
-  /** Whether the file is a canvas, whose threads go on its nodes. */
-  canvas?: boolean
+  /** What threads can go on besides text; none given, none is read. */
+  anchors?: {
+    /** The file parsed as a table, when it is CSV or TSV, so threads can go on cells. */
+    table?: Readable<Table | null>
+    /** What each node of a canvas shows, by id, as the file is now. */
+    nodes?: () => ReadonlyMap<string, string>
+  }
 }
 
 /**
@@ -149,7 +150,7 @@ export class CommentsView {
     meta.on('update', this.#metaChanged)
     content.on('update', this.#textChanged)
     // A file becomes a table once the editor knows its name.
-    this.#stopTable = opts.table?.subscribe(this.#textChanged) ?? (() => {})
+    this.#stopTable = opts.anchors?.table?.subscribe(this.#textChanged) ?? (() => {})
     this.refresh()
   }
 
@@ -220,9 +221,8 @@ export class CommentsView {
   }
 
   /** What each node of the canvas shows, by id; none for a file that is no canvas. */
-  #nodes(): Map<string, string> {
-    if (!this.#opts.canvas) return new Map()
-    return new Map(readCanvas(this.#content).nodes.map((n) => [n.id, nodeText(n)]))
+  #nodes(): ReadonlyMap<string, string> {
+    return this.#opts.anchors?.nodes?.() ?? new Map()
   }
 
   /**
@@ -258,7 +258,7 @@ export class CommentsView {
    * the table view's parse, while it is of this very text.
    */
   #table(text: string): Table | null {
-    const table = this.#opts.table?.get() ?? null
+    const table = this.#opts.anchors?.table?.get() ?? null
     return table?.text === text ? table : null
   }
 
@@ -370,7 +370,7 @@ export class CommentsView {
     }
     let index: TextIndex | null = null
     let cells: Cells | null | undefined
-    let nodes: Map<string, string> | undefined
+    let nodes: ReadonlyMap<string, string> | undefined
     const here: Here = {
       text: this.#text.toString(),
       nodes: () => {
@@ -595,7 +595,7 @@ function position(text: Y.Text, index: number, assoc: number): string {
 /** The text on screen, looked at once a refresh, and what is costly worked out once. */
 interface Here {
   text: string
-  nodes: () => Map<string, string>
+  nodes: () => ReadonlyMap<string, string>
   index: () => TextIndex
   cells: () => Cells | null
 }
@@ -826,7 +826,7 @@ function order(a: ShownThread, b: ShownThread): number {
 export const COMMENTS_OPEN_KEY = 'pedit:comments'
 
 /** Whether this browser left the comments panel open, or null if it never chose. */
-export function loadCommentsOpen(store: Prefs | null = defaultStore()): boolean | null {
+export function loadCommentsOpen(store: Prefs | null): boolean | null {
   try {
     const v = store?.getItem(COMMENTS_OPEN_KEY)
     return v === 'open' ? true : v === 'closed' ? false : null
@@ -835,7 +835,7 @@ export function loadCommentsOpen(store: Prefs | null = defaultStore()): boolean 
   }
 }
 
-export function saveCommentsOpen(open: boolean, store: Prefs | null = defaultStore()): void {
+export function saveCommentsOpen(open: boolean, store: Prefs | null): void {
   try {
     store?.setItem(COMMENTS_OPEN_KEY, open ? 'open' : 'closed')
   } catch {

@@ -16,7 +16,7 @@ vi.mock('@pedit/protocol', async (load) => {
 })
 const clock = vi.hoisted(() => ({ now: 0 }))
 
-const { CommentsView } = await import('../src/comments.ts')
+const { CommentsView } = await import('../../src/core/comments.ts')
 
 afterEach(() => {
   vi.useRealTimers()

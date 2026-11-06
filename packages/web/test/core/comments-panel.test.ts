@@ -9,12 +9,12 @@ import {
   type ShownThread,
   shortTime,
   type ThreadList,
-} from '../src/comments.ts'
-import '../src/components/CommentsPanel.tsx'
-import { colorOf, colorsByName } from '../src/core/room.ts'
-import { Store } from '../src/core/store.ts'
-import { ContextMenu } from '../src/menu.ts'
-import { parsedAs } from './parsed.ts'
+} from '../../src/core/comments.ts'
+import '../../src/core/components/CommentsPanel.tsx'
+import { ContextMenu } from '../../src/core/menu.ts'
+import { colorOf, colorsByName } from '../../src/core/room.ts'
+import { Store } from '../../src/core/store.ts'
+import { parsedAs } from '../parsed.ts'
 
 function mount(text = 'hello world!\n', delimiter: string | null = null) {
   const meta = new Y.Doc()
@@ -24,7 +24,7 @@ function mount(text = 'hello world!\n', delimiter: string | null = null) {
   const view = new CommentsView(meta, content, {
     name: () => 'Ada',
     delayMs: 0,
-    table,
+    anchors: { table },
   })
   const comments = new Store<CommentsView | null>(view)
   const selection = new Store<CommentTarget | null>(null)
