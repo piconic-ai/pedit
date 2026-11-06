@@ -34,7 +34,7 @@ export default defineConfig({
   plugins: [
     // Components render in the browser only: the server never sees the
     // content, so there is nothing for it to render.
-    barefoot({ adapter: new CSRAdapter(), components: ['src/components'] }),
+    barefoot({ adapter: new CSRAdapter(), components: ['src/components', 'src/core/components'] }),
     licenses(),
   ],
   server: {

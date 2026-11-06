@@ -1,7 +1,7 @@
 import { checkMetaUpdate } from '@pedit/protocol'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import * as Y from 'yjs'
-import { addNode, deleteNodes, textOf } from '../src/canvas.ts'
+import { addNode, deleteNodes, nodeText, read as readCanvas, textOf } from '../../src/canvas.ts'
 import {
   COMMENT_LIMITS,
   CommentsPanelState,
@@ -16,8 +16,8 @@ import {
   type ShownThread,
   saveCommentsOpen,
   TextIndex,
-} from '../src/comments.ts'
-import { Store } from '../src/core/store.ts'
+} from '../../src/core/comments.ts'
+import { Store } from '../../src/core/store.ts'
 import {
   deleteColumn,
   deleteRow,
@@ -26,8 +26,8 @@ import {
   insertRow,
   parse,
   setCell,
-} from '../src/csv.ts'
-import { parsedAs } from './parsed.ts'
+} from '../../src/csv.ts'
+import { parsedAs } from '../parsed.ts'
 
 function setup(text: string, delimiter: string | null = null) {
   const meta = new Y.Doc()
@@ -39,7 +39,7 @@ function setup(text: string, delimiter: string | null = null) {
     name: () => 'Ada',
     now: () => new Date(Date.UTC(2026, 9, 21, 0, 0, tick++)),
     delayMs: 0,
-    table,
+    anchors: { table },
   })
   const shown = () => {
     view.refresh()
@@ -445,7 +445,14 @@ describe('comments on a canvas', () => {
       { id: 'g1', type: 'group', x: 0, y: 0, width: 300, height: 200, label: 'Plan' },
       null,
     )
-    const view = new CommentsView(meta, content, { name: () => 'Ada', delayMs: 0, canvas: true })
+    const view = new CommentsView(meta, content, {
+      name: () => 'Ada',
+      delayMs: 0,
+      // As main.ts gives it for a canvas file.
+      anchors: {
+        nodes: () => new Map(readCanvas(content).nodes.map((n) => [n.id, nodeText(n)])),
+      },
+    })
     const shown = () => {
       view.refresh()
       return view.threads.get()
@@ -476,6 +483,30 @@ describe('comments on a canvas', () => {
     const long = 'é'.repeat(513) // 1,026 bytes of UTF-8
     addNode(content, { id: long, type: 'text', x: 0, y: 0, width: 10, height: 10, text: 'x' }, null)
     expect(view.startNode(long, 'Too long')).toBeNull()
+  })
+
+  it('reads no node and no cell without anchors', () => {
+    const meta = new Y.Doc()
+    const content = new Y.Doc()
+    content.getText('content').insert(0, 'a,b\n')
+    const view = new CommentsView(meta, content, { name: () => 'Ada', delayMs: 0 })
+    expect(view.startNode('n1', 'Why?')).toBeNull()
+    expect(view.startCells({ row: 0, col: 0 }, { row: 0, col: 0 }, 'Cell?')).toBeNull()
+  })
+
+  it('asks for the nodes only when a node is looked up', () => {
+    const meta = new Y.Doc()
+    const content = new Y.Doc()
+    const nodes = vi.fn(() => new Map([['n1', 'Idea']]))
+    const view = new CommentsView(meta, content, {
+      name: () => 'Ada',
+      delayMs: 0,
+      anchors: { nodes },
+    })
+    view.refresh()
+    expect(nodes).not.toHaveBeenCalled()
+    expect(view.startNode('n1', 'Why?')).not.toBeNull()
+    expect(nodes).toHaveBeenCalled()
   })
 
   it('places no node in a file that is no canvas', () => {

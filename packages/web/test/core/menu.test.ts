@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
-import { ariaShortcut, ContextMenu, formatShortcut, isMac, SEPARATOR } from '../src/menu.ts'
+import { ariaShortcut, ContextMenu, formatShortcut, isMac, SEPARATOR } from '../../src/core/menu.ts'
 
 describe('formatShortcut', () => {
   it('writes symbols on a Mac and names elsewhere', () => {

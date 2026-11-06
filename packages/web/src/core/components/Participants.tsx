@@ -1,9 +1,9 @@
 'use client'
 
 import { createEffect, createMemo, createSignal } from '@barefootjs/client'
-import { initials } from '../core/avatar.ts'
-import type { Participant } from '../core/room.ts'
-import type { Readable } from '../core/store.ts'
+import { initials } from '../avatar.ts'
+import type { Participant } from '../room.ts'
+import type { Readable } from '../store.ts'
 
 const MAX_FACES = 3
 

@@ -1,5 +1,5 @@
 import { render } from '@barefootjs/client/runtime'
-import { Store } from './core/store.ts'
+import { Store } from './store.ts'
 import './components/Menu.tsx'
 
 export interface MenuItem {

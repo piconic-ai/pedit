@@ -1,6 +1,8 @@
 import { render } from '@barefootjs/client/runtime'
 import type { Awareness } from 'y-protocols/awareness'
 import * as Y from 'yjs'
+import type { Position } from './core/anchors.ts'
+import { ContextMenu, type MenuItem, SEPARATOR } from './core/menu.ts'
 import { participants } from './core/room.ts'
 import { Store } from './core/store.ts'
 import {
@@ -15,16 +17,12 @@ import {
   type Table,
   tryParse,
 } from './csv.ts'
-import { ContextMenu, type MenuItem, SEPARATOR } from './menu.ts'
 import './components/TableGrid.tsx'
 
 /** Marks the table's own edits, so the undo manager tracks them and the view knows them. */
 const TABLE_ORIGIN = Symbol('table')
 
-export interface Position {
-  row: number
-  col: number
-}
+export type { Position }
 
 /** The selected cell, and whether its whole row or column is selected with it. */
 export interface Selection {

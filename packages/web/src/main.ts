@@ -27,8 +27,10 @@ import {
   saveAppearance,
 } from './appearance.ts'
 import { BoardView, setCanvasStatus } from './board.ts'
-import { read as readCanvas, toJSON } from './canvas.ts'
-import { commentMarks } from './commentmarks.ts'
+import { nodeText, read as readCanvas, toJSON } from './canvas.ts'
+import { Attachments, hostAttachments, whyNoImages } from './core/attachments.ts'
+import { CommentDocs } from './core/commentdocs.ts'
+import { commentMarks } from './core/commentmarks.ts'
 import {
   CommentsPanelState,
   CommentsView,
@@ -42,11 +44,10 @@ import {
   saveCommentsOpen,
   type ThreadList,
   textTarget,
-} from './comments.ts'
-import { Attachments, hostAttachments, whyNoImages } from './core/attachments.ts'
-import { CommentDocs } from './core/commentdocs.ts'
+} from './core/comments.ts'
 import { copyText } from './core/copy.ts'
 import { keepAlive } from './core/expiry.ts'
+import { ContextMenu, isMac } from './core/menu.ts'
 import { NoticeBoard } from './core/notice.ts'
 import { imagePaste, textAnchor } from './core/paste.ts'
 import {
@@ -64,7 +65,6 @@ import { avatarFor, fetchIdentity, loadName, saveName } from './identity.ts'
 import { infoLinks } from './info.ts'
 import { JsonPane } from './jsonpane.ts'
 import { resolveLanguage } from './language.ts'
-import { ContextMenu, isMac } from './menu.ts'
 import { applyPalette } from './palette.ts'
 import { PreviewPane } from './pane.ts'
 import { parseRoomLocation } from './room.ts'
@@ -79,7 +79,7 @@ import { NARROW_QUERY, type ViewMode, ViewSwitch } from './view.ts'
 import { trackViewport } from './viewport.ts'
 import { loadVimMode, VimToggle, vimExtension } from './vim.ts'
 import './components/Cards.tsx'
-import './components/CommentsPanel.tsx'
+import './core/components/CommentsPanel.tsx'
 import './components/EndedBanner.tsx'
 import './components/FileTabs.tsx'
 import './components/Header.tsx'
@@ -217,9 +217,9 @@ async function joinRoom(
   // as the reader left it, and keeps what the reader chooses.
   const panel = new CommentsPanelState(
     commentFocus,
-    !matchMedia(NARROW_QUERY).matches && (loadCommentsOpen() ?? true),
+    !matchMedia(NARROW_QUERY).matches && (loadCommentsOpen(defaultStore()) ?? true),
     (open) => {
-      if (!isNarrow.get()) saveCommentsOpen(open)
+      if (!isNarrow.get()) saveCommentsOpen(open, defaultStore())
     },
   )
   const selection = new Store({ from: 0, to: 0 })
@@ -637,8 +637,13 @@ async function joinRoom(
     f.comments = new CommentsView(metaDoc, f.doc, {
       name,
       locked: commentsLocked,
-      table: f.table.parsed,
-      canvas: format === 'canvas',
+      anchors: {
+        table: f.table.parsed,
+        nodes:
+          format === 'canvas'
+            ? () => new Map(readCanvas(f.doc).nodes.map((n) => [n.id, nodeText(n)]))
+            : undefined,
+      },
     })
     if (f === shown) showComments()
   }
