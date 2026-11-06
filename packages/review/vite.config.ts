@@ -2,9 +2,11 @@ import { rmSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { CSRAdapter } from '@barefootjs/client/csr-adapter'
 import { barefoot } from '@barefootjs/vite'
-import { defineConfig, type Plugin } from 'vite'
+import type { Plugin } from 'vite'
+import { defineConfig } from 'vitest/config'
 // @ts-expect-error: plain JS helper without type declarations
 import { thirdPartyLicenses } from '../scripts/third-party-licenses.mjs'
+import { memoryStorage } from './memory-storage.ts'
 
 // The bundle inlines third-party code, so ship their licenses next to it.
 function licenses(): Plugin {
@@ -49,24 +51,6 @@ function singleEntry(): Plugin {
   }
 }
 
-// lib0 (inside Yjs) reads `localStorage` when it loads, to look for debug
-// settings. The element must not touch the page's storage, so it gets lib0's
-// own in-memory fallback instead.
-function memoryStorage(): Plugin {
-  return {
-    name: 'lib0-memory-storage',
-    enforce: 'pre',
-    apply: 'build',
-    load(id) {
-      if (!/[\\/]lib0[\\/]storage\.js$/.test(id)) return null
-      return `const map = new Map()
-export const varStorage = { setItem: (k, v) => map.set(k, v), getItem: (k) => map.get(k) }
-export const onChange = () => {}
-export const offChange = () => {}`
-    },
-  }
-}
-
 export default defineConfig({
   build: {
     target: 'es2022',
@@ -82,4 +66,8 @@ export default defineConfig({
     memoryStorage(),
     licenses(),
   ],
+  test: {
+    // Inlined, so the storage stub above applies to the tests as it does to the build.
+    server: { deps: { inline: [/lib0/, /yjs/, /y-protocols/, /y-codemirror/] } },
+  },
 })

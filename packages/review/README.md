@@ -28,6 +28,12 @@ Events (bubbling, composed):
 - `pedit-error`: `detail.reason` is `bad-link`, `unsupported-browser` or `missing-relay`, with
   `detail.message`.
 
+## Page globals
+
+Yjs marks `globalThis` when it loads, and warns if the page loads a second copy of Yjs. Keep Yjs out
+of the page's own scripts (the CSP above allows none besides the element's). v1 supports one
+`<pedit-review>` per page.
+
 ## Content-Security-Policy
 
 ```js

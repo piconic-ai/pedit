@@ -207,7 +207,14 @@ export async function openRoom(opts: OpenRoomOptions): Promise<Room> {
 
   // Editors show the relay their own token, which also lets them add images.
   const admission = keys.editAdmission ?? keys.readAdmission
-  const blobKeys = await deriveBlobKeys(keys.frameSecret, admission)
+  let blobKeys: Awaited<ReturnType<typeof deriveBlobKeys>>
+  try {
+    blobKeys = await deriveBlobKeys(keys.frameSecret, admission)
+  } catch (e) {
+    // Nothing owns the awareness yet: its renewal timer must not outlive the failure.
+    awareness.destroy()
+    throw e
+  }
   const attachments = new Attachments({
     relay,
     roomId: id,

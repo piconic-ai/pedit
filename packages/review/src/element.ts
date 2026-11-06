@@ -6,11 +6,12 @@ import coreCss from '../../web/src/core/core.css?inline'
 import { mountTextEditor } from '../../web/src/core/editor.ts'
 import { FileSet } from '../../web/src/core/files.ts'
 import { guardDrops } from '../../web/src/core/guard.ts'
-import { parseLink } from '../../web/src/core/link.ts'
+import { type Link, parseLink } from '../../web/src/core/link.ts'
 import { openRoom, type Room, RoomOpenError } from '../../web/src/core/open-room.ts'
 import { mountComponent } from '../../web/src/core/render.ts'
 import { type Readable, Store } from '../../web/src/core/store.ts'
 import hostCss from './host.css?inline'
+import { parseRelayUrl } from './relay.ts'
 
 const NARROW_QUERY = '(max-width: 720px)'
 const MAX_NAME = 64
@@ -21,23 +22,18 @@ const ACCESS_LABELS: Partial<Record<string, { text: string; title: string }>> = 
   read: { text: 'Read only', title: 'You can read this file.' },
 }
 
-export type ReviewErrorReason = 'bad-link' | 'unsupported-browser' | 'missing-relay'
+export type ReviewErrorReason = 'bad-link' | 'unsupported-browser' | 'missing-relay' | 'open-failed'
+
+/** What the reader is told; the core's own wording is for developers. */
+const OPEN_MESSAGES: Record<'bad-link' | 'unsupported-browser', string> = {
+  'bad-link': 'This is not a review link.',
+  'unsupported-browser': 'This browser cannot open the review: it lacks the cryptography it needs.',
+}
 
 /** Hooks for tests only: a page never sets them. */
 export interface ReviewTesting {
   createSocket?: (url: string, headers?: Record<string, string>, protocols?: string[]) => SocketLike
   fetch?: typeof fetch
-}
-
-/** The relay from the attribute: an http(s) URL, or null. */
-function parseRelay(value: string | null): URL | null {
-  if (!value) return null
-  try {
-    const url = new URL(value)
-    return url.protocol === 'https:' || url.protocol === 'http:' ? url : null
-  } catch {
-    return null
-  }
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -68,6 +64,8 @@ export class PeditReview extends HTMLElement {
   /** The name typed in the form, kept in this element only so a remount does not ask again. */
   #typed: string | undefined
   #win: Window | null = null
+  /** The link being opened or open: a hashchange to the same one does nothing. */
+  #current: Link | undefined
 
   connectedCallback(): void {
     this.#win = this.ownerDocument.defaultView
@@ -78,10 +76,15 @@ export class PeditReview extends HTMLElement {
   disconnectedCallback(): void {
     this.#win?.removeEventListener('hashchange', this.#onHash)
     this.#win = null
+    this.#current = undefined
     void this.#stop()
   }
 
   #onHash = (): void => {
+    // An in-page anchor or a cleared hash is not a new room.
+    const link = parseLink(this.#win?.location.hash ?? '')
+    if (!link) return
+    if (link.id === this.#current?.id && link.key === this.#current.key) return
     void this.#start()
   }
 
@@ -112,8 +115,15 @@ export class PeditReview extends HTMLElement {
   #stop(): Promise<void> {
     this.#generation++
     const run = this.#disposers.splice(0).reverse()
+    // Each one runs whatever the others do: the room is the last.
     return (async () => {
-      for (const dispose of run) await dispose()
+      for (const dispose of run) {
+        try {
+          await dispose()
+        } catch {
+          // Nothing to do with a failed teardown; the next one must still run.
+        }
+      }
     })()
   }
 
@@ -132,21 +142,23 @@ export class PeditReview extends HTMLElement {
 
   async #start(): Promise<void> {
     void this.#stop()
+    this.#current = undefined
     const generation = this.#generation
     const root = this.#root()
     // Keeps the adopted or style sheets; only the content goes.
     for (const child of [...root.children]) if (child.localName !== 'style') child.remove()
 
-    const relay = parseRelay(this.getAttribute('relay'))
+    const relay = parseRelayUrl(this.getAttribute('relay'))
     if (!relay) {
       this.#fail('missing-relay', 'This page does not say which relay to use.')
       return
     }
     const link = parseLink(this.#win?.location.hash ?? '')
     if (!link) {
-      this.#fail('bad-link', 'This is not a review link.')
+      this.#fail('bad-link', OPEN_MESSAGES['bad-link'])
       return
     }
+    this.#current = link
     const attr = this.getAttribute('name')?.trim()
     const name = (attr || this.#typed || '').slice(0, MAX_NAME)
     if (!name) {
@@ -168,8 +180,12 @@ export class PeditReview extends HTMLElement {
         fetch: PeditReview.testing.fetch,
       })
     } catch (e) {
-      if (!(e instanceof RoomOpenError) || generation !== this.#generation) throw e
-      this.#fail(e.reason, e.message)
+      // A mount left behind by a newer one says nothing, whatever went wrong.
+      if (generation !== this.#generation) return
+      this.#current = undefined
+      // Fixed words: an error's own text is never shown or sent on.
+      if (e instanceof RoomOpenError) this.#fail(e.reason, OPEN_MESSAGES[e.reason])
+      else this.#fail('open-failed', 'The review could not be opened.')
       return
     }
     if (generation !== this.#generation) {

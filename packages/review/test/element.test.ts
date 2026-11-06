@@ -1,15 +1,36 @@
 // @vitest-environment jsdom
 
-import { generateEditSecret } from '@pedit/protocol'
+import { deriveRoomKeys, generateEditSecret, parseFragment } from '@pedit/protocol'
 import { Relay } from '@pedit/protocol/testing'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import '../src/index.ts'
+import { ContextMenu } from '../../web/src/core/menu.ts'
 import type { PeditReview } from '../src/element.ts'
+
+// Before any import runs: every way into the page's storage counts.
+const storage = vi.hoisted(() => {
+  const touched: string[] = []
+  const trap = (name: string) => () => {
+    touched.push(name)
+    throw new Error(`storage touched: ${name}`)
+  }
+  for (const target of [globalThis, window]) {
+    Object.defineProperty(target, 'localStorage', { configurable: true, get: trap('localStorage') })
+    Object.defineProperty(target, 'sessionStorage', {
+      configurable: true,
+      get: trap('sessionStorage'),
+    })
+  }
+  for (const method of ['getItem', 'setItem', 'removeItem', 'clear', 'key'] as const)
+    Storage.prototype[method] = trap(method) as never
+  return { touched }
+})
 
 const ID = 'a'.repeat(22)
 const hash = () => `#${ID}.${generateEditSecret()}`
 
-beforeAll(() => {
+beforeAll(async () => {
+  // Imported only now: the element and its libraries load with the traps set.
+  await import('../src/index.ts')
   // jsdom lays nothing out; CodeMirror measures text ranges.
   Range.prototype.getClientRects ??= () => [] as unknown as DOMRectList
   Range.prototype.getBoundingClientRect ??= () => new DOMRect()
@@ -60,9 +81,7 @@ describe('<pedit-review>', () => {
   })
 
   it('shows the access of a link below edit', async () => {
-    const secret = generateEditSecret()
-    const { parseFragment, deriveRoomKeys } = await import('@pedit/protocol')
-    const link = parseFragment(secret)
+    const link = parseFragment(generateEditSecret())
     if (!link) throw new Error('no link')
     const keys = await deriveRoomKeys(link, ID)
     location.hash = `#${ID}.${keys.fragments.read}`
@@ -114,11 +133,20 @@ describe('<pedit-review>', () => {
     expect(root.querySelector('form')).toBeNull()
   })
 
-  it('writes nothing to storage', async () => {
-    const set = vi.spyOn(Storage.prototype, 'setItem')
+  it('never touches the page storage, loading or running', async () => {
     const { events } = place({ relay: 'https://relay.test', name: 'Ana' })
     await vi.waitFor(() => expect(statuses(events)).toContain('live'))
-    expect(set).not.toHaveBeenCalled()
+    expect(storage.touched).toEqual([])
+  })
+
+  it('closes the socket even when a disposer throws', async () => {
+    const { el, events } = place()
+    await vi.waitFor(() => expect(statuses(events)).toContain('live'))
+    vi.spyOn(ContextMenu.prototype, 'dispose').mockImplementation(() => {
+      throw new Error('boom')
+    })
+    el.remove()
+    await vi.waitFor(() => expect(open()).toBe(0))
   })
 
   it('leaves no socket and no window listener when removed, and mounts again when added back', async () => {
@@ -150,6 +178,30 @@ describe('<pedit-review>', () => {
     expect(relay.urls.at(-1)).toBe(`wss://relay.test/api/rooms/${'b'.repeat(22)}/ws`)
     await vi.waitFor(() => expect(open()).toBe(1))
     expect(root.querySelectorAll('.cm-editor').length).toBe(1)
+  })
+
+  it('ignores a hash that is not a link while a room is open, and the same link again', async () => {
+    const { events } = place()
+    await vi.waitFor(() => expect(statuses(events)).toContain('live'))
+    const sockets = relay.urls.length
+    const same = location.hash
+    location.hash = '#section'
+    window.dispatchEvent(new HashChangeEvent('hashchange'))
+    location.hash = ''
+    window.dispatchEvent(new HashChangeEvent('hashchange'))
+    location.hash = same
+    window.dispatchEvent(new HashChangeEvent('hashchange'))
+    await new Promise((r) => setTimeout(r, 20))
+    expect(relay.urls.length).toBe(sockets)
+    expect(events.filter((e) => e.type === 'pedit-error')).toEqual([])
+  })
+
+  it('opens a valid link that arrives after a bad one', async () => {
+    location.hash = ''
+    const { events } = place()
+    await vi.waitFor(() => expect(events.map((e) => e.detail.reason)).toEqual(['bad-link']))
+    location.hash = hash()
+    await vi.waitFor(() => expect(statuses(events)).toContain('live'))
   })
 
   it('defines the element once however many copies load', async () => {

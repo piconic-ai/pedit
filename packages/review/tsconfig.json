@@ -6,5 +6,5 @@
     "jsx": "react-jsx",
     "jsxImportSource": "@barefootjs/jsx"
   },
-  "include": ["src", "test", "vite.config.ts", "vite.csp.config.ts"]
+  "include": ["src", "test", "vite.config.ts", "memory-storage.ts", "vite.csp.config.ts"]
 }

@@ -1,4 +1,5 @@
 import { AVATAR_HOSTS } from '@pedit/protocol/avatar-hosts'
+import { parseRelayUrl } from './relay.ts'
 
 export interface ReviewCSPOptions {
   /** The relay the page's `<pedit-review relay="…">` talks to. */
@@ -21,13 +22,8 @@ const ANCESTOR = /^(?:'self'|'none'|[A-Za-z0-9*.:/_-]+)$/
  * A relay's path is not kept: the policy admits the relay's whole origin.
  */
 export function reviewCSP(options: ReviewCSPOptions): string {
-  const relay = new URL(options.relay)
-  if (
-    (relay.protocol !== 'https:' && relay.protocol !== 'http:') ||
-    relay.username ||
-    relay.password
-  )
-    throw new Error('relay must be an http(s) URL without credentials')
+  const relay = parseRelayUrl(options.relay)
+  if (!relay) throw new Error('relay must be an http(s) URL without credentials')
   const socket = `${relay.protocol === 'https:' ? 'wss' : 'ws'}://${relay.host}`
   const avatars = AVATAR_HOSTS.map((h) => `https://${h}`).join(' ')
   const directives = [

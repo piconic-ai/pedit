@@ -6,11 +6,16 @@ import { beforeAll, describe, expect, it } from 'vitest'
 const root = resolve(import.meta.dirname, '..')
 const dist = join(root, 'dist')
 
-/** URLs that appear in the bundle without being requested: XML namespaces and the like. */
-const ALLOWED_URLS = [
-  /^https?:\/\/www\.w3\.org\//,
-  /^https?:\/\/(?:github\.com|reactjs\.org|react\.dev|developer\.mozilla\.org|bugzilla\.mozilla\.org|crbug\.com|bugs\.chromium\.org|bugs\.webkit\.org)\//,
-]
+/**
+ * URLs that appear in the bundle without being requested: XML namespaces and
+ * links in comments. Exact, so a new one is looked at before it is allowed.
+ */
+const ALLOWED_URLS = new Set([
+  'http://www.w3.org/1998/Math/MathML',
+  'http://www.w3.org/2000/svg',
+  'https://github.com/piconic-ai/barefootjs/issues/2733',
+  'https://github.com/yjs/yjs/issues/438',
+])
 
 function files(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
@@ -26,12 +31,13 @@ describe('the built element', () => {
     bundle = readFileSync(join(dist, 'pedit-review.js'), 'utf8')
   }, 120_000)
 
-  it('is one JavaScript file, next to reviewCSP and the licenses', () => {
+  it('is one JavaScript file, next to reviewCSP, its types and the licenses', () => {
     expect(files(dist).sort()).toEqual([
       'THIRD_PARTY_LICENSES.txt',
       'csp.d.ts',
       'csp.js',
       'pedit-review.js',
+      'relay.d.ts',
     ])
   })
 
@@ -43,10 +49,15 @@ describe('the built element', () => {
   })
 
   it('names no URL that it could request, and never touches localStorage', () => {
-    const urls = [...bundle.matchAll(/https?:\/\/[^\s"'`)\\<>]+/g)].map((m) => m[0])
-    const stray = urls.filter((u) => !ALLOWED_URLS.some((ok) => ok.test(u)))
-    expect(stray).toEqual([])
+    const urls = [...bundle.matchAll(/\b(?:https?|wss?):\/\/[^\s"'`)\\<>]*/g)].map((m) => m[0])
+    expect(urls.filter((u) => !ALLOWED_URLS.has(u))).toEqual([])
     expect(bundle).not.toContain('localStorage')
+  })
+
+  it('builds no URL out of a scheme and a host', () => {
+    // A bare "https://" or "wss://" literal is the start of a URL made at run time.
+    expect(bundle).not.toMatch(/["'`](?:https?|wss?):\/\/["'`]/)
+    expect(bundle).not.toMatch(/["'`](?:https?|wss?):["'`]\s*\+/)
   })
 
   it('keeps reviewCSP out of the element', () => {
