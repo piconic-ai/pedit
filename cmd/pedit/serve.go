@@ -42,7 +42,12 @@ room has another history (one pedit <file> made) is answered with a
 resume_choice event; send share again with "choice": "room", "app" or "later".
 The project is found as for pedit <file>, without creating a configuration.
 unshare ends a live room and leaves a kept one kept, and is answered with an
-unshared event. close takes in the edits
+unshared event. A command may carry "id": a string of at most 64 bytes. Every
+event that answers it (shared, resume_choice, unshared, room_ended for close or
+choice "app", and error) carries the same id; events nobody asked for (peers,
+a room_ended of the relay's) carry none. When close leaves a share that was
+running and then fails, an unshared event without an id comes first, then the
+error. close takes in the edits
 of a kept room, saves them and ends it for good, shared now or not, and is
 answered with a room_ended event of reason closed; on a live room it is unshare
 (an unshared event).

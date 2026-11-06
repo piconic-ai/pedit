@@ -75,6 +75,8 @@ func TestParseCommand(t *testing.T) {
 		{"relay other scheme", `{"cmd":"share","relay":"ftp://r.example.com"}`, "share", "relay"},
 		{"relay empty", `{"cmd":"share","relay":""}`, "share", "relay"},
 		{"choice unknown", `{"cmd":"share","choice":"now"}`, "share", "choice"},
+		{"id too long", `{"cmd":"close","id":"` + strings.Repeat("x", 65) + `"}`, "close", "id"},
+		{"id not a string", `{"cmd":"close","id":1}`, "close", "not a command"},
 	}
 	for _, c := range bad {
 		t.Run(c.name, func(t *testing.T) {
@@ -118,10 +120,11 @@ func TestCommandsGoToTheSharerAndErrorsAreEvents(t *testing.T) {
 	if want := []string{"share later", "unshare", "close"}; !slices.Equal(r.calls, want) {
 		t.Fatalf("calls %v", r.calls)
 	}
-	if len(events) != 2 || events[0]["event"] != "error" || events[0]["cmd"] != "share" || events[1]["cmd"] != "" {
+	// A successful unshare is answered with an unshared event.
+	if len(events) != 3 || events[0]["event"] != "unshared" || events[1]["event"] != "error" || events[1]["cmd"] != "share" || events[2]["cmd"] != "" {
 		t.Fatalf("events %v", events)
 	}
-	for _, e := range events {
+	for _, e := range events[1:] {
 		if msg, _ := e["message"].(string); msg == "" || strings.Contains(msg, "\n") {
 			t.Fatalf("message in %v", e)
 		}

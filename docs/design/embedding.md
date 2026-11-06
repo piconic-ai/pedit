@@ -181,6 +181,13 @@ most 64 KiB. Each is answered by events on stream 0.
     cut to 64 bytes; `"more":N` counts those left out;
   - `{"event":"room_ended","reason":"closed"|"expired"|"maintenance"}` when
     the relay ends the room.
+- Every command may carry `"id"`, a string of at most 64 bytes. The events that
+  answer it carry the same `id`: `shared`, `resume_choice`, `unshared`,
+  `room_ended` (for `close`, or `share` with `choice: "app"`) and `error`.
+  Events nobody asked for (`peers`, a `room_ended` from the relay) carry none,
+  so the app tells an answer from an unsolicited event by the id. If `close`
+  leaves a running share and then fails, pedit sends an `unshared` without an
+  id before the `error`: the share is over even though the close was not done.
 - A command that is not valid JSON, or has an unknown `cmd` or bad fields, is
   answered `{"event":"error","cmd":…,"message":…}` and does not end the child.
   Only a frame that breaks the frame format ends the child, as today. One share

@@ -26,14 +26,21 @@ ${extra}
 let buf = Buffer.alloc(0)
 let chain = Promise.resolve()
 const answer = async (c) => {
+  // An answer carries the command's id; the events nobody asked for carry none.
+  const reply = (o) => send({ ...o, id: c.id })
+  if (c.relay === 'noisy') send({ event: 'room_ended', reason: 'expired' })
   await new Promise((r) => setTimeout(r, c.relay === 'slow' ? 150 : 0))
   if (c.cmd === 'share') {
-    if (c.relay === 'fail') return send({ event: 'error', cmd: 'share', message: 'relay down' })
+    if (c.relay === 'fail') return reply({ event: 'error', cmd: 'share', message: 'relay down' })
     if (c.relay === 'choice' && !c.choice)
-      return send({ event: 'resume_choice', room: 'r1', choices: [{ choice: 'room', text: 3 }, { choice: 'later' }] })
-    send({ event: 'shared', room: 'r1', links: { edit: 'r1.e', read: 'r1.r' }, keptUntil: 5, resumed: false })
-  } else if (c.cmd === 'unshare') send({ event: 'unshared' })
-  else send({ event: 'room_ended', reason: 'closed' })
+      return reply({ event: 'resume_choice', room: 'r1', choices: [{ choice: 'room', text: 3 }, { choice: 'later' }] })
+    reply({ event: 'shared', room: 'r1', links: { edit: 'r1.e', read: 'r1.r' }, keptUntil: 5, resumed: false })
+  } else if (c.cmd === 'unshare') reply({ event: 'unshared' })
+  else if (typeof failClose !== 'undefined') {
+    // The share ended before the relay refused.
+    send({ event: 'unshared' })
+    reply({ event: 'error', cmd: 'close', message: 'relay busy' })
+  } else reply({ event: 'room_ended', reason: 'closed' })
 }
 process.stdin.on('data', (d) => {
   buf = Buffer.concat([buf, d])
@@ -50,11 +57,19 @@ process.stdin.on('end', () => process.exit(0))
 `
 }
 
-function setup(js: string, idleMs?: number) {
+function setup(js: string, idleMs?: number, onEvent?: (e: ServeEvent) => void) {
   const { dir, cleanup } = tmpRoot()
   const bin = fakePedit(dir, 'pedit', js)
   const events: ServeEvent[] = []
-  const files = new ServedFiles({ bin, app: 'test-app', idleMs, onEvent: (e) => events.push(e) })
+  const files = new ServedFiles({
+    bin,
+    app: 'test-app',
+    idleMs,
+    onEvent: (e) => {
+      events.push(e)
+      onEvent?.(e)
+    },
+  })
   cleanups.push(cleanup, () => files.close())
   const log = () => {
     try {
@@ -78,11 +93,16 @@ describe.skipIf(!FAKE)('ServedFile commands', () => {
       keptUntil: 5,
       resumed: false,
     })
-    expect(log()).toEqual(['5 0 {"cmd":"share","origins":["https://cms.example.com"],"keep":"1d"}'])
+    expect(log()).toEqual([
+      '5 0 {"cmd":"share","id":"c1","origins":["https://cms.example.com"],"keep":"1d"}',
+    ])
     expect(events).toContainEqual(expect.objectContaining({ type: 'shared', room: 'r1' }))
     await served.unshare()
     await served.close()
-    expect(log().slice(1)).toEqual(['5 0 {"cmd":"unshare"}', '5 0 {"cmd":"close"}'])
+    expect(log().slice(1)).toEqual([
+      '5 0 {"cmd":"unshare","id":"c2"}',
+      '5 0 {"cmd":"close","id":"c3"}',
+    ])
   })
 
   it('resolves share with a choice on resume_choice, and rejects on an error for share', async () => {
@@ -117,6 +137,8 @@ describe.skipIf(!FAKE)('ServedFile commands', () => {
     const { dir, files, log } = setup(script(1))
     const served = await files.acquire(write(dir, 'a.md'))
     await expect(served.share()).rejects.toThrow(/serve 2/)
+    await expect(served.unshare()).rejects.toThrow(/serve 2/)
+    await expect(served.close()).rejects.toThrow(/serve 2/)
     await sleep(100)
     expect(log()).toEqual([])
   })
@@ -166,5 +188,57 @@ send({ event: 'peers', peers: [{ name: 'x'.repeat(10 * 1024), access: 'read' }] 
     const { dir, files } = setup(script(2, `process.stdin.once('data', () => process.exit(1))`))
     const served = await files.acquire(write(dir, 'a.md'))
     await expect(served.share()).rejects.toThrow(/no longer served/)
+  })
+
+  it('is not answered by an unsolicited room_ended while commands are pending', async () => {
+    const { dir, files } = setup(script(2))
+    const served = await files.acquire(write(dir, 'a.md'))
+    const [shared, , closed] = await Promise.all([
+      served.share({ relay: 'noisy' }),
+      served.unshare(),
+      served.close(),
+    ])
+    expect(shared).toMatchObject({ type: 'shared', room: 'r1' })
+    expect(closed).toBeUndefined()
+  })
+
+  it('takes a share from the room_ended callback as its own command', async () => {
+    let served: Awaited<ReturnType<ServedFiles['acquire']>> | undefined
+    let again: Promise<unknown> | undefined
+    const { dir, files } = setup(script(2), undefined, (e) => {
+      if (e.type === 'room_ended' && !again) again = served?.share()
+    })
+    served = await files.acquire(write(dir, 'a.md'))
+    await served.share()
+    await served.close()
+    expect(await again).toMatchObject({ type: 'shared', room: 'r1' })
+  })
+
+  it('keeps the child while a slow share is pending, and once shared', async () => {
+    const { dir, files, events } = setup(script(2), 300)
+    const served = await files.acquire(write(dir, 'a.md'))
+    await sleep(250) // just before the idle deadline
+    await served.share({ relay: 'slow' }) // answered 150 ms later, past it
+    await sleep(500)
+    expect(events.some((e) => e.type === 'stopped')).toBe(false)
+  })
+
+  it('arms the idle stop again after a command is answered with an error', async () => {
+    const { dir, files, events } = setup(script(2), 100)
+    const served = await files.acquire(write(dir, 'a.md'))
+    await expect(served.share({ relay: 'fail' })).rejects.toThrow('relay down')
+    await vi.waitFor(() =>
+      expect(events).toContainEqual({ type: 'stopped', path: served.path, reason: 'idle' }),
+    )
+  })
+
+  it('clears shared when a close fails after the share ended', async () => {
+    const { dir, files, events } = setup(script(2, 'const failClose = true'), 150)
+    const served = await files.acquire(write(dir, 'a.md'))
+    await served.share()
+    await expect(served.close()).rejects.toThrow('relay busy')
+    await vi.waitFor(() =>
+      expect(events).toContainEqual({ type: 'stopped', path: served.path, reason: 'idle' }),
+    )
   })
 })

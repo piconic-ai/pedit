@@ -52,8 +52,9 @@ export interface ServedFile {
 
 type Cmd = 'share' | 'unshare' | 'close'
 
-/** A command waiting for pedit's answer; pedit runs them one at a time, in order. */
+/** A command waiting for pedit's answer: the event that carries its id. */
 interface Pending {
+  id: string
   cmd: Cmd
   resolve: (event: Record<string, unknown>) => void
   reject: (e: Error) => void
@@ -71,6 +72,8 @@ interface Entry {
   /** A room is open, so reviewers may be in it with no app page. */
   shared: boolean
   pending: Pending[]
+  /** Numbers the command ids. */
+  commands: number
   generation: string
   clients: number
   idle: NodeJS.Timeout | undefined
@@ -93,13 +96,6 @@ async function inodeOf(real: string): Promise<string> {
   const st = await stat(real, { bigint: true })
   if (!st.isFile()) throw new Error('not a regular file')
   return st.ino === 0n ? '' : `${st.dev}:${st.ino}`
-}
-
-/** The events that answer each command. `close` on a live room is an unshare. */
-const ANSWERS: Record<Cmd, string[]> = {
-  share: ['shared', 'resume_choice', 'room_ended'],
-  unshare: ['unshared'],
-  close: ['room_ended', 'unshared'],
 }
 
 function sharedOf(ev: Record<string, unknown>): Shared {
@@ -231,6 +227,7 @@ export class ServedFiles {
       serve: 0,
       shared: false,
       pending: [],
+      commands: 0,
       generation: '',
       clients: 0,
       idle: undefined,
@@ -259,8 +256,6 @@ export class ServedFiles {
         },
         dial: (role) => this.#dial(entry, role),
         share: async (options) => {
-          if (entry.serve < SHARE_SERVE)
-            throw new Error(`sharing needs pedit serve ${SHARE_SERVE}; this pedit is older`)
           const { choice, keep, origins, relay } = options ?? {}
           const ev = await this.#command(entry, 'share', { origins, keep, relay, choice })
           if (ev.event === 'resume_choice')
@@ -285,14 +280,13 @@ export class ServedFiles {
     child.stderr.on('data', (d: string) => {
       if (stderr.length < STDERR_KEEP) stderr = (stderr + d).slice(0, STDERR_KEEP)
     })
-    const onEvent = (payload: Buffer) => {
-      let ev: Record<string, unknown>
-      try {
-        ev = JSON.parse(payload.toString())
-      } catch {
-        return
-      }
-      if (ev.event === 'listening' && !entry.listening) {
+    const emitRoom = (ev: Record<string, unknown>, event: ServeEvent) => {
+      this.#answer(entry, ev) // before any callback: a reentrant command must not be taken for it
+      this.#emit(event)
+    }
+    const handlers: Record<string, (ev: Record<string, unknown>) => void> = {
+      listening: (ev) => {
+        if (entry.listening) return
         if (typeof ev.generation !== 'string' || ev.generation === '') {
           errorMessage = 'pedit did not report a generation; it is too old'
           return this.#terminate(entry)
@@ -308,7 +302,8 @@ export class ServedFiles {
         })
         this.#armIdle(entry)
         onReady()
-      } else if (ev.event === 'update_available') {
+      },
+      update_available: (ev) => {
         const { version, url, security } = ev
         if (typeof version !== 'string' || typeof url !== 'string' || version === this.#updateSeen)
           return
@@ -319,22 +314,31 @@ export class ServedFiles {
           url: url.slice(0, 512),
           security: security === true,
         })
-      } else if (ev.event === 'shared') {
+      },
+      held: (ev) => {
+        held = { pid: Number(ev.pid), ...(typeof ev.app === 'string' ? { app: ev.app } : {}) }
+      },
+      error: (ev) => {
+        if (typeof ev.message !== 'string') return
+        errorMessage = ev.message.slice(0, STDERR_KEEP)
+        this.#answer(entry, ev)
+      },
+      shared: (ev) => {
         entry.shared = true
         clearTimeout(entry.idle)
-        this.#emit({ path, ...sharedOf(ev) })
-        this.#answer(entry, ev)
-      } else if (ev.event === 'resume_choice' || ev.event === 'unshared') {
-        if (ev.event === 'unshared') {
-          this.#left(entry)
-          this.#emit({ type: 'unshared', path })
-        }
-        this.#answer(entry, ev)
-      } else if (ev.event === 'room_ended') {
+        emitRoom(ev, { path, ...sharedOf(ev) })
+      },
+      resume_choice: (ev) => this.#answer(entry, ev),
+      unshared: (ev) => {
         this.#left(entry)
-        this.#emit({ type: 'room_ended', path, reason: String(ev.reason).slice(0, 64) })
-        this.#answer(entry, ev)
-      } else if (ev.event === 'peers' && Array.isArray(ev.peers)) {
+        emitRoom(ev, { type: 'unshared', path })
+      },
+      room_ended: (ev) => {
+        this.#left(entry)
+        emitRoom(ev, { type: 'room_ended', path, reason: String(ev.reason).slice(0, 64) })
+      },
+      peers: (ev) => {
+        if (!Array.isArray(ev.peers)) return
         const peers = ev.peers.map(
           (p: Peer): Peer => ({ name: String(p?.name), access: p?.access }),
         )
@@ -344,16 +348,17 @@ export class ServedFiles {
           peers,
           ...(typeof ev.more === 'number' && { more: ev.more }),
         })
-      } else if (ev.event === 'held') {
-        held = { pid: Number(ev.pid), ...(typeof ev.app === 'string' ? { app: ev.app } : {}) }
-      } else if (ev.event === 'error' && typeof ev.message === 'string') {
-        errorMessage = ev.message.slice(0, STDERR_KEEP)
-        const head = entry.pending[0]
-        if (head && ev.cmd === head.cmd) {
-          entry.pending.shift()
-          head.reject(new Error(errorMessage))
-        }
+      },
+    }
+    const onEvent = (payload: Buffer) => {
+      let ev: Record<string, unknown>
+      try {
+        ev = JSON.parse(payload.toString())
+      } catch {
+        return
       }
+      const name = String(ev?.event)
+      if (Object.hasOwn(handlers, name)) handlers[name]?.(ev)
     }
     let broken = false
     const frameBroke = () => {
@@ -406,26 +411,37 @@ export class ServedFiles {
     setTimeout(() => entry.dead || overdue(), this.#options.graceMs ?? TERM_AFTER_MS).unref()
   }
 
-  /** Send a command; it is answered by the next event that fits it, in order. */
+  /**
+   * Send a command with an id of its own; only the event that carries that id answers it. The
+   * idle stop waits while a command is pending.
+   */
   #command(entry: Entry, cmd: Cmd, fields: object = {}): Promise<Record<string, unknown>> {
     if (entry.dead || entry.stopping || !entry.listening)
       return Promise.reject(new Error('the file is no longer served'))
+    if (entry.serve < SHARE_SERVE)
+      return Promise.reject(
+        new Error(`sharing needs pedit serve ${SHARE_SERVE}; this pedit is older`),
+      )
     if (entry.pending.length >= MAX_PENDING)
       return Promise.reject(new LimitError('too many commands'))
-    const json = JSON.stringify({ cmd, ...fields })
+    const id = `c${++entry.commands}`
+    const json = JSON.stringify({ cmd, id, ...fields })
     if (Buffer.byteLength(json) > MAX_COMMAND) return Promise.reject(new Error('command too large'))
     return new Promise((resolve, reject) => {
-      entry.pending.push({ cmd, resolve, reject })
+      clearTimeout(entry.idle)
+      entry.pending.push({ id, cmd, resolve, reject })
       entry.streams.command(json)
     })
   }
 
-  /** Resolve the oldest command if `ev` is one of its answers. */
+  /** Settle the command `ev` answers, by its id; an event without one answers nothing. */
   #answer(entry: Entry, ev: Record<string, unknown>) {
-    const head = entry.pending[0]
-    if (!head || !ANSWERS[head.cmd].includes(String(ev.event))) return
-    entry.pending.shift()
-    head.resolve(ev)
+    const i = entry.pending.findIndex((p) => p.id === ev.id)
+    if (i < 0) return
+    const [done] = entry.pending.splice(i, 1) as [Pending]
+    if (ev.event === 'error') done.reject(new Error(String(ev.message).slice(0, STDERR_KEEP)))
+    else done.resolve(ev)
+    this.#armIdle(entry) // once the queue is empty, with no client and no room, the child may idle out
   }
 
   /** The room is gone: the child may idle out again. */
@@ -436,7 +452,14 @@ export class ServedFiles {
 
   #armIdle(entry: Entry) {
     clearTimeout(entry.idle)
-    if (entry.clients > 0 || entry.shared || entry.dead || entry.stopping) return
+    if (
+      entry.clients > 0 ||
+      entry.shared ||
+      entry.pending.length > 0 ||
+      entry.dead ||
+      entry.stopping
+    )
+      return
     entry.idle = setTimeout(() => this.#stop(entry, 'idle'), this.#options.idleMs ?? 60_000)
     entry.idle.unref()
   }

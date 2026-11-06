@@ -438,12 +438,12 @@ send({ event: 'listening', generation: 'g', serve: 2 })
 process.stdin.on('data', (d) => {
   const c = d.subarray(9).toString()
   fs.appendFileSync(__filename + '.log', c + '\\n')
-  const cmd = JSON.parse(c).cmd
+  const { cmd, id } = JSON.parse(c)
   if (cmd === 'share') {
-    send({ event: 'shared', room: 'r1', links: { edit: 'r1.e', read: 'r1.r' }, keptUntil: 0, resumed: false })
+    send({ event: 'shared', id, room: 'r1', links: { edit: 'r1.e', read: 'r1.r' }, keptUntil: 0, resumed: false })
     send({ event: 'peers', peers: [{ name: 'ada', access: 'edit' }] })
-  } else if (cmd === 'unshare') send({ event: 'unshared' })
-  else send({ event: 'room_ended', reason: 'closed' })
+  } else if (cmd === 'unshare') send({ event: 'unshared', id })
+  else send({ event: 'room_ended', id, reason: 'closed' })
 })
 process.stdin.on('end', () => process.exit(0))
 `,
@@ -457,7 +457,7 @@ process.stdin.on('end', () => process.exit(0))
     await f.token('a') // the routes served it under id "a"
     const path = join(f.root, 'a.md')
     expect(await f.routes.share(path, { keep: '0' })).toMatchObject({ type: 'shared', room: 'r1' })
-    expect(log()).toEqual(['{"cmd":"share","keep":"0"}'])
+    expect(log()).toEqual(['{"cmd":"share","id":"c1","keep":"0"}'])
     await vi.waitFor(() => expect(f.events.some((e) => e.type === 'peers')).toBe(true))
     const room = f.events.filter((e) => e.type === 'shared' || e.type === 'peers')
     expect(room.map((e) => [e.type, 'id' in e && e.id])).toEqual([
@@ -470,7 +470,7 @@ process.stdin.on('end', () => process.exit(0))
     expect(f.events).toContainEqual({ type: 'unshared', id: 'a', path: expect.any(String) })
     await vi.waitFor(() => expect(f.events.some((e) => e.type === 'stopped')).toBe(true))
     await f.routes.close(path)
-    expect(log().at(-1)).toBe('{"cmd":"close"}')
+    expect(log().at(-1)).toBe('{"cmd":"close","id":"c1"}')
     expect(f.events).toContainEqual(
       expect.objectContaining({ type: 'room_ended', reason: 'closed' }),
     )
