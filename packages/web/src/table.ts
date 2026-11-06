@@ -1,6 +1,8 @@
 import { render } from '@barefootjs/client/runtime'
 import type { Awareness } from 'y-protocols/awareness'
 import * as Y from 'yjs'
+import { participants } from './core/room.ts'
+import { Store } from './core/store.ts'
 import {
   CsvError,
   cellAt,
@@ -14,8 +16,6 @@ import {
   tryParse,
 } from './csv.ts'
 import { ContextMenu, type MenuItem, SEPARATOR } from './menu.ts'
-import { participants } from './room.ts'
-import { Store } from './store.ts'
 import './components/TableGrid.tsx'
 
 /** Marks the table's own edits, so the undo manager tracks them and the view knows them. */

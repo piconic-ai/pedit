@@ -3,7 +3,7 @@ import { render } from '@barefootjs/client/runtime'
 import type { FileEntry } from '@pedit/protocol'
 import { describe, expect, it } from 'vitest'
 import '../src/components/FileTabs.tsx'
-import { Store } from '../src/store.ts'
+import { Store } from '../src/core/store.ts'
 
 function mount(list: FileEntry[]) {
   const files = new Store<readonly FileEntry[]>(list)

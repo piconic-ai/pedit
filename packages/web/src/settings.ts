@@ -1,5 +1,5 @@
 import type { ProviderId } from './alwaysload.ts'
-import type { Readable } from './store.ts'
+import type { Readable } from './core/store.ts'
 import type { ThemeInfo } from './themes.ts'
 
 const PANEL_WIDTH = 320

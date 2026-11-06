@@ -1,10 +1,10 @@
 'use client'
 
 import type { Access, FileEntry } from '@pedit/protocol'
+import type { Participant } from '../core/room.ts'
+import type { Readable } from '../core/store.ts'
 import type { InfoLink } from '../info.ts'
-import type { Participant } from '../room.ts'
 import type { SettingsModel } from '../settings.ts'
-import type { Readable } from '../store.ts'
 import type { ViewSwitch } from '../view.ts'
 import { CommentCount } from './FileTabs.tsx'
 import { Info } from './Info.tsx'

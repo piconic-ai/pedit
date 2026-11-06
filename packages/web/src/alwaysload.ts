@@ -1,6 +1,6 @@
 import { PROVIDERS, type ProviderId } from '@pedit/protocol/csp'
+import { Store } from './core/store.ts'
 import { defaultStore, type Store as Storage } from './storage.ts'
-import { Store } from './store.ts'
 
 export const ALWAYS_LOAD_KEY = 'pedit:always-load'
 

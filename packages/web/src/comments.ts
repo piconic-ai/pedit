@@ -1,9 +1,9 @@
 import { META_LIMITS, metaUse, randomBase64Url } from '@pedit/protocol'
 import * as Y from 'yjs'
 import { nodeText, read as readCanvas } from './canvas.ts'
+import { type Readable, Store } from './core/store.ts'
 import type { Cell, Table } from './csv.ts'
 import { defaultStore, type Store as Prefs } from './storage.ts'
-import { type Readable, Store } from './store.ts'
 import type { Position } from './table.ts'
 
 /**

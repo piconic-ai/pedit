@@ -10,9 +10,9 @@ import {
   resolveTheme,
   saveAppearance,
 } from './appearance.ts'
+import { Store } from './core/store.ts'
 import { applyPalette } from './palette.ts'
 import type { SettingsModel } from './settings.ts'
-import { Store } from './store.ts'
 import { readerTheme, THEMES, type ThemeSwitcher } from './themes.ts'
 import type { VimToggle } from './vim.ts'
 

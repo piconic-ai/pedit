@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate } from 'y-protocols/awareness'
 import * as Y from 'yjs'
-import { keepAlive, OUTDATED_TIMEOUT, RENEW_INTERVAL } from '../src/expiry.ts'
+import { keepAlive, OUTDATED_TIMEOUT, RENEW_INTERVAL } from '../../src/core/expiry.ts'
 
 // Chrome wakes the timers of a tab hidden for 5 minutes at most this often.
 const THROTTLED_RENEWAL = 60_000

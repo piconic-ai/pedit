@@ -17,7 +17,7 @@ import {
   hostAttachments,
   MAX_BYTES,
   whyNoImages,
-} from '../src/attachments.ts'
+} from '../../src/core/attachments.ts'
 
 const ROOM = 'AAAAAAAAAAAAAAAAAAAAAA'
 // A PNG with a text chunk that must not reach the room.

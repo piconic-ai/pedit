@@ -1,18 +1,11 @@
 'use client'
 
 import { createSignal, onCleanup, onMount } from '@barefootjs/client'
-import type { RoomStatus } from '@pedit/protocol'
-import type { Readable } from '../store.ts'
+import type { HeaderStatus, KeptSyncStatus } from '../core/keptaway.ts'
+import type { Readable } from '../core/store.ts'
 
-export type KeptSyncStatus =
-  | 'connecting'
-  | 'saving'
-  | 'kept'
-  | 'synced'
-  | 'retrying'
-  | 'expired'
-  | 'host-closed'
-export type HeaderStatus = RoomStatus | KeptSyncStatus
+export type { HeaderStatus, KeptSyncStatus }
+
 const CLOUD = 'M7 18H6a4 4 0 0 1-.6-7.95 6 6 0 0 1 11.7-1.5A4.5 4.5 0 0 1 18 18Z'
 const SPINNER = 'M12 3a9 9 0 1 1-9 9'
 const WARNING = 'M12 3 2 21h20L12 3zM12 9v5m0 3v1'

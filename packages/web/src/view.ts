@@ -1,5 +1,5 @@
+import { type Readable, Store as Value } from './core/store.ts'
 import { defaultStore, type Store } from './storage.ts'
-import { type Readable, Store as Value } from './store.ts'
 
 export type ViewMode = 'editor' | 'split' | 'preview' | 'table' | 'canvas'
 

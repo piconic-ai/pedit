@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
-import { copyText } from '../src/copy.ts'
+import { copyText } from '../../src/core/copy.ts'
 
 describe('copyText', () => {
   it('writes the text to the clipboard', async () => {
