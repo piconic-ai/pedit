@@ -222,6 +222,13 @@ func readText(t *testing.T, path string) string {
 	return string(b)
 }
 
+// holds is whether the file holds want now. A read that fails counts as not
+// yet: on Windows the file cannot be opened while pedit replaces it.
+func holds(path, want string) bool {
+	b, err := os.ReadFile(path)
+	return err == nil && string(b) == want
+}
+
 func TestServeShareRoomEndToEnd(t *testing.T) {
 	env := newShareEnv(t)
 	file := writeFile(t, "hello\n")
@@ -246,7 +253,7 @@ func TestServeShareRoomEndToEnd(t *testing.T) {
 	// The guest's edit reaches the page and the file.
 	guestInsert(g, 0, "oh, ")
 	eventually(t, "the page gets the guest's edit", func() bool { return p.get() == "oh, hello\n" })
-	eventually(t, "the file gets it", func() bool { return readText(t, file) == "oh, hello\n" })
+	eventually(t, "the file gets it", func() bool { return holds(file, "oh, hello\n") })
 	// The page's edit reaches the guest.
 	p.insert(len("oh, hello\n"), "bye\n")
 	eventually(t, "the guest gets the page's edit", func() bool { return guestText(g) == "oh, hello\nbye\n" })
@@ -273,7 +280,7 @@ func TestServeShareRoomEndToEnd(t *testing.T) {
 	if second["room"] == shared["room"] {
 		t.Fatalf("same room twice: %v", second)
 	}
-	eventually(t, "the file has the page edit", func() bool { return readText(t, file) == "oh, hello\nbye\n" })
+	eventually(t, "the file has the page edit", func() bool { return holds(file, "oh, hello\nbye\n") })
 	if got := readText(t, file); got != "oh, hello\nbye\n" {
 		t.Fatalf("file %q", got)
 	}
@@ -303,7 +310,7 @@ func TestServeShareRefusalsKeepServing(t *testing.T) {
 	}
 	// Still serving, and the failed share left no peer behind.
 	p.insert(0, "x")
-	eventually(t, "the file", func() bool { return readText(t, file) == "xhi\n" })
+	eventually(t, "the file", func() bool { return holds(file, "xhi\n") })
 	a.share(fmt.Sprintf(`,"relay":%q`, env.server.URL))
 	a.command(fmt.Sprintf(`{"cmd":"share","keep":"0","relay":%q}`, env.server.URL))
 	if e := a.event("error", 4); !strings.Contains(e["message"].(string), "already shared") {
@@ -460,7 +467,7 @@ func TestServeShareKeepsEditsMadeWhileTheRoomStarts(t *testing.T) {
 	// the doc's to decide: all three must agree, with every edit in them.
 	whole := func(s string) bool { return strings.Count(s, "a") == 60 && strings.Count(s, "\n") == 1 }
 	eventually(t, "the guest has every edit", func() bool { return whole(guestText(g)) })
-	eventually(t, "the file agrees", func() bool { return readText(t, file) == guestText(g) })
+	eventually(t, "the file agrees", func() bool { return holds(file, guestText(g)) })
 	eventually(t, "the page agrees", func() bool { return p.get() == guestText(g) })
 	if code := a.stop(); code != 0 {
 		t.Fatalf("code %d, stderr %s", code, a.stderr.String())
