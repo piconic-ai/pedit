@@ -564,7 +564,8 @@ func (s *Server) leave(c *client) {
 		enc.WriteVarUint(meta.Clock + 1)
 		enc.WriteVarString("null")
 	}
-	if err := s.aw.ApplyUpdate(enc.Bytes(), nil); err == nil {
+	// c is the origin, so that the peer can tell the role of what left.
+	if err := s.aw.ApplyUpdate(enc.Bytes(), c); err == nil {
 		s.broadcast(awarenessFrame(enc.Bytes()), c)
 	}
 }

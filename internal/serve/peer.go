@@ -24,9 +24,44 @@ type PeerHandler struct {
 	// Update receives each Yjs update (v1) applied to the doc by anyone but
 	// the peer: browser streams, saves made by other editors.
 	Update func(update []byte)
-	// Awareness receives each awareness update (y-protocols encoding) applied
-	// by anyone but the peer.
-	Awareness func(update []byte)
+	// Awareness receives each awareness state applied by anyone but the peer,
+	// one ID at a time, with the role it must keep.
+	Awareness func(e PeerAwareness)
+}
+
+// PeerAwareness is the state of one awareness client ID, or its removal.
+type PeerAwareness struct {
+	ID uint64
+	// Reader is true when the ID belongs to a read stream, and when no
+	// stream owns it, so that a state is never promoted above its role.
+	Reader bool
+	// Update is a y-protocols awareness update holding only ID.
+	Update []byte
+}
+
+// peerAwareness splits what changed into one entry per ID. The caller
+// holds s.mu; origin is the client that sent it, if any.
+func (s *Server) peerAwareness(ids []uint64, origin any) []PeerAwareness {
+	out := make([]PeerAwareness, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, PeerAwareness{ID: id, Reader: s.readerOf(id, origin), Update: s.aw.EncodeUpdate([]uint64{id})})
+	}
+	return out
+}
+
+// readerOf is whether id is held to a reader's role: its owner is a read
+// stream, or it has no owner and origin, which may be introducing it, is not
+// an edit stream. The caller holds s.mu.
+func (s *Server) readerOf(id uint64, origin any) bool {
+	for c := range s.clients {
+		if c.ids[id] {
+			return c.reader
+		}
+	}
+	if c, ok := origin.(*client); ok {
+		return c.reader
+	}
+	return true
 }
 
 // A Peer is an in-process client of the server's doc, for a room that keeps a
@@ -41,7 +76,8 @@ type Peer struct {
 	// closed is guarded by s.mu.
 	closed bool
 
-	state, awState []byte
+	state    []byte
+	awStates []PeerAwareness
 
 	// q is what the handler has yet to receive; unbounded, so nothing is
 	// dropped and the server never waits for the handler.
@@ -54,7 +90,7 @@ type Peer struct {
 
 type peerMsg struct {
 	update    []byte
-	awareness bool
+	awareness *PeerAwareness
 }
 
 // AttachPeer takes in a peer. At most one is attached at a time.
@@ -77,7 +113,7 @@ func (s *Server) AttachPeer(h PeerHandler) (*Peer, error) {
 			live = append(live, id)
 		}
 	}
-	p.awState = s.aw.EncodeUpdate(live)
+	p.awStates = s.peerAwareness(live, nil)
 	p.off = s.aw.OnUpdate(func(ev awareness.UpdateEvent) {
 		if ev.Origin == p {
 			// The peer owns the IDs ygo accepted from it, as a stream does.
@@ -87,7 +123,9 @@ func (s *Server) AttachPeer(h PeerHandler) (*Peer, error) {
 			return
 		}
 		ids := append(append(append([]uint64{}, ev.Added...), ev.Updated...), ev.Removed...)
-		p.push(peerMsg{update: s.aw.EncodeUpdate(ids), awareness: true})
+		for _, e := range s.peerAwareness(ids, ev.Origin) {
+			p.push(peerMsg{awareness: &e})
+		}
 	})
 	s.peer = p
 	go p.deliver()
@@ -98,8 +136,9 @@ func (s *Server) AttachPeer(h PeerHandler) (*Peer, error) {
 // attached: every later update reaches Update.
 func (p *Peer) State() []byte { return p.state }
 
-// AwarenessState is every awareness state present when the peer was attached.
-func (p *Peer) AwarenessState() []byte { return p.awState }
+// AwarenessState is every awareness state present when the peer was attached,
+// one entry per ID as Awareness receives them.
+func (p *Peer) AwarenessState() []PeerAwareness { return p.awStates }
 
 // Apply applies a Yjs update from the room: the streams get it and the file
 // is written as for a browser's edit. Update does not receive it.
@@ -193,9 +232,9 @@ func (p *Peer) deliver() {
 		p.q[0] = peerMsg{}
 		p.q = p.q[1:]
 		p.qmu.Unlock()
-		if m.awareness {
+		if m.awareness != nil {
 			if p.h.Awareness != nil {
-				p.h.Awareness(m.update)
+				p.h.Awareness(*m.awareness)
 			}
 		} else if p.h.Update != nil {
 			p.h.Update(m.update)

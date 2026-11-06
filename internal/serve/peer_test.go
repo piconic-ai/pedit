@@ -42,10 +42,10 @@ func attachRoom(t *testing.T, s *Server) *room {
 				t.Error(err)
 			}
 		},
-		Awareness: func(u []byte) {
+		Awareness: func(e PeerAwareness) {
 			r.mu.Lock()
 			defer r.mu.Unlock()
-			if err := r.aw.ApplyUpdate(u, r.local); err != nil {
+			if err := r.aw.ApplyUpdate(e.Update, r.local); err != nil {
 				t.Error(err)
 			}
 		},
@@ -57,8 +57,10 @@ func attachRoom(t *testing.T, s *Server) *room {
 	if err := crdt.ApplyUpdateV1(r.doc, r.peer.State(), r.local); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.aw.ApplyUpdate(r.peer.AwarenessState(), r.local); err != nil {
-		t.Fatal(err)
+	for _, e := range r.peer.AwarenessState() {
+		if err := r.aw.ApplyUpdate(e.Update, r.local); err != nil {
+			t.Fatal(err)
+		}
 	}
 	r.mu.Unlock()
 	// Edits of the room go to the server through Apply.
@@ -354,14 +356,14 @@ func TestPeerHandlersMayCallApplyWithoutDeadlock(t *testing.T) {
 	var err error
 	pa, err = a.AttachPeer(PeerHandler{
 		Update:    func(u []byte) { _ = pb.Apply(u) },
-		Awareness: func(u []byte) { _ = pb.ApplyAwareness(u) },
+		Awareness: func(e PeerAwareness) { _ = pb.ApplyAwareness(e.Update) },
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	pb, err = b.AttachPeer(PeerHandler{
 		Update:    func(u []byte) { _ = pa.Apply(u) },
-		Awareness: func(u []byte) { _ = pa.ApplyAwareness(u) },
+		Awareness: func(e PeerAwareness) { _ = pa.ApplyAwareness(e.Update) },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -396,4 +398,103 @@ func TestPeerHandlersMayCallApplyWithoutDeadlock(t *testing.T) {
 	})
 	pa.Close()
 	pb.Close()
+}
+
+// collect attaches a peer that records each awareness entry.
+func collect(t *testing.T, s *Server) (*Peer, func() entries) {
+	t.Helper()
+	var mu sync.Mutex
+	var got entries
+	p, err := s.AttachPeer(PeerHandler{Awareness: func(e PeerAwareness) {
+		mu.Lock()
+		got = append(got, e)
+		mu.Unlock()
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(p.Close)
+	return p, func() entries {
+		mu.Lock()
+		defer mu.Unlock()
+		return append(entries(nil), got...)
+	}
+}
+
+type entries []PeerAwareness
+
+// find is the entry that holds id alone, live or removed.
+func (g entries) find(id uint64, live bool) (PeerAwareness, bool) {
+	for _, e := range g {
+		es, err := awarenessEntries(e.Update)
+		if err == nil && len(es) == 1 && es[0].id == id && es[0].live == live && e.ID == id {
+			return e, true
+		}
+	}
+	return PeerAwareness{}, false
+}
+
+func TestPeerAwarenessCarriesTheRoleOfItsStream(t *testing.T) {
+	s, _, _ := open(t, "x\n")
+	_, got := collect(t, s)
+	edit, read := dial(t, s), dialAs(t, s, "read")
+	edit.setState(map[string]any{"user": "edit"})
+	read.setState(map[string]any{"user": "read"})
+	eid, rid := edit.aw.ClientID(), read.aw.ClientID()
+	eventually(t, "both entries", func() bool {
+		_, a := got().find(eid, true)
+		_, b := got().find(rid, true)
+		return a && b
+	})
+	if e, _ := got().find(eid, true); e.Reader {
+		t.Fatal("an edit stream's state arrived as a reader's")
+	}
+	if e, _ := got().find(rid, true); !e.Reader {
+		t.Fatal("a read stream's state arrived as an editor's")
+	}
+	// A state no stream owns is never above a reader's role.
+	enc := encoding.NewEncoder()
+	enc.WriteVarUint(1)
+	enc.WriteVarUint(4242)
+	enc.WriteVarUint(1)
+	enc.WriteVarString(`{"n":1}`)
+	s.mu.Lock()
+	err := s.aw.ApplyUpdate(enc.Bytes(), nil)
+	s.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the unowned entry", func() bool { _, ok := got().find(4242, true); return ok })
+	if e, _ := got().find(4242, true); !e.Reader {
+		t.Fatal("a state without an owner arrived as an editor's")
+	}
+}
+
+func TestStreamLeavingDeliversRemovalsWithANewerClock(t *testing.T) {
+	s, _, _ := open(t, "x\n")
+	_, got := collect(t, s)
+	for _, role := range []string{"", "read"} {
+		c := dialAs(t, s, role)
+		c.setState(map[string]any{"user": role})
+		id := c.aw.ClientID()
+		eventually(t, "state", func() bool { _, ok := got().find(id, true); return ok })
+		live, _ := got().find(id, true)
+		c.conn.Close()
+		eventually(t, "removal", func() bool { _, ok := got().find(id, false); return ok })
+		gone, _ := got().find(id, false)
+		if gone.Reader != (role == "read") {
+			t.Fatalf("role %q: removal Reader=%v", role, gone.Reader)
+		}
+		// A y-protocols receiver that holds the state accepts the removal.
+		recv := awareness.New(1)
+		if err := recv.ApplyUpdate(live.Update, nil); err != nil {
+			t.Fatal(err)
+		}
+		if err := recv.ApplyUpdate(gone.Update, nil); err != nil {
+			t.Fatal(err)
+		}
+		if st, ok := recv.GetStates()[id]; ok && st.State != nil {
+			t.Fatalf("role %q: the removal was not accepted", role)
+		}
+	}
 }
