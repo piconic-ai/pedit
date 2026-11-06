@@ -37,8 +37,8 @@ has a kept room of another history, the panel asks which side to keep.
   With it set, `node --test` also shares for real.
 - Reviewers open the relay's own editor (`<relay>/r/<room>#<key>`) until a review
   component exists.
-- Sharing needs pedit with `serve` version 2 (the next release) and the `@pedit/serve`
-  from it: the published 0.5.x has no `share`.
+- Sharing needs pedit 0.6.0 or later (`serve` version 2); an older pedit still
+  edits, and the Share button reports why it cannot share.
 - The `/share` routes are guarded like `/edit`: this origin, `127.0.0.1` as the Host, JSON only.
 
 ## Notes
