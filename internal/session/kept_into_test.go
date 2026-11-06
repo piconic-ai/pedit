@@ -48,10 +48,15 @@ func (a *intoApp) insert(at int, s string) {
 	a.doc.Transact(func(txn *crdt.Transaction) { a.text.Insert(txn, at, s, nil) })
 }
 
-func (a *intoApp) into(base, next string) ([]byte, string) {
-	before := a.doc.StateVector()
-	merge.ExternalEdit(a.doc, a.text, base, next, nil)
-	return crdt.EncodeStateAsUpdateV1(a.doc, before), a.generation
+// prepare builds the edit on a copy and leaves the app alone, as serve does.
+func (a *intoApp) prepare(base, next string) ([]byte, string) {
+	doc := crdt.New(crdt.WithGC(false))
+	if err := crdt.ApplyUpdateV1(doc, a.state(), nil); err != nil {
+		panic(err)
+	}
+	before := doc.StateVector()
+	merge.ExternalEdit(doc, doc.GetText("content"), base, next, nil)
+	return crdt.EncodeStateAsUpdateV1(doc, before), a.generation
 }
 
 func (a *intoApp) reapply(update []byte, generation string) bool {
@@ -62,7 +67,7 @@ func (a *intoApp) reapply(update []byte, generation string) bool {
 // restart of the app would.
 func intoOptions(a *awayRoom, app **intoApp, saved func() error) KeptTextOptions {
 	opts := closeOptions(a)
-	opts.Into = func(base, next string) ([]byte, string) { return (*app).into(base, next) }
+	opts.Prepare = func(base, next string) ([]byte, string) { return (*app).prepare(base, next) }
 	opts.Reapply = func(update []byte, generation string) bool { return (*app).reapply(update, generation) }
 	opts.Saved = saved
 	return opts
@@ -279,4 +284,56 @@ func TestCloseIntoHandsOverOnceToAppContentTheRoomNeverHad(t *testing.T) {
 	}
 	mustCount(t, app.get(), "guest ", 1)
 	mustCount(t, app.get(), "app ", 1)
+}
+
+// The record of the delivery cannot be written: the app must stay as it was,
+// so that a retry with the app alive finds nothing delivered and nothing
+// unrecorded.
+func TestCloseIntoLeavesTheAppAloneWhenTheDeliveryCannotBeRecorded(t *testing.T) {
+	for _, tc := range []struct {
+		name, room, app string
+		entry           func(g *guestDoc) []byte
+		typed           func(app *intoApp)
+		want            string
+	}{
+		{"guest insertion", "notes\n", "notes\n", func(g *guestDoc) []byte { return g.insert(0, "guest ") }, func(*intoApp) {}, "guest notes\n"},
+		{"deletion then typing", "abc\n", "abc\n", func(g *guestDoc) []byte { return g.remove(1, 1) }, func(a *intoApp) { a.insert(1, "X") }, "aXc\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := newAwayRoom(t, tc.room)
+			_, guest := keepAndLeave(t, a)
+			a.script(1, protocol.EncodeLogged(1, tc.entry(guest)), protocol.EncodeLogEnd(1))
+			a.closeAsks(func(int) int { return http.StatusOK })
+
+			app := newIntoApp(tc.app)
+			dir := filepath.Dir(keptTestStatePath(t, a.project, a.id))
+			t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+			opts := intoOptions(a, &app, saveWorks)
+			prepare := opts.Prepare
+			// The record cannot be written from the moment the edit is prepared.
+			opts.Prepare = func(base, next string) ([]byte, string) {
+				u, g := prepare(base, next)
+				_ = os.Chmod(dir, 0o500)
+				return u, g
+			}
+			if err := CloseKept(context.Background(), opts); err == nil {
+				t.Fatal("closed although the delivery could not be recorded")
+			}
+			if err := os.Chmod(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if app.get() != tc.app {
+				t.Fatalf("the app was changed to %q", app.get())
+			}
+			tc.typed(app)
+
+			a.script(1, protocol.EncodeLogEnd(1))
+			if err := CloseKept(context.Background(), intoOptions(a, &app, saveWorks)); err != nil {
+				t.Fatal(err)
+			}
+			if app.get() != tc.want {
+				t.Fatalf("the app holds %q, want %q", app.get(), tc.want)
+			}
+		})
+	}
 }

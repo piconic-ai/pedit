@@ -21,20 +21,26 @@ func (s *Server) Text() string {
 	return s.text.ToString()
 }
 
-// Edit applies the change from base to next onto the document as an ordinary
-// edit, as a save made by another editor is applied: what was written
-// meanwhile is kept unless the change replaced the same region. The streams
-// and the file get it as for any edit. It returns the Yjs update the edit made
-// and the generation it was made in, for ApplyUpdate.
-func (s *Server) Edit(base, next string) (update []byte, generation string) {
+// PrepareEdit builds the change from base to next as a text merge, as a save
+// made by another editor is merged (what was written meanwhile is kept unless
+// the change replaced the same region), on a copy of the document. It returns
+// the Yjs update that edit made and the generation, and leaves the document
+// alone: ApplyUpdate then applies it as many times as needed, so a caller can
+// record the update before the document changes.
+func (s *Server) PrepareEdit(base, next string) (update []byte, generation string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	before := s.doc.StateVector()
-	merge.ExternalEdit(s.doc, s.text, base, next, &fileOrigin{})
-	return crdt.EncodeStateAsUpdateV1(s.doc, before), s.generation
+	doc := crdt.New(crdt.WithGC(false))
+	defer doc.Destroy()
+	if crdt.ApplyUpdateV1(doc, crdt.EncodeStateAsUpdateV1(s.doc, nil), nil) != nil {
+		return nil, s.generation
+	}
+	before := doc.StateVector()
+	merge.ExternalEdit(doc, doc.GetText("content"), base, next, nil)
+	return crdt.EncodeStateAsUpdateV1(doc, before), s.generation
 }
 
-// ApplyUpdate applies an update Edit returned. It does nothing and reports
+// ApplyUpdate applies an update PrepareEdit returned. It does nothing and reports
 // false unless the document still has that generation and the update then
 // integrates completely: a document restarted from a state of the same
 // history lacks what Edit made, and gets it back here, while what it already

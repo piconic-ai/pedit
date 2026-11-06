@@ -46,17 +46,29 @@ func editsBetween(from, to []rune) []edit {
 	return edits
 }
 
-// offsetMapper returns a function mapping rune offsets in base to rune offsets in current.
-func offsetMapper(base, current []rune) func(int) int {
+// offsetMapper returns a function mapping rune offsets in base to rune offsets
+// in current. An offset on a boundary where current has inserted text maps to
+// before it, or after it with after set: the start of a deletion maps after,
+// so that text inserted just before the deleted region is not deleted with it.
+func offsetMapper(base, current []rune) func(offset int, after bool) int {
 	diffs := diffRunes(base, current)
-	return func(offset int) int {
+	return func(offset int, after bool) int {
 		b, c := 0, 0
-		for _, d := range diffs {
+		for i, d := range diffs {
 			n := utf8.RuneCountInString(d.Text)
 			switch d.Type {
 			case diffmatchpatch.DiffEqual:
 				if offset <= b+n {
-					return c + (offset - b)
+					c += offset - b
+					if after && offset == b+n {
+						for _, next := range diffs[i+1:] {
+							if next.Type != diffmatchpatch.DiffInsert {
+								break
+							}
+							c += utf8.RuneCountInString(next.Text)
+						}
+					}
+					return c
 				}
 				b += n
 				c += n
@@ -99,8 +111,8 @@ func ExternalEdit(doc *crdt.Doc, text *crdt.YText, base, next string, origin any
 	doc.Transact(func(txn *crdt.Transaction) {
 		for i := len(edits) - 1; i >= 0; i-- {
 			e := edits[i]
-			start := toCurrent(e.start)
-			end := max(start, toCurrent(e.end))
+			start := toCurrent(e.start, e.end > e.start)
+			end := max(start, toCurrent(e.end, false))
 			if end > start {
 				text.Delete(txn, toUTF16[start], toUTF16[end]-toUTF16[start])
 			}

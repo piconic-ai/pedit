@@ -89,7 +89,13 @@ func TestServerEditMergesTheChangeIntoWhatWasWritten(t *testing.T) {
 	eventually(t, "synced", func() bool { return c.get() == "hello\n" })
 	c.insert(0, "app: ")
 	eventually(t, "the server has it", func() bool { return s.Text() == "app: hello\n" })
-	s.Edit("hello\n", "hello\nroom\n")
+	update, generation := s.PrepareEdit("hello\n", "hello\nroom\n")
+	if s.Text() != "app: hello\n" {
+		t.Fatalf("PrepareEdit changed the document: %q", s.Text())
+	}
+	if !s.ApplyUpdate(update, generation) {
+		t.Fatal("not applied")
+	}
 	eventually(t, "the page gets the edit", func() bool { return c.get() == "app: hello\nroom\n" })
 	eventually(t, "the file", fileIs(t, file, "app: hello\nroom\n"))
 }
@@ -122,7 +128,10 @@ func TestServerAdoptSeesEditsAcceptedUntilTheReplacement(t *testing.T) {
 
 func TestServerApplyUpdateReappliesAnEditOnceAndOnlyInItsGeneration(t *testing.T) {
 	s, file, _ := open(t, "abc\n")
-	update, generation := s.Edit("abc\n", "ac\n")
+	update, generation := s.PrepareEdit("abc\n", "ac\n")
+	if s.Text() != "abc\n" || !s.ApplyUpdate(update, generation) {
+		t.Fatalf("text %q", s.Text())
+	}
 	if generation != s.Generation() || s.Text() != "ac\n" {
 		t.Fatalf("generation %q, text %q", generation, s.Text())
 	}

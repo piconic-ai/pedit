@@ -354,7 +354,7 @@ func (l *liveSharer) closeRoom(ctx context.Context, project string, rec *session
 		defer peer.Close()
 		opts.Source, opts.Generation = peerSource{peer}, l.srv.Generation()
 	} else {
-		opts.Into, opts.Reapply = l.srv.Edit, l.srv.ApplyUpdate
+		opts.Prepare, opts.Reapply = l.srv.PrepareEdit, l.srv.ApplyUpdate
 	}
 	if err := session.CloseKept(ctx, opts); err != nil {
 		return fmt.Errorf("could not close the room, which stays kept: %w; send close to try again", err)
