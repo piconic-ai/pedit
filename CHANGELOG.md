@@ -1,5 +1,21 @@
 # Changelog
 
+## [v0.5.5](https://github.com/piconic-ai/pedit/compare/v0.5.4...v0.5.5) - 2026-11-06
+
+### Changes
+- Design sharing from pedit serve by @kfly8 in https://github.com/piconic-ai/pedit/pull/449
+- Add an in-process peer of serve's document by @kfly8 in https://github.com/piconic-ai/pedit/pull/450
+- Frame serve commands as kind 5 and check their fields by @kfly8 in https://github.com/piconic-ai/pedit/pull/451
+- Share a document the session does not own (Options.Source) by @kfly8 in https://github.com/piconic-ai/pedit/pull/453
+- Declare OriginsHeader once by @kfly8 in https://github.com/piconic-ai/pedit/pull/455
+- Bridge awareness between a source's pages and the room by @kfly8 in https://github.com/piconic-ai/pedit/pull/454
+- Share the served file in a live room from pedit serve by @kfly8 in https://github.com/piconic-ai/pedit/pull/457
+- Share a kept room from pedit serve by @kfly8 in https://github.com/piconic-ai/pedit/pull/458
+- fix(protocol): close freshness and resync lifecycle races by @kfly8 in https://github.com/piconic-ai/pedit/pull/459
+- Resume a kept room from pedit serve in one history by @kfly8 in https://github.com/piconic-ai/pedit/pull/460
+- Close a kept room and settle another history from pedit serve by @kfly8 in https://github.com/piconic-ai/pedit/pull/461
+- Let @pedit/serve share, with serve version 2 commands and events by @kfly8 in https://github.com/piconic-ai/pedit/pull/462
+
 ## [v0.5.4](https://github.com/piconic-ai/pedit/compare/v0.5.3...v0.5.4) - 2026-11-05
 
 ### Changes
