@@ -36,7 +36,10 @@ record fits its source file:
   anything else starts afresh, because the text the editor started from is not
   known.
 - A state that is unreadable, not `0600`, of another version, older than
-  7 days, or whose document does not apply is discarded.
+  7 days, or whose document does not apply is discarded. While a kept room's
+  record for the file exists, age does not discard it, and a state that cannot
+  be used gives way to the record's document when that fits the file
+  (docs/design/embedding.md, "Kept rooms keep one history").
 
 ## Generation
 
@@ -83,6 +86,16 @@ and tests pin them:
   second file is a second child.
 - Besides the file, the child touches only its lock beside the file and its
   state file (see above). The socket directory is gone.
+- While the app shares the file (serve version 2, docs/design/embedding.md),
+  the child also touches what `pedit <file>` does for a shared file:
+  - it reads the project's `.pedit/config.yaml`, and never creates one;
+  - it reads and writes the file's comments under `<project>/.pedit/meta/`;
+  - it saves images that reviewers paste beside the file;
+  - it keeps a kept room's record under `pedit/keep/` in the user
+    configuration directory.
+
+  Nothing else changes: the file is still the one the command line chose, and
+  no command names a path.
 - A stream's role is set by its `open` frame and never changes. `read` is
   enforced by pedit: an update from a reader closes the stream (4003).
 - Only the parent holds the pipes. Any process of the user could dial the old
@@ -101,6 +114,7 @@ Each direction is a sequence of frames, nothing else:
 | `2` data | both | one y-websocket message, as a WebSocket binary frame carried it |
 | `3` close | both | from the app, empty; from pedit, a uint16 close code and a UTF-8 reason of at most 123 bytes |
 | `4` event | pedit | stream 0; one JSON event as `--json` printed it (`listening`, `saved`, `external_save`, `update_available`, `held`, `error`) |
+| `5` command | app | stream 0; one JSON command of at most 64 KiB (`share`, `unshare`, `close`; serve version 2, see docs/design/embedding.md) |
 
 - Stream ids are chosen by the app, start at 1 and only increase; an id is
   never reused within a child. At most 8 streams are open at once.
