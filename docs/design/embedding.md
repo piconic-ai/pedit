@@ -355,8 +355,10 @@ Not published in v1. It is published once it is stable, which means:
 
 Fetches the page (no cookies, no redirects off the origin) and reports:
 the CSP against `reviewCSP` for the page's relay, scripts other than the
-component, inline scripts, the component's version against the newest, and
+component, inline scripts, the component's version against this pedit's version (the packages share one version), and
 whether the page sets `Referrer-Policy: no-referrer`. It never opens a room.
+`--json` prints the same checks for a program; the exit status is 0 when none
+fails, 1 when one does, 2 when the page cannot be checked. Run `pedit doctor --help`.
 
 ### Order
 
