@@ -1,4 +1,4 @@
-import { rmSync } from 'node:fs'
+import { readFileSync, rmSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { CSRAdapter } from '@barefootjs/client/csr-adapter'
 import { barefoot } from '@barefootjs/vite'
@@ -51,13 +51,19 @@ function singleEntry(): Plugin {
   }
 }
 
+// The package's version at build time: the bundle's banner and `PeditReview.version`.
+// `pedit doctor` reads the banner off a page's script to say which version it serves.
+const { version } = JSON.parse(readFileSync(resolve(import.meta.dirname, 'package.json'), 'utf8'))
+
 export default defineConfig({
+  define: { __PEDIT_REVIEW_VERSION__: JSON.stringify(version) },
   build: {
     target: 'es2022',
     chunkSizeWarningLimit: 1024,
     manifest: false,
     lib: { entry: 'src/index.ts', formats: ['es'], fileName: () => 'pedit-review.js' },
-    rollupOptions: { output: { codeSplitting: false } },
+    // `/*!` is a legal comment: minifiers keep it.
+    rollupOptions: { output: { codeSplitting: false, banner: `/*! @pedit/review ${version} */` } },
   },
   plugins: [
     // Components render in the browser only: the server never sees the content.

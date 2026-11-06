@@ -63,11 +63,13 @@ jobs:
       - run: npm install -g npm@11
       - run: pnpm install --frozen-lockfile
         working-directory: packages
-      - run: pnpm --filter "@pedit/${{ matrix.package }}" build
-        working-directory: packages
+      # Before the build: @pedit/review's bundle carries its package version in
+      # a banner and in PeditReview.version.
       - name: Set the package version to the release
         working-directory: packages/${{ matrix.package }}
         run: npm version "${TAG#v}" --no-git-tag-version
+      - run: pnpm --filter "@pedit/${{ matrix.package }}" build
+        working-directory: packages
       - name: Publish
         working-directory: packages/${{ matrix.package }}
         run: npm publish --provenance --access public
