@@ -41,11 +41,20 @@ var builtinTemplates = map[string]string{
 
 func loadConfig(cwd string) (config, error) { return findConfig(cwd, true) }
 
+// loadProject is loadConfig for a command that must not write: it never creates
+// the configuration, and without one the project is the Git root, or cwd
+// outside a repository.
+func loadProject(cwd string) (config, error) { return searchConfig(cwd, false, false) }
+
 // findConfig looks for the configuration from cwd up. When retry is set and
 // another pedit creates the default configuration between our look and our
 // create, it reads that one instead, once: never again, so a name that keeps
 // reading as missing yet cannot be created stops pedit rather than looping.
-func findConfig(cwd string, retry bool) (config, error) {
+func findConfig(cwd string, retry bool) (config, error) { return searchConfig(cwd, true, retry) }
+
+// searchConfig is findConfig; without create, a missing configuration stays
+// missing.
+func searchConfig(cwd string, create, retry bool) (config, error) {
 	c := config{Server: defaultServer, Output: ".", root: cwd}
 	for dir := cwd; ; dir = filepath.Dir(dir) {
 		path := filepath.Join(dir, ".pedit", "config.yaml")
@@ -58,6 +67,10 @@ func findConfig(cwd string, retry bool) (config, error) {
 			return c, err
 		}
 		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			if !create {
+				c.root = dir
+				return c, nil
+			}
 			if dir != cwd {
 				break
 			}

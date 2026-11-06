@@ -52,6 +52,9 @@ type Options struct {
 	// OnPeople is called with the names of the other people in the room,
 	// sorted, whenever someone joins, leaves or renames.
 	OnPeople func([]string)
+	// OnPeers is OnPeople with each person's name and access apart, sorted
+	// the same way.
+	OnPeers func([]Person)
 	// OnSaved is called with the path, relative to File, of each image
 	// someone pasted that was saved beside the file.
 	OnSaved func(path string)

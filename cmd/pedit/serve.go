@@ -33,7 +33,11 @@ big-endian) | payload. The kinds are 1 open (app: one byte, 0 edit or 1 read),
 2 data (both: one y-websocket message), 3 close (app: empty; pedit: a uint16
 code and a reason), 4 event (pedit: stream 0, one JSON event) and 5 command
 (app: stream 0, one JSON object of at most 64 KiB: share, unshare or close).
-A bad command is answered with an error event and does not end pedit. Stream
+share is {"cmd":"share","origins":[…],"keep":"0","relay":"<url>"} and opens a
+live room (kept rooms are not available yet, so keep must be "0"). The project
+is found as for pedit <file>, without creating a configuration.
+share opens a live room for the file and unshare ends it. A bad command is
+answered with an error event and does not end pedit. Stream
 ids start at 1 and only increase; at most 8 are open at once. See
 docs/design/serve.md.
 
@@ -65,6 +69,16 @@ Events (JSON in event frames):
                                             a newer release exists; sent at
                                             most once, after listening
   {"event":"held","pid":N,"app":"<name>"}   another process serves the file
+  {"event":"shared","room":"<id>","links":{"edit":"<room>.<key>","comment":"…","read":"…"},"keptUntil":0,"resumed":false}
+                                            share succeeded; the app puts its
+                                              page URL and "#" before a link.
+                                              comment is left out when the room
+                                              offers no comments
+  {"event":"peers","peers":[{"name":"…","access":"edit"|"comment"|"read"}]}
+                                            who is in the room, when it changed
+  {"event":"room_ended","reason":"closed"|"expired"|"maintenance"}
+                                            the relay ended the room; share
+                                              again to open a new one
   {"event":"error","message":"<one line>"}  any other failure
   {"event":"error","cmd":"<cmd or empty>","message":"<one line>"}
                                             a command was refused; pedit keeps
@@ -212,7 +226,8 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	}
 	// One goroutine handles the commands, so the read loop keeps the streams
 	// flowing while a command is handled.
-	cmds := newCommands(st, noSharer{})
+	sharer := newLiveSharer(s, st, stderr)
+	cmds := newCommands(st, sharer)
 	st.OnCommand = cmds.Enqueue
 	cmdsDone := make(chan struct{})
 	go func() {
@@ -226,6 +241,8 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	}()
 	<-ctx.Done()
 	<-cmdsDone
+	// Leave the room first, so that its last edits are in the file saved below.
+	_ = sharer.Unshare()
 	closeErr := s.Close()
 	var broke error
 	select {

@@ -506,23 +506,46 @@ func removeTemp(dir string) error {
 }
 
 func (s *Session) reportPeople(onPeople func([]string)) {
-	if onPeople == nil {
+	onPeers := s.opts.OnPeers
+	if onPeople == nil && onPeers == nil {
 		return
 	}
-	var names []string
+	var people []Person
 	for id, st := range s.awareness.GetStates() {
 		if id == s.awareness.ClientID() || s.isSourcePage(id) {
 			continue
 		}
-		name := displayName(st.State)
 		// What a participant may do follows from the link it joined with.
-		if access, ok := s.Client.AccessOf(id); ok && access != protocol.AccessEdit {
-			name += " (" + access.String() + " only)"
+		access, ok := s.Client.AccessOf(id)
+		if !ok {
+			access = protocol.AccessEdit
 		}
-		names = append(names, name)
+		people = append(people, Person{Name: displayName(st.State), Access: access})
 	}
-	sort.Strings(names)
-	onPeople(names)
+	sort.Slice(people, func(i, j int) bool { return people[i].label() < people[j].label() })
+	if onPeers != nil {
+		onPeers(people)
+	}
+	if onPeople != nil {
+		names := make([]string, len(people))
+		for i, p := range people {
+			names[i] = p.label()
+		}
+		onPeople(names)
+	}
+}
+
+// A Person is someone else in the room, with the access of their link.
+type Person struct {
+	Name   string
+	Access protocol.Access
+}
+
+func (p Person) label() string {
+	if p.Access != protocol.AccessEdit {
+		return p.Name + " (" + p.Access.String() + " only)"
+	}
+	return p.Name
 }
 
 // hostState returns the awareness state of the host, if one is in the room:

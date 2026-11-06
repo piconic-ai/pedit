@@ -202,7 +202,7 @@ func TestServeAnswersABadCommandAndKeepsServing(t *testing.T) {
 	}
 	send(5, 0, []byte(`{"cmd":"unshare"}`))
 	events = waitFor(t, stdout, 3)
-	if events[2]["cmd"] != "unshare" || !strings.Contains(events[2]["message"].(string), "not available") {
+	if events[2]["cmd"] != "unshare" || !strings.Contains(events[2]["message"].(string), "not shared") {
 		t.Fatalf("events %v", events)
 	}
 	// A stream still works: a sync step 1 is answered with data frames.
