@@ -21,6 +21,7 @@ type subcommand struct {
 var subcommands = map[string]subcommand{
 	"close":       {closeUsage, runClose},
 	"comments":    {commentsUsage, runComments},
+	"doctor":      {doctorUsage, runDoctor},
 	"resume":      {resumeUsage, runResume},
 	"serve":       {serveUsage, runServe},
 	"rooms":       {roomsUsage, runRooms},

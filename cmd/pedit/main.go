@@ -81,6 +81,7 @@ Commands:
   pedit rooms [--json]      List this project's kept rooms
   pedit comments [list]     List, reply to, resolve or reopen comments through a
                             session started with --json
+  pedit doctor <url>        Check a review page: its CSP, scripts and component version
   pedit self-update         Replace this pedit with the latest release, after checking it
   pedit serve <file>        EXPERIMENTAL: hold a file's document for a local app, on a Unix socket
 Run pedit <command> --help for its details. To share a file named like a
