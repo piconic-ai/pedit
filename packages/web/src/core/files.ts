@@ -201,7 +201,9 @@ export class FileSet {
       next = v.target?.()
       if (next !== undefined) break
     }
-    next ??= (this.#editor?.textTarget ?? this.#opts.textTarget)?.() ?? null
+    // Only when no view is active: an active view with nothing selected says
+    // null, and a comment must not go on the hidden editor's selection then.
+    if (next === undefined) next = (this.#editor?.textTarget ?? this.#opts.textTarget)?.() ?? null
     if (!sameTarget(next, this.target.get())) this.target.set(next)
   }
 

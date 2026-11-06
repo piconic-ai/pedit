@@ -143,6 +143,18 @@ describe('FileSet', () => {
     expect(room.current.get()).toBe(0)
   })
 
+  it('keeps an active view without a selection from falling back to the text', async () => {
+    const { files } = await setup()
+    // A table on screen with no cell selected, while the hidden editor has a selection.
+    let active = false
+    files.addView(() => ({ target: () => (active ? null : undefined) }))
+    files.aim()
+    expect(files.target.get()).toEqual({ kind: 'text', from: 0, to: 0 })
+    active = true
+    files.aim()
+    expect(files.target.get()).toBeNull()
+  })
+
   it('tells every open file its views of a status, with whether the link writes', async () => {
     const { room, files, host } = await setup()
     host.setManifest(list(NOTES, LATER))
