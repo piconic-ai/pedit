@@ -33,6 +33,7 @@ type keptRelay struct {
 	// hold keeps the entries editors send from being logged; live makes the
 	// next connections those of a room whose host is back.
 	hold, live bool
+	replayEnd  <-chan struct{}
 }
 
 func newKeptRelay(t *testing.T) *keptRelay {
@@ -81,6 +82,7 @@ func (r *keptRelay) dialed(c *prototest.ScriptConn) {
 	r.mu.Lock()
 	log := append([][]byte{}, r.log...)
 	live := r.live
+	replayEnd := r.replayEnd
 	r.mu.Unlock()
 	if live {
 		c.Push(protocol.WithKind(protocol.KindLive, []byte{0}))
@@ -91,8 +93,11 @@ func (r *keptRelay) dialed(c *prototest.ScriptConn) {
 	for i, entry := range log {
 		c.Push(protocol.EncodeLogged(uint64(i+1), entry))
 	}
-	c.Push(protocol.EncodeLogEnd(uint64(len(log))))
 	go func() {
+		if replayEnd != nil {
+			<-replayEnd
+		}
+		c.Push(protocol.EncodeLogEnd(uint64(len(log))))
 		for m := range c.Sent {
 			r.mu.Lock()
 			hold := r.hold
@@ -247,25 +252,76 @@ func TestACommentLinkWaitsForTheHost(t *testing.T) {
 }
 
 func TestAGuestLiveWhenTheRoomIsKeptJoinsAgain(t *testing.T) {
-	r := newKeptRelay(t)
-	g := r.join(t, protocol.AccessEdit, nil)
-	if _, err := g.Reply("", "c0", "r1", "Logged"); err != nil {
-		t.Fatal(err)
-	}
-	conn := r.relay.Conns()[0]
-	// The room was live, then kept again: the guest connects anew, with
-	// what it holds, and is replayed only what came after.
-	conn.Say("host back")
-	prototest.WaitFor(t, wait, func() bool { return g.Client.Status() == protocol.StatusConnected }, "the host back")
-	conn.Say(fmt.Sprintf("kept %d", time.Now().Add(time.Hour).UnixMilli()))
-	prototest.WaitFor(t, wait, func() bool { return len(r.relay.Conns()) == 2 }, "a new connection")
-	prototest.WaitFor(t, wait, func() bool { return g.Client.Status() == protocol.StatusKept }, "kept again")
-	res, err := g.Resolve("", "c0", true)
-	if err != nil || !res.Delivered {
-		t.Fatalf("%+v %v", res, err)
-	}
-	if ids, _ := r.entries(); len(ids) != 2 {
-		t.Fatalf("entries %v", ids)
+	for _, delayReplayEnd := range []bool{false, true} {
+		t.Run(fmt.Sprintf("delay-replay-end=%t", delayReplayEnd), func(t *testing.T) {
+			r := newKeptRelay(t)
+			g := r.join(t, protocol.AccessEdit, nil)
+			if res, err := g.Reply("", "c0", "r1", "Logged"); err != nil || !res.Delivered {
+				t.Fatalf("reply %+v %v", res, err)
+			}
+			replayEnd := make(chan struct{})
+			r.mu.Lock()
+			if delayReplayEnd {
+				r.replayEnd = replayEnd
+			}
+			r.mu.Unlock()
+			t.Cleanup(func() {
+				select {
+				case <-replayEnd:
+				default:
+					close(replayEnd)
+				}
+			})
+			conn := r.relay.Conns()[0]
+			// The room was live, then kept again: the guest connects anew, with
+			// what it holds, and is replayed only what came after.
+			conn.Say("host back")
+			prototest.WaitFor(t, wait, func() bool { return g.Client.Status() == protocol.StatusConnected }, "the host back")
+			conn.Say(fmt.Sprintf("kept %d", time.Now().Add(time.Hour).UnixMilli()))
+			prototest.WaitFor(t, wait, func() bool { return len(r.relay.Conns()) == 2 }, "a new connection")
+			prototest.WaitFor(t, wait, func() bool { return g.Client.Status() == protocol.StatusKept }, "kept again")
+			done := make(chan WriteResult, 1)
+			go func() {
+				res, err := g.Resolve("", "c0", true)
+				if err != nil {
+					t.Error(err)
+				}
+				done <- res
+			}()
+			prototest.WaitFor(t, wait, func() bool {
+				c := g.Comments()
+				return len(c) == 1 && len(c[0].Threads) == 1 && c[0].Threads[0].Resolved
+			}, "the resolve written locally")
+			close(replayEnd)
+			if res := <-done; !res.Delivered {
+				t.Fatalf("%+v", res)
+			}
+			ids, updates := r.entries()
+			if len(ids) < 2 {
+				t.Fatalf("entries %v", ids)
+			}
+			hostComments := crdt.New()
+			defer hostComments.Destroy()
+			_, bundled := r.bundled(t)
+			if err := crdt.ApplyUpdateV1(hostComments, bundled, nil); err != nil {
+				t.Fatal(err)
+			}
+			for i, update := range updates {
+				if ids[i] != 1024 {
+					t.Fatalf("entry for %d", ids[i])
+				}
+				if err := meta.CheckUpdate(hostComments, update); err != nil {
+					t.Fatalf("the host would refuse: %v", err)
+				}
+				if err := crdt.ApplyUpdateV1(hostComments, update, nil); err != nil {
+					t.Fatal(err)
+				}
+			}
+			threads := meta.ShownThreads(hostComments)
+			if len(threads) != 1 || !threads[0].Resolved || len(threads[0].Messages) != 2 || threads[0].Messages[1].ID != "r1" || threads[0].Messages[1].Body != "Logged" {
+				t.Fatalf("at the host %+v", threads)
+			}
+		})
 	}
 }
 

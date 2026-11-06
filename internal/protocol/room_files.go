@@ -447,6 +447,9 @@ func (s *timeShare) take(apply func() ([]byte, error)) ([]byte, error) {
 // last asked, so that an update refused while it waited is not left out.
 // The caller holds Client.applying.
 func (c *Client) askAgain(id uint64, f *fileDoc) bool {
+	if c.isDestroyed() {
+		return false
+	}
 	wait := f.resyncAt.Sub(c.checks.clock())
 	if wait <= 0 {
 		f.resyncAt = c.checks.clock().Add(resyncEvery)
