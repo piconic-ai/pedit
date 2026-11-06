@@ -246,7 +246,10 @@ export async function openRoom(opts: OpenRoomOptions): Promise<Room> {
 
   // Nobody edits while the host is away and nothing keeps the edits: nobody
   // would save them. Once the room has ended, for good.
+  let disposed = false
   const setStatus = (s: RoomStatus) => {
+    // Leaving is not the room ending: what the page said stays as it was.
+    if (disposed) return
     const wasLocked = editLocked()
     status.set(s)
     review.set(reviewStatusOf(s))
@@ -359,10 +362,13 @@ export async function openRoom(opts: OpenRoomOptions): Promise<Room> {
       renderPeople()
     },
     async dispose() {
+      disposed = true
+      // Still listening: destroying removes this client's own state, which
+      // the people must lose too.
+      await rc.destroy()
       awareness.off('change', renderPeople)
       awareness.off('change', sanitize)
       notices.dismiss()
-      await rc.destroy()
       awareness.destroy()
     },
   }

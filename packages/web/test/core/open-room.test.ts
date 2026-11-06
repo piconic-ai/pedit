@@ -255,14 +255,109 @@ describe('openRoom', () => {
     const keys = await editKeys()
     const room = await open(relay, keys)
     await vi.waitFor(() => expect(room.status.get()).toBe('connected'))
-    const renders = vi.fn()
-    room.hooks.people = renders
+    await vi.waitFor(() => expect(room.people.get().some((p) => p.isSelf)).toBe(true))
+    const calls: string[] = []
+    const off = vi.spyOn(room.awareness, 'off')
+    const destroy = vi.spyOn(room.awareness, 'destroy').mockImplementation(() => {
+      calls.push('destroy')
+    })
+    off.mockImplementation(((name: string) => {
+      calls.push(`off:${name}`)
+    }) as typeof room.awareness.off)
     await room.dispose()
     expect(room.client.status).toBe('disconnected')
     expect(relay.sockets.size).toBe(0)
-    renders.mockClear()
-    // Awareness changes after dispose reach nobody.
-    room.awareness.emit('change', [{ added: [1], updated: [], removed: [] }, 'test'])
-    expect(renders).not.toHaveBeenCalled()
+    // Both listeners come off, before the awareness is destroyed.
+    expect(calls.slice(-3)).toEqual(['off:change', 'off:change', 'destroy'])
+    // The client's own state went while the people were still followed.
+    expect(room.people.get().some((p) => p.isSelf)).toBe(false)
+    destroy.mockRestore()
+    off.mockRestore()
+  })
+
+  it('keeps the status as it was when it leaves', async () => {
+    const relay = new Relay()
+    const keys = await editKeys()
+    const live = await open(relay, keys)
+    await vi.waitFor(() => expect(live.review.get()).toBe('live'))
+    const seen: ReviewStatus[] = []
+    live.review.subscribe((r) => seen.push(r))
+    await live.dispose()
+    expect(live.review.get()).toBe('live')
+    expect(live.status.get()).toBe('connected')
+    expect(live.locked.get()).toBe(false)
+    expect(seen).toEqual([])
+
+    const ended = await open(relay, keys)
+    await vi.waitFor(() => expect(ended.status.get()).toBe('connected'))
+    relay.closeAll(ROOM_EXPIRED, expiredReason(86400))
+    await vi.waitFor(() => expect(ended.review.get()).toBe('ended'))
+    await ended.dispose()
+    expect(ended.review.get()).toBe('ended')
+    expect(ended.status.get()).toBe('expired')
+    expect(ended.editLocked()).toBe(true)
+  })
+
+  it('sends an attachment about the file on screen unless told otherwise', async () => {
+    const relay = new Relay()
+    const keys = await editKeys()
+    const fetched = vi.fn(async () => new Response(null, { status: 201 }))
+    const room = await open(relay, keys, 'edit', { fetch: fetched as unknown as typeof fetch })
+    peer(relay, keys, { role: 'host', attachments: { dir: 'assets', maxBytes: 1000 } })
+    await vi.waitFor(() => expect(room.attachments.host).not.toBeNull())
+    const toRoom = vi.spyOn(room.client, 'sendAttachment')
+    const toFile = vi.spyOn(room.client, 'sendFileAttachment')
+    room.current.set(2)
+    void room.attachments.upload(new Blob([PNG])).catch(() => {})
+    await vi.waitFor(() => expect(toFile).toHaveBeenCalled())
+    expect(toFile.mock.calls[0]?.[0]).toBe(2)
+    expect(toRoom).not.toHaveBeenCalled()
+    // With the room's own doc on screen, the room's own client sends it.
+    const second = await open(relay, keys, 'edit', { fetch: fetched as unknown as typeof fetch })
+    await vi.waitFor(() => expect(second.attachments.host).not.toBeNull())
+    const toOwn = vi.spyOn(second.client, 'sendAttachment')
+    void second.attachments.upload(new Blob([PNG])).catch(() => {})
+    await vi.waitFor(() => expect(toOwn).toHaveBeenCalled())
+  })
+
+  it('follows what the relay says of kept comments', async () => {
+    const relay = new Relay({ protocol: 'pedit-v8' })
+    const keys = await editKeys()
+    const room = await open(relay, keys, 'comment')
+    await vi.waitFor(() => expect(room.status.get()).toBe('connected'))
+    relay.signal('kept 1700000000000')
+    await vi.waitFor(() => expect(room.status.get()).toBe('kept'))
+    // A comment link cannot comment in a kept room until the relay takes comments.
+    expect(room.locked.get()).toBe(true)
+    expect(room.away.keeps.get()).toBeNull()
+    relay.signal('kept comments')
+    await vi.waitFor(() => expect(room.locked.get()).toBe(false))
+    expect(room.away.keeps.get()).toBe('comments')
+  })
+
+  it('routes canvas messages to the hook with the file they are about', async () => {
+    const relay = new Relay()
+    const keys = await editKeys()
+    const room = await open(relay, keys)
+    const got: [number, unknown][] = []
+    room.hooks.canvas = (file, m) => got.push([file, m])
+    const host = peer(relay, keys, { role: 'host' })
+    await vi.waitFor(() => expect(host.status).toBe('connected'))
+    host.sendCanvas({ kind: 'applied', id: 'a' })
+    await vi.waitFor(() => expect(got).toContainEqual([0, { kind: 'applied', id: 'a' }]))
+    host.sendFileCanvas(3, { kind: 'applied', id: 'b' })
+    await vi.waitFor(() => expect(got).toContainEqual([3, { kind: 'applied', id: 'b' }]))
+  })
+
+  it('takes awareness changes before connect() with no hooks, then tells the hook', async () => {
+    const relay = new Relay()
+    const keys = await editKeys()
+    const room = await open(relay, keys, 'edit', { connect: false })
+    expect(() => room.awareness.setLocalStateField('file', 1)).not.toThrow()
+    expect(room.people.get().some((p) => p.isSelf)).toBe(true)
+    const people = vi.fn()
+    room.hooks.people = people
+    room.connect()
+    expect(people).toHaveBeenCalled()
   })
 })
