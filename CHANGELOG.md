@@ -1,5 +1,23 @@
 # Changelog
 
+## [v0.7.0](https://github.com/piconic-ai/pedit/compare/v0.6.0...v0.7.0) - 2026-11-06
+
+### Changes
+- Share the file from the serve-app sample by @kfly8 in https://github.com/piconic-ai/pedit/pull/463
+- Add packages/web/src/core and move the modules that take their inputs by @kfly8 in https://github.com/piconic-ai/pedit/pull/465
+- Make the core leaves take the relay, the link and the root by @kfly8 in https://github.com/piconic-ai/pedit/pull/466
+- Move comments, the context menu and their components into the core by @kfly8 in https://github.com/piconic-ai/pedit/pull/467
+- Open the room in the core: openRoom() takes the room half of joinRoom() by @kfly8 in https://github.com/piconic-ai/pedit/pull/468
+- Keep the room's files in the core: FileSet and views by @kfly8 in https://github.com/piconic-ai/pedit/pull/469
+- Mount the text editor from the core: mountTextEditor() by @kfly8 in https://github.com/piconic-ai/pedit/pull/470
+- Mount comments and banners from the core, and run the core in a shadow root by @kfly8 in https://github.com/piconic-ai/pedit/pull/471
+- Split the review core's CSS out of the page stylesheet by @kfly8 in https://github.com/piconic-ai/pedit/pull/472
+- test(serve): wait for stream edit before closing server by @kfly8 in https://github.com/piconic-ai/pedit/pull/474
+- Add @pedit/review: the <pedit-review> element and reviewCSP by @kfly8 in https://github.com/piconic-ai/pedit/pull/475
+- Theme <pedit-review>: custom properties, slots, labels and parts by @kfly8 in https://github.com/piconic-ai/pedit/pull/476
+- Add a sample review page, and share to it from the serve-app sample by @kfly8 in https://github.com/piconic-ai/pedit/pull/477
+- Publish @pedit/review with each release by @kfly8 in https://github.com/piconic-ai/pedit/pull/478
+
 ## [v0.5.5](https://github.com/piconic-ai/pedit/compare/v0.5.4...v0.5.5) - 2026-11-06
 
 ### Changes
