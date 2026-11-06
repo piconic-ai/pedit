@@ -34,6 +34,8 @@ const OPEN_MESSAGES: Record<'bad-link' | 'unsupported-browser', string> = {
 export interface ReviewTesting {
   createSocket?: (url: string, headers?: Record<string, string>, protocols?: string[]) => SocketLike
   fetch?: typeof fetch
+  /** Stands in for reloading the page, which jsdom cannot do. */
+  reload?: () => void
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -140,7 +142,8 @@ export class PeditReview extends HTMLElement {
     this.#emit('pedit-error', { reason, message })
   }
 
-  async #start(): Promise<void> {
+  /** Opens the room of `again` (a reconnect) or of the page's hash. */
+  async #start(again?: Link): Promise<void> {
     void this.#stop()
     this.#current = undefined
     const generation = this.#generation
@@ -153,7 +156,8 @@ export class PeditReview extends HTMLElement {
       this.#fail('missing-relay', 'This page does not say which relay to use.')
       return
     }
-    const link = parseLink(this.#win?.location.hash ?? '')
+    // A reconnect keeps the room open before: the hash may be an in-page anchor by now.
+    const link = again ?? parseLink(this.#win?.location.hash ?? '')
     if (!link) {
       this.#fail('bad-link', OPEN_MESSAGES['bad-link'])
       return
@@ -164,7 +168,7 @@ export class PeditReview extends HTMLElement {
     if (!name) {
       this.#askName(generation, (typed) => {
         this.#typed = typed
-        void this.#start()
+        void this.#start(link)
       })
       return
     }
@@ -192,7 +196,7 @@ export class PeditReview extends HTMLElement {
       await room.dispose()
       return
     }
-    this.#mount(root, room, name)
+    this.#mount(root, room, name, link)
   }
 
   #askName(generation: number, done: (name: string) => void): void {
@@ -218,7 +222,7 @@ export class PeditReview extends HTMLElement {
     this.#root().append(form)
   }
 
-  #mount(root: ShadowRoot, room: Room, name: string): void {
+  #mount(root: ShadowRoot, room: Room, name: string, link: Link): void {
     const doc = this.ownerDocument
     const disposers = this.#disposers
     disposers.push(() => room.dispose())
@@ -277,8 +281,13 @@ export class PeditReview extends HTMLElement {
     disposers.push(() => comments.dispose())
     disposers.push(
       mountBanner(banner, room, {
-        // Leave the room and open it again from the same link.
-        onReconnect: () => void this.#start(),
+        // Leave the room and open it again from the same link. An outdated page
+        // needs the newer bundle the integrator serves, which only a reload loads.
+        onReconnect: () => {
+          if (room.status.get() === 'client-outdated')
+            (PeditReview.testing.reload ?? (() => this.#win?.location.reload()))()
+          else void this.#start(link)
+        },
       }),
     )
     disposers.push(mountNotice(notice, room))
