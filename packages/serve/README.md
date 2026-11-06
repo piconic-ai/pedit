@@ -87,6 +87,32 @@ const extensions = [yCollab(conn.text, conn.awareness)] // plus basicSetup, Edit
 | `resolvePedit({ bin, install })`, `MIN_PEDIT_VERSION` | Finds pedit, checks the binary and its version. With `install: true`, downloads it when none is usable (see above) and returns `installed`. |
 | `HeldError`, `LimitError`, `NoPeditError` | Another process serves the file; 32 files or 8 clients; pedit missing or too old. |
 
+## Sharing
+
+`peditRoutes(...)` also returns `share(path, opts)`, `unshare(path)` and `close(path)`. `path` is an absolute path to a file under `root`, checked as the routes check it (a path outside `root`, a link out of it or a missing file rejects with `file not found`, and starts no child). Sharing needs pedit with `serve` 2; the child is not stopped for idleness while the file is shared.
+
+```ts
+const result = await routes.share('/home/me/notes/a.md', {
+  origins: ['https://cms.example.com'], // pages that may open the room
+  keep: '1d', // how long the relay keeps it after you leave; '0' is a live room
+})
+if (result.type === 'shared') {
+  const url = `https://cms.example.com/review#${result.links.comment ?? result.links.read}`
+}
+```
+
+`share` resolves one of:
+
+| Result | Meaning |
+| --- | --- |
+| `{ type: 'shared', room, links: { edit, comment?, read }, keptUntil, resumed }` | The room is open. A link is `<room>.<fragment>`: the page link is `<page URL>#<link>`. |
+| `{ type: 'choice', room, choices }` | The file has a kept room of another history. Ask the user which to keep (`room`, `app` or `later`; `text` is the characters each side holds), then call `share` again with the same options and `choice`. |
+| `{ type: 'closed' }` | `choice: 'app'` ended the kept room, so nothing is shared. Call `share` again to open a new one. |
+
+`unshare` leaves the room: a kept room stays until its deadline, a live one ends. `close` ends a kept room for good (called with no path it stops every child, as before). A failure from pedit rejects with its message.
+
+`onEvent` also gets `shared`, `peers` (`{ peers: [{ name, access }], more? }`, `more` counts people left out of the list), `room_ended` (`reason`: `closed`, `expired` or `maintenance`, also when the relay ended the room unasked) and `unshared`. Each carries `path` and `id`: the id the routes last served that path under, or `null`.
+
 ## Installing pedit for the user
 
 Nothing is ever downloaded unless your app asks for it. Without the opt-in, a missing or old pedit

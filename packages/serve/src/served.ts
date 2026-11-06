@@ -325,7 +325,10 @@ export class ServedFiles {
         this.#emit({ path, ...sharedOf(ev) })
         this.#answer(entry, ev)
       } else if (ev.event === 'resume_choice' || ev.event === 'unshared') {
-        if (ev.event === 'unshared') this.#left(entry)
+        if (ev.event === 'unshared') {
+          this.#left(entry)
+          this.#emit({ type: 'unshared', path })
+        }
         this.#answer(entry, ev)
       } else if (ev.event === 'room_ended') {
         this.#left(entry)

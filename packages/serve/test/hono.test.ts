@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, statSync, symlinkSync } from 'node:fs'
+import { mkdirSync, readFileSync, statSync, symlinkSync } from 'node:fs'
 import { request as httpRequest, type Server } from 'node:http'
 import { createServer } from 'node:net'
 import { join, sep } from 'node:path'
@@ -416,3 +416,78 @@ describe('peditRoutes checks', () => {
 function tmpdirOf(): string {
   return tmpRoot().dir
 }
+
+describe.skipIf(!FAKE)('peditRoutes sharing', () => {
+  // Answers share with shared and peers, unshare with unshared, close with room_ended. It logs
+  // each command frame to `<script>.log`.
+  function sharer() {
+    const { dir } = tmpRoot()
+    const bin = fakePedit(
+      dir,
+      'pedit',
+      `const fs = require('node:fs')
+if (process.argv[2] === '--version') { console.log('1.2.3'); process.exit(0) }
+const send = (o) => {
+  const b = Buffer.from(JSON.stringify(o))
+  const h = Buffer.alloc(9)
+  h[0] = 4
+  h.writeUInt32BE(b.length, 5)
+  process.stdout.write(Buffer.concat([h, b]))
+}
+send({ event: 'listening', generation: 'g', serve: 2 })
+process.stdin.on('data', (d) => {
+  const c = d.subarray(9).toString()
+  fs.appendFileSync(__filename + '.log', c + '\\n')
+  const cmd = JSON.parse(c).cmd
+  if (cmd === 'share') {
+    send({ event: 'shared', room: 'r1', links: { edit: 'r1.e', read: 'r1.r' }, keptUntil: 0, resumed: false })
+    send({ event: 'peers', peers: [{ name: 'ada', access: 'edit' }] })
+  } else if (cmd === 'unshare') send({ event: 'unshared' })
+  else send({ event: 'room_ended', reason: 'closed' })
+})
+process.stdin.on('end', () => process.exit(0))
+`,
+    )
+    return { bin, log: () => readFileSync(`${bin}.js.log`, 'utf8').trim().split('\n') }
+  }
+
+  it('shares a file under root, maps the events, and keeps the child up while shared', async () => {
+    const { bin, log } = sharer()
+    const f = await start({ bin, idleMs: 200 })
+    await f.token('a') // the routes served it under id "a"
+    const path = join(f.root, 'a.md')
+    expect(await f.routes.share(path, { keep: '0' })).toMatchObject({ type: 'shared', room: 'r1' })
+    expect(log()).toEqual(['{"cmd":"share","keep":"0"}'])
+    await vi.waitFor(() => expect(f.events.some((e) => e.type === 'peers')).toBe(true))
+    const room = f.events.filter((e) => e.type === 'shared' || e.type === 'peers')
+    expect(room.map((e) => [e.type, 'id' in e && e.id])).toEqual([
+      ['shared', 'a'],
+      ['peers', 'a'],
+    ])
+    await sleep(700)
+    expect(f.events.some((e) => e.type === 'stopped')).toBe(false)
+    await f.routes.unshare(path)
+    expect(f.events).toContainEqual({ type: 'unshared', id: 'a', path: expect.any(String) })
+    await vi.waitFor(() => expect(f.events.some((e) => e.type === 'stopped')).toBe(true))
+    await f.routes.close(path)
+    expect(log().at(-1)).toBe('{"cmd":"close"}')
+    expect(f.events).toContainEqual(
+      expect.objectContaining({ type: 'room_ended', reason: 'closed' }),
+    )
+  })
+
+  it('refuses a path the routes would refuse, without starting a child', async () => {
+    const { bin, log } = sharer()
+    const f = await start({ bin })
+    const bad = [
+      join(f.dir, 'root-private/x.md'),
+      join(f.root, 'link/x.md'),
+      join(f.root, 'nope.md'),
+      f.root,
+    ]
+    for (const p of bad) await expect(f.routes.share(p), p).rejects.toThrow('file not found')
+    await expect(f.routes.share('a.md')).rejects.toThrow(/absolute/)
+    expect(f.events.filter((e) => e.type === 'started')).toEqual([])
+    expect(() => log()).toThrow() // the fake never ran
+  })
+})

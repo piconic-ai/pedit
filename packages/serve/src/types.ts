@@ -55,3 +55,5 @@ export type ServeEvent =
   /** The room ended, possibly without the app asking: the relay expired or closed it. */
   | { type: 'room_ended'; path: string; reason: string }
   | ({ path: string } & Omit<Shared, 'type'> & { type: 'shared' })
+  /** `unshare` (or `close` on a live room) left the room. */
+  | { type: 'unshared'; path: string }
