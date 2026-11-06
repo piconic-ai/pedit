@@ -96,28 +96,36 @@ func (p *page) addMeta(n *html.Node) {
 	}
 }
 
-// scanAttrs notes inline event handlers and javascript: URLs.
+// mediaSrc are elements whose src is only ever an image or media: a data: URL
+// there loads no document (and the review CSP's img-src blocks it anyway).
+var mediaSrc = map[string]bool{"img": true, "source": true, "video": true, "audio": true, "track": true, "input": true}
+
+// scanAttrs notes inline event handlers and URLs that run code: javascript:
+// and vbscript: anywhere, and data: where it can load a document.
 func (p *page) scanAttrs(n *html.Node) {
 	for _, a := range n.Attr {
 		switch {
 		case strings.HasPrefix(a.Key, "on"):
 			p.Handlers = append(p.Handlers, a.Key+" on <"+n.Data+">")
 		case a.Key == "href" || a.Key == "src" || a.Key == "action" || a.Key == "formaction":
-			if isJavascriptURL(a.Val) {
+			if isScriptURL(a.Val, a.Key == "src" && mediaSrc[n.Data]) {
 				p.JSURLs = append(p.JSURLs, a.Key+" on <"+n.Data+">")
 			}
 		}
 	}
 }
 
-// isJavascriptURL ignores the leading space and control characters, and the
-// tabs and newlines inside the scheme, that browsers drop.
-func isJavascriptURL(v string) bool {
+// isScriptURL ignores the leading space and control characters, and the tabs
+// and newlines inside the scheme, that browsers drop. data: counts unless
+// media says the attribute only loads an image or media.
+func isScriptURL(v string, media bool) bool {
 	v = strings.Map(func(r rune) rune {
 		if r == '\t' || r == '\n' || r == '\r' {
 			return -1
 		}
 		return r
 	}, strings.TrimLeft(v, "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f "))
-	return strings.HasPrefix(strings.ToLower(v), "javascript:")
+	v = strings.ToLower(v)
+	return strings.HasPrefix(v, "javascript:") || strings.HasPrefix(v, "vbscript:") ||
+		(!media && strings.HasPrefix(v, "data:"))
 }

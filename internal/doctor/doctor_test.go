@@ -165,6 +165,9 @@ func TestFailures(t *testing.T) {
 		}, "scripts"},
 		{"onclick", func(s *site) { s.html = goodPage(componentTag + `<button onclick="x()">x</button>`) }, "scripts"},
 		{"javascript: URL", func(s *site) { s.html = goodPage(componentTag + `<a href=" JaVa&#9;script:x()">x</a>`) }, "scripts"},
+		{"vbscript: URL", func(s *site) { s.html = goodPage(componentTag + `<a href="VBScript:x">x</a>`) }, "scripts"},
+		{"data: URL in a frame", func(s *site) { s.html = goodPage(componentTag + `<iframe src="data:text/html,x"></iframe>`) }, "scripts"},
+		{"data: URL in a link", func(s *site) { s.html = goodPage(componentTag + `<a href="data:text/html,x">x</a>`) }, "scripts"},
 		{"component from another origin", func(s *site) {
 			s.html = goodPage(`<script type="module" src="https://cdn.example.com/review.js"></script>`)
 		}, "scripts"},
@@ -466,5 +469,15 @@ func TestParseTargetNeverEchoesFragment(t *testing.T) {
 		if err == nil || strings.Contains(err.Error(), "SECRET") {
 			t.Errorf("%q: %v", raw, err)
 		}
+	}
+}
+
+// A data: image loads no document: it is not a URL that runs code.
+func TestDataImageIsNotAScriptURL(t *testing.T) {
+	s := good()
+	s.html = goodPage(componentTag + `<img alt="" src="data:image/png;base64,AA==">`)
+	base, _ := serve(t, s)
+	if got := status(run(t, base+"/review"), "scripts"); got != OK {
+		t.Errorf("scripts: %s", got)
 	}
 }

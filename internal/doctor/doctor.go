@@ -351,7 +351,7 @@ func checkScripts(base *url.URL, pg *page, comp component) Check {
 		problems = append(problems, "an inline event handler ("+h+")")
 	}
 	for _, j := range pg.JSURLs {
-		problems = append(problems, "a javascript: URL ("+j+")")
+		problems = append(problems, "a URL that runs code ("+j+")")
 	}
 	if len(problems) > 0 {
 		return Check{ID: "scripts", Status: Fail, Message: strings.Join(problems, "; "),
