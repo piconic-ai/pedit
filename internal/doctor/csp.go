@@ -92,18 +92,46 @@ type directive struct {
 	sources []string
 }
 
-// parseCSP reads one policy. A directive named twice counts once, the first,
-// as browsers do. Names and sources are lower-cased.
+func isCSPSpace(r rune) bool {
+	return r == ' ' || r == '\t' || r == '\n' || r == '\f' || r == '\r'
+}
+
+// asciiLower lower-cases ASCII letters only, as the CSP spec does.
+func asciiLower(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if c >= 'A' && c <= 'Z' {
+			b[i] = c + 'a' - 'A'
+		}
+	}
+	return string(b)
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
+}
+
+// parseCSP reads one policy as the spec does: directives split on ';', tokens
+// on ASCII whitespace only (not \v, not Unicode spaces), a name with a
+// non-ASCII character skipped. Every directive is kept, also one named twice:
+// browsers use the first, but the checks look at all of them.
 func parseCSP(policy string) []directive {
 	var out []directive
-	seen := map[string]bool{}
 	for part := range strings.SplitSeq(policy, ";") {
-		fields := strings.Fields(strings.ToLower(part))
-		if len(fields) == 0 || seen[fields[0]] {
+		fields := strings.FieldsFunc(part, isCSPSpace)
+		if len(fields) == 0 || !isASCII(fields[0]) {
 			continue
 		}
-		seen[fields[0]] = true
-		out = append(out, directive{fields[0], fields[1:]})
+		d := directive{name: asciiLower(fields[0])}
+		for _, f := range fields[1:] {
+			d.sources = append(d.sources, asciiLower(f))
+		}
+		out = append(out, d)
 	}
 	return out
 }
@@ -117,12 +145,16 @@ func findDirective(ds []directive, name string) (directive, bool) {
 	return directive{}, false
 }
 
-// extraSources lists the sources of got that want does not have.
-func extraSources(got, want []string) []string {
+// extraSources lists the sources of got that want does not allow. 'none'
+// allows nothing and 'report-sample' is harmless. When want has 'self', the
+// page's own origin is the same thing.
+func extraSources(got, want []string, pageOrigin string) []string {
 	var extra []string
 	for _, s := range got {
-		// 'none' allows nothing: it is never more than expected.
-		if s != "'none'" && !slices.Contains(want, s) {
+		switch {
+		case s == "'none'" || s == "'report-sample'" || slices.Contains(want, s):
+		case pageOrigin != "" && s == asciiLower(pageOrigin) && slices.Contains(want, "'self'"):
+		default:
 			extra = append(extra, s)
 		}
 	}
@@ -134,27 +166,51 @@ func extraSources(got, want []string) []string {
 var looseDirectives = []string{"script-src-elem", "script-src-attr", "worker-src"}
 
 // cspProblems lists what policy allows beyond, or lacks of, the expected one.
-// A directive may allow less than expected, never more.
-func cspProblems(policy, expected []directive) []string {
+// A directive may allow less than expected, never more, in any of its copies.
+// pageOrigin (scheme://host[:port], or "") is what 'self' means.
+func cspProblems(policy, expected []directive, pageOrigin string) []string {
 	var problems []string
 	for _, want := range expected {
-		got, ok := findDirective(policy, want.name)
-		if !ok {
-			problems = append(problems, "no "+want.name+" directive")
-			continue
-		}
-		if extra := extraSources(got.sources, want.sources); len(extra) > 0 {
-			problems = append(problems, want.name+" also allows "+strings.Join(extra, " "))
-		}
+		problems = append(problems, directiveProblems(policy, want, pageOrigin)...)
 	}
 	for _, name := range looseDirectives {
-		if got, ok := findDirective(policy, name); ok {
-			if extra := extraSources(got.sources, []string{"'self'", "'none'"}); len(extra) > 0 {
-				problems = append(problems, name+" allows "+strings.Join(extra, " "))
+		want := directive{name, []string{"'self'", "'none'"}}
+		for _, d := range policy {
+			if d.name == name {
+				problems = append(problems, sourceProblems(d, want, pageOrigin)...)
 			}
 		}
 	}
 	return append(problems, evalProblems(policy)...)
+}
+
+// directiveProblems checks every copy of want's directive in policy. A missing
+// one is a problem, except object-src, which falls back to default-src.
+func directiveProblems(policy []directive, want directive, pageOrigin string) []string {
+	var problems []string
+	found := false
+	for _, d := range policy {
+		if d.name == want.name {
+			found = true
+			problems = append(problems, sourceProblems(d, want, pageOrigin)...)
+		}
+	}
+	if !found && !(want.name == "object-src" && defaultIsNone(policy)) {
+		problems = append(problems, "no "+want.name+" directive")
+	}
+	return problems
+}
+
+func defaultIsNone(policy []directive) bool {
+	d, ok := findDirective(policy, "default-src")
+	return ok && len(extraSources(d.sources, nil, "")) == 0
+}
+
+func sourceProblems(got, want directive, pageOrigin string) []string {
+	if extra := extraSources(got.sources, want.sources, pageOrigin); len(extra) > 0 {
+		return []string{want.name + " also allows " + strings.Join(extra, " ")}
+	}
+	return nil
 }
 
 // evalProblems flags 'unsafe-eval' wherever it appears.
