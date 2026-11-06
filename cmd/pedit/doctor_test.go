@@ -26,6 +26,7 @@ func doctorSite(t *testing.T, html string, withCSP bool) string {
 		_, _ = w.Write([]byte(html))
 	})
 	mux.HandleFunc("/review.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/javascript")
 		_, _ = w.Write([]byte("/*! @pedit/review 0.0.1 */\nexport{}\n"))
 	})
 	srv := httptest.NewServer(mux)
