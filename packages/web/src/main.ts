@@ -2,20 +2,9 @@ import { render } from '@barefootjs/client/runtime'
 import { markdown } from '@codemirror/lang-markdown'
 import { Compartment, EditorState, type Extension, Prec } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
-import {
-  deriveBlobKeys,
-  deriveRoomKeys,
-  type FileEntry,
-  isFinalStatus,
-  metaFiles,
-  parseFragment,
-  RoomClient,
-  type RoomKeys,
-  type RoomStatus,
-} from '@pedit/protocol'
+import { type FileEntry, isFinalStatus, type RoomStatus } from '@pedit/protocol'
 import { basicSetup } from 'codemirror'
 import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next'
-import { Awareness } from 'y-protocols/awareness'
 import * as Y from 'yjs'
 import { AlwaysLoad, followOtherTabs } from './alwaysload.ts'
 import {
@@ -28,8 +17,6 @@ import {
 } from './appearance.ts'
 import { BoardView, setCanvasStatus } from './board.ts'
 import { nodeText, read as readCanvas, toJSON } from './canvas.ts'
-import { Attachments, hostAttachments, whyNoImages } from './core/attachments.ts'
-import { CommentDocs } from './core/commentdocs.ts'
 import { commentMarks } from './core/commentmarks.ts'
 import {
   CommentsPanelState,
@@ -38,7 +25,6 @@ import {
   followFocus,
   isCommentKey,
   loadCommentsOpen,
-  OpenCounts,
   type ShownThread,
   sameTarget,
   saveCommentsOpen,
@@ -46,19 +32,9 @@ import {
   textTarget,
 } from './core/comments.ts'
 import { copyText } from './core/copy.ts'
-import { keepAlive } from './core/expiry.ts'
 import { ContextMenu, isMac } from './core/menu.ts'
-import { NoticeBoard } from './core/notice.ts'
+import { getsComments, openRoom, type Room, RoomOpenError } from './core/open-room.ts'
 import { imagePaste, textAnchor } from './core/paste.ts'
-import {
-  colorFor,
-  colorsByName,
-  type Participant,
-  participants,
-  roomSocketUrl,
-  sanitizeUser,
-  selectionTint,
-} from './core/room.ts'
 import { Store } from './core/store.ts'
 import { delimiterFor } from './csv.ts'
 import { avatarFor, fetchIdentity, loadName, saveName } from './identity.ts'
@@ -86,7 +62,6 @@ import './components/Header.tsx'
 import './components/Layout.tsx'
 import './components/Notice.tsx'
 import type { LayoutParts } from './components/Layout.tsx'
-import { AwayView, commentsLockedFor, isLocked, keptKindFor } from './core/keptaway.ts'
 import { lockedUndo } from './core/lockedundo.ts'
 import './style.css'
 
@@ -152,65 +127,51 @@ async function joinRoom(
   appearance: Appearance,
   theme: LoadedTheme,
 ): Promise<void> {
-  // What the link gives in this room (#122). A browser that cannot check
-  // signatures could only show changes nobody checked.
-  const link = parseFragment(key)
-  if (!link) throw new Error('not a room link')
-  let keys: RoomKeys
+  let room: Room
   try {
-    keys = await deriveRoomKeys(link, id)
-  } catch {
-    render(app, 'UnsupportedBrowser')
-    return
-  }
-  // Editors edit the file; commenters only its comments; readers nothing.
-  const writesFile = keys.access === 'edit'
-  const writesComments = keys.access !== 'read'
-  const doc = new Y.Doc()
-  const text = doc.getText('content')
-  const awareness = new Awareness(doc)
-  // A guest in a background tab renews only once a minute (#193).
-  keepAlive(awareness)
-  // Before the editor subscribes, so remote cursors never see a hostile colour.
-  awareness.on('change', ({ added, updated }: { added: number[]; updated: number[] }) => {
-    for (const id of [...added, ...updated]) {
-      const state = awareness.getStates().get(id)
-      if (state) sanitizeUser(state, id)
+    room = await openRoom({ relay: new URL(location.origin), roomId: id, fragment: key, me })
+  } catch (e) {
+    if (e instanceof RoomOpenError && e.reason === 'unsupported-browser') {
+      render(app, 'UnsupportedBrowser')
+      return
     }
-  })
-  const color = colorFor(doc.clientID)
-  awareness.setLocalState({ user: { ...me, color, colorLight: selectionTint(color) } })
-
-  const roomStatus = new Store<RoomStatus>('connecting')
-  // What the page says while the host is away.
-  const away = new AwayView(() => client?.keptUntil ?? 0)
-  const fileName = new Store<string | null>(null)
-  const people = new Store<readonly Participant[]>([])
-  // Each name's colour in the header, for the comments of people in the room.
-  const authorColors = new Store<ReadonlyMap<string, string>>(new Map())
-  // The relay's time limit in seconds, once it has closed an expired room.
-  const timeLimit = new Store<number | undefined>(undefined)
-  // The room's files, once the host shares more than one (#113). File 0 is
-  // the room's own doc; each other file opened gets a doc of its own.
-  const files = new Store<readonly FileEntry[]>([])
-  const current = new Store(0)
-  // The comments of the files the host keeps them for (#121): which file of
-  // the room holds each file's, those on screen, and what they act on.
-  const metaOf = new Map<number, number>()
-  // The format the host lists each file of the room in: text files and
-  // canvases get comments, a canvas's on its nodes.
-  const formats = new Map<number, string>()
+    throw e
+  }
+  const {
+    keys,
+    writesFile,
+    writesComments,
+    doc,
+    text,
+    awareness,
+    client,
+    attachments,
+    notices,
+    away,
+    fileName,
+    people,
+    authorColors,
+    timeLimit,
+    files,
+    current,
+    locked,
+    metaOf,
+    formats,
+    openCounts,
+    commentDocs,
+    editLocked,
+    fileLocked,
+    commentsLocked,
+    noImages,
+  } = room
+  const roomStatus = room.status
+  // The comments of the files the host keeps them for (#121): those on screen, and what they act on.
   const comments = new Store<CommentsView | null>(null)
   const threadsShown = new Store<readonly ShownThread[]>([])
   const commentFocus = new Store<string | null>(null)
   // The list of threads on screen, open or resolved: that of the thread in focus.
   const commentList = new Store<ThreadList>('open')
   followFocus(threadsShown, commentFocus, commentList)
-  // The comments of every file, each in its doc, joined as soon as the host
-  // lists them: the tabs count the open threads of files not opened yet.
-  // Made with the client, before anything can list a file.
-  let commentDocs: CommentDocs | undefined
-  const openCounts = new OpenCounts((metaId) => commentDocs?.docFor(metaId) ?? null)
   // Whether the file on screen has comments, and whether the panel shows them.
   const commentable = new Store(false)
   // A narrow screen starts with the panel folded, over the text; a wide one
@@ -226,7 +187,6 @@ async function joinRoom(
   // What a new comment goes on: the table's cells in the table view, else
   // the editor's selection.
   const commentTarget = new Store<CommentTarget | null>(null)
-  const locked = new Store(!writesComments)
   // The room closes as soon as the host leaves (or was never there).
   let parts: LayoutParts | undefined
   render(app, 'Layout', { onReady: (p: LayoutParts) => (parts = p) })
@@ -242,23 +202,6 @@ async function joinRoom(
     hostClosed: away.hostClosed,
     onReconnect: () => location.reload(),
   })
-  // Filled in once the client exists; nothing is sent before it connects.
-  let client: RoomClient | undefined
-  // Editors show the relay their own token, which also lets them add images.
-  const admission = keys.editAdmission ?? keys.readAdmission
-  const blobKeys = await deriveBlobKeys(keys.frameSecret, admission)
-  const attachments = new Attachments({
-    relay: new URL(location.origin),
-    roomId: id,
-    keys: blobKeys,
-    // The relay keeps the images while the host is away, which saves them on its return.
-    kept: () => roomStatus.get() === 'kept',
-    // About the file an image was added to, or the one on screen: its
-    // directory on the host takes the image.
-    send: (a, file = shown.id) =>
-      file === 0 ? client?.sendAttachment(a) : client?.sendFileAttachment(file, a),
-  })
-  const notices = new NoticeBoard()
   render(parts.notice, 'Notice', {
     message: notices.message,
     uploading: attachments.uploading,
@@ -286,27 +229,6 @@ async function joinRoom(
   // Reused so switching back to Markdown does not reparse the document.
   const markdownSupport = markdown()
   const readOnly = [EditorState.readOnly.of(true), EditorView.editable.of(false)]
-  // Nobody edits while the host is away and the relay keeps nothing (the
-  // two minutes it waits for a host that dropped), nor once the room has
-  // ended, nor when the relay has no more room to keep edits.
-  const editLocked = () => isLocked(roomStatus.get())
-  // While the host is away, a comment link comments only if the relay takes
-  // comment entries (`kept comments`); a read link never does.
-  const commentsLocked = () =>
-    commentsLockedFor(roomStatus.get(), writesComments, writesFile, client?.keptComments ?? false)
-  // What the banner says the relay keeps from this link while the host is away.
-  const setKeeps = () =>
-    away.keeps.set(keptKindFor(writesFile, writesComments, client?.keptComments ?? false))
-  // Nor does anyone whose link is below edit, ever.
-  const fileLocked = () => editLocked() || !writesFile
-  const noImages = () =>
-    writesFile
-      ? whyNoImages(
-          roomStatus.get(),
-          people.get().some((p) => p.isHost),
-          attachments.host,
-        )
-      : 'This link cannot add images.'
   // One instance for every editor on the page: readerTheme() alternates.
   const reader = readerTheme()
   const undoManager = new Y.UndoManager(text)
@@ -395,7 +317,7 @@ async function joinRoom(
     const jsonTheme = new Compartment()
     const jsonFont = new Compartment()
     const json = new JsonPane(fileDoc, {
-      send: (m) => (id === 0 ? client?.sendCanvas(m) : client?.sendFileCanvas(id, m)),
+      send: (m) => (id === 0 ? client.sendCanvas(m) : client.sendFileCanvas(id, m)),
       extensions: [
         jsonTheme.of(theme.extension),
         jsonFont.of(fontMode.get(editor.state) ?? reader),
@@ -528,14 +450,10 @@ async function joinRoom(
     },
   })
 
-  // Nobody edits while the host is away and nothing keeps the edits: nobody
-  // would save them. Once the room has ended, for good.
-  const setStatus = (s: RoomStatus) => {
-    const wasLocked = editLocked()
-    roomStatus.set(s)
-    away.show(s, client?.closedByHost)
-    locked.set(commentsLocked())
-    setKeeps()
+  // The editor and the tables follow the room's status, once the room has
+  // set the stores: nobody edits while the host is away and nothing keeps the
+  // edits, and once the room has ended, for good.
+  const onStatus = (s: RoomStatus, wasLocked: boolean) => {
     for (const f of opened.values()) setCanvasStatus(f.board, f.json, s, writesFile)
     if (isFinalStatus(s)) {
       editor.dispatch({ effects: editable.reconfigure(readOnly) })
@@ -615,8 +533,8 @@ async function joinRoom(
     }
     opened.set(entry.id, f)
     // A comments doc a forged list of files put under this id goes.
-    commentDocs?.takeForFile(entry.id)
-    client?.addFile(entry.id, fileDoc)
+    commentDocs.takeForFile(entry.id)
+    client.addFile(entry.id, fileDoc)
     followComments(f)
     return f
   }
@@ -627,7 +545,7 @@ async function joinRoom(
     const metaId = metaOf.get(f.id)
     const format = formats.get(f.id)
     if (f.comments || !getsComments(format)) return
-    const metaDoc = metaId === undefined ? null : (commentDocs?.docFor(metaId) ?? null)
+    const metaDoc = metaId === undefined ? null : commentDocs.docFor(metaId)
     if (!metaDoc) return
     f.commentsMeta = metaId
     const name = () => {
@@ -703,16 +621,8 @@ async function joinRoom(
     showView(view.mode)
   }
 
-  const takeManifest = (list: FileEntry[]) => {
-    metaOf.clear()
-    formats.clear()
-    for (const [file, meta] of metaFiles(list)) metaOf.set(file, meta)
-    for (const f of list) formats.set(f.id, f.format)
-    // Those of a list sent before, forged or not, go: they would take the
-    // places of this list's.
-    commentDocs?.keepOnly(new Set(metaOf.values()))
-    // Every file with comments is counted, opened or not.
-    openCounts.follow(new Map([...metaOf].filter(([file]) => getsComments(formats.get(file)))))
+  // What the views do once the room has taken a list of files.
+  const onManifest = (known: FileEntry[]) => {
     // A file whose comments the list now puts in another doc, or in none,
     // lets go of those it follows.
     for (const f of opened.values()) {
@@ -722,10 +632,6 @@ async function joinRoom(
       if (f === shown) showComments()
     }
     for (const f of opened.values()) followComments(f)
-    // A file of a format this version does not know is left out, and so is
-    // the metadata of a file, shown with it.
-    const known = list.filter((f) => f.format === 'text' || f.format === 'canvas')
-    files.set(known)
     const named = known.find((f) => f.id === shown.id)
     if (!named) return
     // The list may come before the host's state, which says so too.
@@ -733,16 +639,8 @@ async function joinRoom(
     showName(named.path)
   }
 
-  const renderPeople = () => {
-    const accessOf = (clientId: number) => client?.accessOf(clientId)
-    people.set(participants(awareness.getStates(), doc.clientID, accessOf))
-    const colors = colorsByName(people.get())
-    if (!sameColors(colors, authorColors.get())) authorColors.set(colors)
-    attachments.host = hostAttachments(awareness.getStates(), accessOf)
-    // Only an editor's state speaks for the host: anyone can say they are.
-    const host = [...awareness.getStates()].find(
-      ([id, s]) => s.role === 'host' && accessOf(id) === 'edit',
-    )?.[1]
+  // What the views do once the room has rendered the people.
+  const onPeople = (host: Record<string, unknown> | undefined) => {
     if (host?.format === 'canvas' && !first.canvas) {
       first.canvas = true
       // The list may have named the file already, as text.
@@ -756,38 +654,6 @@ async function joinRoom(
     }
   }
 
-  client = new RoomClient({
-    url: roomSocketUrl(new URL(location.origin), id),
-    keys,
-    admissionToken: admission,
-    doc,
-    awareness,
-    onKeptSync: (state) => {
-      away.setPending(state === 'pending')
-    },
-    onKeptSkipped: (count) => away.skipped.set(count),
-    onKeptComments: () => {
-      locked.set(commentsLocked())
-      setKeeps()
-    },
-    onStatus: (s) => {
-      if (s === 'expired') timeLimit.set(client?.timeLimitSeconds)
-      setStatus(s)
-      renderPeople()
-      if (s === 'connected') {
-        attachments.reconnected()
-        for (const f of opened.values()) f.json.reconnected()
-      }
-    },
-    onAttachment: (a) => attachments.handle(a),
-    onCanvas: (m) => first.json.handle(m),
-    onManifest: takeManifest,
-    // A peer's state may stay the same while what it may do rises.
-    onAccess: renderPeople,
-    onFileAttachment: (_, a) => attachments.handle(a),
-    onFileCanvas: (fileId, m) => opened.get(fileId)?.json.handle(m),
-  })
-  commentDocs = new CommentDocs(client)
   render(parts.files, 'FileTabs', { files, current, onOpen: switchTo, counts: openCounts.counts })
   render(parts.comments, 'CommentsPanel', {
     comments,
@@ -824,14 +690,17 @@ async function joinRoom(
     panel.open.set(true)
     parts?.comments.querySelector<HTMLTextAreaElement>('.comments-new textarea')?.focus()
   })
-  awareness.on('change', renderPeople)
-
-  setStatus('connecting')
-  client.connect()
-  renderPeople()
+  room.hooks.status = onStatus
+  room.hooks.manifest = onManifest
+  room.hooks.people = onPeople
+  room.hooks.canvas = (fileId, m) => opened.get(fileId)?.json.handle(m)
+  room.hooks.reconnected = () => {
+    for (const f of opened.values()) f.json.reconnected()
+  }
+  room.connect()
   // Edits the relay has not logged yet are lost if the page goes.
   window.addEventListener('beforeunload', away.warn)
-  window.addEventListener('pagehide', () => void client?.destroy())
+  window.addEventListener('pagehide', () => void room.dispose())
 }
 
 /** The board's selection as a comment's target: one node. */
@@ -880,18 +749,6 @@ function commentedCells(threads: readonly ShownThread[]): ReadonlySet<string> {
 function sameSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
   if (a.size !== b.size) return false
   for (const k of a) if (!b.has(k)) return false
-  return true
-}
-
-/** Whether files of a format get comments: text files and canvases. */
-function getsComments(format: string | undefined): boolean {
-  return format === 'text' || format === 'canvas'
-}
-
-/** Whether two maps of names to colours hold the same. */
-function sameColors(a: ReadonlyMap<string, string>, b: ReadonlyMap<string, string>): boolean {
-  if (a.size !== b.size) return false
-  for (const [k, v] of a) if (b.get(k) !== v) return false
   return true
 }
 
