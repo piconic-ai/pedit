@@ -268,7 +268,7 @@ func (s *Server) Close() error {
 // Flush writes the doc to the file now, as Close does at the end, and returns
 // once the write is done. The server stays open.
 func (s *Server) Flush() error {
-	s.writer.Schedule(s.render())
+	s.scheduleDoc()
 	err := s.writer.Flush()
 	s.saveState(s.writer.LastWritten(), nil)
 	return err
@@ -281,6 +281,15 @@ func (s *Server) cleanup() {
 	// The lock is released through the directory handle: close that last.
 	s.release()
 	_ = s.bound.Close()
+}
+
+// scheduleDoc schedules the doc's text for the file. The render and the
+// schedule are one step under s.mu, as in onUpdate: a newer edit's text is
+// never replaced by an older render. Nothing here may wait for a write.
+func (s *Server) scheduleDoc() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.writer.Schedule(s.fileText())
 }
 
 // text as the doc has it now.
@@ -354,7 +363,7 @@ func (s *Server) syncFromDisk() {
 	}
 	if changed {
 		// Edits made meanwhile are not on disk yet; Rebase dropped them.
-		s.writer.Schedule(s.render())
+		s.scheduleDoc()
 	}
 }
 
