@@ -46,31 +46,50 @@ func editsBetween(from, to []rune) []edit {
 	return edits
 }
 
-// offsetMapper returns a function mapping rune offsets in base to rune offsets in current.
-func offsetMapper(base, current []rune) func(int) int {
+// offsetMapper returns a function mapping rune offsets in base to rune offsets
+// in current. An offset on a boundary where current has inserted text maps to
+// before it, or after it with after set: the start of a deletion maps after,
+// so that text inserted just before the deleted region is not deleted with it.
+func offsetMapper(base, current []rune) func(offset int, after bool) int {
 	diffs := diffRunes(base, current)
-	return func(offset int) int {
+	return func(offset int, after bool) int {
 		b, c := 0, 0
-		for _, d := range diffs {
+		for i, d := range diffs {
 			n := utf8.RuneCountInString(d.Text)
-			switch d.Type {
-			case diffmatchpatch.DiffEqual:
-				if offset <= b+n {
-					return c + (offset - b)
-				}
-				b += n
+			switch {
+			case d.Type == diffmatchpatch.DiffInsert:
 				c += n
-			case diffmatchpatch.DiffDelete:
-				if offset <= b+n {
-					return c
-				}
+				continue
+			case offset > b+n:
+				// Past this part: it moves both offsets, or only base's if deleted.
 				b += n
-			case diffmatchpatch.DiffInsert:
-				c += n
+				if d.Type == diffmatchpatch.DiffEqual {
+					c += n
+				}
+				continue
+			case d.Type == diffmatchpatch.DiffDelete:
+				return c
 			}
+			c += offset - b
+			if after && offset == b+n {
+				c += insertedAfter(diffs[i+1:])
+			}
+			return c
 		}
 		return c + (offset - b)
 	}
+}
+
+// insertedAfter is how many runes current inserts right at the start of diffs.
+func insertedAfter(diffs []diffmatchpatch.Diff) int {
+	n := 0
+	for _, d := range diffs {
+		if d.Type != diffmatchpatch.DiffInsert {
+			break
+		}
+		n += utf8.RuneCountInString(d.Text)
+	}
+	return n
 }
 
 // utf16Offsets maps each rune offset in rs (0..len(rs)) to a UTF-16 offset,
@@ -99,8 +118,8 @@ func ExternalEdit(doc *crdt.Doc, text *crdt.YText, base, next string, origin any
 	doc.Transact(func(txn *crdt.Transaction) {
 		for i := len(edits) - 1; i >= 0; i-- {
 			e := edits[i]
-			start := toCurrent(e.start)
-			end := max(start, toCurrent(e.end))
+			start := toCurrent(e.start, e.end > e.start)
+			end := max(start, toCurrent(e.end, false))
 			if end > start {
 				text.Delete(txn, toUTF16[start], toUTF16[end]-toUTF16[start])
 			}

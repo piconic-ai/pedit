@@ -167,7 +167,13 @@ most 64 KiB. Each is answered by events on stream 0.
   its deadline, a live room ends. Stdin closing is `unshare`.
 - `{"cmd":"close"}` ends a kept room for good, as `pedit close` does: it takes
   the edits in, saves them and asks the relay to drop everything. It also works
-  on a room that is kept but not shared now: pedit resumes it first.
+  on a room that is kept but not shared now: pedit resumes it first. It is
+  answered `{"event":"room_ended","reason":"closed"}`. On a live room it is
+  `unshare`; with nothing shared or kept it is an error. A record of another
+  history is refused: the app sends `share` with `choice`. If the relay cannot
+  end the room (HTTP 409: it is busy), `close` is an error telling the app to
+  send it again; the room and its record stay, and a share that was running has
+  ended.
 - Events while shared:
   - `{"event":"peers","peers":[{"name":…,"access":"edit"|"comment"|"read"}]}`
     whenever someone joins, leaves or renames;
@@ -211,9 +217,12 @@ the record's document were both unusable, or the file changed so that neither
 fits it). Then `share` answers with a choice instead of `shared`:
 
     {"event":"resume_choice","room":"<id>","choices":[
-      {"choice":"room","text":<chars>,"entries":<written while away>},
+      {"choice":"room","text":<chars>},
       {"choice":"app","text":<chars>},
       {"choice":"later"}]}
+
+`text` is the number of characters each side holds. How much was written while
+away would need a connection to the relay, so it is not sent.
 
 The app (that is, the person using it) picks one and sends
 `{"cmd":"share","choice":"room"}`, with the same other fields as before:
@@ -223,7 +232,8 @@ The app (that is, the person using it) picks one and sends
   App pages get `gone`; reviewers' links go on working.
 - `app` takes the reviewers' edits and comments into the app's document as a
   text merge, then ends the room as `close` does. A new `share` gives new links.
-- `later` does nothing, and the room stays until its deadline.
+- `later` does nothing, and the room stays until its deadline. `share` is
+  answered with an error saying that sharing waits for a choice.
 
 No choice loses an edit; they differ only in whose pages reload.
 

@@ -45,6 +45,21 @@ type KeptTextOptions struct {
 	// Options): the host then leaves file 0 to the source.
 	Source     Source
 	Generation string
+	// Prepare is for a room of another history than the document it is closed
+	// into, which also owns file 0. Given the text the room started from and
+	// the text it ends with, it builds the edit between them and returns the
+	// Yjs update and the generation of the document, without changing the
+	// document. The host records the update, then has it applied with
+	// Reapply. Source and Prepare are exclusive.
+	Prepare func(base, next string) (update []byte, generation string)
+	// Reapply applies an update Prepare returned to the document, if its
+	// generation is still the document's and the update then integrates
+	// completely; it reports whether it did. Applying what the document
+	// already has changes nothing, so a retry never delivers an edit twice.
+	Reapply func(update []byte, generation string) bool
+	// Saved is called after Source or Prepare has the edits, before the room is
+	// ended: the owner saves its file there. An error leaves the room open.
+	Saved func() error
 }
 type keptTextState struct {
 	Project, Origin, Fragment, HostToken string
@@ -73,8 +88,24 @@ type keptTextFileState struct {
 	State      []byte
 	Text       string
 	Pending    *string `json:",omitempty"`
+	// Handover is, for a room being closed into a document of another history
+	// (KeptTextOptions.Prepare), the text the app last received: the diff to
+	// hand it starts there, however far replay has advanced State. It is
+	// advanced only once the app has saved the result. Delivering is what was
+	// last handed to the app, whose save is not confirmed (handoverBase).
+	// Like CommentEntries they make an older pedit refuse the record.
+	Handover   *string       `json:",omitempty"`
+	Delivering *keptDelivery `json:",omitempty"`
 	// Meta is the comments doc paired with the file, if its comments can be kept.
 	Meta *keptMetaState `json:",omitempty"`
+}
+
+// keptDelivery is an edit handed to the app: the Yjs update it made, the
+// generation of the app's document then, and the room's text it delivered.
+type keptDelivery struct {
+	Update     []byte
+	Generation string
+	Text       string
 }
 type keptTextDocument struct {
 	doc   *crdt.Doc
@@ -127,10 +158,119 @@ type keptTextHost struct {
 	// source, when set, owns file 0: the host never reads, checks or writes
 	// it, and takes the source's state in instead of a text diff.
 	source Source
+	// into and saved are KeptTextOptions' Prepare and Saved; base is the text
+	// file 0 had when the host opened, or when into last got it.
+	into    func(base, next string) ([]byte, string)
+	reapply func(update []byte, generation string) bool
+	saved   func() error
+	base    string
 }
 
 // owns tells whether the host reads and writes the file itself.
-func (h *keptTextHost) owns(file *keptTextFileState) bool { return h.source == nil || file.ID != 0 }
+func (h *keptTextHost) owns(file *keptTextFileState) bool {
+	return h.source == nil && h.into == nil || file.ID != 0
+}
+
+// beginHandover records the text the app last received, before the room's log
+// is taken in: replay saves the advanced document first, and a retry after an
+// interruption must still hand over the diff from here.
+func (h *keptTextHost) beginHandover() error {
+	file := &h.state.Files[0]
+	if h.into == nil || file.Handover != nil {
+		return nil
+	}
+	base := h.base
+	file.Handover = &base
+	return saveKeptState(h.path, h.state)
+}
+
+// handOver gives the owner of file 0 what the room holds, and has it saved.
+func (h *keptTextHost) handOver() error {
+	doc := h.files[0].doc
+	switch {
+	case h.source != nil:
+		if err := h.source.Apply(crdt.EncodeStateAsUpdateV1(doc, nil)); err != nil {
+			return err
+		}
+	case h.into != nil:
+		return h.handOverInto(doc.GetText("content").ToString())
+	default:
+		return nil
+	}
+	if h.saved != nil {
+		if err := h.saved(); err != nil {
+			return err
+		}
+	}
+	return h.finishHandover()
+}
+
+// finishHandover notes that the owner of file 0 has saved what it was given.
+func (h *keptTextHost) finishHandover() error {
+	file := &h.state.Files[0]
+	// What the owner has is saved: nothing of file 0 is pending any more.
+	file.Delivering = nil
+	if file.Pending != nil {
+		file.Text, file.Pending = *file.Pending, nil
+	}
+	return saveKeptState(h.path, h.state)
+}
+
+// handoverBase is the one decision on where the diff for the app starts, for a
+// first try and every retry alike. Delivering is what the app was last given,
+// whose save is not confirmed. Reapplying its Yjs update changes nothing if
+// the delivery survived and restores it exactly if the app lost it and came
+// back from a state of the same history, with the app's own edits untouched:
+// the diff then starts at the room text it delivered. If the generation
+// differs or the update does not integrate, the history is gone (the app
+// started afresh, a case of histories that differ): the diff starts at
+// Handover, the text the app is known to have saved, and may apply that
+// delivery's edits again, a duplicate and never a loss.
+func (h *keptTextHost) handoverBase() (base string, d *keptDelivery) {
+	file := &h.state.Files[0]
+	if d := file.Delivering; d != nil && h.reapply != nil && h.reapply(d.Update, d.Generation) {
+		return d.Text, d
+	}
+	if file.Handover != nil {
+		return *file.Handover, nil
+	}
+	return h.base, nil
+}
+
+// handOverInto gives the app the change from handoverBase to next, and has it
+// saved, as a write-ahead log: the edit is prepared without touching the app,
+// recorded as Delivering, and only then applied. A failed record write leaves
+// the app unchanged; a retry finds no delivery or a recorded one, which
+// applying again does not repeat. Handover moves on once the save succeeded.
+func (h *keptTextHost) handOverInto(next string) error {
+	file := &h.state.Files[0]
+	base, kept := h.handoverBase()
+	if base != next {
+		update, generation := h.into(base, next)
+		if kept != nil {
+			// Both are in the app until saved: a retry reapplies them together.
+			if merged, err := crdt.MergeUpdatesV1(kept.Update, update); err == nil {
+				update = merged
+			}
+		}
+		previous := file.Delivering
+		file.Delivering = &keptDelivery{Update: update, Generation: generation, Text: next}
+		if err := saveKeptState(h.path, h.state); err != nil {
+			file.Delivering = previous
+			return err
+		}
+		if !h.reapply(update, generation) {
+			return errors.New("could not hand the room's edit to the document: it changed history; close again")
+		}
+	}
+	if h.saved != nil {
+		if err := h.saved(); err != nil {
+			return err
+		}
+	}
+	file.Handover = &next
+	return h.finishHandover()
+}
 
 // CloseKept takes in the edits of a room kept by the relay, writes them to the
 // files, and ends the room, which removes its link and its record. Source
@@ -804,4 +944,28 @@ func ListKeptText(project string) ([]KeptTextRecord, error) {
 	}
 	sort.SliceStable(records, func(i, j int) bool { return records[i].Until < records[j].Until })
 	return records, nil
+}
+
+// SetKeptGeneration gives the record of a kept room the generation of the
+// document that is now one history with it, if it has none. A record with a
+// generation is left as it is.
+func SetKeptGeneration(project, room, generation string) error {
+	project, e := filepath.Abs(project)
+	if e != nil || !keptTextRoomID.MatchString(room) || generation == "" {
+		return errors.New("invalid kept room")
+	}
+	directory, e := keptTextDirectory(filepath.Clean(project))
+	if e != nil {
+		return e
+	}
+	path := filepath.Join(directory, room+".json")
+	var s keptTextState
+	if e := readKeptState(path, &s); e != nil {
+		return e
+	}
+	if s.Generation != "" {
+		return nil
+	}
+	s.Generation = generation
+	return saveKeptState(path, s)
 }

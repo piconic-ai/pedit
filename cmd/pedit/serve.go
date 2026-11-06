@@ -37,11 +37,14 @@ code and a reason), 4 event (pedit: stream 0, one JSON event) and 5 command
 share is {"cmd":"share","origins":[…],"keep":"0","relay":"<url>"} and opens a
 room: live with keep "0", otherwise kept by the relay for that long after
 unshare (Unix only). The shared event's keptUntil is when the relay ends a kept
-room, in Unix ms, or 0 if it keeps nothing (an old relay). Sharing a file that
-has a kept room with another history, and close, are not available yet. The project
-is found as for pedit <file>, without creating a configuration.
-unshare ends a live room and leaves a kept one kept. A bad command is
-answered with an error event and does not end pedit. Stream
+room, in Unix ms, or 0 if it keeps nothing (an old relay). A file whose kept
+room has another history (one pedit <file> made) is answered with a
+resume_choice event; send share again with "choice": "room", "app" or "later".
+The project is found as for pedit <file>, without creating a configuration.
+unshare ends a live room and leaves a kept one kept. close takes in the edits
+of a kept room, saves them and ends it for good, shared now or not, and is
+answered with a room_ended event of reason closed; on a live room it is unshare.
+A bad command is answered with an error event and does not end pedit. Stream
 ids start at 1 and only increase; at most 8 are open at once. See
 docs/design/serve.md.
 
@@ -81,8 +84,14 @@ Events (JSON in event frames):
   {"event":"peers","peers":[{"name":"…","access":"edit"|"comment"|"read"}]}
                                             who is in the room, when it changed
   {"event":"room_ended","reason":"closed"|"expired"|"maintenance"}
-                                            the relay ended the room; share
-                                              again to open a new one
+                                            the relay ended the room, or
+                                              close did; share again to open
+                                              a new one
+  {"event":"resume_choice","room":"<id>","choices":[{"choice":"room","text":N},{"choice":"app","text":N},{"choice":"later"}]}
+                                            share found a kept room of another
+                                              history; text is the characters
+                                              each side holds. Answer with
+                                              share and "choice"
   {"event":"error","message":"<one line>"}  any other failure
   {"event":"error","cmd":"<cmd or empty>","message":"<one line>"}
                                             a command was refused; pedit keeps

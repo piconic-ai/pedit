@@ -12,11 +12,14 @@ import (
 	"slices"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/piconic-ai/pedit/internal/access"
+	"github.com/piconic-ai/pedit/internal/merge"
 	"github.com/piconic-ai/pedit/internal/protocol"
 	"github.com/piconic-ai/pedit/internal/serve"
 	"github.com/piconic-ai/pedit/internal/session"
+	"github.com/reearth/ygo/crdt"
 )
 
 // serveDial connects to the relay; nil is the real thing. Tests replace it.
@@ -42,9 +45,11 @@ type liveSharer struct {
 type liveShare struct {
 	peer    *serve.Peer
 	session *session.Session
-	bridge  *bridge
-	last    []session.Person
-	pmu     sync.Mutex
+	// kept: the room outlives the share, with a record.
+	kept   bool
+	bridge *bridge
+	last   []session.Person
+	pmu    sync.Mutex
 }
 
 func newLiveSharer(srv *serve.Server, st *serve.Stdio, stderr io.Writer) *liveSharer {
@@ -54,10 +59,11 @@ func newLiveSharer(srv *serve.Server, st *serve.Stdio, stderr io.Writer) *liveSh
 var (
 	errAlreadyShared = errors.New("already shared; send unshare first")
 	errNotShared     = errors.New("not shared")
-	errCloseNotYet   = errors.New("close is not available yet")
 	errKeptWindows   = errors.New(`kept rooms need Unix file permissions and are not available on Windows; send keep "0" for a live room`)
-	errChoiceNotYet  = errors.New("choice is not available yet")
 	errOrigins       = errors.New("this file has a kept room with other origins; share with the origins it was opened with")
+
+	errNothingToClose = errors.New("no kept room to close: this file has no room shared or kept")
+	errChoiceLater    = errors.New("sharing waits for a choice: this file has a kept room with another history; send share with a choice")
 )
 
 func (l *liveSharer) Share(ctx context.Context, req shareRequest) error {
@@ -68,8 +74,6 @@ func (l *liveSharer) Share(ctx context.Context, req shareRequest) error {
 		return errAlreadyShared
 	case req.Keep > 0 && runtime.GOOS == "windows":
 		return errKeptWindows
-	case req.Choice != "":
-		return errChoiceNotYet
 	}
 	// Read-only: serve never creates the project's configuration.
 	cfg, err := loadProject(filepath.Dir(l.srv.Path()))
@@ -87,13 +91,16 @@ func (l *liveSharer) Share(ctx context.Context, req shareRequest) error {
 			return err
 		}
 		if rec != nil {
+			if done, err := l.settle(ctx, cfg.root, rec, req); done || err != nil {
+				return err
+			}
 			if err := l.checkResume(rec, req); err != nil {
 				return err
 			}
 			resume = rec.Room
 		}
 	}
-	ls := &liveShare{bridge: &bridge{onError: func(err error) { fmt.Fprintln(l.stderr, "pedit:", err) }}}
+	ls := &liveShare{kept: req.Keep > 0, bridge: &bridge{onError: func(err error) { fmt.Fprintln(l.stderr, "pedit:", err) }}}
 	ls.peer, err = l.srv.AttachPeer(serve.PeerHandler{
 		Update: func(u []byte) {
 			ls.bridge.run(func(s *session.Session) error { return s.FromSource(u) })
@@ -217,10 +224,11 @@ func sameFile(a, b string) bool {
 
 // checkResume refuses to take up a kept room unless it is one history with
 // serve's document, which only the generation proves, and the share asks for
-// the origins the room was opened with. Choosing is not available yet.
+// the origins the room was opened with. A record of another history is
+// settled first (settle).
 func (l *liveSharer) checkResume(rec *session.KeptTextRecord, req shareRequest) error {
 	if rec.Generation == "" || rec.Generation != l.srv.Generation() {
-		return fmt.Errorf("this file has a kept room %s with another history; choosing is not available yet", rec.Room)
+		return fmt.Errorf("this file has a kept room %s with another history", rec.Room)
 	}
 	if !sameSet(req.Origins, rec.Origins) {
 		return errOrigins
@@ -298,8 +306,125 @@ func (l *liveSharer) Unshare() error {
 	return nil
 }
 
-// Close ends a kept room, which comes with resuming one.
-func (l *liveSharer) Close(context.Context) error { return errCloseNotYet }
+// Close ends a kept room for good, as pedit close does, and tells the app. A
+// live room is only left, as unshare does. A failure leaves the room kept, and
+// the share, if there was one, ended.
+func (l *liveSharer) Close(ctx context.Context) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.cur != nil {
+		kept := l.cur.kept
+		l.leave()
+		if !kept {
+			return nil
+		}
+	}
+	cfg, err := loadProject(filepath.Dir(l.srv.Path()))
+	if err != nil {
+		return err
+	}
+	rec, err := keptRecordOf(cfg.root, l.srv.Path())
+	switch {
+	case err != nil:
+		return err
+	case rec == nil:
+		return errNothingToClose
+	case rec.Generation == "" || rec.Generation != l.srv.Generation():
+		return fmt.Errorf("this file has a kept room %s with another history; send share with a choice to settle it first", rec.Room)
+	}
+	return l.closeRoom(ctx, cfg.root, rec, true)
+}
+
+// closeRoom takes in the edits of the kept room rec and ends it, with the
+// edits in serve's document and its file. In one history they are Yjs updates;
+// in another, a text merge. The app is told once the room is over.
+func (l *liveSharer) closeRoom(ctx context.Context, project string, rec *session.KeptTextRecord, oneHistory bool) error {
+	opts := session.KeptTextOptions{
+		Project: project, Resume: rec.Room, Dial: serveDial, Saved: l.srv.Flush,
+		OnSkipped: func(n int) { fmt.Fprintf(l.stderr, "pedit: skipped %d invalid updates\n", n) },
+		OnImageError: func(path string, err error) {
+			fmt.Fprintf(l.stderr, "pedit: could not save an image of %s: %v\n", path, err)
+		},
+	}
+	if oneHistory {
+		peer, err := l.srv.AttachPeer(serve.PeerHandler{})
+		if err != nil {
+			return err
+		}
+		defer peer.Close()
+		opts.Source, opts.Generation = peerSource{peer}, l.srv.Generation()
+	} else {
+		opts.Prepare, opts.Reapply = l.srv.PrepareEdit, l.srv.ApplyUpdate
+	}
+	if err := session.CloseKept(ctx, opts); err != nil {
+		return fmt.Errorf("could not close the room, which stays kept: %w; send close to try again", err)
+	}
+	l.st.Event("room_ended", map[string]any{"reason": "closed"})
+	return nil
+}
+
+// settle deals with a kept room of the file whose history is not serve's
+// document's (docs/design/embedding.md "When the histories differ"): it asks
+// for a choice, or acts on it. done says the share is over. For "room" it
+// leaves the record one history with serve, and the share goes on as a resume.
+func (l *liveSharer) settle(ctx context.Context, project string, rec *session.KeptTextRecord, req shareRequest) (done bool, err error) {
+	if rec.Generation != "" && rec.Generation == l.srv.Generation() {
+		return false, nil
+	}
+	switch req.Choice {
+	case "":
+		room := rec.Text
+		if rec.Pending != nil {
+			room = *rec.Pending
+		}
+		l.st.Event("resume_choice", map[string]any{"room": rec.Room, "choices": []map[string]any{
+			{"choice": "room", "text": utf8.RuneCountInString(room)},
+			{"choice": "app", "text": utf8.RuneCountInString(l.srv.Text())},
+			{"choice": "later"},
+		}})
+		return true, nil
+	case "later":
+		return true, errChoiceLater
+	case "app":
+		return true, l.closeRoom(ctx, project, rec, false)
+	}
+	if !sameSet(req.Origins, rec.Origins) {
+		return true, errOrigins
+	}
+	// The merge sees the app's text under serve's lock, so that no edit
+	// accepted meanwhile is lost to the replacement.
+	err = l.srv.Adopt(func(app string) ([]byte, string, error) {
+		doc, err := mergeAppText(rec.State, app)
+		return doc, rec.Generation, err
+	})
+	if err != nil {
+		return true, err
+	}
+	if rec.Generation == "" {
+		rec.Generation = l.srv.Generation()
+		if err := session.SetKeptGeneration(project, rec.Room, rec.Generation); err != nil {
+			return true, err
+		}
+	}
+	return false, nil
+}
+
+// mergeAppText is the room's document with the app's text merged in as the
+// edit from the text the document holds, so that it then holds the app's text.
+// What reviewers wrote meanwhile arrives with the room's log.
+func mergeAppText(state []byte, app string) ([]byte, error) {
+	if len(state) == 0 {
+		return nil, errors.New("the kept room has no saved document")
+	}
+	doc := crdt.New(crdt.WithGC(false))
+	defer doc.Destroy()
+	if err := crdt.ApplyUpdateV1(doc, state, nil); err != nil {
+		return nil, err
+	}
+	text := doc.GetText("content")
+	merge.ExternalEdit(doc, text, text.ToString(), app, nil)
+	return crdt.EncodeStateAsUpdateV1(doc, nil), nil
+}
 
 // leave stops the session, so a live room ends and nothing more is sent, and a
 // kept room stays kept with its record, then detaches the peer. The bridge

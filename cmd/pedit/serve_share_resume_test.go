@@ -92,11 +92,10 @@ func TestServeShareResumesAKeptRoomOnceInOneHistory(t *testing.T) {
 	}
 }
 
-// A record that pedit <file> --keep wrote has no generation: its document was
-// made on its own, so serve's never merges with it, whatever the text.
-func TestServeShareNeverMergesWithACLIKeptRecord(t *testing.T) {
-	env := keptEnv(t)
-	file := writeFile(t, "hello\n")
+// cliRoom keeps a room as pedit <file> --keep does and leaves it, with a guest
+// still in it. The record has no generation: its document was made on its own.
+func cliRoom(t *testing.T, env *shareEnv, file string) (room, link string, guest *session.Session) {
+	t.Helper()
 	// The project as serve finds it, with the links of its path resolved; the
 	// file keeps the path it was given.
 	project, err := filepath.EvalSymlinks(filepath.Dir(file))
@@ -110,16 +109,44 @@ func TestServeShareNeverMergesWithACLIKeptRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	room := roomOf(s.URL)
+	room = roomOf(s.URL)
+	_, frag, _ := strings.Cut(s.URL, "#")
+	// The record is written once the host is connected: a guest can join.
 	waitForKeptRecord(t, room)
+	guest = env.join(t, room+"."+frag, "ada")
+	eventually(t, "the guest's text", func() bool { return guestText(guest) != "" })
 	if err := s.Stop(); err != nil {
 		t.Fatal(err)
 	}
+	waitLeft(t, room)
+	return room, room + "." + frag, guest
+}
+
+// A record that pedit <file> --keep wrote has no generation: its document was
+// made on its own, so serve's never merges with it, whatever the text. The
+// app is asked, and nothing changes until it answers.
+func TestServeShareNeverMergesWithACLIKeptRecord(t *testing.T) {
+	env := keptEnv(t)
+	file := writeFile(t, "hello\n")
+	room, _, _ := cliRoom(t, env, file)
 
 	a := startApp(t, file)
 	a.command(fmt.Sprintf(`{"cmd":"share","keep":"1h","relay":%q}`, env.server.URL))
-	e := a.event("error", 1)
-	if e["cmd"] != "share" || !strings.Contains(e["message"].(string), "kept room "+room) || !strings.Contains(e["message"].(string), "another history") {
+	e := a.event("resume_choice", 1)
+	if e["room"] != room {
+		t.Fatalf("%v", e)
+	}
+	want := []any{
+		map[string]any{"choice": "room", "text": float64(len("hello\n"))},
+		map[string]any{"choice": "app", "text": float64(len("hello\n"))},
+		map[string]any{"choice": "later"},
+	}
+	if fmt.Sprint(e["choices"]) != fmt.Sprint(want) {
+		t.Fatalf("choices %v", e["choices"])
+	}
+	// A close does not settle it either.
+	a.command(`{"cmd":"close"}`)
+	if e := a.event("error", 1); e["cmd"] != "close" || !strings.Contains(e["message"].(string), "another history") {
 		t.Fatalf("%v", e)
 	}
 	if rec := keptRecord(t, room); rec["Generation"] != nil {

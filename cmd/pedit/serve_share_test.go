@@ -35,6 +35,11 @@ var shareRooms atomic.Int32
 type shareEnv struct {
 	relay  *prototest.Relay
 	server *httptest.Server
+	// closed counts the requests that ended a kept room.
+	closed atomic.Int32
+	// busy, when set, is the status the relay answers a close with, and then it
+	// does not end the room (409: another host holds it).
+	busy atomic.Int32
 }
 
 func newShareEnv(t *testing.T) *shareEnv {
@@ -43,6 +48,16 @@ func newShareEnv(t *testing.T) *shareEnv {
 	// Room ids are unique across tests: kept records outlive a test's relay.
 	rooms := &shareRooms
 	e.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/keep/close") {
+			// Once the room is ended the relay turns the host away.
+			if status := int(e.busy.Load()); status != 0 {
+				w.WriteHeader(status)
+				return
+			}
+			e.closed.Add(1)
+			e.relay.SetRefuse(protocol.RoomClosed)
+			return
+		}
 		w.WriteHeader(http.StatusCreated)
 		// A room's id is the digest of its host token: a record is checked by it.
 		token := fmt.Sprintf("host-token-%d", rooms.Add(1))
@@ -308,7 +323,7 @@ func TestServeShareRefusalsKeepServing(t *testing.T) {
 		t.Fatalf("%v", e)
 	}
 	a.command(`{"cmd":"close"}`)
-	if e := a.event("error", 2); e["cmd"] != "close" || !strings.Contains(e["message"].(string), "not available yet") {
+	if e := a.event("error", 2); e["cmd"] != "close" || !strings.Contains(e["message"].(string), "no kept room") {
 		t.Fatalf("%v", e)
 	}
 	a.command(`{"cmd":"share","keep":"0","relay":"http://127.0.0.1:1"}`)
