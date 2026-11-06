@@ -20,20 +20,17 @@ import { nodeText, read as readCanvas, toJSON } from './canvas.ts'
 import { commentMarks } from './core/commentmarks.ts'
 import {
   CommentsPanelState,
-  CommentsView,
   type CommentTarget,
-  followFocus,
   isCommentKey,
   loadCommentsOpen,
   type ShownThread,
-  sameTarget,
   saveCommentsOpen,
-  type ThreadList,
   textTarget,
 } from './core/comments.ts'
 import { copyText } from './core/copy.ts'
+import { FileSet, type FileView, type OpenFile } from './core/files.ts'
 import { ContextMenu, isMac } from './core/menu.ts'
-import { getsComments, openRoom, type Room, RoomOpenError } from './core/open-room.ts'
+import { openRoom, type Room, RoomOpenError } from './core/open-room.ts'
 import { imagePaste, textAnchor } from './core/paste.ts'
 import { Store } from './core/store.ts'
 import { delimiterFor } from './csv.ts'
@@ -49,7 +46,7 @@ import { lineWrapping, settingsModel } from './settings-model.ts'
 import { COPIED, shareLinks } from './share.ts'
 import { Splitter } from './splitter.ts'
 import { defaultStore } from './storage.ts'
-import { describeError, TableErrors, TableView } from './table.ts'
+import { describeError, TableErrors, TableView, tableReadOnly } from './table.ts'
 import { fallbackTheme, loadTheme, readerTheme, ThemeSwitcher } from './themes.ts'
 import { NARROW_QUERY, type ViewMode, ViewSwitch } from './view.ts'
 import { trackViewport } from './viewport.ts'
@@ -103,23 +100,6 @@ function loadStartTheme(id: string): Promise<LoadedTheme> {
   )
 }
 
-/** A file of the room this page has opened, with what edits it. */
-interface OpenFile {
-  /** Its id in the room's list of files; 0 for the room's own doc. */
-  id: number
-  doc: Y.Doc
-  text: Y.Text
-  undo: Y.UndoManager
-  /** Shared as nodes and edges rather than text. */
-  canvas: boolean
-  table: TableView
-  board: BoardView
-  json: JsonPane
-  /** Its comments, once the host shares them (#121), and the id of their doc. */
-  comments: CommentsView | null
-  commentsMeta?: number
-}
-
 async function joinRoom(
   id: string,
   key: string,
@@ -152,28 +132,31 @@ async function joinRoom(
     people,
     authorColors,
     timeLimit,
-    files,
+    files: roomFiles,
     current,
     locked,
     metaOf,
-    formats,
     openCounts,
-    commentDocs,
     editLocked,
     fileLocked,
     commentsLocked,
     noImages,
   } = room
   const roomStatus = room.status
-  // The comments of the files the host keeps them for (#121): those on screen, and what they act on.
-  const comments = new Store<CommentsView | null>(null)
-  const threadsShown = new Store<readonly ShownThread[]>([])
-  const commentFocus = new Store<string | null>(null)
-  // The list of threads on screen, open or resolved: that of the thread in focus.
-  const commentList = new Store<ThreadList>('open')
-  followFocus(threadsShown, commentFocus, commentList)
-  // Whether the file on screen has comments, and whether the panel shows them.
-  const commentable = new Store(false)
+  // The room's files, each with its comments (#121) and the views below. A
+  // new comment goes on what the view on screen says, else the editor's selection.
+  const selection = new Store({ from: 0, to: 0 })
+  const files = new FileSet(room, {
+    name: me.name,
+    textTarget: () => textTarget(selection.get()),
+    onStatus: (s, wasLocked) => onStatus(s, wasLocked),
+    onManifest: (known) => onManifest(known),
+  })
+  const { comments, threads: threadsShown, focus: commentFocus, list: commentList } = files
+  const { commentable } = files
+  const commentTarget = files.target
+  const shown = () => files.shown.get()
+  selection.subscribe(() => files.aim())
   // A narrow screen starts with the panel folded, over the text; a wide one
   // as the reader left it, and keeps what the reader chooses.
   const panel = new CommentsPanelState(
@@ -183,10 +166,6 @@ async function joinRoom(
       if (!isNarrow.get()) saveCommentsOpen(open, defaultStore())
     },
   )
-  const selection = new Store({ from: 0, to: 0 })
-  // What a new comment goes on: the table's cells in the table view, else
-  // the editor's selection.
-  const commentTarget = new Store<CommentTarget | null>(null)
   // The room closes as soon as the host leaves (or was never there).
   let parts: LayoutParts | undefined
   render(app, 'Layout', { onReady: (p: LayoutParts) => (parts = p) })
@@ -195,7 +174,7 @@ async function joinRoom(
   render(banner, 'EndedBanner', {
     status: roomStatus,
     timeLimit,
-    text: () => (shown.canvas ? toJSON(readCanvas(shown.doc)) : shown.text.toString()),
+    text: () => (shown().canvas ? toJSON(readCanvas(shown().doc)) : shown().text.toString()),
     keptUntil: away.until,
     keeps: away.keeps,
     skipped: away.skipped,
@@ -231,7 +210,8 @@ async function joinRoom(
   const readOnly = [EditorState.readOnly.of(true), EditorView.editable.of(false)]
   // One instance for every editor on the page: readerTheme() alternates.
   const reader = readerTheme()
-  const undoManager = new Y.UndoManager(text)
+  // File 0's (on screen until a switch): its table and the vim undo use the same one.
+  const undoManager = files.shown.get().undo
   // The editor's extensions for a file's text. Switching files keeps the
   // settings: each compartment takes what it holds in `from`.
   const editorExtensions = (
@@ -292,18 +272,34 @@ async function joinRoom(
   const tableErrors = new TableErrors(0, (error) =>
     view.setTableError(error && describeError(error)),
   )
-  const tableFor = (id: number, fileText: Y.Text, undo: Y.UndoManager) => {
-    const t = new TableView(fileText, awareness, undo, {
-      onError: (error) => tableErrors.report(id, error),
+  // What each file shows it with: its table, and its board with the JSON pane.
+  const tables = new WeakMap<OpenFile, TableView>()
+  const boards = new WeakMap<OpenFile, { board: BoardView; json: JsonPane }>()
+  const tableOf = (f: OpenFile) => tables.get(f) as TableView
+  const boardOf = (f: OpenFile) => (boards.get(f) as { board: BoardView }).board
+  const tableView = (f: OpenFile): FileView => {
+    const t = new TableView(f.text, awareness, f.undo, {
+      onError: (error) => tableErrors.report(f.id, error),
     })
     if (!writesFile) t.readOnly = true
+    tables.set(f, t)
     // The cell selected can come or go with the table, as well as move.
-    const follow = () => {
-      if (t === shown.table) aim()
+    t.selection.subscribe(f.aim)
+    t.shown.subscribe(f.aim)
+    return {
+      setStatus(s, canWrite) {
+        t.readOnly = tableReadOnly(s, canWrite, editLocked())
+      },
+      anchors: { table: t.parsed },
+      commented(threads) {
+        const cells = commentedCells(threads)
+        if (!sameSet(cells, t.commented.get())) t.commented.set(cells)
+      },
+      target: () => (t.active ? cellsTarget(t) : undefined),
+      hide() {
+        t.active = false
+      },
     }
-    t.selection.subscribe(follow)
-    t.shown.subscribe(follow)
-    return t
   }
   // Other editors that follow the settings: each canvas's JSON.
   const fontFollowers: { view: EditorView; compartment: Compartment }[] = []
@@ -313,7 +309,8 @@ async function joinRoom(
     (typeof state.file === 'number' ? state.file : 0) === id
   // A file's canvas: the board and its JSON, in the editor's theme. Edits go
   // to the host.
-  const canvasFor = (id: number, fileDoc: Y.Doc) => {
+  const canvasView = (f: OpenFile): FileView => {
+    const { id, doc: fileDoc } = f
     const jsonTheme = new Compartment()
     const jsonFont = new Compartment()
     const json = new JsonPane(fileDoc, {
@@ -340,30 +337,33 @@ async function joinRoom(
         onError: (message) => notices.show(message),
       },
     })
-    setCanvasStatus(board, json, roomStatus.get(), writesFile)
+    boards.set(f, { board, json })
     attachments.version.subscribe(() => board.refreshMarkdown())
-    board.selected.subscribe(() => {
-      if (board === shown.board) aim()
-    })
-    return { json, board }
+    board.selected.subscribe(f.aim)
+    return {
+      setStatus: (s, canWrite) => setCanvasStatus(board, json, s, canWrite),
+      reconnected: () => json.reconnected(),
+      canvas: (m) => json.handle(m),
+      anchors: {
+        nodes: () => new Map(readCanvas(fileDoc).nodes.map((n) => [n.id, nodeText(n)])),
+      },
+      commented(threads) {
+        const nodes = new Set(threads.flatMap((x) => (!x.resolved && x.node ? [x.node] : [])))
+        if (!sameSet(nodes, board.commented.get())) board.commented.set(nodes)
+      },
+      target: () => (board.active ? nodeTarget(board.selected.get()) : undefined),
+      hide() {
+        board.active = false
+      },
+    }
   }
   let themes: ThemeSwitcher | undefined
-  const first: OpenFile = {
-    id: 0,
-    doc,
-    text,
-    undo: undoManager,
-    canvas: false,
-    table: tableFor(0, text, undoManager),
-    ...canvasFor(0, doc),
-    comments: null,
-  }
-  // The file on screen, and every file opened so far, which stay in sync.
-  let shown = first
-  const opened = new Map<number, OpenFile>([[0, first]])
+  files.addView(tableView)
+  files.addView(canvasView)
+  const first = shown()
   parts.splitter.replaceChildren(splitter.element)
-  parts.table.replaceChildren(first.table.element)
-  parts.canvas.replaceChildren(first.board.element)
+  parts.table.replaceChildren(tableOf(first).element)
+  parts.canvas.replaceChildren(boardOf(first).element)
   let following = 0
   editor.scrollDOM.addEventListener('scroll', () => {
     following ||= requestAnimationFrame(() => {
@@ -374,11 +374,11 @@ async function joinRoom(
   showView = (mode) => {
     main.dataset.view = mode
     preview.active = mode === 'split' || mode === 'preview'
-    shown.table.active = mode === 'table'
-    shown.board.active = mode === 'canvas'
+    tableOf(shown()).active = mode === 'table'
+    boardOf(shown()).active = mode === 'canvas'
     editor.requestMeasure()
     followEditor()
-    aim()
+    files.aim()
   }
   showView(view.mode)
   // Keep the page above the on-screen keyboard, with the cursor in sight.
@@ -394,8 +394,8 @@ async function joinRoom(
 
   // Vim's u and Ctrl-r undo in the file on screen.
   const undoShown = {
-    undo: () => (fileLocked() ? null : shown.undo.undo()),
-    redo: () => (fileLocked() ? null : shown.undo.redo()),
+    undo: () => (fileLocked() ? null : shown().undo.undo()),
+    redo: () => (fileLocked() ? null : shown().undo.redo()),
   }
   const vim = new VimToggle(editor, vimMode, () => vimExtension(undoShown))
   themes = new ThemeSwitcher(editor, themeMode, theme.id)
@@ -425,7 +425,7 @@ async function joinRoom(
     settings,
     comments: {
       counts: openCounts.counts,
-      files,
+      files: roomFiles,
       current,
       commentable,
       open: panel.open,
@@ -454,26 +454,19 @@ async function joinRoom(
   // set the stores: nobody edits while the host is away and nothing keeps the
   // edits, and once the room has ended, for good.
   const onStatus = (s: RoomStatus, wasLocked: boolean) => {
-    for (const f of opened.values()) setCanvasStatus(f.board, f.json, s, writesFile)
     if (isFinalStatus(s)) {
       editor.dispatch({ effects: editable.reconfigure(readOnly) })
-      for (const f of opened.values()) {
-        f.table.readOnly = true
-      }
     } else if (writesFile) {
       const away = editLocked()
       if (away !== wasLocked)
         editor.dispatch({ effects: editable.reconfigure(away ? readOnly : []) })
-      for (const f of opened.values()) {
-        f.table.readOnly = away
-      }
     }
   }
 
   // Markdown until the host tells us the file name; other languages load lazily.
   let languageFor: string | undefined
   const applyLanguage = async (fileName: string, canvas: boolean) => {
-    const key = `${shown.id}:${canvas}:${fileName}`
+    const key = `${shown().id}:${canvas}:${fileName}`
     if (key === languageFor) return
     languageFor = key
     if (canvas) {
@@ -482,7 +475,7 @@ async function joinRoom(
     }
     const lang = resolveLanguage(fileName)
     const delimiter = delimiterFor(fileName)
-    shown.table.setDelimiter(delimiter)
+    tableOf(shown()).setDelimiter(delimiter)
     view.setKind(lang.kind === 'markdown' ? 'markdown' : delimiter ? 'table' : 'plain')
     let support: Extension
     try {
@@ -505,117 +498,25 @@ async function joinRoom(
   const showName = (name: string) => {
     fileName.set(name)
     document.title = `${name} · pedit`
-    void applyLanguage(name, shown.canvas)
+    void applyLanguage(name, shown().canvas)
   }
-
-  // Opens a file of the room, the first time: a doc of its own, kept in sync
-  // from then on, and its own undo, table and canvas.
-  const openFile = (entry: FileEntry): OpenFile => {
-    const known = opened.get(entry.id)
-    if (known) return known
-    const fileDoc = new Y.Doc()
-    const fileText = fileDoc.getText('content')
-    const undo = new Y.UndoManager(fileText)
-    const f: OpenFile = {
-      id: entry.id,
-      doc: fileDoc,
-      text: fileText,
-      undo,
-      canvas: entry.format === 'canvas',
-      table: tableFor(entry.id, fileText, undo),
-      ...canvasFor(entry.id, fileDoc),
-      comments: null,
-    }
-    if (isFinalStatus(roomStatus.get())) {
-      f.table.readOnly = true
-    } else {
-      f.table.readOnly = editLocked()
-    }
-    opened.set(entry.id, f)
-    // A comments doc a forged list of files put under this id goes.
-    commentDocs.takeForFile(entry.id)
-    client.addFile(entry.id, fileDoc)
-    followComments(f)
-    return f
-  }
-
-  // Follows the comments of a text file once the host lists them, in a doc
-  // whose every update is checked: anyone in the room can send one.
-  const followComments = (f: OpenFile) => {
-    const metaId = metaOf.get(f.id)
-    const format = formats.get(f.id)
-    if (f.comments || !getsComments(format)) return
-    const metaDoc = metaId === undefined ? null : commentDocs.docFor(metaId)
-    if (!metaDoc) return
-    f.commentsMeta = metaId
-    const name = () => {
-      const user = awareness.getLocalState()?.user as { name?: unknown } | undefined
-      return typeof user?.name === 'string' ? user.name : me.name
-    }
-    f.comments = new CommentsView(metaDoc, f.doc, {
-      name,
-      locked: commentsLocked,
-      anchors: {
-        table: f.table.parsed,
-        nodes:
-          format === 'canvas'
-            ? () => new Map(readCanvas(f.doc).nodes.map((n) => [n.id, nodeText(n)]))
-            : undefined,
-      },
-    })
-    if (f === shown) showComments()
-  }
-  let stopThreads = () => {}
-  // Shows the comments of the file on screen, if it has any.
-  const showComments = () => {
-    stopThreads()
-    const c = shown.comments
-    comments.set(c)
-    commentable.set(c !== null)
-    commentFocus.set(null)
-    const show = (t: readonly ShownThread[]) => {
-      threadsShown.set(t)
-      const cells = commentedCells(t)
-      if (!sameSet(cells, shown.table.commented.get())) shown.table.commented.set(cells)
-      const nodes = new Set(t.flatMap((x) => (!x.resolved && x.node ? [x.node] : [])))
-      if (!sameSet(nodes, shown.board.commented.get())) shown.board.commented.set(nodes)
-    }
-    show(c?.threads.get() ?? [])
-    stopThreads = c ? c.threads.subscribe(show) : () => {}
-  }
-  // Works out what a new comment would go on, when the selection, the view
-  // or the file changes. Declared so showView, which runs first, can call it.
-  function aim() {
-    const next = shown.board.active
-      ? nodeTarget(shown.board.selected.get())
-      : shown.table.active
-        ? cellsTarget(shown.table)
-        : textTarget(selection.get())
-    if (!sameTarget(next, commentTarget.get())) commentTarget.set(next)
-  }
-  selection.subscribe(aim)
 
   // Shows another file of the room. The editor keeps its settings.
   const switchTo = (id: number) => {
-    const entry = files.get().find((f) => f.id === id)
-    if (!entry || id === shown.id) return
-    shown.table.active = false
-    shown.board.active = false
-    shown = openFile(entry)
-    showComments()
-    current.set(id)
-    awareness.setLocalStateField('file', id)
+    const entry = files.switchTo(id)
+    if (!entry) return
+    const f = shown()
     editor.setState(
       EditorState.create({
-        doc: shown.text.toString(),
-        extensions: editorExtensions(shown.id, shown.text, shown.undo, editor.state),
+        doc: f.text.toString(),
+        extensions: editorExtensions(f.id, f.text, f.undo, editor.state),
       }),
     )
     // setState runs no update listener: the selection is the new file's.
     selection.set({ from: 0, to: 0 })
-    preview.setText(shown.text)
-    table.replaceChildren(shown.table.element)
-    canvas.replaceChildren(shown.board.element)
+    preview.setText(f.text)
+    table.replaceChildren(tableOf(f).element)
+    canvas.replaceChildren(boardOf(f).element)
     tableErrors.show(id)
     showName(entry.path)
     showView(view.mode)
@@ -623,19 +524,10 @@ async function joinRoom(
 
   // What the views do once the room has taken a list of files.
   const onManifest = (known: FileEntry[]) => {
-    // A file whose comments the list now puts in another doc, or in none,
-    // lets go of those it follows.
-    for (const f of opened.values()) {
-      if (!f.comments || metaOf.get(f.id) === f.commentsMeta) continue
-      f.comments.destroy()
-      f.comments = null
-      if (f === shown) showComments()
-    }
-    for (const f of opened.values()) followComments(f)
-    const named = known.find((f) => f.id === shown.id)
+    const named = known.find((f) => f.id === shown().id)
     if (!named) return
     // The list may come before the host's state, which says so too.
-    if (named.format === 'canvas') shown.canvas = true
+    if (named.format === 'canvas') shown().canvas = true
     showName(named.path)
   }
 
@@ -645,16 +537,21 @@ async function joinRoom(
       first.canvas = true
       // The list may have named the file already, as text.
       const named = fileName.get()
-      if (shown === first && named) showName(named)
+      if (shown() === first && named) showName(named)
     }
     // Keep showing the file name after the host has gone. Once the host
     // lists the room's files, the list names them.
-    if (typeof host?.file === 'string' && shown === first && files.get().length === 0) {
+    if (typeof host?.file === 'string' && shown() === first && roomFiles.get().length === 0) {
       showName(host.file)
     }
   }
 
-  render(parts.files, 'FileTabs', { files, current, onOpen: switchTo, counts: openCounts.counts })
+  render(parts.files, 'FileTabs', {
+    files: roomFiles,
+    current,
+    onOpen: switchTo,
+    counts: openCounts.counts,
+  })
   render(parts.comments, 'CommentsPanel', {
     comments,
     target: commentTarget,
@@ -669,12 +566,12 @@ async function joinRoom(
       if (isNarrow.get()) panel.toggle()
     },
     onShow: (t: ShownThread) => {
-      if (t.cells && shown.table.active) {
-        shown.table.select(t.cells.from)
+      if (t.cells && tableOf(shown()).active) {
+        tableOf(shown()).select(t.cells.from)
         return
       }
-      if (t.node && shown.board.active) {
-        shown.board.selectNode(t.node)
+      if (t.node && boardOf(shown()).active) {
+        boardOf(shown()).selectNode(t.node)
         return
       }
       if (t.from < 0 || t.to > editor.state.doc.length) return
@@ -690,17 +587,14 @@ async function joinRoom(
     panel.open.set(true)
     parts?.comments.querySelector<HTMLTextAreaElement>('.comments-new textarea')?.focus()
   })
-  room.hooks.status = onStatus
-  room.hooks.manifest = onManifest
   room.hooks.people = onPeople
-  room.hooks.canvas = (fileId, m) => opened.get(fileId)?.json.handle(m)
-  room.hooks.reconnected = () => {
-    for (const f of opened.values()) f.json.reconnected()
-  }
   room.connect()
   // Edits the relay has not logged yet are lost if the page goes.
   window.addEventListener('beforeunload', away.warn)
-  window.addEventListener('pagehide', () => void room.dispose())
+  window.addEventListener('pagehide', () => {
+    files.dispose()
+    void room.dispose()
+  })
 }
 
 /** The board's selection as a comment's target: one node. */

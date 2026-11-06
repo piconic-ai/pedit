@@ -1,4 +1,5 @@
 import { render } from '@barefootjs/client/runtime'
+import { isFinalStatus, type RoomStatus } from '@pedit/protocol'
 import type { Awareness } from 'y-protocols/awareness'
 import * as Y from 'yjs'
 import type { Position } from './core/anchors.ts'
@@ -873,4 +874,13 @@ export function keepCaret(editor: HTMLTextAreaElement, value: string): void {
   const shifted = caret > start ? caret + (value.length - before.length) : caret
   const at = Math.max(0, Math.min(value.length, shifted))
   editor.setSelectionRange(at, at)
+}
+
+/**
+ * Whether a file's table is read-only in a room status: for good once the
+ * room has ended, while the status locks editing, and always on a link that
+ * cannot write the file.
+ */
+export function tableReadOnly(status: RoomStatus, canWrite: boolean, editLocked: boolean): boolean {
+  return isFinalStatus(status) || !canWrite || editLocked
 }
