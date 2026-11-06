@@ -26,6 +26,28 @@ To run no code from the relay:
 - **Self-host** the relay and the editor ([self-hosting](self-hosting.md)). On
   Cloudflare, you then trust your own account and Cloudflare.
 
+## On a third-party review page, you trust its operator
+
+An app can serve its own review page for a room (see [review page](review-page.md)). A reviewer
+who opens such a link runs that page's JavaScript, not the relay's. So the reviewer trusts whoever
+operates the page: anyone who can change the page or its scripts can read every room opened from it,
+the key in the link included. The relay still sees only ciphertext, as before.
+
+The host lists the page's origins when it shares. The relay lets a browser join the room (WebSocket
+and attachments) only from one of them. This limits which web pages can join; it is not
+authentication. A browser enforces `Origin` and a page cannot forge it, but the relay only reads the
+header: a client that is not a browser can send any `Origin`. It still gets only ciphertext without the key
+in the link's fragment: the link, not the origin, is what grants access, as on any other page. A room with no list refuses every
+foreign origin.
+
+The integrator must:
+
+- send the Content-Security-Policy from `reviewCSP({ relay })` as a response header, and
+  `Referrer-Policy: no-referrer`;
+- put no other script on the page: no analytics, tag manager or widget;
+- serve the component from its own origin, at a version it pins, never from the relay or a CDN;
+- run `pedit doctor <url>` against the deployed page.
+
 ## Keys
 
 - **Edit secret.** The host's `pedit` makes 32 random bytes for every room

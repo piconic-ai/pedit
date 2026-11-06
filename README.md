@@ -296,6 +296,8 @@ not protect against, and [the public relay](docs/public-relay.md) for what
 `edit.piconic.ai` logs and keeps. The public relay's
 [terms of use](https://edit.piconic.ai/terms) and
 [privacy policy](https://edit.piconic.ai/privacy) are on the relay itself.
+To share a file from your own app on your own page, see
+[your own review page](docs/review-page.md).
 
 ![The browser encrypts Text. Cloudflare relays Encrypted Text to pedit CLI, which decrypts it and saves Text to local notes.md. The URL path identifies the room; its fragment contains the shared key, which is never sent to the server.](docs/assets/encryption-sequence.svg)
 

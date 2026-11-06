@@ -4,7 +4,7 @@ The `<pedit-review>` element: your own page for reviewing a file that your app s
 [pedit](https://github.com/piconic-ai/pedit). It shows the file, who is there, and comments, inside a
 shadow root. The relay sees only ciphertext, and the key stays in the link's `#fragment`.
 
-Experimental (0.x), and not published to npm yet. The design is in
+Experimental (0.x). The guide is [docs/review-page.md](../../docs/review-page.md); the design is in
 [docs/design/embedding.md](../../docs/design/embedding.md).
 
 ## Use

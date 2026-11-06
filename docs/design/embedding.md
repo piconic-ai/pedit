@@ -1,81 +1,9 @@
 # Embedding: a review page on the app's own domain
 
 The guest side of embedding pedit in another app (#235). The host side already
-exists (`pedit serve`, `@pedit/serve`, docs/design/serve.md). The first half of
-this document is written for the integrator, the author of the app. The second
-half is the design behind it.
-
-The integrator we design with needs its own review page; the answers to the
-questions below set the v1 scope.
-
-## For integrators
-
-### What you get
-
-Your app already keeps a file open through `@pedit/serve`, and your editor edits it
-live. With this, the app can also share the file: pedit opens an encrypted room on
-a relay and gives you a link to **your own review page**, for example
-`https://cms.example.com/review#…`. Reviewers open that page in a browser. It shows
-the file, who is there, and comments, in your look. Their edits and comments reach
-your app's document; the file on disk is still written only by pedit.
-
-Reviewers need no account and no install. The relay (the public one at
-`edit.piconic.ai`, or your own) sees only ciphertext.
-
-### What you do
-
-1. **Serve one static page** with the review component. Copy the component's one
-   file from the npm package `@pedit/review` into your static files, at a version
-   you pin; do not load it from edit.piconic.ai or another CDN:
-
-   ```html
-   <!doctype html>
-   <meta charset="utf-8">
-   <title>Review</title>
-   <script type="module" src="/assets/pedit-review-1.0.0.js"></script>
-   <pedit-review relay="https://edit.piconic.ai"></pedit-review>
-   ```
-
-2. **Send the Content-Security-Policy** that `@pedit/review` gives you for that
-   relay (`reviewCSP({ relay })`), and put no other script on the page: no
-   analytics, no tag manager, no chat widget. Anything that runs on the page can
-   read the key in the link.
-3. **Tell pedit the page's origin** when you share: `https://cms.example.com`.
-   The relay admits browsers from that origin to this room only.
-4. Optional: run `pedit doctor https://cms.example.com/review` to check the CSP,
-   the scripts on the page and the component version.
-
-You do not handle keys, encryption, permissions or attachments: the component
-and pedit do.
-
-### What you style
-
-The component draws inside a shadow root. You can change:
-
-- colours, fonts, spacing and radii through CSS custom properties
-  (`--pedit-bg`, `--pedit-fg`, `--pedit-accent`, `--pedit-font`, …);
-- the header through slots: `<img slot="logo">`, `<span slot="title">`;
-- labels through attributes (`lang`, or `labels` as JSON).
-
-The editor area, the comment panel and the presence list keep pedit's layout.
-
-### What changes in trust
-
-On edit.piconic.ai, reviewers trust pedit's deployment to serve honest
-JavaScript. On your page, **they trust yours**. The relay still never sees the
-text or the key, but whoever can change your page can read every room opened
-from it. Keep the page on a host you control, behind the same review as your
-code, and say so to your users.
-
-### Questions for you
-
-- Do your reviewers need your own page, or is an edit.piconic.ai link enough?
-  If it is enough, none of the work below is needed.
-- Which of these do reviewers use: editing, comments, comment-only links,
-  read-only links, pasting images, several files in one room?
-- How far must the look follow your app: colours and logo, or more?
-- Can you serve a static page with your own response headers (the CSP)?
-- Does your app share one file at a time, or several?
+exists (`pedit serve`, `@pedit/serve`, docs/design/serve.md). The guide for the
+integrator, the author of the app, is [review-page.md](../review-page.md). This
+document is the design behind it.
 
 ## Design
 
@@ -367,8 +295,9 @@ fails, 1 when one does, 2 when the page cannot be checked. Run `pedit doctor --h
 3. Review core extracted from packages/web, the relay's editor rebuilt on it.
 4. `@pedit/review` and a sample static page in `examples/`.
 5. `pedit doctor`.
-6. Docs: this guide moves to the integrator docs; docs/security-design.md and
-   docs/public-relay.md say who is trusted on a third-party page.
+6. Docs: the integrator guide is [review-page.md](../review-page.md);
+   docs/security-design.md and docs/public-relay.md say who is trusted on a
+   third-party page.
 
 ### What stays out
 
