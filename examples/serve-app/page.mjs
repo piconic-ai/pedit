@@ -44,10 +44,12 @@ async function ask(path, body = {}) {
   return data
 }
 
-let shownKeptUntil = 0
+// What the panel shows now: the share it shows (or null), and the keep the last Share asked for.
+let shown = null
+let askedKeep = '0'
 
 function showShared(s) {
-  shownKeptUntil = s.keptUntil
+  shown = s
   const link = (kind, url) =>
     el('li', `${kind}: `).appendChild(
       el('a', url, { href: url, target: '_blank', rel: 'noopener' }),
@@ -65,6 +67,7 @@ function showShared(s) {
 }
 
 function showNotShared(message) {
+  shown = null
   info.replaceChildren(...(message ? [el('p', message)] : []))
   peersBox.replaceChildren()
   $('share-start').hidden = false
@@ -73,7 +76,11 @@ function showNotShared(message) {
 }
 
 function showChoice(r) {
-  const labels = { room: 'Keep the room', app: 'Keep this file', later: 'Decide later' }
+  const labels = {
+    room: 'Keep the room',
+    app: 'Keep this file and end the room',
+    later: 'Decide later',
+  }
   info.replaceChildren(
     el('p', `Room ${r.room} already has content from another history. Which one do you keep?`),
     ...r.choices.map((c) =>
@@ -88,9 +95,11 @@ function showChoice(r) {
   )
 }
 
+// A choice answers the first Share, so it is sent with that Share's options.
 async function share(choice) {
+  if (!choice) askedKeep = $('share-keep').value
   try {
-    const r = await ask('/share', { keep: $('share-keep').value, choice })
+    const r = await ask('/share', { keep: askedKeep, choice })
     if (r.type === 'shared') showShared(r)
     else if (r.type === 'choice') showChoice(r)
     else showNotShared('The kept room was ended. Nothing is shared.')
@@ -101,7 +110,7 @@ async function share(choice) {
 
 // What leaving says: a kept room waits for the next share; close or a live room ended it.
 async function stop(path) {
-  const keptUntil = shownKeptUntil
+  const keptUntil = shown?.keptUntil ?? 0
   try {
     await ask(path)
     showNotShared(
@@ -118,16 +127,24 @@ $('share-start').onclick = () => share()
 $('share-stop').onclick = () => stop('/share/unshare')
 $('share-close').onclick = () => stop('/share/close')
 
-const events = new EventSource('/share/events')
-const on = (type, fn) => events.addEventListener(type, (e) => fn(JSON.parse(e.data)))
-on('shared', showShared)
-on('unshared', () => info.querySelector('ul') && showNotShared())
-on('room_ended', (e) => showNotShared(`The room ended (${e.reason}).`))
-on('peers', (e) => {
+// The server sends its whole share state on connect and on every change.
+const showPeers = (e) =>
   peersBox.replaceChildren(
-    el(
-      'p',
-      `In the room: ${e.peers.map((p) => `${p.name} (${p.access})`).join(', ') || 'nobody'}${e.more ? ` +${e.more} more` : ''}`,
-    ),
+    ...(e
+      ? [
+          el(
+            'p',
+            `In the room: ${e.peers.map((p) => `${p.name} (${p.access})`).join(', ') || 'nobody'}${e.more ? ` +${e.more} more` : ''}`,
+          ),
+        ]
+      : []),
   )
+new EventSource('/share/events').addEventListener('state', (m) => {
+  const s = JSON.parse(m.data)
+  if (s.shared) {
+    showShared(s.shared)
+    showPeers(s.peers)
+  } else if (shown) {
+    showNotShared(s.ended ? `The room ended (${s.ended}).` : 'Not shared.')
+  }
 })

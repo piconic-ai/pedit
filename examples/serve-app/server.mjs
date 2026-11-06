@@ -1,7 +1,7 @@
 // Usage: npm run build && node server.mjs
 // PEDIT=/path/to/pedit if pedit is not on the PATH; PORT to change the port (default 3000);
 // PEDIT_RELAY for a relay other than https://edit.piconic.ai (e.g. http://127.0.0.1:8787).
-import { mkdir, stat, writeFile } from 'node:fs/promises'
+import { mkdir, realpath, stat, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { serve } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
@@ -20,6 +20,8 @@ const origin = `http://127.0.0.1:${port}`
 const root = fileURLToPath(new URL('content', import.meta.url))
 await mkdir(root, { recursive: true })
 await stat(`${root}/demo.md`).catch(() => writeFile(`${root}/demo.md`, '# Hello\n')) // pedit edits existing files
+// Events name the file by its real path, also when no page has opened it yet.
+const file = await realpath(`${root}/demo.md`)
 
 // Reviewers open the relay's own editor until a review component exists. The sample always passes
 // this relay to share(), so the links and these URLs agree even if the project config sets another.
@@ -31,16 +33,21 @@ const reviewerUrl = (link) => {
 const reviewerLinks = (links) =>
   Object.fromEntries(Object.entries(links).map(([k, v]) => [k, reviewerUrl(v)]))
 
-// What the share panel shows: the room (as the page gets it) and the last peers. One file, so one state.
+// What the share panel shows: the room (as the page gets it) and the last peers. One file, so one
+// state. Every change goes to the pages as the whole state, so a page that missed events, or
+// reconnected, still ends up showing what is true.
 const state = { shared: null, peers: null }
 const listeners = new Set()
 const publish = (event) => {
   if (event.type === 'shared') state.shared = event
-  else if (event.type === 'unshared' || event.type === 'room_ended') {
+  else if (event.type === 'peers') state.peers = event
+  else {
+    // unshared, room_ended, or pedit stopped (it exited or crashed): nothing is shared any more.
     state.shared = null
     state.peers = null
-  } else if (event.type === 'peers') state.peers = event
-  for (const send of listeners) send(event)
+  }
+  const ended = event.type === 'room_ended' ? event.reason : undefined
+  for (const send of listeners) send({ ...state, ended })
 }
 
 // Routes: the page, its script, and pedit under /edit.
@@ -65,7 +72,10 @@ const routes = peditRoutes({
   // Why a page saw `busy`: pedit missing, too old, or failed to start. Never log a token.
   onEvent: (e) => {
     if (e.type === 'error') return console.error(`pedit: ${e.message}`)
-    if (['peers', 'shared', 'unshared', 'room_ended'].includes(e.type) && e.id === 'demo') {
+    if (
+      ['peers', 'shared', 'unshared', 'room_ended', 'stopped'].includes(e.type) &&
+      e.path === file
+    ) {
       publish({ ...e, ...(e.links && { links: reviewerLinks(e.links) }) })
     }
   },
@@ -94,29 +104,36 @@ app.use('/share/*', guardShare)
 app.post('/share', (c) =>
   answer(c, async () => {
     const { keep, choice } = await c.req.json().catch(() => ({}))
-    const r = await routes.share(`${root}/demo.md`, { relay, keep, choice })
+    const r = await routes.share(file, { relay, keep, choice })
     return c.json(r.type === 'shared' ? { ...r, links: reviewerLinks(r.links) } : r)
   }),
 )
 app.post('/share/unshare', (c) =>
   answer(c, async () => {
-    await routes.unshare(`${root}/demo.md`)
+    await routes.unshare(file)
     return c.json({})
   }),
 )
 app.post('/share/close', (c) =>
   answer(c, async () => {
-    await routes.close(`${root}/demo.md`)
+    await routes.close(file)
     return c.json({})
   }),
 )
 app.get('/share/events', (c) =>
   streamSSE(c, async (stream) => {
-    const send = (e) => stream.writeSSE({ event: e.type, data: JSON.stringify(e) })
-    for (const e of [state.shared, state.peers]) if (e) await send(e)
+    const send = (s) => stream.writeSSE({ event: 'state', data: JSON.stringify(s) })
+    // Listen before the first write, so nothing published during it is missed or leaked.
+    const closed = new Promise((resolve) => stream.onAbort(resolve))
     listeners.add(send)
-    await new Promise((resolve) => stream.onAbort(resolve))
-    listeners.delete(send)
+    try {
+      if (!stream.aborted) {
+        await send(state)
+        await closed
+      }
+    } finally {
+      listeners.delete(send)
+    }
   }),
 )
 

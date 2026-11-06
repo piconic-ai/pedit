@@ -39,7 +39,7 @@ has a kept room of another history, the panel asks which side to keep.
   component exists.
 - Sharing needs pedit 0.6.0 or later (`serve` version 2); an older pedit still
   edits, and the Share button reports why it cannot share.
-- The `/share` routes are guarded like `/edit`: this origin, `127.0.0.1` as the Host, JSON only.
+- The `/share` routes need `127.0.0.1` as the Host, this origin (a same-origin `EventSource` may send none) and JSON bodies.
 
 ## Notes
 

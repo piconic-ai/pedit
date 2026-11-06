@@ -58,9 +58,27 @@ test('the app serves its page, guards the routes, and bridges the file', { skip 
     assert.equal(await post(origin, '/share/close', { origin: 'http://evil.test' }), 403)
     assert.equal(await post(origin, '/share', ok), 403)
     assert.equal(await post(origin, '/share/events', { origin: 'http://evil.test' }, 'GET'), 403)
+    // The stream starts with the whole share state, and sends it again on every change.
     const events = await fetch(`${origin}/share/events`, { headers: ok })
     assert.match(events.headers.get('content-type'), /^text\/event-stream/)
-    await events.body.cancel()
+    const reader = events.body.pipeThrough(new TextDecoderStream()).getReader()
+    let buffered = ''
+    const nextState = async () => {
+      for (;;) {
+        const end = buffered.indexOf('\n\n')
+        if (end >= 0) {
+          const message = buffered.slice(0, end)
+          buffered = buffered.slice(end + 2)
+          const data = message.match(/^data: (.*)$/m)
+          if (message.includes('event: state') && data) return JSON.parse(data[1])
+          continue
+        }
+        const { value, done } = await reader.read()
+        if (done) throw new Error('the event stream ended')
+        buffered += value
+      }
+    }
+    assert.deepEqual(await nextState(), { shared: null, peers: null })
 
     // A real share needs a relay (PEDIT_RELAY, e.g. a local worker); keep 0 leaves nothing behind.
     if (process.env.PEDIT_RELAY) {
@@ -74,8 +92,15 @@ test('the app serves its page, guards the routes, and bridges the file', { skip 
       assert.equal(shared.status, 200, result.error)
       assert.equal(result.type, 'shared')
       assert.ok(result.links.edit.startsWith(`${relay}/r/`), result.links.edit)
+      // No page has opened the file yet, and the stream still hears of the share and its end.
+      let s = await nextState()
+      while (!s.shared) s = await nextState()
+      assert.equal(s.shared.links.edit, result.links.edit)
       assert.equal(await post(origin, '/share/unshare', json), 200)
+      do s = await nextState()
+      while (s.shared)
     }
+    await reader.cancel()
 
     const session = await fetch(`${origin}/edit/demo/session`, { method: 'POST', headers: ok })
     assert.equal(session.status, 200)
