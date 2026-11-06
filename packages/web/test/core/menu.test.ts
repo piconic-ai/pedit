@@ -80,6 +80,18 @@ describe('ContextMenu', () => {
     expect(document.activeElement).toBe(before)
   })
 
+  it('lets go of its outside-click listener and its rendering when disposed open', () => {
+    const remove = vi.spyOn(document, 'removeEventListener')
+    const { menu } = open()
+    expect(menu.open).toBe(true)
+    menu.dispose()
+    expect(menu.open).toBe(false)
+    expect(remove).toHaveBeenCalledWith('pointerdown', expect.any(Function), true)
+    expect(menu.element.childElementCount).toBe(0)
+    remove.mockRestore()
+    menu.element.remove()
+  })
+
   describe('inside a shadow root', () => {
     function inShadow() {
       const host = document.createElement('div')

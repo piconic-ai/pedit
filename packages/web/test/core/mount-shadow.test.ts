@@ -9,6 +9,7 @@ import { mountBanner, mountNotice } from '../../src/core/banner.ts'
 import { mountComments } from '../../src/core/comments-mount.ts'
 import { mountTextEditor } from '../../src/core/editor.ts'
 import { FileSet } from '../../src/core/files.ts'
+import { ContextMenu } from '../../src/core/menu.ts'
 import { openRoom } from '../../src/core/open-room.ts'
 import { Store } from '../../src/core/store.ts'
 
@@ -294,7 +295,11 @@ describe('the core in a shadow root', () => {
     m.comments.open.set(false)
     // The component itself stops reacting, not only its place in the page.
     const shown = m.banner.querySelector('.banner') as HTMLElement
+    // The panel's menu goes too, so an open one leaves no document listener behind.
+    const menuDispose = vi.spyOn(ContextMenu.prototype, 'dispose')
     await m.dispose()
+    expect(menuDispose).toHaveBeenCalledTimes(1)
+    menuDispose.mockRestore()
     expect(m.banner.children.length).toBe(0)
     expect(m.notice.children.length).toBe(0)
     expect(m.commentsEl.children.length).toBe(0)
