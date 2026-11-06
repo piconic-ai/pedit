@@ -62,7 +62,8 @@ const BUILT_IN: Record<string, Labels> = { en, ja }
  * string values of the `labels` JSON object laid over them. Invalid JSON is ignored.
  */
 export function resolveLabels(lang: string | null, json: string | null): Labels {
-  const base = BUILT_IN[(lang ?? '').trim().toLowerCase().split('-')[0] ?? ''] ?? en
+  const code = (lang ?? '').trim().toLowerCase().split('-')[0] ?? ''
+  const base = Object.hasOwn(BUILT_IN, code) ? (BUILT_IN[code] as Labels) : en
   const out = { ...base }
   if (json === null || json.trim() === '') return out
   let parsed: unknown
@@ -77,8 +78,8 @@ export function resolveLabels(lang: string | null, json: string | null): Labels 
     return out
   }
   for (const key of Object.keys(en) as (keyof Labels)[]) {
-    const value = (parsed as Record<string, unknown>)[key]
-    if (typeof value === 'string') out[key] = value
+    const own = parsed as Record<string, unknown>
+    if (Object.hasOwn(own, key) && typeof own[key] === 'string') out[key] = own[key] as string
   }
   return out
 }

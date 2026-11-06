@@ -1,6 +1,6 @@
 /* What the element adds around the core's own styles: the page's layout, not the core's.
    Public properties (all optional; the defaults are pedit's light theme, and its dark one
-   under prefers-color-scheme: dark unless the page sets the property):
+   under prefers-color-scheme: dark, or as the scheme attribute says, unless the page sets the property):
      --pedit-bg      -> --bg                     --pedit-fg     -> --ink
      --pedit-muted   -> --muted                  --pedit-border -> --line
      --pedit-accent  -> --accent                 --pedit-font   -> --sans
@@ -27,8 +27,9 @@
   background: var(--bg);
   font: 14px / 1.45 var(--sans);
 }
+/* scheme="auto" (the default) follows the OS; "light" and "dark" fix it. */
 @media (prefers-color-scheme: dark) {
-  :host {
+  :host(:not([scheme="light"])) {
     --bg: var(--pedit-bg, #0d1117);
     --ink: var(--pedit-fg, #c9d1d9);
     --muted: var(--pedit-muted, #8b949e);
@@ -37,6 +38,19 @@
     --warn-bg: #2c221a;
     --warn-ink: #f5c08a;
   }
+}
+:host([scheme="light"]) {
+  color-scheme: light;
+}
+:host([scheme="dark"]) {
+  color-scheme: dark;
+  --bg: var(--pedit-bg, #0d1117);
+  --ink: var(--pedit-fg, #c9d1d9);
+  --muted: var(--pedit-muted, #8b949e);
+  --line: var(--pedit-border, #30363d);
+  --accent: var(--pedit-accent, #58a6ff);
+  --warn-bg: #2c221a;
+  --warn-ink: #f5c08a;
 }
 .review {
   display: flex;
@@ -55,7 +69,14 @@
   flex: none;
   max-height: 28px;
 }
-.review-header ::slotted([slot="title"]),
+.review-header ::slotted([slot="title"]) {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
 .review-header .file {
   flex: 1;
   min-width: 0;

@@ -2,7 +2,13 @@
 
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { generateEditSecret } from '@pedit/protocol'
+import {
+  deriveRoomKeys,
+  generateEditSecret,
+  HOST_AWAY,
+  parseFragment,
+  ROOM_CLOSED,
+} from '@pedit/protocol'
 import { Relay } from '@pedit/protocol/testing'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PeditReview } from '../src/element.ts'
@@ -15,20 +21,20 @@ const coreCss = readdirSync(cssDir)
   .map((f) => readFileSync(join(cssDir, f), 'utf8'))
   .join('\n')
 
-/** Declarations `--name: value` inside the blocks whose selector starts with `:host`. */
-function hostBlocks(css: string) {
+/** Declarations `--name: value` of the block with exactly this selector. */
+function block(css: string, selector: string) {
   const plain = css.replace(/\/\*[\s\S]*?\*\//g, '')
-  const dark = /@media \(prefers-color-scheme: dark\) \{\s*:host \{([^}]*)\}\s*\}/.exec(plain)
-  const base = /(?:^|\n):host \{([^}]*)\}/.exec(plain)
-  const decls = (body = '') =>
-    Object.fromEntries(
-      [...body.matchAll(/(--[a-z0-9-]+):\s*([^;]+);/g)].map((m) => [m[1], (m[2] ?? '').trim()]),
-    ) as Record<string, string>
-  return { base: decls(base?.[1]), dark: decls(dark?.[1]) }
+  const at = plain.indexOf(`${selector} {`)
+  const body = at < 0 ? '' : plain.slice(at, plain.indexOf('}', at))
+  return Object.fromEntries(
+    [...body.matchAll(/(--[a-z0-9-]+):\s*([^;]+);/g)].map((m) => [m[1], (m[2] ?? '').trim()]),
+  ) as Record<string, string>
 }
 
 describe('host.css variables', () => {
-  const { base, dark } = hostBlocks(hostCss)
+  const base = block(hostCss, '\n:host')
+  const dark = block(hostCss, ':host(:not([scheme="light"]))')
+  const forced = block(hostCss, ':host([scheme="dark"])')
 
   it('defines every variable the core CSS reads, except the ones it sets itself', () => {
     const used = new Set([...coreCss.matchAll(/var\((--[a-z0-9-]+)/g)].map((m) => m[1]))
@@ -61,12 +67,46 @@ describe('host.css variables', () => {
   })
 })
 
+describe('scheme', () => {
+  const base = block(hostCss, '\n:host')
+  const dark = block(hostCss, ':host(:not([scheme="light"]))')
+  const forced = block(hostCss, ':host([scheme="dark"])')
+
+  it('applies the media dark block to auto and dark, never to light', () => {
+    expect(hostCss).toMatch(
+      /@media \(prefers-color-scheme: dark\) \{\s*:host\(:not\(\[scheme="light"\]\)\)/,
+    )
+    expect(hostCss).toMatch(/:host\(\[scheme="light"\]\) \{\s*color-scheme: light;\s*\}/)
+    expect(hostCss).toMatch(/:host\(\[scheme="dark"\]\) \{\s*color-scheme: dark;/)
+    expect(Object.keys(block(hostCss, ':host([scheme="light"])')).length).toBe(0)
+  })
+
+  it('sets the same dark defaults under scheme=dark as under the media query', () => {
+    expect(forced).toEqual(dark)
+    expect(forced['--bg']).toBe('var(--pedit-bg, #0d1117)')
+    expect(base['--bg']).toBe('var(--pedit-bg, #fff)')
+  })
+})
+
 describe('resolveLabels', () => {
   it('defaults to English, takes ja and a region of it, and ignores unknown languages', () => {
     expect(resolveLabels(null, null).join).toBe('Join')
     expect(resolveLabels('ja', null).join).toBe('参加')
     expect(resolveLabels('ja-JP', null).join).toBe('参加')
     expect(resolveLabels('fr', null).join).toBe('Join')
+  })
+
+  it.each(['constructor', '__proto__', 'toString', 'hasOwnProperty'])(
+    'falls back to English for lang=%s',
+    (lang) => {
+      expect(resolveLabels(lang, null)).toEqual(resolveLabels('en', null))
+    },
+  )
+
+  it('is not changed by a __proto__ payload', () => {
+    const l = resolveLabels('en', '{"__proto__":{"join":"x"},"constructor":"y"}')
+    expect(l).toEqual(resolveLabels('en', null))
+    expect(({} as Record<string, unknown>).join).toBeUndefined()
   })
 
   it('overrides single strings, ignoring non-strings and unknown keys', () => {
@@ -138,20 +178,61 @@ describe('<pedit-review> theming', () => {
     expect(root.querySelector('slot:not([name])')).toBeNull()
   })
 
-  it('shows the file name until a title is given', async () => {
-    const root = place({ name: 'Ana' })
+  it('keeps the file name beside the title slot', async () => {
+    const title = slotted('span', 'title', 'My doc')
+    const root = place({ name: 'Ana' }, [title])
+    await vi.waitFor(() => expect(root.querySelector('.file')).not.toBeNull())
     const h = await header(root)
-    const slot = h.querySelector<HTMLSlotElement>('slot[name="title"]')
-    expect(slot?.assignedNodes()).toEqual([])
-    expect(slot?.assignedNodes({ flatten: true })).toEqual([h.querySelector('.file')])
+    const kids = [...h.children].map((c) => c.getAttribute('name') ?? c.className)
+    expect(kids.slice(0, 3)).toEqual(['logo', 'title', 'file'])
   })
 
-  it('marks the header, editor and comments regions as parts', async () => {
-    const root = place({ name: 'Ana' })
-    await header(root)
-    expect(root.querySelector('.review-header')?.getAttribute('part')).toBe('header')
-    expect(root.querySelector('main.editor')?.getAttribute('part')).toBe('editor')
-    expect(root.querySelector('.comments-host')?.getAttribute('part')).toBe('comments')
+  it.each([
+    ['the join form', { relay: 'https://relay.test' }, ''],
+    ['an error', { name: 'Ana' }, 'bad'],
+  ])('shows the header slots in %s', (_, attrs, bad) => {
+    if (bad) location.hash = ''
+    const logo = slotted('img', 'logo', '')
+    const root = place(attrs, [logo])
+    const slot = root.querySelector<HTMLSlotElement>('.review-header slot[name="logo"]')
+    expect(slot?.assignedNodes()).toEqual([logo])
+    expect(root.querySelector('.review-header slot[name="title"]')).not.toBeNull()
+  })
+
+  it('takes lang from the element, else the nearest ancestor, else English', () => {
+    const wrap = document.createElement('div')
+    wrap.lang = 'ja'
+    document.body.append(wrap)
+    const el = document.createElement('pedit-review')
+    el.setAttribute('relay', 'https://relay.test')
+    wrap.append(el)
+    expect(el.shadowRoot?.querySelector('form button')?.textContent).toBe('参加')
+    wrap.replaceChildren()
+    const own = document.createElement('pedit-review')
+    own.setAttribute('relay', 'https://relay.test')
+    own.setAttribute('lang', 'en')
+    wrap.append(own)
+    expect(own.shadowRoot?.querySelector('form button')?.textContent).toBe('Join')
+    wrap.remove()
+    expect(place({}).querySelector('form button')?.textContent).toBe('Join')
+  })
+
+  it('translates the access labels', async () => {
+    const link = parseFragment(generateEditSecret())
+    if (!link) throw new Error('no link')
+    const keys = await deriveRoomKeys(link, ID)
+    for (const [frag, text, title] of [
+      [keys.fragments.read, '閲覧のみ', 'このファイルを読めます。'],
+      [keys.fragments.comment, 'コメントのみ', 'このファイルを読み、コメントできます。'],
+    ] as const) {
+      document.body.replaceChildren()
+      location.hash = `#${ID}.${frag}`
+      const root = place({ name: 'Ana', lang: 'ja' })
+      await vi.waitFor(() => {
+        expect(root.querySelector('.access')?.textContent).toBe(text)
+        expect(root.querySelector<HTMLElement>('.access')?.title).toBe(title)
+      })
+    }
   })
 
   it('renders the Japanese join form, and a label override', async () => {
@@ -182,5 +263,22 @@ describe('<pedit-review> theming', () => {
       expect(s?.getAttribute('aria-live')).toBe('polite')
       expect(s?.textContent).toBe('All good')
     })
+  })
+
+  it('speaks connecting, the host being away, and the end', async () => {
+    const root = place({ name: 'Ana', lang: 'ja' })
+    const said = () => root.querySelector('[role="status"]')?.textContent
+    // `connecting` passes too fast to wait for: record what the line said.
+    const seen: string[] = []
+    new MutationObserver(() => {
+      const t = said()
+      if (t && seen.at(-1) !== t) seen.push(t)
+    }).observe(root, { childList: true, subtree: true, characterData: true })
+    await vi.waitFor(() => expect(said()).toBe('接続しました'))
+    expect(seen[0]).toBe('接続中')
+    relay.signal(HOST_AWAY)
+    await vi.waitFor(() => expect(said()).toBe('ホストが離席中です'))
+    relay.closeAll(ROOM_CLOSED)
+    await vi.waitFor(() => expect(said()).toBe('レビューは終了しました'))
   })
 })

@@ -45,6 +45,8 @@ ancestor (all optional; the defaults are pedit's light theme, and its dark one u
 | `--pedit-mono` | Editor font |
 | `--pedit-radius` | Corner radius of the join form and messages |
 
+`scheme="auto"` (the default) follows `prefers-color-scheme`; `scheme="light"` or `"dark"` fixes it. If you set `--pedit-bg` or `--pedit-fg`, set both, and set `scheme` to match them, or the other defaults (borders, muted text) will not suit your colours.
+
 Panels are a tint of the background towards the text colour. The warning colours and the comment
 mark colour are pedit's. The core has no spacing variable, so there is no `--pedit-space`.
 
@@ -61,10 +63,9 @@ Slots (the header only; other children of the element are not shown):
 </pedit-review>
 ```
 
-Without a `title` slot the header shows the file's name. `::part(header)`, `::part(editor)` and
-`::part(comments)` let you tweak size, margin and borders; the editor and panel layout stay pedit's.
+The header, with the logo and title, shows in every state, the join form and errors included. The file's name follows the title. The editor and panel layout stay pedit's.
 
-Labels: `lang="ja"` (built in: `en`, the default, and `ja`; a region like `ja-JP` counts as `ja`) and
+Labels: `lang="ja"` (else the nearest ancestor's `lang`, else `en`; built in: `en`, the default, and `ja`; a region like `ja-JP` counts as `ja`) and
 `labels='{"join":"Enter"}'`, a JSON object overriding single strings. Keys: `yourName`, `join`,
 `comments`, `commentOnly`, `commentOnlyTitle`, `readOnly`, `readOnlyTitle`, `badLink`,
 `unsupportedBrowser`, `missingRelay`, `openFailed`, and the status line's `connecting`, `live`,

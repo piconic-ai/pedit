@@ -141,10 +141,21 @@ export class PeditReview extends HTMLElement {
     void this.#stop()
     this.#current = undefined
     const generation = this.#generation
-    this.#labels = resolveLabels(this.getAttribute('lang'), this.getAttribute('labels'))
+    this.#labels = resolveLabels(
+      this.getAttribute('lang') ?? this.closest('[lang]')?.getAttribute('lang') ?? null,
+      this.getAttribute('labels'),
+    )
     const root = this.#root()
     // Keeps the adopted or style sheets; only the content goes.
     for (const child of [...root.children]) if (child.localName !== 'style') child.remove()
+    // The branding shows in every state, before joining too.
+    const header = el(this.ownerDocument, 'header', 'review-header')
+    for (const name of ['logo', 'title']) {
+      const slot = el(this.ownerDocument, 'slot')
+      slot.name = name
+      header.append(slot)
+    }
+    root.append(header)
 
     const relay = parseRelayUrl(this.getAttribute('relay'))
     if (!relay) {
@@ -191,7 +202,7 @@ export class PeditReview extends HTMLElement {
       await room.dispose()
       return
     }
-    this.#mount(root, room, name)
+    this.#mount(root, header, room, name)
   }
 
   #askName(generation: number, done: (name: string) => void): void {
@@ -217,35 +228,25 @@ export class PeditReview extends HTMLElement {
     this.#root().append(form)
   }
 
-  #mount(root: ShadowRoot, room: Room, name: string): void {
+  #mount(root: ShadowRoot, header: HTMLElement, room: Room, name: string): void {
     const doc = this.ownerDocument
     const disposers = this.#disposers
     disposers.push(() => room.dispose())
 
     const layout = el(doc, 'div', 'review')
-    const header = el(doc, 'header', 'review-header')
-    const logo = el(doc, 'slot')
-    logo.name = 'logo'
     const file = el(doc, 'span', 'file')
-    const title = el(doc, 'slot')
-    title.name = 'title'
-    // The file name shows until the page gives a title.
-    title.append(file)
     const people = el(doc, 'div', 'people-host')
     const access = el(doc, 'span', 'access')
     const toggle = el(doc, 'button', 'comments-button')
     toggle.type = 'button'
     toggle.textContent = this.#labels.comments
     toggle.hidden = true
-    header.setAttribute('part', 'header')
-    header.append(logo, title, people, access, toggle)
+    header.append(file, people, access, toggle)
     const banner = el(doc, 'div', 'banner-slot')
     const notice = el(doc, 'div', 'notice-slot')
     const main = el(doc, 'main', 'editor')
     const source = el(doc, 'div', 'source')
     const commentsHost = el(doc, 'div', 'comments-host')
-    main.setAttribute('part', 'editor')
-    commentsHost.setAttribute('part', 'comments')
     main.append(source, commentsHost)
     const status = el(doc, 'div', 'visually-hidden')
     status.setAttribute('role', 'status')
