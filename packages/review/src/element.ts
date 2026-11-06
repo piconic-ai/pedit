@@ -7,28 +7,22 @@ import { mountTextEditor } from '../../web/src/core/editor.ts'
 import { FileSet } from '../../web/src/core/files.ts'
 import { guardDrops } from '../../web/src/core/guard.ts'
 import { type Link, parseLink } from '../../web/src/core/link.ts'
-import { openRoom, type Room, RoomOpenError } from '../../web/src/core/open-room.ts'
+import {
+  openRoom,
+  type ReviewStatus,
+  type Room,
+  RoomOpenError,
+} from '../../web/src/core/open-room.ts'
 import { mountComponent } from '../../web/src/core/render.ts'
 import { type Readable, Store } from '../../web/src/core/store.ts'
 import hostCss from './host.css?inline'
+import { type Labels, resolveLabels } from './labels.ts'
 import { parseRelayUrl } from './relay.ts'
 
 const NARROW_QUERY = '(max-width: 720px)'
 const MAX_NAME = 64
 
-/** What a link below edit lets the reader do, as the header says it. */
-const ACCESS_LABELS: Partial<Record<string, { text: string; title: string }>> = {
-  comment: { text: 'Comment only', title: 'You can read this file and comment on it.' },
-  read: { text: 'Read only', title: 'You can read this file.' },
-}
-
 export type ReviewErrorReason = 'bad-link' | 'unsupported-browser' | 'missing-relay' | 'open-failed'
-
-/** What the reader is told; the core's own wording is for developers. */
-const OPEN_MESSAGES: Record<'bad-link' | 'unsupported-browser', string> = {
-  'bad-link': 'This is not a review link.',
-  'unsupported-browser': 'This browser cannot open the review: it lacks the cryptography it needs.',
-}
 
 /** Hooks for tests only: a page never sets them. */
 export interface ReviewTesting {
@@ -66,6 +60,8 @@ export class PeditReview extends HTMLElement {
   #win: Window | null = null
   /** The link being opened or open: a hashchange to the same one does nothing. */
   #current: Link | undefined
+  /** From `lang` and `labels`, read each time the element opens a room. */
+  #labels: Labels = resolveLabels(null, null)
 
   connectedCallback(): void {
     this.#win = this.ownerDocument.defaultView
@@ -131,7 +127,8 @@ export class PeditReview extends HTMLElement {
     this.dispatchEvent(new CustomEvent(name, { detail, bubbles: true, composed: true }))
   }
 
-  #fail(reason: ReviewErrorReason, message: string): void {
+  #fail(reason: ReviewErrorReason, key: keyof Labels): void {
+    const message = this.#labels[key]
     const root = this.#root()
     const box = el(this.ownerDocument, 'div', 'review-message')
     box.setAttribute('role', 'alert')
@@ -144,18 +141,19 @@ export class PeditReview extends HTMLElement {
     void this.#stop()
     this.#current = undefined
     const generation = this.#generation
+    this.#labels = resolveLabels(this.getAttribute('lang'), this.getAttribute('labels'))
     const root = this.#root()
     // Keeps the adopted or style sheets; only the content goes.
     for (const child of [...root.children]) if (child.localName !== 'style') child.remove()
 
     const relay = parseRelayUrl(this.getAttribute('relay'))
     if (!relay) {
-      this.#fail('missing-relay', 'This page does not say which relay to use.')
+      this.#fail('missing-relay', 'missingRelay')
       return
     }
     const link = parseLink(this.#win?.location.hash ?? '')
     if (!link) {
-      this.#fail('bad-link', OPEN_MESSAGES['bad-link'])
+      this.#fail('bad-link', 'badLink')
       return
     }
     this.#current = link
@@ -184,8 +182,9 @@ export class PeditReview extends HTMLElement {
       if (generation !== this.#generation) return
       this.#current = undefined
       // Fixed words: an error's own text is never shown or sent on.
-      if (e instanceof RoomOpenError) this.#fail(e.reason, OPEN_MESSAGES[e.reason])
-      else this.#fail('open-failed', 'The review could not be opened.')
+      if (e instanceof RoomOpenError)
+        this.#fail(e.reason, e.reason === 'bad-link' ? 'badLink' : 'unsupportedBrowser')
+      else this.#fail('open-failed', 'openFailed')
       return
     }
     if (generation !== this.#generation) {
@@ -199,7 +198,7 @@ export class PeditReview extends HTMLElement {
     const doc = this.ownerDocument
     const form = el(doc, 'form', 'review-join')
     const label = el(doc, 'label')
-    label.textContent = 'Your name '
+    label.textContent = `${this.#labels.yourName} `
     const input = el(doc, 'input')
     input.name = 'name'
     input.required = true
@@ -208,7 +207,7 @@ export class PeditReview extends HTMLElement {
     label.append(input)
     const button = el(doc, 'button')
     button.type = 'submit'
-    button.textContent = 'Join'
+    button.textContent = this.#labels.join
     form.append(label, button)
     form.addEventListener('submit', (e) => {
       e.preventDefault()
@@ -225,26 +224,42 @@ export class PeditReview extends HTMLElement {
 
     const layout = el(doc, 'div', 'review')
     const header = el(doc, 'header', 'review-header')
+    const logo = el(doc, 'slot')
+    logo.name = 'logo'
     const file = el(doc, 'span', 'file')
+    const title = el(doc, 'slot')
+    title.name = 'title'
+    // The file name shows until the page gives a title.
+    title.append(file)
     const people = el(doc, 'div', 'people-host')
     const access = el(doc, 'span', 'access')
     const toggle = el(doc, 'button', 'comments-button')
     toggle.type = 'button'
-    toggle.textContent = 'Comments'
+    toggle.textContent = this.#labels.comments
     toggle.hidden = true
-    header.append(file, people, access, toggle)
+    header.setAttribute('part', 'header')
+    header.append(logo, title, people, access, toggle)
     const banner = el(doc, 'div', 'banner-slot')
     const notice = el(doc, 'div', 'notice-slot')
     const main = el(doc, 'main', 'editor')
     const source = el(doc, 'div', 'source')
     const commentsHost = el(doc, 'div', 'comments-host')
+    main.setAttribute('part', 'editor')
+    commentsHost.setAttribute('part', 'comments')
     main.append(source, commentsHost)
-    layout.append(header, banner, notice, main)
+    const status = el(doc, 'div', 'visually-hidden')
+    status.setAttribute('role', 'status')
+    status.setAttribute('aria-live', 'polite')
+    layout.append(header, status, banner, notice, main)
     root.append(layout)
     disposers.push(() => layout.remove())
 
     const narrow = this.#narrow(disposers)
-    const label = ACCESS_LABELS[room.access]
+    const words = this.#labels
+    const label = {
+      comment: { text: words.commentOnly, title: words.commentOnlyTitle },
+      read: { text: words.readOnly, title: words.readOnlyTitle },
+    }[room.access as string]
     access.hidden = !label
     if (label) {
       access.textContent = label.text
@@ -295,8 +310,17 @@ export class PeditReview extends HTMLElement {
     disposers.push(() => toggle.removeEventListener('click', onToggle))
 
     // The first status is `connecting`; the store only speaks when it changes.
-    this.#emit('pedit-status', { status: room.review.get() })
-    disposers.push(room.review.subscribe((status) => this.#emit('pedit-status', { status })))
+    const say = (value: ReviewStatus) => {
+      status.textContent = {
+        connecting: words.connecting,
+        live: words.live,
+        'host-away': words.hostAway,
+        ended: words.ended,
+      }[value]
+      this.#emit('pedit-status', { status: value })
+    }
+    say(room.review.get())
+    disposers.push(room.review.subscribe(say))
     room.connect()
   }
 
