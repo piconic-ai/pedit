@@ -1,5 +1,10 @@
 # Changelog
 
+## [v0.8.1](https://github.com/piconic-ai/pedit/compare/v0.8.0...v0.8.1) - 2026-11-07
+
+### Changes
+- Pin the review page examples at 0.8.0 by @kfly8 in https://github.com/piconic-ai/pedit/pull/485
+
 ## [v0.8.0](https://github.com/piconic-ai/pedit/compare/v0.7.0...v0.8.0) - 2026-11-07
 
 ### Changes
