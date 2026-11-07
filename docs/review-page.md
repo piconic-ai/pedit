@@ -20,20 +20,20 @@ into your static files:
 
 ```sh
 npm install --save-exact @pedit/review
-cp node_modules/@pedit/review/dist/pedit-review.js public/assets/pedit-review-0.7.0.js
+cp node_modules/@pedit/review/dist/pedit-review.js public/assets/pedit-review-0.8.0.js
 ```
 
 ```html
 <!doctype html>
 <meta charset="utf-8">
 <title>Review</title>
-<script type="module" src="/assets/pedit-review-0.7.0.js"></script>
+<script type="module" src="/assets/pedit-review-0.8.0.js"></script>
 <pedit-review relay="https://edit.piconic.ai"></pedit-review>
 ```
 
 Serve the file from your own origin. Do not load it from edit.piconic.ai or a CDN. The component, `@pedit/serve` and the
 `pedit` CLI share one version number: keep them on the same one, and update them together. The
-version banner that `pedit doctor` reads (step 4) is in releases after 0.7.0.
+version banner that `pedit doctor` reads (step 4) is in 0.8.0 and later.
 
 ### 2. Send the policy and the Referrer-Policy
 
@@ -78,7 +78,7 @@ in front. A resumed room keeps the origins it was opened with.
 pedit doctor https://cms.example.com/review
 ```
 
-`doctor` is in pedit releases after 0.7.0.
+`doctor` is in pedit 0.8.0 and later.
 
 It fetches the page (no cookies, no Referer; it contacts only the page's origin; the `#fragment` is dropped)
 and never opens a room. It checks:
