@@ -12,7 +12,7 @@ Experimental (0.x). The guide is [docs/review-page.md](../../docs/review-page.md
 Copy `dist/pedit-review.js` into your static files at a version you pin, and load it from your own origin:
 
 ```html
-<script type="module" src="/assets/pedit-review-0.1.0.js"></script>
+<script type="module" src="/assets/pedit-review-0.8.0.js"></script>
 <pedit-review relay="https://edit.piconic.ai" name="Ana"></pedit-review>
 ```
 
