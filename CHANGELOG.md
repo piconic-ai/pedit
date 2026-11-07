@@ -1,5 +1,14 @@
 # Changelog
 
+## [v0.8.0](https://github.com/piconic-ai/pedit/compare/v0.7.0...v0.8.0) - 2026-11-07
+
+### Changes
+- Mark the review bundle with its version, and share the reviewCSP vectors by @kfly8 in https://github.com/piconic-ai/pedit/pull/479
+- Keep the release PR's version in step with its tagpr labels by @kfly8 in https://github.com/piconic-ai/pedit/pull/481
+- Add the Go twin of reviewCSP for pedit doctor by @kfly8 in https://github.com/piconic-ai/pedit/pull/482
+- Add pedit doctor <url>: check a review page by @kfly8 in https://github.com/piconic-ai/pedit/pull/483
+- Add the integrator guide for your own review page (#235) by @kfly8 in https://github.com/piconic-ai/pedit/pull/484
+
 ## [v0.7.0](https://github.com/piconic-ai/pedit/compare/v0.6.0...v0.7.0) - 2026-11-06
 
 ### Changes
