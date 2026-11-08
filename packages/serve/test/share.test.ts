@@ -29,7 +29,7 @@ const answer = async (c) => {
   // An answer carries the command's id; the events nobody asked for carry none.
   const reply = (o) => send({ ...o, id: c.id })
   if (c.relay === 'noisy') send({ event: 'room_ended', reason: 'expired' })
-  await new Promise((r) => setTimeout(r, c.relay === 'slow' ? 150 : 0))
+  await new Promise((r) => setTimeout(r, c.relay === 'slow' ? 150 : typeof slowStatus !== 'undefined' && c.cmd === 'status' ? 400 : 0))
   if (c.cmd === 'share') {
     if (c.relay === 'fail') return reply({ event: 'error', cmd: 'share', message: 'relay down' })
     if (c.relay === 'choice' && !c.choice)
@@ -293,9 +293,11 @@ send({ event: 'peers', peers: [{ name: 'x'.repeat(10 * 1024), access: 'read' }] 
   })
 
   it('does not stop the child while a status is pending, and arms the idle stop after', async () => {
-    const { dir, files, events } = setup(script(2), 100)
+    // The answer comes 400 ms in, well past the 100 ms idle deadline.
+    const { dir, files, events } = setup(script(2, 'const slowStatus = true'), 100)
     const served = await files.acquire(write(dir, 'a.md'))
     await served.status()
+    expect(events.some((e) => e.type === 'stopped')).toBe(false)
     await vi.waitFor(() =>
       expect(events).toContainEqual({ type: 'stopped', path: served.path, reason: 'idle' }),
     )
