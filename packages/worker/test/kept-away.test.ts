@@ -674,8 +674,8 @@ describe('a kept room and the clients and deploys that meet it', () => {
     expect((await env.BLOBS.list({ prefix: `rooms/${id}/` })).objects).toHaveLength(0)
     h.ws.close(1001, 'gone')
     await h.closed
-    // A later connect cannot change it: it is answered with the stored keep.
-    const again = await hostOf(room, '60')
+    // A later connect with no keep cannot remove it: it is answered with the stored keep.
+    const again = await hostOf(room, '0')
     await until(() => again.signals.length === 1)
     expect(again.signals).toEqual(['keep 3600 0'])
     expect((await state(room)).keep).toBe(3600)
@@ -922,5 +922,197 @@ describe('the room`s whole life', () => {
     const guest = await join(room)
     h.ws.close(HOST_LEFT, 'bye')
     expect((await guest.closed).code).toBe(ROOM_CLOSED)
+  })
+})
+
+describe('the host reads and changes the keep over HTTP', () => {
+  const keepRequest = (
+    room: Room,
+    method: 'GET' | 'POST',
+    o: { token?: string | null; keep?: string } = {},
+  ) => {
+    const headers: Record<string, string> = { 'CF-Connecting-IP': nextAddress() }
+    const token = o.token === undefined ? room.hostToken : o.token
+    if (token !== null) headers.Authorization = `Bearer ${token}`
+    if (o.keep !== undefined) headers['X-Pedit-Keep'] = o.keep
+    return exports.default.fetch(`https://pedit.test/api/rooms/${room.id}/keep`, {
+      method,
+      headers,
+    })
+  }
+  interface Status {
+    keep: number
+    host: 'here' | 'away'
+    ends: number
+    lifeEnd: number
+  }
+  const status = async (room: Room) => {
+    const res = await keepRequest(room, 'GET')
+    expect(res.status).toBe(200)
+    return res.json<Status>()
+  }
+  const closeKept = (room: Room, tail: number) =>
+    exports.default.fetch(`https://pedit.test/api/rooms/${room.id}/keep/close`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${room.hostToken}`,
+        'X-Pedit-Tail': String(tail),
+        'CF-Connecting-IP': nextAddress(),
+      },
+    })
+  const near = (actual: number, expected: number) =>
+    expect(Math.abs(actual - expected)).toBeLessThan(5000)
+  const LIFE_MS = 7 * DAY * 1000
+
+  it('reports a room whose host is here', async () => {
+    const room = await createRoom()
+    await hostOf(room, '3600')
+    const { opened } = await state(room)
+    expect(await status(room)).toEqual({
+      keep: 3600,
+      host: 'here',
+      ends: opened! + ROOM_SECONDS * 1000,
+      lifeEnd: opened! + LIFE_MS,
+    })
+  })
+
+  it('counts a host within the grace period as here', async () => {
+    const room = await createRoom()
+    const h = await hostOf(room, '3600')
+    h.ws.close(1001, 'gone')
+    await h.closed
+    expect((await status(room)).host).toBe('here')
+  })
+
+  it('reports a room kept away, ending at its keptAwayUntil', async () => {
+    const room = await createRoom()
+    const h = await hostOf(room, '3600')
+    await leave(room, h)
+    const { until: keptUntil } = await state(room)
+    expect(await status(room)).toMatchObject({ keep: 3600, host: 'away', ends: keptUntil })
+  })
+
+  it('caps ends at the end of the room life', async () => {
+    const room = await createRoom()
+    const h = await hostOf(room, '3600')
+    const lifeEnd = Date.now() + 600_000
+    await inRoom(room, (_, st) => {
+      st.storage.kv.put('openedAt', lifeEnd - LIFE_MS)
+      st.storage.kv.put('hostSince', Date.now())
+    })
+    const s = await status(room)
+    expect([s.ends, s.lifeEnd]).toEqual([lifeEnd, lifeEnd])
+    // POST does not take it past the life either.
+    const res = await keepRequest(room, 'POST', { keep: String(KEEP_MAX) })
+    expect((await res.json<Status>()).ends).toBe(lifeEnd)
+    // Kept away, near the end of its life.
+    await leave(room, h)
+    const away = await status(room)
+    expect([away.host, away.ends]).toEqual(['away', lifeEnd])
+  })
+
+  it('answers 410 for a room that was never opened', async () => {
+    const room = await createRoom()
+    expect((await keepRequest(room, 'GET')).status).toBe(410)
+    expect((await keepRequest(room, 'POST', { keep: '60' })).status).toBe(410)
+  })
+
+  it('answers 410 for a room that was closed or expired', async () => {
+    const closed = await createRoom()
+    const h = await hostOf(closed, '3600')
+    await leave(closed, h)
+    expect((await closeKept(closed, 0)).status).toBe(200)
+    expect((await keepRequest(closed, 'GET')).status).toBe(410)
+
+    const expired = await createRoom()
+    const e = await hostOf(expired, '3600')
+    await leave(expired, e)
+    expect(await (await keepRequest(expired, 'GET')).json<Status>()).toMatchObject({
+      host: 'away',
+    })
+    await inRoom(expired, (_, st) => {
+      st.storage.kv.put('keptAwayUntil', Date.now() - 1)
+    })
+    // The alarm has not run yet: the room still counts as ended.
+    expect((await keepRequest(expired, 'GET')).status).toBe(410)
+    expect((await keepRequest(expired, 'POST', { keep: '60' })).status).toBe(410)
+    expect(await runDurableObjectAlarm(stubOf(expired))).toBe(true)
+    expect((await keepRequest(expired, 'GET')).status).toBe(410)
+  })
+
+  it('answers 403 without the host token, or with another', async () => {
+    const room = await createRoom()
+    await hostOf(room, '3600')
+    for (const method of ['GET', 'POST'] as const) {
+      expect((await keepRequest(room, method, { token: null, keep: '60' })).status).toBe(403)
+      const other = 'y'.repeat(43)
+      expect((await keepRequest(room, method, { token: other, keep: '60' })).status).toBe(403)
+    }
+    expect((await state(room)).keep).toBe(3600)
+  })
+
+  it('raises and lowers the keep while the host is here', async () => {
+    const room = await createRoom()
+    const h = await hostOf(room, '3600')
+    const up = await keepRequest(room, 'POST', { keep: '7200' })
+    expect(up.status).toBe(200)
+    expect((await up.json<Status>()).keep).toBe(7200)
+    expect((await state(room)).keep).toBe(7200)
+    const down = await keepRequest(room, 'POST', { keep: '60' })
+    expect((await down.json<Status>()).keep).toBe(60)
+    const clamped = await keepRequest(room, 'POST', { keep: String(KEEP_MAX * 10) })
+    expect((await clamped.json<Status>()).keep).toBe(KEEP_MAX)
+    await keepRequest(room, 'POST', { keep: '120' })
+    // The new keep is the one that counts when the host leaves.
+    await leave(room, h)
+    near((await state(room)).until!, Date.now() + 120_000)
+    expect((await status(room)).host).toBe('away')
+  })
+
+  it('refuses a change for a room kept away, a live room, or a bad value', async () => {
+    const room = await createRoom()
+    const h = await hostOf(room, '3600')
+    for (const keep of [undefined, '', '0', '-5', '1.5', 'x']) {
+      expect((await keepRequest(room, 'POST', { keep })).status).toBe(409)
+    }
+    expect((await state(room)).keep).toBe(3600)
+    await leave(room, h)
+    const { until: keptUntil } = await state(room)
+    expect((await keepRequest(room, 'POST', { keep: '60' })).status).toBe(409)
+    expect((await state(room)).until).toBe(keptUntil)
+
+    const live = await createRoom()
+    await join(live, { host: true })
+    expect((await keepRequest(live, 'POST', { keep: '60' })).status).toBe(409)
+    expect((await state(live)).keep).toBe(0)
+    expect(await (await keepRequest(live, 'GET')).json<Status>()).toMatchObject({
+      keep: 0,
+      host: 'here',
+    })
+  })
+
+  it('lets a later connect replace the keep, never remove or add one', async () => {
+    const room = await createRoom()
+    const h = await hostOf(room, '3600')
+    h.ws.close(1001, 'gone')
+    await h.closed
+    const again = await hostOf(room, '7200')
+    await until(() => again.signals.length === 1)
+    expect(again.signals).toEqual(['keep 7200 0'])
+    expect((await state(room)).keep).toBe(7200)
+    // Zero or none: answered with the stored keep, which stays.
+    const zero = await hostOf(room, '0')
+    await until(() => zero.signals.length === 1)
+    expect(zero.signals).toEqual(['keep 7200 0'])
+    await join(room, { host: true })
+    await quiet()
+    expect((await state(room)).keep).toBe(7200)
+    // A live room does not gain one.
+    const live = await createRoom()
+    await join(live, { host: true })
+    const later = await hostOf(live, '3600')
+    await until(() => later.signals.length === 1)
+    expect(later.signals).toEqual(['keep 0 0'])
+    expect((await state(live)).keep).toBe(0)
   })
 })

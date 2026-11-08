@@ -423,11 +423,42 @@ export class Room extends DurableObject<Env> {
     return this.ctx.storage.kv.get<string[]>(ORIGINS_KEY) ?? []
   }
 
-  // A request under /keep: only the host's close of a room kept without it.
+  // A request under /keep: the host's close of a room kept without it, the
+  // status of a kept room, and a change of its keep.
   private keepRequest(request: Request, path: string): Promise<Response> | Response {
     if (path.endsWith('/keep/close') && request.method === 'POST' && this.awayRoom())
       return this.closeAway(request)
+    if (path.endsWith('/keep') && (request.method === 'GET' || request.method === 'POST'))
+      return this.keepStatus(request)
     return new Response(null, { status: 404 })
+  }
+
+  // GET /keep answers what the room will do; POST /keep first replaces the
+  // keep, while the host is here, of a room opened with one.
+  private keepStatus(request: Request): Response {
+    if (request.headers.get(HOST_HEADER) !== '1') return new Response(null, { status: 403 })
+    const kv = this.ctx.storage.kv
+    // `expired()` also covers a room whose alarm has not run yet.
+    if (
+      this.openedAt() === undefined ||
+      kv.get(CLOSED_KEY) === true ||
+      kv.get(EXPIRED_KEY) === true ||
+      this.expired()
+    )
+      return new Response(null, { status: 410 })
+    if (request.method === 'POST') {
+      const asked = this.keepFrom(request.headers.get(KEEP_HEADER))
+      if (this.keptAway() || this.keepSeconds() === 0 || !asked)
+        return new Response(null, { status: 409 })
+      kv.put(KEEP_KEY, asked)
+    }
+    const keptUntil = kv.get<number>(KEPT_AWAY_KEY)
+    return Response.json({
+      keep: this.keepSeconds(),
+      host: keptUntil === undefined ? 'here' : 'away',
+      ends: Math.min(keptUntil ?? this.deadline(), this.lifeEnd()),
+      lifeEnd: this.lifeEnd(),
+    })
   }
 
   private joinFrom(request: Request, version: number, isHost: boolean): Join {
@@ -536,9 +567,11 @@ export class Room extends DurableObject<Env> {
     const v6 = join.version >= 6
     if (isHost) {
       this.log('host connected')
-      // Fixed at the first connection, before any image is stored under the
-      // prefix it picks: a later connect is answered with the stored keep.
+      // Whether there is a keep is fixed at the first connection, before any
+      // image is stored under the prefix it picks. A later connect may only
+      // replace a positive keep with another positive one.
       if (first) kv.put(KEEP_KEY, join.keep ?? 0)
+      else if (this.keepSeconds() > 0 && join.keep) kv.put(KEEP_KEY, join.keep)
       if (join.keep !== undefined) safeSend(server, `${KEEP} ${this.keepSeconds()} 0`)
       // The host returns to a room kept without it: it is sent what was
       // written, and the room is its own again.
