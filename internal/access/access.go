@@ -44,6 +44,31 @@ func runCloudflared(ctx context.Context, stdout, stderr io.Writer, args ...strin
 	return cmd.Run()
 }
 
+// Cached returns the token cloudflared keeps for app when it is still valid
+// for a minute, without opening the browser: "" when there is none. It is for
+// a request the user did not start, such as reading a room's status.
+func (c *Cloudflared) Cached(ctx context.Context, app string) (string, error) {
+	run := c.Run
+	if run == nil {
+		run = runCloudflared
+	}
+	now := time.Now
+	if c.Now != nil {
+		now = c.Now
+	}
+	var out bytes.Buffer
+	if err := run(ctx, &out, io.Discard, "access", "token", "-app="+app); err != nil {
+		if errors.Is(err, ErrNoCloudflared) {
+			return "", err
+		}
+		return "", nil
+	}
+	if token := strings.TrimSpace(out.String()); validFor(token, now(), time.Minute) {
+		return token, nil
+	}
+	return "", nil
+}
+
 // Token returns a token for the Access application at app, e.g. https://pedit.example.com
 func (c *Cloudflared) Token(ctx context.Context, app string) (string, error) {
 	run := c.Run
