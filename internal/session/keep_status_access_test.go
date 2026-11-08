@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -15,8 +16,14 @@ func TestKeepRequestsCarryTheSessionsAccessToken(t *testing.T) {
 	var got []http.Header
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got = append(got, r.Header.Clone())
-		if r.Header.Get(access.Header) != "user-token" {
+		switch {
+		case r.Header.Get(access.Header) == "user-token":
+		case r.Header.Get("X-Gate") == "403":
 			w.WriteHeader(http.StatusForbidden)
+			return
+		default:
+			// Cloudflare Access sends a request without its token to its login page.
+			http.Redirect(w, r, "/cdn-cgi/access/login/relay?redirect_url=%2F", http.StatusFound)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -49,7 +56,12 @@ func TestKeepRequestsCarryTheSessionsAccessToken(t *testing.T) {
 	if _, err := keepCall(context.Background(), srv.Client(), http.Header{access.Header: {"user-token"}}, srv.URL, "room", "host-token", -1); err != nil {
 		t.Fatalf("keepCall with the Access header: %v", err)
 	}
-	if _, err := keepCall(context.Background(), srv.Client(), nil, srv.URL, "room", "host-token", -1); err == nil {
-		t.Fatal("keepCall without the Access header passed the gate")
+	// Turned away by a redirect to the login page, or by a 403: both say an
+	// Access token may help.
+	if _, err := keepCall(context.Background(), nil, nil, srv.URL, "room", "host-token", -1); !errors.Is(err, ErrKeepForbidden) {
+		t.Fatalf("redirect to the login page: %v", err)
+	}
+	if _, err := keepCall(context.Background(), nil, http.Header{"X-Gate": {"403"}}, srv.URL, "room", "host-token", -1); !errors.Is(err, ErrKeepForbidden) {
+		t.Fatalf("403: %v", err)
 	}
 }

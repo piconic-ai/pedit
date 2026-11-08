@@ -72,7 +72,8 @@ func (f *fakeKeep) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if f.access != "" && r.Header.Get(access.Header) != f.access {
-		w.WriteHeader(http.StatusForbidden)
+		// As Cloudflare Access does: off to its login page.
+		http.Redirect(w, r, "/cdn-cgi/access/login/relay.example?redirect_url=%2F", http.StatusFound)
 		return
 	}
 	if r.Method == http.MethodPost {

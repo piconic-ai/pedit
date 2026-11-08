@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/piconic-ai/pedit/internal/protocol"
@@ -34,8 +35,9 @@ var (
 	// errUnanswered: the request got no answer, so the relay may have acted on it.
 	errUnanswered = errors.New("could not reach the relay")
 	// ErrKeepForbidden: the relay, or Cloudflare Access in front of it, turned
-	// the request away (HTTP 403); a caller may retry with an Access token.
-	ErrKeepForbidden = errors.New("the relay refused the request (HTTP 403)")
+	// the request away (HTTP 403, or a redirect to Access's login page); a
+	// caller may retry with an Access token.
+	ErrKeepForbidden = errors.New("the relay, or Cloudflare Access in front of it, refused the request")
 	ErrKeepRefused   = errors.New("the relay refused the keep: the room is live, or the host is away, or the value is not allowed")
 )
 
@@ -74,6 +76,11 @@ func keepCall(ctx context.Context, client *http.Client, extra http.Header, origi
 		return RoomStatus{}, errUnanswered
 	}
 	defer resp.Body.Close()
+	// Cloudflare Access sends a request without its token to its login page,
+	// as for creating a room (session.go), or answers 403.
+	if location, err := resp.Location(); err == nil && strings.HasPrefix(location.Path, "/cdn-cgi/access/") {
+		return RoomStatus{}, ErrKeepForbidden
+	}
 	switch resp.StatusCode {
 	case http.StatusOK:
 	case http.StatusGone:
