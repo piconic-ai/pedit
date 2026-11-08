@@ -80,7 +80,7 @@ type Options struct {
 	// Resume is the ID of a room Keep left a record of in Project: Start
 	// takes in what was written while the host was away, then goes on
 	// sharing the record's files in that room. File, More and Server are
-	// the record's.
+	// the record's. A positive Keep then replaces the room's keep.
 	Resume string
 	// OnKeep is called with the seconds the relay keeps the room, which may be
 	// less than asked, or 0 if it cannot keep it (it speaks version 5).
@@ -142,6 +142,8 @@ type Session struct {
 	noProject string
 	server    string
 	roomID    string
+	// hostToken is the host's bearer token for the relay's /keep requests.
+	hostToken string
 	blobKeys  *protocol.BlobKeys
 
 	// filesMu guards the files added after the first, the watched files and
@@ -294,6 +296,7 @@ func Start(ctx context.Context, opts Options) (*Session, error) {
 		blobKeys:  blobKeys,
 		nextID:    1,
 		resumed:   res,
+		hostToken: room.HostToken,
 	}
 	s.opts.OnError = onError
 	header, dial := hostHeader(opts, room.HostToken, res)

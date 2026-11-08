@@ -55,6 +55,7 @@ type Relay struct {
 	mu         sync.Mutex
 	hostPaused bool
 	hostAway   bool
+	hostSeen   bool
 	limited    int
 	conns      map[*Conn]bool
 	urls       []string
@@ -70,6 +71,14 @@ type Relay struct {
 // keptSignal tells a guest the room is kept until the deadline.
 func (r *Relay) keptSignal() protocol.Signal {
 	return protocol.Signal(fmt.Sprintf("kept %d", r.until))
+}
+
+// SetKeep changes the seconds the relay keeps the room, as a change of the
+// keep over HTTP does.
+func (r *Relay) SetKeep(seconds int64) {
+	r.mu.Lock()
+	r.Keep = seconds
+	r.mu.Unlock()
 }
 
 // Log returns the entries a kept room logged, oldest first.
@@ -111,6 +120,12 @@ func (r *Relay) Dial(_ context.Context, url string, header http.Header) (protoco
 		return nil, &protocol.CloseError{Code: protocol.RoomFull}
 	}
 	if c.isHost && r.Keep > 0 && header.Get(protocol.KeepHeader) != "" {
+		// As the Worker does, a later connection of the host replaces the keep
+		// with the one it asks for.
+		if asked, err := strconv.ParseInt(header.Get(protocol.KeepHeader), 10, 64); err == nil && asked > 0 && r.hostSeen {
+			r.Keep = asked
+		}
+		r.hostSeen = true
 		c.keeps = true
 		c.signals = append(c.signals, protocol.Signal(fmt.Sprintf("keep %d 0", r.Keep)))
 	}

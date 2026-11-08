@@ -189,11 +189,16 @@ const resumeStep = 30 * time.Second
 // files while the host was away, connects as the host, applies the replayed log, writes the files, and checkpoints, which has the
 // relay drop its log. It sets opts to share the record's files.
 func resumeAway(ctx context.Context, opts *Options) (*resumed, error) {
-	h, err := openAway(KeptTextOptions{Project: opts.Project, Resume: opts.Resume, OnSkipped: opts.OnSkipped, OnImageError: opts.OnImageError, Source: opts.Source, Generation: opts.Generation})
+	h, err := openAway(KeptTextOptions{Project: opts.Project, Resume: opts.Resume, Keep: opts.Keep, OnSkipped: opts.OnSkipped, OnImageError: opts.OnImageError, Source: opts.Source, Generation: opts.Generation})
 	if err != nil {
 		return nil, err
 	}
 	defer h.closeFiles()
+	// A positive Keep replaces the room's keep, which the relay hears on this
+	// first connection and the record holds from then on.
+	if opts.Keep > 0 {
+		h.state.Keep = int64(opts.Keep / time.Second)
+	}
 	conn, err := h.dialAway(ctx, opts.Dial, opts.Header)
 	if err != nil {
 		h.dropIfGone(err)

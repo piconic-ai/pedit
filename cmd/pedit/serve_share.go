@@ -62,6 +62,9 @@ var (
 	errKeptWindows   = errors.New(`kept rooms need Unix file permissions and are not available on Windows; send keep "0" for a live room`)
 	errOrigins       = errors.New("this file has a kept room with other origins; share with the origins it was opened with")
 
+	errKeepNotShared = errors.New("not shared; a room kept without this process gets a new keep from the next share")
+	errKeepLive      = errors.New("this room is live: a live room cannot become kept")
+
 	errNothingToClose = errors.New("no kept room to close: this file has no room shared or kept")
 	errChoiceLater    = errors.New("sharing waits for a choice: this file has a kept room with another history; send share with a choice")
 )
@@ -127,8 +130,9 @@ func (l *liveSharer) Share(ctx context.Context, req shareRequest) error {
 		// one from the account, with no avatar unless Access gives one.
 		Name:    nameOf(commandArgs{}),
 		Origins: req.Origins,
-		// A resumed room goes on with the keep it was opened with.
-		Keep:   req.Keep,
+		// A resumed room goes on with the keep it has, unless the share names
+		// another, which the relay hears on connecting.
+		Keep:   resumeKeep(req, resume),
 		Resume: resume,
 		// Names the document the record belongs to.
 		Generation:   l.srv.Generation(),
@@ -166,6 +170,15 @@ func (l *liveSharer) Share(ctx context.Context, req shareRequest) error {
 	}
 	l.st.Event("shared", answerWith(ctx, map[string]any{"room": room, "links": links, "keptUntil": keptUntil(ctx, s, req, kept), "resumed": resume != ""}))
 	return nil
+}
+
+// resumeKeep is the keep a session starts with: the request's, but a share that
+// takes up a kept room and names no keep leaves the room's own.
+func resumeKeep(req shareRequest, resume string) time.Duration {
+	if resume != "" && !req.KeepSet {
+		return 0
+	}
+	return req.Keep
 }
 
 // keepWait is how long a share waits for the relay's word on the keep. A relay
@@ -322,6 +335,76 @@ func (l *liveSharer) ended(ls *liveShare, st protocol.Status) {
 	}
 	l.st.Event("room_ended", map[string]any{"reason": reason})
 	l.leave()
+}
+
+// statusEvent answers a status command: the room, its links as the shared event
+// gives them, and what the relay says of its keep.
+func (l *liveSharer) statusEvent(ctx context.Context, room, edit, comment, read, host string, st session.RoomStatus) {
+	links := map[string]string{"edit": room + "." + edit, "read": room + "." + read}
+	if comment != "" {
+		links["comment"] = room + "." + comment
+	}
+	l.st.Event("status", answerWith(ctx, map[string]any{
+		"room": room, "links": links, "keep": st.Keep, "host": host, "ends": st.Ends, "lifeEnd": st.LifeEnd,
+	}))
+}
+
+// Status tells the app about the file's room: the one this process shares, or
+// else the one kept for the file without it. It changes nothing.
+func (l *liveSharer) Status(ctx context.Context) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.cur != nil {
+		st, err := l.cur.session.KeepStatus(ctx)
+		if err != nil {
+			return err
+		}
+		room, edit, comment, read := l.cur.session.Fragments()
+		l.statusEvent(ctx, room, edit, comment, read, "here", st)
+		return nil
+	}
+	cfg, err := loadProject(filepath.Dir(l.srv.Path()))
+	if err != nil {
+		return err
+	}
+	rec, err := keptRecordOf(cfg.root, l.srv.Path())
+	if err != nil {
+		return err
+	}
+	if rec == nil {
+		l.st.Event("status", answerWith(ctx, map[string]any{"room": nil}))
+		return nil
+	}
+	away, err := session.KeptStatus(ctx, cfg.root, rec.Room, nil)
+	if errors.Is(err, session.ErrRoomEnded) {
+		l.st.Event("status", answerWith(ctx, map[string]any{"room": nil}))
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	l.statusEvent(ctx, away.Room, away.Edit, away.Comment, away.Read, away.Host, away.RoomStatus)
+	return nil
+}
+
+// Keep changes the keep of the kept room this process shares, and answers with
+// its status.
+func (l *liveSharer) Keep(ctx context.Context, keep time.Duration) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	switch {
+	case l.cur == nil:
+		return errKeepNotShared
+	case !l.cur.kept:
+		return errKeepLive
+	}
+	st, err := l.cur.session.SetKeep(ctx, keep)
+	if err != nil {
+		return err
+	}
+	room, edit, comment, read := l.cur.session.Fragments()
+	l.statusEvent(ctx, room, edit, comment, read, "here", st)
+	return nil
 }
 
 func (l *liveSharer) Unshare() error {
