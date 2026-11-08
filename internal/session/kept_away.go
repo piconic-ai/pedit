@@ -272,10 +272,11 @@ func (a *keepAway) checkpoint(tail uint64) {
 func (a *keepAway) onText(text string) {
 	if seconds, _, ok := protocol.ParseKeep(text); ok {
 		a.mu.Lock()
-		first := a.granted == 0
+		changed := a.granted != seconds
 		a.granted = seconds
 		a.mu.Unlock()
-		if first && seconds > 0 {
+		// The record holds what the relay grants: write it when that changes.
+		if changed && seconds > 0 {
 			a.report(a.saveRecord(false))
 		}
 		a.tell(seconds)

@@ -457,6 +457,13 @@ func (c *Client) SetHeader(key, value string) {
 	c.opts.Header = h
 }
 
+// Header is a handshake header as the next connection sends it.
+func (c *Client) Header(key string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.opts.Header.Get(key)
+}
+
 func (c *Client) handshake() http.Header {
 	c.mu.Lock()
 	defer c.mu.Unlock()

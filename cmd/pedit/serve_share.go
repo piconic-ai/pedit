@@ -356,6 +356,11 @@ func (l *liveSharer) Status(ctx context.Context) error {
 	defer l.mu.Unlock()
 	if l.cur != nil {
 		st, err := l.cur.session.KeepStatus(ctx)
+		if errors.Is(err, session.ErrRoomEnded) {
+			// The room ended; the ended event follows.
+			l.st.Event("status", answerWith(ctx, map[string]any{"room": nil}))
+			return nil
+		}
 		if err != nil {
 			return err
 		}

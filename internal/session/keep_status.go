@@ -31,6 +31,8 @@ var (
 	ErrRelayTooOld = errors.New("the relay is too old to report or change a room's keep; it needs an update")
 	// ErrKeepRefused: the relay refused the new keep (HTTP 409): the room is
 	// kept without the host, live, or the value is not one it takes.
+	// errUnanswered: the request got no answer, so the relay may have acted on it.
+	errUnanswered  = errors.New("could not reach the relay")
 	ErrKeepRefused = errors.New("the relay refused the keep: the room is live, or the host is away, or the value is not allowed")
 )
 
@@ -59,7 +61,7 @@ func keepCall(ctx context.Context, client *http.Client, origin, room, token stri
 	}
 	resp, err := keepClient(client).Do(req)
 	if err != nil {
-		return RoomStatus{}, errors.New("could not reach the relay")
+		return RoomStatus{}, errUnanswered
 	}
 	defer resp.Body.Close()
 	switch resp.StatusCode {
@@ -92,8 +94,17 @@ func (s *Session) SetKeep(ctx context.Context, keep time.Duration) (RoomStatus, 
 	if keep <= 0 || keep%time.Second != 0 {
 		return RoomStatus{}, errors.New("keep must be positive whole seconds")
 	}
+	// A reconnect while the request is out asks for the new keep too, as the
+	// relay replaces the keep on every connection that sends one. Only a
+	// definite refusal takes it back: after a network failure the relay may
+	// have applied the change, and the next reconnect then agrees with it.
+	previous := s.Client.Header(protocol.KeepHeader)
+	s.Client.SetHeader(protocol.KeepHeader, strconv.FormatInt(int64(keep/time.Second), 10))
 	st, err := keepCall(ctx, s.opts.HTTPClient, s.server, s.roomID, s.hostToken, int64(keep/time.Second))
 	if err != nil {
+		if previous != "" && !errors.Is(err, errUnanswered) {
+			s.Client.SetHeader(protocol.KeepHeader, previous)
+		}
 		return st, err
 	}
 	s.Client.SetHeader(protocol.KeepHeader, strconv.FormatInt(st.Keep, 10))

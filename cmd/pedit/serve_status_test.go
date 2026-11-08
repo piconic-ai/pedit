@@ -20,6 +20,8 @@ type fakeKeep struct {
 	// forced is a status to answer with instead (404 for a relay too old, 410
 	// for a room that ended, 409 for a refusal).
 	forced int
+	// drop cuts the connection without an answer.
+	drop bool
 	// away says the host is away; live that the room has no keep.
 	away, live bool
 	secs       int64
@@ -32,6 +34,7 @@ type fakeKeepRequest struct{ method, auth, keep string }
 
 func (f *fakeKeep) set(secs int64) { f.mu.Lock(); f.secs = secs; f.mu.Unlock() }
 func (f *fakeKeep) force(code int) { f.mu.Lock(); f.forced = code; f.mu.Unlock() }
+func (f *fakeKeep) setDrop(v bool) { f.mu.Lock(); f.drop = v; f.mu.Unlock() }
 func (f *fakeKeep) setAway(v bool) { f.mu.Lock(); f.away = v; f.mu.Unlock() }
 func (f *fakeKeep) setLive(v bool) { f.mu.Lock(); f.live = v; f.mu.Unlock() }
 
@@ -45,6 +48,12 @@ func (f *fakeKeep) serve(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.reqs = append(f.reqs, fakeKeepRequest{r.Method, r.Header.Get("Authorization"), r.Header.Get(protocol.KeepHeader)})
+	if f.drop {
+		if conn, _, err := w.(http.Hijacker).Hijack(); err == nil {
+			_ = conn.Close()
+		}
+		return
+	}
 	if f.forced != 0 {
 		w.WriteHeader(f.forced)
 		return
