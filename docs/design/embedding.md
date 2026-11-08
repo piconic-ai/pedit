@@ -103,6 +103,26 @@ most 64 KiB. Each is answered by events on stream 0.
   end the room (HTTP 409: it is busy), `close` is an error telling the app to
   send it again; the room and its record stay, and a share that was running has
   ended.
+- `{"cmd":"status"}` tells the app about the file's room without changing
+  anything, so an app that restarted can show a share that is still open:
+  `{"event":"status","room":"<id>","links":{…},"keep":<seconds>,"host":"here"|"away","ends":<ms>,"lifeEnd":<ms>}`.
+  `host` is `here` while this process shares the room, `away` while the room is
+  kept without it. pedit reads the record for the file and asks the relay
+  (`GET /keep`); with no record, or a room the relay says has ended, it answers
+  `{"event":"status","room":null}`. A record of another history is still
+  reported: `share` then gives the choice below. Links come from the record,
+  as a resumed share gives them.
+- `{"cmd":"keep","keep":"3d"}` changes how long a shared room stays after the
+  host leaves, while it is shared (`POST /keep`). `keep` is as in `share`, but
+  not `0`: a live room cannot become kept, nor a kept one live. It is answered
+  with a `status` event. The room's life (7 days from its opening, on the
+  public relay) still caps it, and `ends` says when the room will end. Not
+  shared, a live room, or a relay without the endpoint: an error. A room kept
+  away gets its new keep from the next `share`, which sends it on connect.
+- `@pedit/serve` gives both as `status(path)` and `keep(path, keep)` beside
+  `share`, `unshare` and `close` (on `peditRoutes` and on `ServedFile`). A
+  pedit without them answers the unknown command with an error, which they
+  reject with, saying pedit is too old; the child goes on.
 - Events while shared:
   - `{"event":"peers","peers":[{"name":…,"access":"edit"|"comment"|"read"}]}`
     whenever someone joins, leaves or renames. At most 64 people are listed, names
@@ -110,7 +130,7 @@ most 64 KiB. Each is answered by events on stream 0.
   - `{"event":"room_ended","reason":"closed"|"expired"|"maintenance"}` when
     the relay ends the room.
 - Every command may carry `"id"`, a string of at most 64 bytes. The events that
-  answer it carry the same `id`: `shared`, `resume_choice`, `unshared`,
+  answer it carry the same `id`: `shared`, `resume_choice`, `status`, `unshared`,
   `room_ended` (for `close`, or `share` with `choice: "app"`) and `error`.
   Events nobody asked for (`peers`, a `room_ended` from the relay) carry none,
   so the app tells an answer from an unsolicited event by the id. If `close`
