@@ -1040,6 +1040,25 @@ describe('the host reads and changes the keep over HTTP', () => {
     expect((await keepRequest(expired, 'GET')).status).toBe(410)
   })
 
+  it('answers 410 for a room the host left without a snapshot, kept or not', async () => {
+    // Asked for a keep, but left no snapshot: it ends as the host leaves.
+    const noSnapshot = await createRoom()
+    const h = await hostOf(noSnapshot, '3600')
+    h.ws.close(HOST_LEFT, 'bye')
+    await h.closed
+    expect((await keepRequest(noSnapshot, 'GET')).status).toBe(410)
+    expect((await keepRequest(noSnapshot, 'POST', { keep: '60' })).status).toBe(410)
+    expect((await state(noSnapshot)).keep).toBe(3600)
+    // A room that was never kept.
+    const live = await createRoom()
+    const l = await join(live, { host: true })
+    expect((await keepRequest(live, 'GET')).status).toBe(200)
+    l.ws.close(HOST_LEFT, 'bye')
+    await l.closed
+    expect((await keepRequest(live, 'GET')).status).toBe(410)
+    expect((await keepRequest(live, 'POST', { keep: '60' })).status).toBe(410)
+  })
+
   it('answers 403 without the host token, or with another', async () => {
     const room = await createRoom()
     await hostOf(room, '3600')

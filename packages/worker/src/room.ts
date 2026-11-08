@@ -438,9 +438,12 @@ export class Room extends DurableObject<Env> {
   private keepStatus(request: Request): Response {
     if (request.headers.get(HOST_HEADER) !== '1') return new Response(null, { status: 403 })
     const kv = this.ctx.storage.kv
-    // `expired()` also covers a room whose alarm has not run yet.
+    // `endSession` is the one way a session ends (host left, close, expiry),
+    // and it always deletes the admission key; a room that opened has one until
+    // then. `expired()` also covers a room whose alarm has not run yet.
     if (
       this.openedAt() === undefined ||
+      kv.get(ADMISSION_KEY) === undefined ||
       kv.get(CLOSED_KEY) === true ||
       kv.get(EXPIRED_KEY) === true ||
       this.expired()
