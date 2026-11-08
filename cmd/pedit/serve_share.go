@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -380,7 +381,7 @@ func (l *liveSharer) Status(ctx context.Context) error {
 		l.st.Event("status", answerWith(ctx, map[string]any{"room": nil}))
 		return nil
 	}
-	away, err := session.KeptStatus(ctx, cfg.root, rec.Room, nil, nil)
+	away, err := keptStatusSignedIn(ctx, cfg.root, rec.Room, &access.Cloudflared{})
 	if errors.Is(err, session.ErrRoomEnded) {
 		l.st.Event("status", answerWith(ctx, map[string]any{"room": nil}))
 		return nil
@@ -390,6 +391,22 @@ func (l *liveSharer) Status(ctx context.Context) error {
 	}
 	l.statusEvent(ctx, away.Room, away.Edit, away.Comment, away.Read, away.Host, away.RoomStatus)
 	return nil
+}
+
+// keptStatusSignedIn asks the relay about a kept room from its record. The
+// record holds no Access token, so a relay behind Cloudflare Access turns the
+// first request away: it is asked again with the token cloudflared keeps, if
+// one is still valid. A status never opens the browser to sign in.
+func keptStatusSignedIn(ctx context.Context, project, room string, cf *access.Cloudflared) (session.KeptRoomStatus, error) {
+	st, err := session.KeptStatus(ctx, project, room, nil, nil)
+	if !errors.Is(err, session.ErrKeepForbidden) {
+		return st, err
+	}
+	token, cerr := cf.Cached(ctx, st.Origin)
+	if cerr != nil || token == "" {
+		return st, fmt.Errorf("%w; if the relay is behind Cloudflare Access, share the file to sign in", err)
+	}
+	return session.KeptStatus(ctx, project, room, nil, http.Header{access.Header: {token}})
 }
 
 // Keep changes the keep of the kept room this process shares, and answers with

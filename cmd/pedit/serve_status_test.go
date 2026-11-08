@@ -1,15 +1,21 @@
 package main
 
 import (
+	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/piconic-ai/pedit/internal/access"
 	"github.com/piconic-ai/pedit/internal/protocol"
 )
 
@@ -28,6 +34,8 @@ type fakeKeep struct {
 	// onKeep is told of a change that was accepted.
 	onKeep func(int64)
 	reqs   []fakeKeepRequest
+	// access, when set, is the Cf-Access-Token the relay's Access gate wants.
+	access string
 }
 
 type fakeKeepRequest struct{ method, auth, keep string }
@@ -37,6 +45,11 @@ func (f *fakeKeep) force(code int) { f.mu.Lock(); f.forced = code; f.mu.Unlock()
 func (f *fakeKeep) setDrop(v bool) { f.mu.Lock(); f.drop = v; f.mu.Unlock() }
 func (f *fakeKeep) setAway(v bool) { f.mu.Lock(); f.away = v; f.mu.Unlock() }
 func (f *fakeKeep) setLive(v bool) { f.mu.Lock(); f.live = v; f.mu.Unlock() }
+func (f *fakeKeep) setAccess(token string) {
+	f.mu.Lock()
+	f.access = token
+	f.mu.Unlock()
+}
 
 func (f *fakeKeep) requests() []fakeKeepRequest {
 	f.mu.Lock()
@@ -56,6 +69,10 @@ func (f *fakeKeep) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	if f.forced != 0 {
 		w.WriteHeader(f.forced)
+		return
+	}
+	if f.access != "" && r.Header.Get(access.Header) != f.access {
+		w.WriteHeader(http.StatusForbidden)
 		return
 	}
 	if r.Method == http.MethodPost {
@@ -276,5 +293,56 @@ func TestServeKeepErrors(t *testing.T) {
 	a.errorOf(5, "keep", "too old")
 	if rec := keptRecord(t, room); rec["Keep"] != float64(3600) {
 		t.Fatalf("the record changed: %v", rec["Keep"])
+	}
+}
+
+// A relay behind Cloudflare Access: the status of a kept room read from its
+// record is asked again with the token cloudflared keeps, never by signing in.
+func TestServeStatusOfAKeptRoomBehindAccess(t *testing.T) {
+	env := keptEnv(t)
+	env.keep.set(3600)
+	file := writeFile(t, "hello\n")
+	a := startApp(t, file)
+	room := a.shareKeptAt(env, cmsOrigin)["room"].(string)
+	a.command(`{"cmd":"unshare"}`)
+	waitLeft(t, room)
+	env.keep.setAway(true)
+	// The child finds the project from the file's real path (/var is a link on macOS).
+	real, err := filepath.EvalSymlinks(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadProject(filepath.Dir(real))
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := "eyJhbGciOiJSUzI1NiJ9." + base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"exp":%d}`, time.Now().Add(time.Hour).Unix()))) + ".sig"
+	cloudflared := func(token string, calls *[]string) *access.Cloudflared {
+		return &access.Cloudflared{Run: func(_ context.Context, stdout, _ io.Writer, args ...string) error {
+			*calls = append(*calls, strings.Join(args, " "))
+			if args[1] != "token" || token == "" {
+				return errors.New("exit status 1")
+			}
+			fmt.Fprintln(stdout, token)
+			return nil
+		}}
+	}
+
+	// Signed in: the cached token goes along, and the room is reported.
+	env.keep.setAccess(valid)
+	var calls []string
+	st, err := keptStatusSignedIn(context.Background(), cfg.root, room, cloudflared(valid, &calls))
+	if err != nil || st.Host != "away" || st.Room != room {
+		t.Fatalf("status %+v, %v", st, err)
+	}
+	// Not signed in: an error that says how to sign in; the browser never opens.
+	calls = nil
+	if _, err := keptStatusSignedIn(context.Background(), cfg.root, room, cloudflared("", &calls)); err == nil || !strings.Contains(err.Error(), "Cloudflare Access") {
+		t.Fatalf("err %v", err)
+	}
+	for _, c := range calls {
+		if strings.Contains(c, "login") {
+			t.Fatalf("signed in to read a status: %v", calls)
+		}
 	}
 }

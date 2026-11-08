@@ -156,3 +156,31 @@ func TestEmail(t *testing.T) {
 		}
 	}
 }
+
+func TestCachedNeverSignsIn(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	for name, tc := range map[string]struct {
+		token string
+		want  bool
+	}{
+		"valid":      {jwt("k@example.com", now.Add(time.Hour)), true},
+		"expiring":   {jwt("k@example.com", now.Add(10*time.Second)), false},
+		"signed out": {"", false},
+	} {
+		f := &fakeCloudflared{token: tc.token, now: now}
+		c := &Cloudflared{Run: f.run, Now: func() time.Time { return now }}
+		got, err := c.Cached(context.Background(), "https://pedit.example.com")
+		if err != nil || (got != "") == !tc.want || (tc.want && got != tc.token) {
+			t.Errorf("%s: %q, %v", name, got, err)
+		}
+		for _, call := range f.calls {
+			if strings.HasPrefix(call, "access login") {
+				t.Errorf("%s: signed in: %v", name, f.calls)
+			}
+		}
+	}
+	c := &Cloudflared{Run: func(context.Context, io.Writer, io.Writer, ...string) error { return ErrNoCloudflared }}
+	if _, err := c.Cached(context.Background(), "https://pedit.example.com"); !errors.Is(err, ErrNoCloudflared) {
+		t.Errorf("without cloudflared: %v", err)
+	}
+}

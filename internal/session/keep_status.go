@@ -32,8 +32,11 @@ var (
 	// ErrKeepRefused: the relay refused the new keep (HTTP 409): the room is
 	// kept without the host, live, or the value is not one it takes.
 	// errUnanswered: the request got no answer, so the relay may have acted on it.
-	errUnanswered  = errors.New("could not reach the relay")
-	ErrKeepRefused = errors.New("the relay refused the keep: the room is live, or the host is away, or the value is not allowed")
+	errUnanswered = errors.New("could not reach the relay")
+	// ErrKeepForbidden: the relay, or Cloudflare Access in front of it, turned
+	// the request away (HTTP 403); a caller may retry with an Access token.
+	ErrKeepForbidden = errors.New("the relay refused the request (HTTP 403)")
+	ErrKeepRefused   = errors.New("the relay refused the keep: the room is live, or the host is away, or the value is not allowed")
 )
 
 // keepClient is used when no HTTP client is given.
@@ -79,6 +82,8 @@ func keepCall(ctx context.Context, client *http.Client, extra http.Header, origi
 		return RoomStatus{}, ErrRelayTooOld
 	case http.StatusConflict:
 		return RoomStatus{}, ErrKeepRefused
+	case http.StatusForbidden:
+		return RoomStatus{}, ErrKeepForbidden
 	default:
 		return RoomStatus{}, fmt.Errorf("the relay refused the request (HTTP %d)", resp.StatusCode)
 	}
@@ -129,6 +134,8 @@ func (s *Session) SetKeep(ctx context.Context, keep time.Duration) (RoomStatus, 
 type KeptRoomStatus struct {
 	RoomStatus
 	Room string
+	// Origin is the relay the record names, also on an error from it.
+	Origin string
 	// Edit, Comment and Read are the fragments that follow '#' in the links;
 	// Comment is empty when no file of the room offers comments.
 	Edit, Comment, Read string
@@ -162,7 +169,7 @@ func KeptStatus(ctx context.Context, project, room string, client *http.Client, 
 	if err != nil {
 		return KeptRoomStatus{}, err
 	}
-	out := KeptRoomStatus{Room: room, Edit: keys.Fragments[protocol.AccessEdit], Read: keys.Fragments[protocol.AccessRead]}
+	out := KeptRoomStatus{Room: room, Origin: state.Origin, Edit: keys.Fragments[protocol.AccessEdit], Read: keys.Fragments[protocol.AccessRead]}
 	for _, f := range state.Files {
 		if f.Meta != nil {
 			out.Comment = keys.Fragments[protocol.AccessComment]
