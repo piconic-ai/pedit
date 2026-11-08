@@ -115,41 +115,57 @@ func parseCommand(payload []byte) (command, *shareRequest, error) {
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return c, nil, &commandError{knownCmd(payload), knownID(payload), errors.New("not a command: data after the JSON object")}
 	}
-	fail := func(format string, args ...any) error {
-		return &commandError{knownCmd(payload), c.ID, fmt.Errorf(format, args...)}
+	fail := func(err error) error {
+		return &commandError{knownCmd(payload), c.ID, err}
 	}
 	if c.ID != nil && len(*c.ID) > maxCommandID {
-		return c, nil, fail("id is longer than %d bytes", maxCommandID)
+		return c, nil, fail(fmt.Errorf("id is longer than %d bytes", maxCommandID))
 	}
+	var req *shareRequest
+	var err error
 	switch c.Cmd {
 	case cmdShare:
+		req, err = parseShare(c)
 	case cmdUnshare, cmdClose, cmdStatus:
 		if c.Origins != nil || c.Keep != nil || c.Relay != nil || c.Choice != nil {
-			return c, nil, fail("%s takes no fields but cmd", c.Cmd)
+			err = fmt.Errorf("%s takes no fields but cmd", c.Cmd)
 		}
-		return c, nil, nil
 	case cmdKeep:
-		if c.Origins != nil || c.Relay != nil || c.Choice != nil {
-			return c, nil, fail("keep takes no fields but cmd, id and keep")
-		}
-		if c.Keep == nil {
-			return c, nil, fail("keep: missing")
-		}
-		if *c.Keep == "0" {
-			return c, nil, fail("keep: 0 is not allowed; a room cannot become live")
-		}
-		d, err := parseKeepDuration(*c.Keep)
-		if err != nil {
-			return c, nil, fail("keep: %w", err)
-		}
-		return c, &shareRequest{Keep: d}, nil
+		req, err = parseKeepCommand(c)
 	default:
 		return c, nil, &commandError{"", c.ID, errors.New("unknown cmd")}
 	}
+	if err != nil {
+		return c, nil, fail(err)
+	}
+	return c, req, nil
+}
+
+// parseKeepCommand checks a keep command: it gives a request holding only
+// its Keep, which must not be 0 (a kept room cannot become live).
+func parseKeepCommand(c command) (*shareRequest, error) {
+	if c.Origins != nil || c.Relay != nil || c.Choice != nil {
+		return nil, errors.New("keep takes no fields but cmd, id and keep")
+	}
+	if c.Keep == nil {
+		return nil, errors.New("keep: missing")
+	}
+	if *c.Keep == "0" {
+		return nil, errors.New("keep: 0 is not allowed; a room cannot become live")
+	}
+	d, err := parseKeepDuration(*c.Keep)
+	if err != nil {
+		return nil, fmt.Errorf("keep: %w", err)
+	}
+	return &shareRequest{Keep: d}, nil
+}
+
+// parseShare checks a share command's fields and gives its request.
+func parseShare(c command) (*shareRequest, error) {
 	req := &shareRequest{Keep: defaultKeep}
 	origins, err := protocol.ParseOrigins(c.Origins)
 	if err != nil {
-		return c, nil, fail("origins: %w", err)
+		return nil, fmt.Errorf("origins: %w", err)
 	}
 	req.Origins = origins
 	if c.Keep != nil {
@@ -157,12 +173,12 @@ func parseCommand(payload []byte) (command, *shareRequest, error) {
 		if *c.Keep == "0" {
 			req.Keep = 0
 		} else if req.Keep, err = parseKeepDuration(*c.Keep); err != nil {
-			return c, nil, fail("keep: %w", err)
+			return nil, fmt.Errorf("keep: %w", err)
 		}
 	}
 	if c.Relay != nil {
 		if err := checkRelay(*c.Relay); err != nil {
-			return c, nil, fail("relay: %w", err)
+			return nil, fmt.Errorf("relay: %w", err)
 		}
 		req.Relay = *c.Relay
 	}
@@ -171,10 +187,10 @@ func parseCommand(payload []byte) (command, *shareRequest, error) {
 		case "room", "app", "later":
 			req.Choice = *c.Choice
 		default:
-			return c, nil, fail(`choice must be "room", "app" or "later"`)
+			return nil, errors.New(`choice must be "room", "app" or "later"`)
 		}
 	}
-	return c, req, nil
+	return req, nil
 }
 
 // knownCmd is the cmd of a payload if it names a command pedit knows, so that

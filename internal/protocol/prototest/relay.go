@@ -120,14 +120,7 @@ func (r *Relay) Dial(_ context.Context, url string, header http.Header) (protoco
 		return nil, &protocol.CloseError{Code: protocol.RoomFull}
 	}
 	if c.isHost && r.Keep > 0 && header.Get(protocol.KeepHeader) != "" {
-		// As the Worker does, a later connection of the host replaces the keep
-		// with the one it asks for.
-		if asked, err := strconv.ParseInt(header.Get(protocol.KeepHeader), 10, 64); err == nil && asked > 0 && r.hostSeen {
-			r.Keep = asked
-		}
-		r.hostSeen = true
-		c.keeps = true
-		c.signals = append(c.signals, protocol.Signal(fmt.Sprintf("keep %d 0", r.Keep)))
+		r.hostKeeps(c, header.Get(protocol.KeepHeader))
 	}
 	if r.kept && !c.isHost {
 		c.signals = append(c.signals, r.keptSignal())
@@ -142,6 +135,18 @@ func (r *Relay) Dial(_ context.Context, url string, header http.Header) (protoco
 	}
 	r.conns[c] = true
 	return c, nil
+}
+
+// hostKeeps answers a host that asks for a keep with the room's keep. As the
+// Worker does, a later connection of the host replaces the keep with the
+// positive one it asks for.
+func (r *Relay) hostKeeps(c *Conn, asked string) {
+	if n, err := strconv.ParseInt(asked, 10, 64); err == nil && n > 0 && r.hostSeen {
+		r.Keep = n
+	}
+	r.hostSeen = true
+	c.keeps = true
+	c.signals = append(c.signals, protocol.Signal(fmt.Sprintf("keep %d 0", r.Keep)))
 }
 
 // hostReturns replays the log after the last entry the host holds, as the
