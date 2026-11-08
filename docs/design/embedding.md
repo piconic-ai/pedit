@@ -106,12 +106,14 @@ most 64 KiB. Each is answered by events on stream 0.
 - `{"cmd":"status"}` tells the app about the file's room without changing
   anything, so an app that restarted can show a share that is still open:
   `{"event":"status","room":"<id>","links":{…},"keep":<seconds>,"host":"here"|"away","ends":<ms>,"lifeEnd":<ms>}`.
-  `host` is `here` while this process shares the room, `away` while the room is
-  kept without it. pedit reads the record for the file and asks the relay
-  (`GET /keep`); with no record, or a room the relay says has ended, it answers
+  While this process shares the file, the answer is that room (live or kept),
+  with `host` `here` and the links `shared` gave; pedit still asks the relay
+  (`GET /keep`) for `keep`, `ends` and `lifeEnd`. Only when nothing is shared
+  does pedit read the record for the file and ask the relay about it: `host`
+  is then `away`, and the links come from the record, as a resumed share gives
+  them. With no record, or a room the relay says has ended, it answers
   `{"event":"status","room":null}`. A record of another history is still
-  reported: `share` then gives the choice below. Links come from the record,
-  as a resumed share gives them.
+  reported: `share` then gives the choice below.
 - `{"cmd":"keep","keep":"3d"}` changes how long a shared room stays after the
   host leaves, while it is shared (`POST /keep`). `keep` is as in `share`, but
   not `0`: a live room cannot become kept, nor a kept one live. It is answered
