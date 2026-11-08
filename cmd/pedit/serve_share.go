@@ -380,7 +380,7 @@ func (l *liveSharer) Status(ctx context.Context) error {
 		l.st.Event("status", answerWith(ctx, map[string]any{"room": nil}))
 		return nil
 	}
-	away, err := session.KeptStatus(ctx, cfg.root, rec.Room, nil)
+	away, err := session.KeptStatus(ctx, cfg.root, rec.Room, nil, nil)
 	if errors.Is(err, session.ErrRoomEnded) {
 		l.st.Event("status", answerWith(ctx, map[string]any{"room": nil}))
 		return nil

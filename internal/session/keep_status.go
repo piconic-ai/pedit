@@ -45,8 +45,10 @@ func keepClient(c *http.Client) *http.Client {
 }
 
 // keepCall asks the relay for the status of room (keep < 0), or changes its
-// keep to that many seconds, with the host's token.
-func keepCall(ctx context.Context, client *http.Client, origin, room, token string, keep int64) (RoomStatus, error) {
+// keep to that many seconds, with the host's token. extra holds what the
+// session sends with every request, such as a Cloudflare Access token; it
+// never replaces the host's Authorization.
+func keepCall(ctx context.Context, client *http.Client, extra http.Header, origin, room, token string, keep int64) (RoomStatus, error) {
 	method := http.MethodGet
 	if keep >= 0 {
 		method = http.MethodPost
@@ -54,6 +56,11 @@ func keepCall(ctx context.Context, client *http.Client, origin, room, token stri
 	req, err := http.NewRequestWithContext(ctx, method, origin+"/api/rooms/"+room+"/keep", nil)
 	if err != nil {
 		return RoomStatus{}, errors.New("invalid keep request")
+	}
+	for name, values := range extra {
+		if http.CanonicalHeaderKey(name) != "Authorization" {
+			req.Header[http.CanonicalHeaderKey(name)] = append([]string(nil), values...)
+		}
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	if keep >= 0 {
@@ -84,7 +91,7 @@ func keepCall(ctx context.Context, client *http.Client, origin, room, token stri
 
 // KeepStatus asks the relay about the room this session hosts.
 func (s *Session) KeepStatus(ctx context.Context) (RoomStatus, error) {
-	return keepCall(ctx, s.opts.HTTPClient, s.server, s.roomID, s.hostToken, -1)
+	return keepCall(ctx, s.opts.HTTPClient, s.opts.Header, s.server, s.roomID, s.hostToken, -1)
 }
 
 // SetKeep changes how long the relay keeps the room after the host leaves,
@@ -100,7 +107,7 @@ func (s *Session) SetKeep(ctx context.Context, keep time.Duration) (RoomStatus, 
 	// have applied the change, and the next reconnect then agrees with it.
 	previous := s.Client.Header(protocol.KeepHeader)
 	s.Client.SetHeader(protocol.KeepHeader, strconv.FormatInt(int64(keep/time.Second), 10))
-	st, err := keepCall(ctx, s.opts.HTTPClient, s.server, s.roomID, s.hostToken, int64(keep/time.Second))
+	st, err := keepCall(ctx, s.opts.HTTPClient, s.opts.Header, s.server, s.roomID, s.hostToken, int64(keep/time.Second))
 	if err != nil {
 		if previous != "" && !errors.Is(err, errUnanswered) {
 			s.Client.SetHeader(protocol.KeepHeader, previous)
@@ -127,10 +134,11 @@ type KeptRoomStatus struct {
 	Edit, Comment, Read string
 }
 
-// KeptStatus reads the record of room in project and asks the relay about it.
-// A relay that says the room has ended gives ErrRoomEnded; the record is left
-// as it is.
-func KeptStatus(ctx context.Context, project, room string, client *http.Client) (KeptRoomStatus, error) {
+// KeptStatus reads the record of room in project and asks the relay about it,
+// sending header besides the host's token (the record holds no Access token:
+// a caller signed in to an Access-protected relay passes its own). A relay
+// that says the room has ended gives ErrRoomEnded; the record is left as it is.
+func KeptStatus(ctx context.Context, project, room string, client *http.Client, header http.Header) (KeptRoomStatus, error) {
 	project, err := filepath.Abs(project)
 	if err != nil {
 		return KeptRoomStatus{}, errors.New("invalid kept project")
@@ -160,6 +168,6 @@ func KeptStatus(ctx context.Context, project, room string, client *http.Client) 
 			out.Comment = keys.Fragments[protocol.AccessComment]
 		}
 	}
-	out.RoomStatus, err = keepCall(ctx, client, state.Origin, room, state.HostToken, -1)
+	out.RoomStatus, err = keepCall(ctx, client, header, state.Origin, room, state.HostToken, -1)
 	return out, err
 }
