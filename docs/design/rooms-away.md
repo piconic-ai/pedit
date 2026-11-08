@@ -62,9 +62,12 @@ Yjs sync when the host returns. A version 5 host cannot keep a room.
   `X-Pedit-Keep: <seconds>`, which the Worker passes on only with a host token
   that checked out. The room clamps it to `KEEP_MAX_SECONDS`, stores it, and
   answers `keep`. The keep is fixed at the room's first host connection, since
-  it decides where images go (`kept/` from the first upload, never `rooms/`): a
-  later connect, with another value or none, is answered with the stored keep,
-  and a room first connected without one cannot gain one. Zero or none: the room ends when the host leaves, as always.
+  it decides where images go (`kept/` from the first upload, never `rooms/`):
+  a room first connected without one cannot gain one, and one first connected
+  with one cannot lose it. Within that, a later connect with another positive
+  value replaces the stored keep (clamped as at first), and a later connect
+  with zero or none is answered with the stored keep. Zero or none at first:
+  the room ends when the host leaves, as always.
   While the host is connected the session lasts `ROOM_MAX_SECONDS` from
   `hostSince` (`openedAt` until the host first returns from kept-away, then the
   time of that return); the keep does not lengthen it. Whatever the state, the room ends
@@ -98,6 +101,23 @@ Yjs sync when the host returns. A version 5 host cannot keep a room.
 - **Closing.** `POST /keep/close` with the host token and `X-Pedit-Tail` ends a
   kept room early, after the host took in every entry (a later entry gives 409).
   It does the same teardown, closing peers with `ROOM_CLOSED`.
+- **Status.** `GET /keep` with the host token answers what the room will do,
+  so a host that restarted can show a room it does not hold a connection to:
+  `{"keep":<seconds>,"host":"here"|"away","ends":<ms>,"lifeEnd":<ms>}`.
+  `ends` is when the room ends if nothing changes: `keptAwayUntil` while kept,
+  else the end of the host's session (`ROOM_MAX_SECONDS` from `hostSince`),
+  both capped at `lifeEnd` (`openedAt + ROOM_LIFE_SECONDS`). A room that has
+  ended (closed, expired), or that no host ever opened, answers 410.
+  A room whose host dropped and is still within the grace period is `here`.
+- **Changing the keep.** `POST /keep` with the host token and `X-Pedit-Keep:
+  <seconds>` replaces the stored keep while the host is connected, and answers
+  as `GET /keep` does. It needs a room first opened with a keep and a positive
+  value (else 409), and is clamped to `KEEP_MAX_SECONDS`; the room's life still
+  caps it, so a keep never takes a room past `lifeEnd`. A room kept away answers
+  409: the host changes the keep by coming back (its connect carries the new
+  value, above). Both requests are limited as `/keep/close` is. They need no
+  new protocol version: a relay without them answers 404 (they always answer
+  something else), and the host reports that the relay is too old for it.
 
 ## Clients
 
