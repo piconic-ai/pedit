@@ -1,6 +1,6 @@
 import { checkProtocolVersion } from '@pedit/protocol/admission'
 import { RELAY_BUSY, RELAY_MAINTENANCE } from '@pedit/protocol/close'
-import { Hono } from 'hono'
+import { type Context, Hono } from 'hono'
 import { FOREIGN_ORIGIN_HEADER, ORIGINS_HEADER } from './origins.ts'
 import { embedSourcesFor, mediaSourcesFrom, scriptHashes, servePage } from './page.ts'
 import { HOST_HEADER, KEEP_HEADER, maintenance, refuse } from './room.ts'
@@ -152,27 +152,38 @@ app.post('/api/rooms', async (c) => {
   return c.json({ id: await roomIdFor(hostToken), hostToken }, 201)
 })
 
-// Only the host's close survives of the old HTTP kept rooms.
-app.post('/api/rooms/:id/keep/close', async (c) => {
+// What the host asks of a room it may not hold a connection to: close a kept
+// room, read its status, change its keep. The room answers; the Worker only
+// checks the host token and passes the role on.
+async function hostRequest(c: Context<{ Bindings: Bindings }>, label: string): Promise<Response> {
   const id = c.req.param('id')
   if (!id || !ROOM_ID.test(id) || !allowedOrigin(c.req.raw))
     return c.text('invalid room request', 400)
   const level = maintenance(c.env)
   if (level === 'closed') return c.text(CLOSED_FOR_MAINTENANCE, 503)
-  if (await overLimit(c.env.KEEP_REQUEST_LIMIT, c.req.raw, 'keep close'))
+  if (await overLimit(c.env.KEEP_REQUEST_LIMIT, c.req.raw, label))
     return c.text('Too many kept room requests', 429, { 'Retry-After': '60' })
 
+  // The keep is the host's to ask for, so it goes on only with a host token
+  // that checked out.
   const headers = new Headers(c.req.raw.headers)
   headers.delete(HOST_HEADER)
+  headers.delete(KEEP_HEADER)
   headers.delete(FOREIGN_ORIGIN_HEADER)
   const auth = c.req.header('Authorization')
   if (auth) {
     const token = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(auth)?.[1]
     if (!token || (await roomIdFor(token)) !== id) return c.text('invalid host token', 403)
     headers.set(HOST_HEADER, '1')
+    const keep = c.req.header(KEEP_HEADER)
+    if (keep !== undefined) headers.set(KEEP_HEADER, keep)
   }
   return c.env.ROOM.get(c.env.ROOM.idFromName(id)).fetch(new Request(c.req.raw, { headers }))
-})
+}
+
+app.post('/api/rooms/:id/keep/close', (c) => hostRequest(c, 'keep close'))
+app.get('/api/rooms/:id/keep', (c) => hostRequest(c, 'keep status'))
+app.post('/api/rooms/:id/keep', (c) => hostRequest(c, 'keep change'))
 
 app.get('/api/rooms/:id/ws', async (c) => {
   const id = c.req.param('id')
