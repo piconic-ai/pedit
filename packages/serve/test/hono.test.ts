@@ -443,6 +443,8 @@ process.stdin.on('data', (d) => {
     send({ event: 'shared', id, room: 'r1', links: { edit: 'r1.e', read: 'r1.r' }, keptUntil: 0, resumed: false })
     send({ event: 'peers', peers: [{ name: 'ada', access: 'edit' }] })
   } else if (cmd === 'unshare') send({ event: 'unshared', id })
+  else if (cmd === 'status' || cmd === 'keep')
+    send({ event: 'status', id, room: 'r1', links: { edit: 'r1.e', read: 'r1.r' }, keep: 60, host: 'away', ends: 5, lifeEnd: 9 })
   else send({ event: 'room_ended', id, reason: 'closed' })
 })
 process.stdin.on('end', () => process.exit(0))
@@ -476,6 +478,22 @@ process.stdin.on('end', () => process.exit(0))
     )
   })
 
+  it('reports a kept file without a share, and changes its keep', async () => {
+    const { bin, log } = sharer()
+    const f = await start({ bin })
+    const path = join(f.root, 'a.md')
+    expect(await f.routes.status(path)).toEqual({
+      room: 'r1',
+      links: { edit: 'r1.e', read: 'r1.r' },
+      keep: 60,
+      host: 'away',
+      ends: 5,
+      lifeEnd: 9,
+    })
+    expect(await f.routes.keep(path, '3d')).toMatchObject({ room: 'r1' })
+    expect(log()).toEqual(['{"cmd":"status","id":"c1"}', '{"cmd":"keep","id":"c2","keep":"3d"}'])
+  })
+
   it('refuses a path the routes would refuse, without starting a child', async () => {
     const { bin, log } = sharer()
     const f = await start({ bin })
@@ -485,7 +503,11 @@ process.stdin.on('end', () => process.exit(0))
       join(f.root, 'nope.md'),
       f.root,
     ]
-    for (const p of bad) await expect(f.routes.share(p), p).rejects.toThrow('file not found')
+    for (const p of bad) {
+      await expect(f.routes.share(p), p).rejects.toThrow('file not found')
+      await expect(f.routes.status(p), p).rejects.toThrow('file not found')
+      await expect(f.routes.keep(p, '1d'), p).rejects.toThrow('file not found')
+    }
     await expect(f.routes.share('a.md')).rejects.toThrow(/absolute/)
     expect(f.events.filter((e) => e.type === 'started')).toEqual([])
     expect(() => log()).toThrow() // the fake never ran

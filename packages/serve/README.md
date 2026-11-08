@@ -83,13 +83,13 @@ const extensions = [yCollab(conn.text, conn.awareness)] // plus basicSetup, Edit
 | Export | |
 | --- | --- |
 | `ServedFiles` | The layer below the routes: `acquire(path)` starts or reuses a child, `close()` ends all. |
-| `ServedFile.share(opts)`, `unshare()`, `close()` | Open a room for the file (needs pedit with `serve` 2; the child is not idle-stopped while shared). `share` resolves `{ type: 'shared', room, links, keptUntil, resumed }`, or `{ type: 'choice', room, choices }` when the file has a kept room of another history (share again with `choice`). A link is `<room>.<fragment>`: put your page URL and `#` before it. `onEvent` also gets `peers`, `room_ended` and `shared`. |
+| `ServedFile.share(opts)`, `unshare()`, `close()`, `status()`, `keep(keep)` | Open a room for the file (needs pedit with `serve` 2; the child is not idle-stopped while shared). `share` resolves `{ type: 'shared', room, links, keptUntil, resumed }`, or `{ type: 'choice', room, choices }` when the file has a kept room of another history (share again with `choice`). A link is `<room>.<fragment>`: put your page URL and `#` before it. `onEvent` also gets `peers`, `room_ended` and `shared`. `status()` and `keep(keep)` are described under Sharing. |
 | `resolvePedit({ bin, install })`, `MIN_PEDIT_VERSION` | Finds pedit, checks the binary and its version. With `install: true`, downloads it when none is usable (see above) and returns `installed`. |
 | `HeldError`, `LimitError`, `NoPeditError` | Another process serves the file; 32 files or 8 clients; pedit missing or too old. |
 
 ## Sharing
 
-`peditRoutes(...)` also returns `share(path, opts)`, `unshare(path)` and `close(path)`. `path` is an absolute path to a file under `root`, checked as the routes check it (a path outside `root`, a link out of it or a missing file rejects with `file not found`, and starts no child). Sharing needs pedit with `serve` 2; the child is not stopped for idleness while the file is shared.
+`peditRoutes(...)` also returns `share(path, opts)`, `unshare(path)`, `close(path)`, `status(path)` and `keep(path, keep)`. `path` is an absolute path to a file under `root`, checked as the routes check it (a path outside `root`, a link out of it or a missing file rejects with `file not found`, and starts no child). Sharing needs pedit with `serve` 2; the child is not stopped for idleness while the file is shared.
 
 ```ts
 const result = await routes.share('/home/me/notes/a.md', {
@@ -110,6 +110,12 @@ if (result.type === 'shared') {
 | `{ type: 'closed' }` | `choice: 'app'` ended the kept room, so nothing is shared. Call `share` again to open a new one. |
 
 `unshare` leaves the room: a kept room stays until its deadline, a live one ends. `close` ends a kept room for good (called with no path it stops every child, as before). A failure from pedit rejects with its message.
+
+`status(path)` tells what room the file has, without changing anything, so an app that restarted can show a share that is still open. It resolves `{ room, links: { edit, comment?, read }, keep, host, ends, lifeEnd }`, or `null` when the file has no room (or the relay says it has ended). `host` is `'here'` while pedit shares the room now and `'away'` while it is kept without pedit; `keep` is in seconds, `ends` is when the room ends and `lifeEnd` the end of its life (both Unix ms). It starts the child if none runs, as pedit reads the file's record there, and a record of another history is still reported: `share` then gives the `choice`.
+
+`keep(path, keep)` changes how long the relay keeps the room after pedit leaves (`'3d'`, as in `share`; not `'0'`), while the file is shared with a keep. It resolves the new status. It rejects when the file is not shared, the room is live, or the relay refuses; a room kept without pedit gets its new keep from the next `share`.
+
+A pedit that has no `status` or `keep` (an earlier release with `serve` 2) answers the unknown command with an error, and both reject with `pedit is too old for status; update it` (or `keep`). The child goes on.
 
 `onEvent` also gets `shared`, `peers` (`{ peers: [{ name, access }], more? }`, `more` counts people left out of the list), `room_ended` (`reason`: `closed`, `expired` or `maintenance`, also when the relay ended the room unasked) and `unshared`. Each carries `path` and `id`: the id the routes last served that path under, or `null`.
 

@@ -9,7 +9,7 @@ import { HeldError } from './errors.ts'
 import { nativeRealpath, nativeRealpathSync } from './paths.ts'
 import { resolvePedit } from './resolve.ts'
 import { ServedFiles } from './served.ts'
-import type { Peer, Role, Shared, ShareOptions, ShareResult } from './types.ts'
+import type { Peer, Role, Shared, ShareOptions, ShareResult, ShareStatus } from './types.ts'
 
 export type { Role }
 
@@ -52,6 +52,10 @@ export interface PeditRoutes {
   unshare(path: string): Promise<void>
   /** With a path: end that file's kept room for good. Without: stop every child. */
   close(path?: string): Promise<void>
+  /** The file's room, shared now or kept without pedit; `null` when it has none. */
+  status(path: string): Promise<ShareStatus | null>
+  /** Change the keep of the room this file shares now (`3d`; not `0`). */
+  keep(path: string, keep: string): Promise<ShareStatus>
 }
 
 const ID = /^[A-Za-z0-9_-]{1,128}$/
@@ -372,5 +376,7 @@ export function peditRoutes<E extends Env = Env>(options: PeditOptions<E>): Hono
       if (path !== undefined) return (await sharable(path)).close()
       await (await filesP?.catch(() => undefined))?.close()
     },
+    status: async (path: string) => (await sharable(path)).status(),
+    keep: async (path: string, keep: string) => (await sharable(path)).keep(keep),
   })
 }
