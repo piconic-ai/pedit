@@ -7,7 +7,15 @@ import { type Bridge, EVENT, FrameParser, MAX_COMMAND, Streams } from './bridge.
 import { HeldError, LimitError, NoPeditError } from './errors.ts'
 import { nativeRealpath } from './paths.ts'
 import { peditEnv } from './resolve.ts'
-import type { Peer, Role, ServeEvent, Shared, ShareOptions, ShareResult } from './types.ts'
+import type {
+  Peer,
+  Role,
+  ServeEvent,
+  Shared,
+  ShareOptions,
+  ShareResult,
+  ShareStatus,
+} from './types.ts'
 
 const MAX_FILES = 32
 const MAX_CLIENTS = 8
@@ -48,9 +56,21 @@ export interface ServedFile {
   unshare(): Promise<void>
   /** End the file's kept room for good (a live one is only left). Resolves once it is over. */
   close(): Promise<void>
+  /**
+   * The file's room, without changing anything: the one pedit shares now, or the one kept for the
+   * file without it. `null` when the file has none, or the relay says it has ended. A pedit that
+   * does not know the command rejects, saying it is too old.
+   */
+  status(): Promise<ShareStatus | null>
+  /**
+   * Change how long the relay keeps the room after pedit leaves (`3d`; not `0`), while this file
+   * is shared with a keep. Resolves with the new status. Rejects when it is not shared, the room is
+   * live, or the relay refuses.
+   */
+  keep(keep: string): Promise<ShareStatus>
 }
 
-type Cmd = 'share' | 'unshare' | 'close'
+type Cmd = 'share' | 'unshare' | 'close' | 'status' | 'keep'
 
 /** A command waiting for pedit's answer: the event that carries its id. */
 interface Pending {
@@ -106,6 +126,19 @@ function sharedOf(ev: Record<string, unknown>): Shared {
     links: { edit: links.edit, read: links.read, ...(links.comment && { comment: links.comment }) },
     keptUntil: Number(ev.keptUntil) || 0,
     resumed: ev.resumed === true,
+  }
+}
+
+function statusOf(ev: Record<string, unknown>): ShareStatus | null {
+  if (ev.room === null || ev.room === undefined) return null
+  const links = (ev.links ?? {}) as ShareStatus['links']
+  return {
+    room: String(ev.room),
+    links: { edit: links.edit, read: links.read, ...(links.comment && { comment: links.comment }) },
+    keep: Number(ev.keep) || 0,
+    host: ev.host === 'away' ? 'away' : 'here',
+    ends: Number(ev.ends) || 0,
+    lifeEnd: Number(ev.lifeEnd) || 0,
   }
 }
 
@@ -265,6 +298,12 @@ export class ServedFiles {
         },
         unshare: async () => void (await this.#command(entry, 'unshare')),
         close: async () => void (await this.#command(entry, 'close')),
+        status: async () => statusOf(await this.#newer(entry, 'status')),
+        keep: async (keep) => {
+          const status = statusOf(await this.#newer(entry, 'keep', { keep }))
+          if (!status) throw new Error('the room has ended')
+          return status
+        },
       },
     }
     this.#byPath.set(path, entry)
@@ -329,6 +368,7 @@ export class ServedFiles {
         emitRoom(ev, { path, ...sharedOf(ev) })
       },
       resume_choice: (ev) => this.#answer(entry, ev),
+      status: (ev) => this.#answer(entry, ev),
       unshared: (ev) => {
         this.#left(entry)
         emitRoom(ev, { type: 'unshared', path })
@@ -432,6 +472,20 @@ export class ServedFiles {
       entry.pending.push({ id, cmd, resolve, reject })
       entry.streams.command(json)
     })
+  }
+
+  /**
+   * status and keep: an earlier release of pedit with serve 2 lacks them and answers with an
+   * `unknown cmd` error, which is said as what it means.
+   */
+  async #newer(entry: Entry, cmd: Cmd, fields: object = {}): Promise<Record<string, unknown>> {
+    try {
+      return await this.#command(entry, cmd, fields)
+    } catch (e) {
+      if (e instanceof Error && e.message === 'unknown cmd')
+        throw new Error(`pedit is too old for ${cmd}; update it`)
+      throw e
+    }
   }
 
   /** Settle the command `ev` answers, by its id; an event without one answers nothing. */

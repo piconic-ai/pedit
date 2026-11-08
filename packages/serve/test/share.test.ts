@@ -29,14 +29,25 @@ const answer = async (c) => {
   // An answer carries the command's id; the events nobody asked for carry none.
   const reply = (o) => send({ ...o, id: c.id })
   if (c.relay === 'noisy') send({ event: 'room_ended', reason: 'expired' })
-  await new Promise((r) => setTimeout(r, c.relay === 'slow' ? 150 : 0))
+  await new Promise((r) => setTimeout(r, c.relay === 'slow' ? 150 : typeof slowStatus !== 'undefined' && c.cmd === 'status' ? 400 : 0))
   if (c.cmd === 'share') {
     if (c.relay === 'fail') return reply({ event: 'error', cmd: 'share', message: 'relay down' })
     if (c.relay === 'choice' && !c.choice)
       return reply({ event: 'resume_choice', room: 'r1', choices: [{ choice: 'room', text: 3 }, { choice: 'later' }] })
     reply({ event: 'shared', room: 'r1', links: { edit: 'r1.e', read: 'r1.r' }, keptUntil: 5, resumed: false })
   } else if (c.cmd === 'unshare') reply({ event: 'unshared' })
-  else if (typeof failClose !== 'undefined') {
+  else if (c.cmd === 'status' || c.cmd === 'keep') {
+    // An earlier pedit does not know them; this one answers by the keep field or a relay word.
+    if (typeof oldPedit !== 'undefined')
+      return reply({ event: 'error', cmd: '', message: 'unknown cmd' })
+    if (c.cmd === 'keep' && c.keep === 'refused')
+      return reply({ event: 'error', cmd: 'keep', message: 'not shared; a room kept without this process gets a new keep from the next share' })
+    if (c.cmd === 'status' && typeof nothing !== 'undefined') return reply({ event: 'status', room: null })
+    reply({
+      event: 'status', room: 'r1', links: { edit: 'r1.e', comment: 'r1.c', read: 'r1.r' },
+      keep: c.cmd === 'keep' ? 259200 : 3600, host: typeof away !== 'undefined' ? 'away' : 'here', ends: 20, lifeEnd: 30,
+    })
+  } else if (typeof failClose !== 'undefined') {
     // The share ended before the relay refused.
     send({ event: 'unshared' })
     reply({ event: 'error', cmd: 'close', message: 'relay busy' })
@@ -240,5 +251,64 @@ send({ event: 'peers', peers: [{ name: 'x'.repeat(10 * 1024), access: 'read' }] 
     await vi.waitFor(() =>
       expect(events).toContainEqual({ type: 'stopped', path: served.path, reason: 'idle' }),
     )
+  })
+
+  it('asks for the status and the keep, and maps the answer', async () => {
+    const { dir, files, log } = setup(script(2))
+    const served = await files.acquire(write(dir, 'a.md'))
+    expect(await served.status()).toEqual({
+      room: 'r1',
+      links: { edit: 'r1.e', comment: 'r1.c', read: 'r1.r' },
+      keep: 3600,
+      host: 'here',
+      ends: 20,
+      lifeEnd: 30,
+    })
+    expect(await served.keep('3d')).toMatchObject({ room: 'r1', keep: 259200, host: 'here' })
+    expect(log()).toEqual([
+      '5 0 {"cmd":"status","id":"c1"}',
+      '5 0 {"cmd":"keep","id":"c2","keep":"3d"}',
+    ])
+    await expect(served.keep('refused')).rejects.toThrow('not shared')
+  })
+
+  it('gives null for a file with no room, and away for a kept one', async () => {
+    const none = setup(script(2, 'const nothing = true'))
+    const a = await none.files.acquire(write(none.dir, 'a.md'))
+    expect(await a.status()).toBeNull()
+    const kept = setup(script(2, 'const away = true'))
+    const b = await kept.files.acquire(write(kept.dir, 'a.md'))
+    expect(await b.status()).toMatchObject({ host: 'away', room: 'r1' })
+  })
+
+  it('says a pedit that does not know status or keep is too old, and goes on', async () => {
+    const { dir, files, events } = setup(script(2, 'const oldPedit = true'), 100)
+    const served = await files.acquire(write(dir, 'a.md'))
+    await expect(served.status()).rejects.toThrow(/pedit is too old for status/)
+    await expect(served.keep('1d')).rejects.toThrow(/pedit is too old for keep/)
+    await expect(served.unshare()).resolves.toBeUndefined()
+    await vi.waitFor(() =>
+      expect(events).toContainEqual({ type: 'stopped', path: served.path, reason: 'idle' }),
+    )
+  })
+
+  it('does not stop the child while a status is pending, and arms the idle stop after', async () => {
+    // The answer comes 400 ms in, well past the 100 ms idle deadline.
+    const { dir, files, events } = setup(script(2, 'const slowStatus = true'), 100)
+    const served = await files.acquire(write(dir, 'a.md'))
+    await served.status()
+    expect(events.some((e) => e.type === 'stopped')).toBe(false)
+    await vi.waitFor(() =>
+      expect(events).toContainEqual({ type: 'stopped', path: served.path, reason: 'idle' }),
+    )
+  })
+
+  it('refuses status and keep against serve 1 without writing a frame', async () => {
+    const { dir, files, log } = setup(script(1))
+    const served = await files.acquire(write(dir, 'a.md'))
+    await expect(served.status()).rejects.toThrow(/serve 2/)
+    await expect(served.keep('1d')).rejects.toThrow(/serve 2/)
+    await sleep(100)
+    expect(log()).toEqual([])
   })
 })

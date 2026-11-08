@@ -447,12 +447,35 @@ func (c *Client) Destroy() {
 	c.setStatus(StatusDisconnected)
 }
 
+// SetHeader changes a handshake header from the next connection on, such as
+// the host's X-Pedit-Keep after the keep was changed.
+func (c *Client) SetHeader(key, value string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	h := c.opts.Header.Clone()
+	h.Set(key, value)
+	c.opts.Header = h
+}
+
+// Header is a handshake header as the next connection sends it.
+func (c *Client) Header(key string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.opts.Header.Get(key)
+}
+
+func (c *Client) handshake() http.Header {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.opts.Header
+}
+
 func (c *Client) run(done chan struct{}) {
 	defer close(done)
 	attempts := 0
 	for {
 		c.setStatus(StatusConnecting)
-		conn, err := c.opts.Dial(c.ctx, c.dialURL(), c.opts.Header)
+		conn, err := c.opts.Dial(c.ctx, c.dialURL(), c.handshake())
 		if err == nil {
 			attempts = 0
 			err = c.serve(conn)

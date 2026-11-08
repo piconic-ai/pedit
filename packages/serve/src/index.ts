@@ -12,4 +12,5 @@ export type {
   Shared,
   ShareOptions,
   ShareResult,
+  ShareStatus,
 } from './types.ts'

@@ -35,7 +35,10 @@ import (
 // is about.
 type KeptTextOptions struct {
 	File, Project, Resume string
-	OnSkipped             func(int)
+	// Keep, when positive, replaces the keep of the record on the connection
+	// that takes the room in (see Options.Resume).
+	Keep      time.Duration
+	OnSkipped func(int)
 	// OnImageError reports an image a kept text refers to that could not be
 	// saved beside its file (once per image and file).
 	OnImageError func(path string, err error)

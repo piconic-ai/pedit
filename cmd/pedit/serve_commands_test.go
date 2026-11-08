@@ -30,12 +30,17 @@ func TestParseCommand(t *testing.T) {
 		{"choice later", `{"cmd":"share","choice":"later"}`, shareRequest{Keep: defaultKeep, Choice: "later"}, "share"},
 		{"unshare", `{"cmd":"unshare"}`, shareRequest{}, "unshare"},
 		{"close", ` {"cmd":"close"} `, shareRequest{}, "close"},
+		{"status", `{"cmd":"status","id":"a"}`, shareRequest{}, "status"},
+		{"keep", `{"cmd":"keep","keep":"3d"}`, shareRequest{}, "keep"},
 	}
 	for _, c := range ok {
 		t.Run(c.name, func(t *testing.T) {
 			cmd, req, err := parseCommand([]byte(c.in))
 			if err != nil || cmd.Cmd != c.cmd {
 				t.Fatalf("%+v, %v", cmd, err)
+			}
+			if c.cmd == "keep" && req.Keep != 3*24*time.Hour {
+				t.Fatalf("keep %v", req.Keep)
 			}
 			if c.cmd != "share" {
 				return
@@ -58,6 +63,11 @@ func TestParseCommand(t *testing.T) {
 		{"trailing junk", `{"cmd":"close"}x`, "close", "data after"},
 		{"unshare with a field", `{"cmd":"unshare","origins":[]}`, "unshare", "takes no fields"},
 		{"close with a field", `{"cmd":"close","keep":"1d"}`, "close", "takes no fields"},
+		{"status with a field", `{"cmd":"status","keep":"1d"}`, "status", "takes no fields"},
+		{"keep without keep", `{"cmd":"keep"}`, "keep", "keep"},
+		{"keep zero", `{"cmd":"keep","keep":"0"}`, "keep", "0 is not allowed"},
+		{"keep nonsense", `{"cmd":"keep","keep":"soon"}`, "keep", "keep"},
+		{"keep with origins", `{"cmd":"keep","keep":"1d","origins":[]}`, "keep", "takes no fields"},
 		{"origins not a list", `{"cmd":"share","origins":"https://a.com"}`, "share", "not a command"},
 		{"five origins", `{"cmd":"share","origins":["https://a.com","https://b.com","https://c.com","https://d.com","https://e.com"]}`, "share", "origins"},
 		{"http origin", `{"cmd":"share","origins":["http://a.com"]}`, "share", "origins"},
@@ -101,6 +111,12 @@ func (r *recorder) Share(_ context.Context, q shareRequest) error {
 }
 func (r *recorder) Unshare() error              { r.calls = append(r.calls, "unshare"); return r.err }
 func (r *recorder) Close(context.Context) error { r.calls = append(r.calls, "close"); return r.err }
+
+func (r *recorder) Status(context.Context) error { r.calls = append(r.calls, "status"); return r.err }
+func (r *recorder) Keep(_ context.Context, d time.Duration) error {
+	r.calls = append(r.calls, "keep "+d.String())
+	return r.err
+}
 
 func runCommands(t *testing.T, sh sharer, payloads ...string) []map[string]any {
 	t.Helper()
@@ -282,4 +298,10 @@ func trimToFrames(out string) string {
 		n += l
 	}
 	return string(bytes.Clone(b[:n]))
+}
+
+func (b *blocking) Status(context.Context) error { b.note("status"); return nil }
+func (b *blocking) Keep(context.Context, time.Duration) error {
+	b.note("keep")
+	return nil
 }

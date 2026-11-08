@@ -36,6 +36,20 @@ export interface ShareClosed {
   type: 'closed'
 }
 
+/**
+ * A file's room as pedit reports it: `host` is `here` while pedit shares it now, `away` while it is
+ * kept without pedit. `keep` is in seconds; `ends` is when the room ends (Unix ms) and `lifeEnd`
+ * the end of its life, which caps it.
+ */
+export interface ShareStatus {
+  room: string
+  links: { edit: string; comment?: string; read: string }
+  keep: number
+  host: 'here' | 'away'
+  ends: number
+  lifeEnd: number
+}
+
 export type ShareResult = Shared | ShareChoice | ShareClosed
 
 export interface Peer {

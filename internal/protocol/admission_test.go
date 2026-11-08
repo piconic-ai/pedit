@@ -110,6 +110,30 @@ func TestHostRegistersTheReadersToken(t *testing.T) {
 	}
 }
 
+// SetHeader changes what the next connection sends, such as the host's keep.
+func TestSetHeaderIsSentOnReconnect(t *testing.T) {
+	key := protocol.GenerateKey()
+	raw, _ := protocol.DecodeKey(key)
+	relay := prototest.NewRelay(false)
+	doc := crdt.New()
+	host, err := protocol.NewClient(protocol.ClientOptions{
+		URL: "ws://test", Key: raw, Doc: doc, Awareness: awareness.New(uint64(doc.ClientID())),
+		Host: true, Header: http.Header{protocol.KeepHeader: {"60"}}, Dial: relay.Dial, MinBackoff: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(host.Destroy)
+	host.Connect()
+	prototest.WaitFor(t, wait, func() bool { return len(relay.Headers()) == 1 }, "the first connection")
+	host.SetHeader(protocol.KeepHeader, "120")
+	relay.DropAll()
+	prototest.WaitFor(t, wait, func() bool { return len(relay.Headers()) >= 2 }, "the reconnection")
+	if first, second := relay.Headers()[0].Get(protocol.KeepHeader), relay.Headers()[1].Get(protocol.KeepHeader); first != "60" || second != "120" {
+		t.Fatalf("keep headers %q then %q", first, second)
+	}
+}
+
 func TestSocketProtocolNamesProtocolVersion(t *testing.T) {
 	if want := fmt.Sprintf("pedit-v%d", protocol.ProtocolVersion); protocol.SocketProtocol != want {
 		t.Fatalf("SocketProtocol = %q, want %q", protocol.SocketProtocol, want)

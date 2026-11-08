@@ -40,6 +40,8 @@ type shareEnv struct {
 	// busy, when set, is the status the relay answers a close with, and then it
 	// does not end the room (409: another host holds it).
 	busy atomic.Int32
+	// keep is the fake relay's /keep endpoint (serve_status_test.go).
+	keep fakeKeep
 }
 
 func newShareEnv(t *testing.T) *shareEnv {
@@ -58,6 +60,10 @@ func newShareEnv(t *testing.T) *shareEnv {
 			e.relay.SetRefuse(protocol.RoomClosed)
 			return
 		}
+		if strings.HasSuffix(r.URL.Path, "/keep") {
+			e.keep.serve(w, r)
+			return
+		}
 		w.WriteHeader(http.StatusCreated)
 		// A room's id is the digest of its host token: a record is checked by it.
 		token := fmt.Sprintf("host-token-%d", rooms.Add(1))
@@ -65,6 +71,7 @@ func newShareEnv(t *testing.T) *shareEnv {
 		_ = json.NewEncoder(w).Encode(map[string]string{"id": base64.RawURLEncoding.EncodeToString(digest[:])[:22], "hostToken": token})
 	}))
 	t.Cleanup(e.server.Close)
+	e.keep.onKeep = e.relay.SetKeep
 	serveDial = e.relay.Dial
 	t.Cleanup(func() { serveDial = nil })
 	return e
