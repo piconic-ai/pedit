@@ -45,7 +45,7 @@ opened, whatever the host does. While it is kept, the relay stores ciphertext as
 
 A room with a keep (protocol version 6, `X-Pedit-Keep`; the host sets the keep
 when it first connects and can change it while it is connected, not once it has
-left) stores ciphertext when the host leaves on purpose or does not
+left, and not for a room opened with `--keep 0`) stores ciphertext when the host leaves on purpose or does not
 return within the grace period: the host's latest encrypted snapshot, and a log
 of the encrypted, editor-signed entries that peers write meanwhile, in the
 room's SQLite storage (4 MiB, 10,000 entries). The peers stay connected and
@@ -259,7 +259,7 @@ To report a vulnerability instead, see [SECURITY.md](../SECURITY.md).
 | Session length | 24 hours of host connection, from its first connection or its return to a kept room |
 | Kept room after departure | One day unless the host chose otherwise, counted from the moment the host leaves; up to 7 days; the CLI reports any clamp |
 | Kept room total life | 7 days from the host's first connection (`ROOM_LIFE_SECONDS`); a keep never reaches past it |
-| Kept text snapshot | 1 MiB of ciphertext for all files together; at most 64 text files, fixed when the room opens |
+| Kept text snapshot | 1 MiB of ciphertext for all files together; the room's files (at most 20) are fixed when the room opens |
 | Kept text log | 4 MiB of encrypted editing history before the host checkpoints; a 10,000-entry abuse guard also applies |
 | Kept room requests | 1,200 a minute from one network |
 

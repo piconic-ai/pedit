@@ -3,7 +3,8 @@
 This page is for the host, the person who ran `pedit <file>`. It says what
 happens when a connection drops, when pedit writes to your files, and how a
 room stays open after you leave so that others can go on without you. A guest
-needs only [getting started](getting-started.md#leave-and-come-back).
+needs only [while you are away](#while-you-are-away), which says what a room
+whose host is away lets you do.
 
 ## If the connection drops
 
@@ -19,8 +20,9 @@ within the two minutes, the room carries on as before. If you do not, a room
 that is not kept (`--keep 0`) ends, and a kept room goes on without you, as if
 you had left with Ctrl+C ([kept rooms](#kept-rooms)).
 
-A guest whose connection drops reconnects the same way. A guest who reconnects
-before the host waits the same two minutes.
+A guest whose connection drops reconnects the same way. A guest with an edit
+link who reconnects before the host waits the same two minutes; a comment-only
+or read-only link is turned away until an editor is in the room.
 
 ## Saving
 
@@ -90,12 +92,13 @@ held, and carries on as a live room. Ctrl+C keeps the room again.
 A keep applies to `pedit <file>` and `pedit <file> <file>...` with existing
 text and canvas files. These rooms are not kept:
 
-- A scratch room: `pedit` with no file, `--template` or `--directory`
+- A scratch room: `pedit` with no file, `--template`, `--directory`, or a
+  file that does not exist yet, which is made from a template
   ([templates](configuration.md#templates-and-new-notes)).
 - A room you join with `pedit <link>`.
 - A room hosted on Windows. The private record below needs Unix file
-  permissions, so there a room ends when you leave, and `pedit resume` and
-  `pedit close` are not available.
+  permissions, so there a room ends when you leave; `--keep`, `pedit resume`
+  and `pedit close` are refused.
 - A room on a relay that cannot keep rooms, such as a self-hosted one that is
   not updated. The room ends when you leave, and pedit says so at the start.
 
@@ -107,11 +110,12 @@ text and canvas files. These rooms are not kept:
   file the room does not hold is an error: run `pedit close` first, or
   `pedit --keep 0 <file>` for a separate room.
 - You can edit a text file while you are away. On resume, pedit merges your
-  changes with the guests' edits. Do not edit a `.canvas` file while away: a
-  resume refuses external changes to it instead of merging them.
-- A file that cannot be read, is not valid UTF-8 or is over the size limit is
-  left alone: pedit does not write the room's edits into it. Fix the file,
-  then resume again.
+  changes with the guests' edits.
+- pedit checks every file before it writes any. If one cannot be read, is not
+  valid UTF-8, is over the size limit, or is a `.canvas` file that changed
+  while you were away, the resume stops there: nothing is written, your files
+  are left as they are, and the room stays kept. Fix the file, then resume
+  again.
 - The encrypted snapshot of all files together, comments included, must fit
   in 1 MiB. Edits made while you are away have a budget of their own
   ([limits](public-relay.md#limits)).

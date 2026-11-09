@@ -121,7 +121,7 @@ shows only with `PEDIT_DEBUG=1`.
 
 | | What | What keeps it in bounds |
 | --- | --- | --- |
-| Writes | A copy of each text file the room shares, in a new private directory such as `$TMPDIR/pedit-<room>-<random>/` | Named by pedit, as above, never as the room names it, and never in a directory of its own. The directory is `0700` and each copy `0600`, both before your umask; every copy is made through a handle on the directory held since joining, so the directory moved and replaced by a link cannot lead elsewhere. Never over a file that is there. Canvases are not copied. At most 20 files. All are removed when you leave or the host closes the room, with anything else you put in that directory; when the room closes because a file grew too large, they stay, and pedit says where. |
+| Writes | A copy of each text file the room shares, in a new private directory such as `$TMPDIR/pedit-<room>-<random>/` | Named by pedit, as above, never as the room names it, and never in a directory of its own. The directory is `0700` and each copy `0600`, both before your umask; every copy is made through a handle on the directory held since joining, so the directory moved and replaced by a link cannot lead elsewhere. Never over a file that is there. A canvas is copied as its JSON Canvas, under `.json`. At most 20 files. All are removed when you leave or the host closes the room, with anything else you put in that directory; when the room closes because a file grew too large, they stay, and pedit says where. |
 | Reads | The copies, when you edit them | The same guards as the host's file: never through a symlink, only UTF-8. |
 
 In a kept room, `pedit resume` also saves, under `assets/` beside each
