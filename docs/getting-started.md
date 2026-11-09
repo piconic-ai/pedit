@@ -161,8 +161,8 @@ Quote the link in the shell: `#` starts a comment otherwise. Copy out what you
 want to keep before you leave. A guest who joins this way gets a copy of each
 text file in the room, including files the host adds later: `docs/spec.md` is
 copied to `01-docs-spec.md`. A canvas comes as its JSON Canvas, under `.json`
-(`00-board.json`). See [sessions](sessions.md#joining-from-the-command-line)
-for how copies are named and synced.
+(`00-board.json`). See [what pedit does on your computer](local-files.md#joining-from-the-command-line-pedit-link)
+for what the copies hold and how they are protected.
 
 Joining from the command line also runs no code from the relay, which matters
 if you do not trust whoever serves the browser editor. For that, use a pedit
