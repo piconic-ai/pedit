@@ -186,7 +186,9 @@ relay or on the wire.
   them (16 characters of base64url).
 - Every answer carries the command's `id`, as above. The `comments` event
   that shows the write is sent before its answer, so an app that waits for the
-  answer already holds the thread.
+  answer already holds the thread: that event always lists the thread written
+  to, whatever else does not fit (below). A `resolve` that writes nothing
+  sends no new event; the last one already showed that state.
 - **The `comments` event** tells the app the file's threads as they are now:
 
       {"event":"comments","threads":[{"id":"…","quote":"…","resolved":false,
@@ -204,8 +206,9 @@ relay or on the wire.
     the browser shows them: by their first comment, then by id. Names and text
     are cleaned as the browser cleans them (control and bidi characters
     removed).
-  - The event must fit the app's limit of 64 KiB. When the threads do not, open
-    threads come first, then resolved ones; a thread that is left out is
+  - The event must fit the app's limit of 64 KiB. When the threads do not, the
+    thread a command just wrote to comes first, then open threads, then
+    resolved ones; a thread that is left out is
     counted in `"more"`, and a thread whose oldest comments do not fit lists
     the latest ones, with `"cut"` counting those left out. The app can read the
     rest from `.pedit/meta/`.
