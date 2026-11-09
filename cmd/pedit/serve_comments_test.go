@@ -170,7 +170,7 @@ func TestCommentsEventFitsTheLimit(t *testing.T) {
 		th.Messages[2].Body = big
 		threads = append(threads, th)
 	}
-	ev := commentsEvent(threads)
+	ev := commentsEvent(threads, "")
 	b, _ := json.Marshal(ev)
 	if len(b) > maxCommentsEvent {
 		t.Fatalf("%d bytes", len(b))
@@ -185,12 +185,39 @@ func TestCommentsEventFitsTheLimit(t *testing.T) {
 	}
 }
 
+func TestCommentsEventKeepsTheThreadACommandWroteTo(t *testing.T) {
+	big := strings.Repeat("x", 4000)
+	var threads []session.PlacedThread
+	old := placed("old", true, 1)
+	old.Messages[0].Body = big
+	threads = append(threads, old)
+	for i := range 40 {
+		th := placed(fmt.Sprintf("t%d", i), false, 3)
+		th.Messages[2].Body = big
+		threads = append(threads, th)
+	}
+	// Without a command, the resolved thread is the one left out to fit.
+	if shown := commentsEvent(threads, "")["threads"].([]threadView); slices.ContainsFunc(shown, func(v threadView) bool { return v.ID == "old" }) {
+		t.Fatal("the resolved thread fit without a command")
+	}
+	// A reply to it puts it first in the event that answers the reply.
+	ev := commentsEvent(threads, "old")
+	b, _ := json.Marshal(ev)
+	shown := ev["threads"].([]threadView)
+	if len(b) > maxCommentsEvent || len(shown) == 0 || shown[0].ID != "old" {
+		t.Fatalf("%d bytes, shown %v", len(b), shown)
+	}
+	if ev["more"] == nil || len(shown)+ev["more"].(int) != len(threads) {
+		t.Fatalf("%d shown, more %v", len(shown), ev["more"])
+	}
+}
+
 func TestCommentsEventCutsTheOldestComments(t *testing.T) {
 	th := placed("t", false, 20)
 	for i := range th.Messages {
 		th.Messages[i].Body = strings.Repeat("y", 4000)
 	}
-	ev := commentsEvent([]session.PlacedThread{th})
+	ev := commentsEvent([]session.PlacedThread{th}, "")
 	b, _ := json.Marshal(ev)
 	v := ev["threads"].([]threadView)[0]
 	if len(b) > maxCommentsEvent || v.Cut == 0 || v.Cut+len(v.Messages) != 20 || v.Messages[len(v.Messages)-1].ID != "m19" {
@@ -202,14 +229,14 @@ func TestCommentsEventCutsTheOldestComments(t *testing.T) {
 	// One comment that cannot fit leaves its thread out.
 	huge := placed("h", false, 1)
 	huge.Messages[0].Body = strings.Repeat("z", 70<<10)
-	if got := commentsEvent([]session.PlacedThread{huge}); len(got["threads"].([]threadView)) != 0 || got["more"] != 1 {
+	if got := commentsEvent([]session.PlacedThread{huge}, ""); len(got["threads"].([]threadView)) != 0 || got["more"] != 1 {
 		t.Fatalf("%v", got)
 	}
 }
 
 func TestCommentsEventKeepsAThreadWithNoValidComments(t *testing.T) {
 	th := placed("t", false, 0)
-	ev := commentsEvent([]session.PlacedThread{th})
+	ev := commentsEvent([]session.PlacedThread{th}, "")
 	if got := ev["threads"].([]threadView); len(got) != 1 || got[0].Cut != 0 || got[0].Messages == nil {
 		t.Fatalf("%v", ev)
 	}
