@@ -70,8 +70,10 @@ The relay learns ciphertext sizes, request times, and opaque sender identifiers
 and counts. It receives no plaintext or URL-fragment key. A relay can still
 withhold or replay data; a signature does not prove freshness or availability.
 
-While the host is connected, and in a room without a keep, the relay stores
-no text. A host whose connection drops, rather than leaving with Ctrl+C, gets
+The relay never stores plaintext. A room without a keep stores no document
+ciphertext either, at any time; a kept room stores the host's encrypted
+snapshot while the host is connected, as described above. A host whose
+connection drops, rather than leaving with Ctrl+C, gets
 two minutes to come back: meanwhile the room keeps its guests, lets new ones
 in and keeps its images and per-room data, and nobody edits. If the host does
 not come back, a room without a keep ends as if the host had left, and a room
