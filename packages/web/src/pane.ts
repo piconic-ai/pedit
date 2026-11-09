@@ -109,7 +109,8 @@ export class PreviewPane {
   // Keeps the article's blocks between renders (blockrender.ts); made once the renderer is loaded.
   #blocks: BlockRenderer | null = null
   #imagesVersion = 0
-  #loading: Promise<Renderer> | null = null
+  // Loads the renderer and the BlockRenderer together, so one is never set without the other.
+  #loading: Promise<void> | null = null
   #active = false
   #dirty = true
   #frame = 0
@@ -235,16 +236,20 @@ export class PreviewPane {
     })
   }
 
+  async #ready(): Promise<void> {
+    const [renderer, blockrender] = await Promise.all([this.#load(), import('./blockrender.ts')])
+    this.#renderer = renderer
+    this.#blocks ??= new blockrender.BlockRenderer(this.element)
+  }
+
   async #render(): Promise<void> {
-    if (!this.#renderer) {
+    if (!this.#renderer || !this.#blocks) {
       try {
-        this.#loading ??= this.#load()
-        this.#renderer = await this.#loading
-        this.#blocks ??= new (await import('./blockrender.ts')).BlockRenderer(this.element)
+        this.#loading ??= this.#ready()
+        await this.#loading
       } catch {
         // Offline or a stale deploy: try again on the next change.
         this.#loading = null
-        this.#renderer = null
         // The article's content is rendered Markdown, kept block by block (blockrender.ts),
         // so this message goes in the same way rather than through a component.
         const message = document.createElement('p')
@@ -254,9 +259,9 @@ export class PreviewPane {
         return
       }
     }
-    if (!this.#active || !this.#dirty) return
+    if (!this.#active || !this.#dirty || !this.#blocks) return
     this.#dirty = false
-    this.#blocks?.update(this.#text.toString(), this.#images, this.#imagesVersion)
+    this.#blocks.update(this.#text.toString(), this.#images, this.#imagesVersion)
     this.#loadRemembered()
     this.#images?.rendered?.()
     this.#onRender()
