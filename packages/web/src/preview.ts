@@ -21,11 +21,14 @@ import {
   snippetFor,
 } from './embed.ts'
 import { fixLink } from './links.ts'
+import { installPositions } from './previewpos.ts'
 import { failureMessage, fetchSnippet } from './snippet.ts'
 
 // Raw HTML in the document is shown as text, never parsed.
 const md = new MarkdownIt({ html: false, linkify: true })
 const escape = md.utils.escapeHtml
+// Source positions, for a render that asks for them (BlockEnv.spans); see previewpos.ts.
+const positions = installPositions(md)
 
 // Consume the header as a block so all subsequent source maps stay intact.
 md.block.ruler.before('hr', 'frontmatter', (state, start, end, silent) => {
@@ -350,6 +353,12 @@ export interface BlockEnv {
   images?: ImageResolver
   media: readonly string[]
   breaks: boolean
+  /**
+   * Wrap each run of text in `<span data-src>` (and mark code) with its offset in
+   * `block.src`. Meant for a detached twin of a block, never for the live preview;
+   * a block with `unmapped` gets none. Off, the output is exactly as without it.
+   */
+  spans?: boolean
   /** markdown-it's env.references, as parseBlocks returns it. */
   references: References
 }
@@ -519,14 +528,17 @@ export function renderBlock(block: Block, env: BlockEnv): Element[] {
   images = env.images
   media = env.media
   md.set({ breaks: env.breaks })
+  const spans = env.spans === true && !block.unmapped
+  if (spans) positions.on()
   try {
-    const mdEnv = { references: env.references }
+    const mdEnv = spans ? { references: env.references, spans } : { references: env.references }
     const state = new md.core.State(block.src, md, mdEnv)
     // Fresh copies: the inline rule and source_lines mutate tokens.
     state.tokens = block.tokens.map((t) => copyToken(state, t))
     for (const rule of coreRules().rest) rule(state)
     return [...sanitize(md.renderer.render(state.tokens, md.options, mdEnv)).children]
   } finally {
+    if (spans) positions.off()
     images = undefined
     media = []
     md.set({ breaks: false })

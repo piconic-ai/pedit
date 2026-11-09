@@ -24,6 +24,15 @@ interface Entry {
   elements: Element[]
 }
 
+/** A block rendered again with source positions, detached (see BlockRenderer.twin). */
+export interface Twin {
+  /** The block's roots, as renderBlock gives them with `spans` on; block-relative `data-src`. */
+  elements: Element[]
+  /** Where the block starts in the text the renderer last showed. */
+  offset: number
+  block: Block
+}
+
 /**
  * Keeps the rendered Markdown of a document in `container`, one top-level block
  * at a time. A block whose key (see keyOf) is the same as in the last render
@@ -45,6 +54,10 @@ export class BlockRenderer {
   #imagesVersion = 0
   // The entries that looked an image up.
   #withImages = new Set<Entry>()
+  // The entry each root belongs to, for blockAt.
+  #byRoot = new WeakMap<Element, Entry>()
+  // What the last update rendered with, for twin.
+  #env: Pick<BlockEnv, 'images' | 'media' | 'references'> = { media: [], references: {} }
 
   /**
    * `decorate` is called on every root as it is rendered, before it is compared with
@@ -94,6 +107,32 @@ export class BlockRenderer {
     }
   }
 
+  /**
+   * The block holding `node` (a root or anything inside one) and its root, or null if
+   * `node` is not in the rendered text.
+   */
+  blockAt(node: Node): { element: Element; block: Block } | null {
+    let el: Node | null = node
+    while (el && el.parentNode !== this.#container) el = el.parentNode
+    const entry = el ? this.#byRoot.get(el as Element) : undefined
+    return entry ? { element: el as Element, block: entry.block } : null
+  }
+
+  /**
+   * The block at `at` (its index, or one of its roots) rendered again from its cached
+   * tokens with source positions on, into detached elements: the same pipeline as the
+   * live block, so its text equals the live text (check it; a block that was patched
+   * since, or has `unmapped`, may differ and carries no positions). Positions are
+   * offsets in `block.src`; `offset` is where that starts in the text.
+   */
+  twin(at: number | Element): Twin | null {
+    const entry = typeof at === 'number' ? this.#entries[at] : this.#byRoot.get(at)
+    if (!entry) return null
+    const elements = renderBlock(entry.block, { ...this.#env, breaks: this.#breaks, spans: true })
+    if (this.#decorate) for (const root of elements) this.#decorate(root)
+    return { elements, offset: entry.block.offset, block: entry.block }
+  }
+
   #apply(
     source: string,
     images: ImageResolver | undefined,
@@ -113,6 +152,7 @@ export class BlockRenderer {
     this.#refs = refs
     this.#imagesVersion = imagesVersion
     const env: BlockEnv = { images, media, breaks: this.#breaks, references }
+    this.#env = { images, media, references }
     const fresh = blocks.slice(from, to)
     const keys = fresh.map((b) => keyOf(b, refs, imagesVersion, this.#breaks))
     const old = this.#entries.slice(from, oldTo)
@@ -125,6 +165,7 @@ export class BlockRenderer {
     if (images) for (const e of this.#withImages) for (const src of e.images) images.lookup(src)
     this.#entries = replaceRange(this.#entries, from, oldTo, list)
     const roots = stampFresh(list, fresh)
+    for (const e of list) for (const el of e.elements) this.#byRoot.set(el, e)
     const end = from + list.length
     if (parsed.lineShift !== 0)
       for (let i = end; i < this.#entries.length; i++) stamp(this.#entries[i] as Entry)
