@@ -1,0 +1,9 @@
+# Link check for the Markdown in this repository (scripts/check-links.sh).
+# Offline: only links to files in the repository and their #fragments are
+# checked, so the check depends on nothing outside the tree. Web links are
+# skipped, not checked.
+offline = true
+include_fragments = "full"
+no_progress = true
+# Regular expressions over paths.
+exclude_path = ["(^|/)node_modules/", "(^|/)dist/", "(^|/)\\.wrangler/"]
