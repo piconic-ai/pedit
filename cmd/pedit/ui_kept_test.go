@@ -45,3 +45,18 @@ func TestUIKeptLineSaysWhatBecomesOfEdits(t *testing.T) {
 		}
 	}
 }
+
+// A guest who joins a room that is already kept hears so during the join,
+// before the live line is drawn; the first line drawn must already say what
+// this link may do (main.go sets the editor before joined).
+func TestUIJoinedAlreadyKeptRoomDrawsTheEditorLine(t *testing.T) {
+	var out strings.Builder
+	u := newUI(&out, false, false)
+	u.setKeptUntil(time.UnixMilli(1700000000000).UTC())
+	u.setStatus(protocol.StatusKept)
+	u.setEditor(true)
+	u.joined("/tmp/pedit-AAAA-1/00-notes.md", "https://x.test/r/AAAA#key", true, false)
+	if !strings.Contains(out.String(), "your edits wait on the relay until they are back.") || strings.Contains(out.String(), "read-only") {
+		t.Errorf("first live line:\n%s", out.String())
+	}
+}

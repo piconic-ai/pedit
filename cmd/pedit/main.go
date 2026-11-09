@@ -547,8 +547,10 @@ func runJoin(opts commandArgs, out *ui, ev *events, stderr io.Writer) int {
 		return 1
 	}
 	file := displayPath(s.File())
-	out.joined(file, opts.Room, s.Temporary(), !opts.JSON && clipboard.Copy(s.File()))
+	// Before joined draws the live line: a room that is already kept said so
+	// during the join, and the line depends on what this link may do.
 	out.setEditor(s.Client.Keys().Access == protocol.AccessEdit)
+	out.joined(file, opts.Room, s.Temporary(), !opts.JSON && clipboard.Copy(s.File()))
 	if s.Client.Keys().Access != protocol.AccessEdit {
 		out.above("This link can comment only: edits to the copies are not sent.")
 	}

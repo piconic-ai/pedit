@@ -72,7 +72,6 @@ Run `pedit <file>` and send the printed link:
     https://edit.piconic.ai/r/<room-id>#<key>
 
   Press Ctrl+C when you are done. Everything is saved to notes.md.
-  To share another file in this room, type its path and press Enter.
   Press Ctrl+L for links that can only comment or read.
 
   ● Alice and Bob are here
