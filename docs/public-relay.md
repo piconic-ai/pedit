@@ -87,61 +87,36 @@ time limit unless configured.
 
 ## Logs
 
-Workers Logs is on (`observability` in `packages/worker/wrangler.jsonc`). Each
-request that reaches the Worker (every page and file of the editor, which it
-serves to add security headers, and `/api/*`: creating a room, WebSocket
-connections, image uploads and downloads) gets an invocation log, and so does
-each event in a room's Durable Object, including every WebSocket message it
-relays, so the logs hold the time of every relayed frame. Cloudflare documents
-that a request's log has details of the request and response and metadata it
-adds, including the path, the status, and the request's `cf` properties, which
-include country, city, postal code, coordinates and network (ASN)
-([Workers Logs](https://developers.cloudflare.com/workers/observability/logs/workers-logs/#invocation-logs),
-[`cf` properties](https://developers.cloudflare.com/workers/runtime-apis/request/#incomingrequestcfproperties),
-[query builder](https://developers.cloudflare.com/workers/observability/query-builder/)).
-A logged request (checked on `POST /api/rooms`) keeps the client's IP address
-(`cf-connecting-ip`, `x-real-ip`), the `user-agent`, `accept`, `accept-encoding` and
-`host` headers, and the `cf` properties: country, city, postal code,
-coordinates, time zone, ASN and organization, and TLS version, cipher and
-client fingerprints. A guest's `GET /api/rooms/:id/ws` entry and a `PUT /api/rooms/:id/blobs/:blobId`
-entry (both checked from a browser) keep request headers whole: the
-`sec-websocket-protocol` header and the `x-pedit-admission` header, so the
-admission token is stored in plain text for the 7 days the logs are kept, and
-also `origin`, `accept-language` and the `sec-ch-ua*` client hints. The CLI
-host's `GET /api/rooms/:id/ws` entry (checked on the Room Durable Object side)
-keeps `sec-websocket-protocol` (the editor token) and `x-pedit-read-admission`
-(the reader token) in plain text and the `user-agent` (`Go-http-client/1.1`),
-but shows `authorization` (the host token) as `********`, so Cloudflare masks
-it. The relay keeps these logs to see which routes fail, and accepts that
-they hold the admission tokens: a token cannot decrypt anything, and stops
-working when its room ends, within 24 hours
-([room admission](contributing/room-admission.md)). The Worker-side entry of
-the host's request has not been looked at.
-<!-- TODO(operator): confirm in the dashboard that webSocketMessage events of the Room Durable Object appear as invocation logs, and whether they name the room. If per-frame logs are not wanted, set observability.logs.invocation_logs to false or lower head_sampling_rate, and update the comment in wrangler.jsonc. -->
-The room ID is in the path; the key never reaches the relay. In the entries
-looked at, the room ID and the blob ID in the path showed as `REDACTED`.
-Nobody redacted them by hand: workerd replaces ID-like parts of a URL in logs
-(`redactUrl` in `src/workerd/api/util.c++`: 32 or more hex digits, or 21 or
-more characters with at least two digits, two upper case and two lower case
-letters). A room ID with fewer than two digits does not match, so some room
-IDs, about one in eight by that rule, are kept as they are. The Worker's own
-log lines are `rate limited <route>`, without the address,
-`failed to delete blobs` with the error, and one JSON line per event that
-ends a session or turns someone away, so a room that closed unexpectedly can
-be explained: `room: host connected`, `room: host closed` (with its close
-code), `room: host errored`, `room: host away` (the room waits for a host
-that dropped), `room: host returned`, `room: host did not come back`,
-`room: alarm found no host`,
-`room: closed a peer` (rate limited, a frame too big, or text),
-`room: closed for maintenance`, `room: session ended` (with the close code
-and reason) and `room: turned a guest away`. Each names the room's Durable
-Object ID rather than the room ID, and gives how many hosts and guests were
-connected and how long ago the host first came.
+Workers Logs is on (`observability` in `packages/worker/wrangler.jsonc`), and
+the relay keeps its logs for 7 days. Each request that reaches the Worker gets
+an entry: every page and file of the editor, which the Worker serves to add
+security headers, and every `/api/*` request (creating a room, WebSocket
+connections, image uploads and downloads). So does each event in a room's
+Durable Object, including every message it relays, so the logs hold the time
+of every relayed frame, never its content.
 
-This relay runs on Workers Paid, where Workers Logs keeps logs for 7 days
-([pricing](https://developers.cloudflare.com/workers/observability/logs/workers-logs/#pricing),
-[Cloudflare Observability pricing](https://developers.cloudflare.com/observability/pricing/)).
-<!-- TODO(operator): look at the Worker-side (stateless) entry of a host's GET /api/rooms/:id/ws to see whether Authorization is masked there too, and update this section and web/public/privacy.html if it is not. -->
+An entry keeps what Cloudflare documents for a request
+([Workers Logs](https://developers.cloudflare.com/workers/observability/logs/workers-logs/#invocation-logs),
+[`cf` properties](https://developers.cloudflare.com/workers/runtime-apis/request/#incomingrequestcfproperties)):
+the path and status, your IP address, the `user-agent` and the other request
+headers, and what Cloudflare derives from the address and the connection:
+country, city, postal code, coordinates, time zone, network (ASN and
+organization), and the TLS version, cipher and client fingerprints. The
+request headers include the admission tokens (`sec-websocket-protocol`,
+`x-pedit-admission`, `x-pedit-read-admission`), stored in plain text for the
+7 days; the host token (`authorization`) was masked in the entries looked at.
+The relay accepts that: a
+token cannot decrypt anything, and stops working when its room ends
+([room admission](contributing/room-admission.md)).
+
+The room ID is in the path; the key never reaches the relay. workerd replaces
+ID-like parts of a URL in logs with `REDACTED`, but its rule misses about one
+room ID in eight, which are kept as they are. The Worker's own log lines say
+when a session ends or someone is turned away, with the room's Durable Object
+ID and how many people were connected, never with content.
+
+Which entries were looked at, what each held, and what remains to be checked
+is in [relay logs](contributing/relay-logs.md).
 
 ## In your browser
 
@@ -159,7 +134,6 @@ should not load it (inferred from the policy, not yet seen in a browser
 console). Responses also carry Network Error Logging headers (`nel`,
 `report-to`, `success_fraction` 0): if a browser cannot reach the relay, it may
 report the failure to Cloudflare.
-<!-- TODO(operator): decide whether to switch off the automatic Web Analytics insertion for piconic.ai in the dashboard, and check in a browser that the beacon is blocked and that no cookie (such as __cf_bm) is set on the WebSocket and asset requests. Then update this paragraph and web/public/privacy.html. -->
 The editor keeps in `localStorage` only the name you typed (`pedit:name`) and
 display preferences: appearance, theme colours, the last Markdown and CSV view,
 Vim mode and the split position (`pedit:appearance`, `pedit:palette`,
@@ -278,8 +252,8 @@ approximate ([Cloudflare](https://developers.cloudflare.com/workers/runtime-apis
 The new-room limit counts `POST /api/rooms` requests. The relay derives a
 room's ID from its host token without remembering which tokens it issued, so a
 live client can make its own and skip that creation request; WebSocket clients
-are still held to the connection limit. A guest over the rate limits is disconnected and
-reconnects; a host over them ends the session. A live room ends 24 hours after its
+are still held to the connection limit. A client over the rate limits is disconnected and
+reconnects, with backoff; a host's room waits for it as for any dropped host. A live room ends 24 hours after its
 host's connection began, even if the host is still connected or has reconnected
 since: everyone is disconnected and its link stops working. Running pedit
 again starts a new room with a new link. A pedit released before this limit
