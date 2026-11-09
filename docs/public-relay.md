@@ -19,8 +19,9 @@ only as ciphertext while the room is open. Once the host has taken in changes,
 the relay's copies can be deleted without losing them. Frames are relayed and
 never stored. A room opened from existing text files has a keep by default (a
 day; `--keep` up to the cap below; `--keep 0` for a room that stores nothing
-and ends when the host leaves; a canvas, a scratch room and a host on Windows
-get no keep): the host uploads an encrypted snapshot while it is connected,
+and ends when the host leaves; a scratch room and a host on Windows get no
+keep; [sessions](sessions.md#which-rooms-are-kept) has the rules): the host
+uploads an encrypted snapshot while it is connected,
 and after it leaves the room stays open for the keep, counted from the moment
 it leaves. The host's connection lasts at most 24 hours; a host that comes back
 to a kept room gets a new 24 hours, but the whole room ends 7 days after it was
@@ -42,9 +43,9 @@ opened, whatever the host does. While it is kept, the relay stores ciphertext as
   point-in-time recovery
   ([Cloudflare](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/#pitr-point-in-time-recovery-api)).
 
-A room with a keep (protocol version 6, `X-Pedit-Keep`; the keep is fixed when
-the host first connects, and a later request to change it is answered with the
-stored value) stores ciphertext when the host leaves on purpose or does not
+A room with a keep (protocol version 6, `X-Pedit-Keep`; the host sets the keep
+when it first connects and can change it while it is connected, not once it has
+left, and not for a room opened with `--keep 0`) stores ciphertext when the host leaves on purpose or does not
 return within the grace period: the host's latest encrypted snapshot, and a log
 of the encrypted, editor-signed entries that peers write meanwhile, in the
 room's SQLite storage (4 MiB, 10,000 entries). The peers stay connected and
@@ -69,30 +70,20 @@ The relay learns ciphertext sizes, request times, and opaque sender identifiers
 and counts. It receives no plaintext or URL-fragment key. A relay can still
 withhold or replay data; a signature does not prove freshness or availability.
 
-The following disconnect behavior describes a room while its host is
-connected, and a room without a keep (`--keep 0`) after that.
-
-A host whose connection drops, rather than one ending the session with
-Ctrl+C, gets two minutes to come back: meanwhile the room keeps its guests,
-lets new ones in and keeps its images and per-room data, and nobody edits. If
-the host does not come back, the room ends as if it had left.
-
-A relay update can drop every room's connections without the room seeing
-anyone leave. Keep the host's `pedit` running. It reconnects with the same link
-and merges the state kept on participant devices. Text, canvas changes, and
-comments save to the host during the session. Pending saves and edits still
-in transit can be lost if a device crashes. A guest that reconnects before the
-host starts the same two-minute wait. If nobody reconnects, the hourly check
-deletes orphaned images and per-room data within about an hour. Starting
-`pedit` again creates a new room and link.
-
-The two-minute grace period preserves guests, images, and per-room data after
-a host disconnect. It does not extend the public relay's 24-hour session limit,
-measured from the host's first connection. After the grace period expires,
-guests are disconnected and their link stops working until the host returns.
-Ctrl+C closes the guests' sessions immediately and their link stops working.
-The 24-hour limit closes the room even if the host returns within the grace period. Self-hosted relays
-have no room time limit unless configured.
+The relay never stores plaintext. A room without a keep stores no document
+ciphertext either, at any time; a kept room stores the host's encrypted
+snapshot while the host is connected, as described above. A host whose
+connection drops, rather than leaving with Ctrl+C, gets
+two minutes to come back: meanwhile the room keeps its guests, lets new ones
+in and keeps its images and per-room data, and nobody edits. If the host does
+not come back, a room without a keep ends as if the host had left, and a room
+with a keep is kept as described above. A relay update can drop every room's
+connections at once; the clients reconnect, and if nobody does, the hourly
+check deletes orphaned images and per-room data within about an hour. What
+people see meanwhile is in [sessions](sessions.md#if-the-connection-drops).
+The two minutes do not extend the 24-hour session limit, measured from the
+host's first connection ([limits](#limits)); a self-hosted relay has no room
+time limit unless configured.
 
 ## Logs
 
@@ -270,7 +261,7 @@ To report a vulnerability instead, see [SECURITY.md](../SECURITY.md).
 | Session length | 24 hours of host connection, from its first connection or its return to a kept room |
 | Kept room after departure | One day unless the host chose otherwise, counted from the moment the host leaves; up to 7 days; the CLI reports any clamp |
 | Kept room total life | 7 days from the host's first connection (`ROOM_LIFE_SECONDS`); a keep never reaches past it |
-| Kept text snapshot | 1 MiB of ciphertext for all files together; at most 64 text files, fixed when the room opens |
+| Kept text snapshot | 1 MiB of ciphertext for all files together; the room's files (at most 20) are fixed when the room opens |
 | Kept text log | 4 MiB of encrypted editing history before the host checkpoints; a 10,000-entry abuse guard also applies |
 | Kept room requests | 1,200 a minute from one network |
 

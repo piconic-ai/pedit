@@ -290,10 +290,11 @@ intake, truncation and close against a local relay.
 
 ### The command line guest
 
-A guest speaks version 7 and handles a kept room as a host that dropped: `kept
-<until>` is shown once as the host being away and the room being kept until then, the copy stays read-only, and on
-`host back` the guest continues. Editing from the command line while the host is
-away is not supported yet.
+A guest speaks version 7 and takes part in a kept room as the browser does:
+`kept <until>` is shown once as the host being away and the room being kept
+until then, its edits go to the relay as signed, encrypted entries, and on
+`host back` the guest continues (`internal/session/kept_guest.go`,
+[comments-cli.md](comments-cli.md#guests-while-the-host-is-away)).
 
 ## What the relay learns
 
