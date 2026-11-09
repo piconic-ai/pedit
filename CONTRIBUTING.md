@@ -29,6 +29,7 @@ pnpm test:deploy # self-host deployment orchestration
 PEDIT_INTEROP=1 go test -race ./...    # the CLI; its interop test drives the web client's RoomClient with Node.js
 go vet ./...
 cccc .           # cognitive complexity per function; cccc.toml sets the limit CI enforces
+scripts/check-links.sh  # links between the Markdown files and their #fragments (needs lychee)
 ```
 
 [cccc](https://github.com/moznion/cccc) comes with `mise install` (`mise.toml`)
