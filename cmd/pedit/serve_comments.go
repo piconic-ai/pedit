@@ -248,7 +248,9 @@ func fitThread(v threadView, room int) (threadView, int, bool) {
 		start--
 		size += jsonSize(all[start]) + 1
 	}
-	if start == len(all) {
+	// A thread whose comments were all invalid has none to show, and fits if
+	// its base does; one that has comments needs at least one of them to fit.
+	if base > room || (len(all) > 0 && start == len(all)) {
 		return v, 0, false
 	}
 	v.Messages, v.Cut = all[start:], start
