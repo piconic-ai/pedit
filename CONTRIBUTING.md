@@ -29,6 +29,7 @@ pnpm test:deploy # self-host deployment orchestration
 PEDIT_INTEROP=1 go test -race ./...    # the CLI; its interop test drives the web client's RoomClient with Node.js
 go vet ./...
 cccc .           # cognitive complexity per function; cccc.toml sets the limit CI enforces
+scripts/check-links.sh  # links between the Markdown files and their #fragments (needs lychee)
 ```
 
 [cccc](https://github.com/moznion/cccc) comes with `mise install` (`mise.toml`)
@@ -142,7 +143,7 @@ Before opening a pull request, also run `pnpm build` and check Go formatting wit
 installed TypeScript dependencies; `PEDIT_INTEROP=1` prevents silently skipping them.
 
 Keep encryption keys in the URL fragment and keep document content on clients.
-See [privacy and security](README.md#privacy-and-security) for the trust model and
+See [privacy and security](README.md#how-it-stays-private) for the trust model and
 [deployment](docs/contributing/deployment.md) for releases, previews and the lab Worker.
 
 See [Homebrew releases](docs/contributing/homebrew.md) for tap updates and token setup.

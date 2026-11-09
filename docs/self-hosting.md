@@ -51,7 +51,8 @@ close alternative public routes. In your repository's `wrangler.json`, add:
 
 Remove any other unprotected routes to the same Worker. After deployment,
 check that a signed-out browser must sign in and a disallowed identity cannot
-reach the editor or API.
+reach the editor or API. Access keeps its own logs, with their own retention,
+which are not erased when a room closes.
 
 ## CLI sign-in
 
