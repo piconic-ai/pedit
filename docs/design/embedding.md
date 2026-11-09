@@ -145,6 +145,76 @@ most 64 KiB. Each is answered by events on stream 0.
 - Saving, external saves and the lock are unchanged: the room is one more
   client of the document pedit already owns.
 
+#### Comments from the app (#492)
+
+While the app shares the file, the host takes part in its comments from the
+app, without opening the relay's editor. The comments are the room's as
+`comments.md` has them: the same doc, checks and limits. Nothing changes on the
+relay or on the wire.
+
+- **Only while shared and connected.** The commands below are accepted while
+  this process shares the file and the host is connected to the room. Not
+  shared, a kept room with `host: "away"` (nobody here to see a comment), or a
+  share whose connection is down or waiting: `error`, as `keep` is refused
+  today. A comment written while nobody can see it would look delivered. What
+  is saved stays readable (`.pedit/meta/`, `pedit comments list --file`).
+- **Author.** The host's name as the room shows it, which is the session's own
+  name (the account's, as for presence). Cleaned and cut as every author is.
+- `{"cmd":"comment","from":12,"to":20,"body":"…"}` starts a thread on the range
+  `[from, to)` of the file's text, as the browser does for text and Markdown:
+  the start is a Yjs RelativePosition with assoc 0 and the end one with assoc
+  -1, and the quote is the text the range covers.
+  - `from` and `to` are offsets in UTF-16 code units, as Yjs counts, in the
+    text of the room's document. A file with CRLF line endings is held with LF
+    there (`internal/lineend`), so an offset counts a line break as one unit,
+    as the app's own Y.Doc does.
+  - An empty range, an offset outside the text, a range that cuts a surrogate
+    pair, or one that covers more than a quote may hold (1,000 units) is an
+    error. The browser refuses the same.
+  - Only text and Markdown take it. A CSV or TSV (whose threads sit on cells)
+    and a canvas (on nodes) are refused.
+  - It is answered `{"event":"commented","thread":"<id>","message":"<id>"}`.
+- `{"cmd":"reply","thread":"<id>","body":"…"}` adds a comment to a thread,
+  answered `{"event":"replied","thread":"<id>","message":"<id>"}`.
+- `{"cmd":"resolve","thread":"<id>","resolved":true}` resolves a thread, or
+  reopens it with `false`. Setting the state a thread has already is done and
+  writes nothing. Answered `{"event":"resolved","thread":"<id>","resolved":true}`.
+- A body is trimmed, then must be 1 to 4,000 UTF-16 units, as the browser
+  keeps it. A room holds at most 500 threads, a thread 200 comments, and the
+  doc stays under `meta.MaxDocBytes`. Every update passes `meta.CheckUpdate`
+  before it is applied, as every peer's does. Ids are made as the browser makes
+  them (16 characters of base64url).
+- Every answer carries the command's `id`, as above. The `comments` event
+  that shows the write is sent before its answer, so an app that waits for the
+  answer already holds the thread.
+- **The `comments` event** tells the app the file's threads as they are now:
+
+      {"event":"comments","threads":[{"id":"…","quote":"…","resolved":false,
+        "from":12,"to":20,
+        "messages":[{"id":"…","author":"…","time":"2026-11-09T01:02:03.000Z","body":"…"}]}]}
+
+  - It is sent once when sharing starts, and again on a resume, so an app
+    always has the state. Afterwards it is sent when the comments doc changes,
+    from the room or from the app's commands, and when the text moves where a
+    thread points. Changes within 200 ms are one event, and an event equal to
+    the last one sent is not sent.
+  - `from` and `to` are where the anchor is in the text now, in the same
+    units, or `null` when it cannot be placed: the text it covered was
+    deleted, or the thread is on cells or a node. Threads are in the order
+    the browser shows them: by their first comment, then by id. Names and text
+    are cleaned as the browser cleans them (control and bidi characters
+    removed).
+  - The event must fit the app's limit of 64 KiB. When the threads do not, open
+    threads come first, then resolved ones; a thread that is left out is
+    counted in `"more"`, and a thread whose oldest comments do not fit lists
+    the latest ones, with `"cut"` counting those left out. The app can read the
+    rest from `.pedit/meta/`.
+- `@pedit/serve` gives them as `comment(path, {from, to, body})`, `reply(path,
+  thread, body)` and `resolve(path, thread, resolved)` beside `status` and
+  `keep`, and passes the event on as `comments`. A pedit without them answers
+  the unknown command with an error, which they reject with, saying pedit is
+  too old.
+
 #### Kept rooms keep one history
 
 A kept room's record written by serve also stores serve's generation and the

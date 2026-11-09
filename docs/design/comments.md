@@ -256,5 +256,7 @@ rules as above. See `docs/design/rooms-away.md`.
   stops writing it and says so.
 - Comments in the Markdown preview, or on canvas edges. Scripts and agents
   read and answer comments from the command line as `comments-cli.md` says.
+  An app that embeds pedit through `pedit serve` takes part as the host, live
+  (`embedding.md`, "Comments from the app").
 - A pending state, for a thread whose content has not arrived yet: it shows
   as gone until it does.
