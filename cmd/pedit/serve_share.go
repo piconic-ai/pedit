@@ -339,6 +339,8 @@ func (l *liveSharer) ended(ls *liveShare, st protocol.Status) {
 	case protocol.StatusMaintenance:
 		reason = "maintenance"
 	}
+	// The feed stops first: no comments event may follow room_ended.
+	l.cur.feed.stop()
 	l.st.Event("room_ended", map[string]any{"reason": reason})
 	l.leave()
 }

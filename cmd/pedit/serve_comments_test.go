@@ -8,8 +8,10 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/piconic-ai/pedit/internal/meta"
+	"github.com/piconic-ai/pedit/internal/protocol"
 	"github.com/piconic-ai/pedit/internal/session"
 )
 
@@ -202,5 +204,52 @@ func TestCommentsEventCutsTheOldestComments(t *testing.T) {
 	huge.Messages[0].Body = strings.Repeat("z", 70<<10)
 	if got := commentsEvent([]session.PlacedThread{huge}); len(got["threads"].([]threadView)) != 0 || got["more"] != 1 {
 		t.Fatalf("%v", got)
+	}
+}
+
+func TestCommentsEventKeepsAThreadWithNoValidComments(t *testing.T) {
+	th := placed("t", false, 0)
+	ev := commentsEvent([]session.PlacedThread{th})
+	if got := ev["threads"].([]threadView); len(got) != 1 || got[0].Cut != 0 || got[0].Messages == nil {
+		t.Fatalf("%v", ev)
+	}
+	if _, more := ev["more"]; more {
+		t.Fatal("more with the thread shown")
+	}
+	// A thread whose base alone does not fit is left out.
+	if _, _, ok := fitThread(viewOf(th), 10); ok {
+		t.Fatal("a thread over the room fits")
+	}
+}
+
+func TestNoCommentsEventFollowsRoomEnded(t *testing.T) {
+	env := newShareEnv(t)
+	a := startApp(t, writeFile(t, "hello wide world\n"))
+	p := a.openPage(1)
+	eventually(t, "the page's text", func() bool { return p.get() == "hello wide world\n" })
+	a.share(fmt.Sprintf(`,"relay":%q`, env.server.URL))
+	a.commentsWhere("the first comments event", func(th []map[string]any) bool { return len(th) == 0 })
+	a.command(`{"cmd":"comment","from":6,"to":10,"body":"Why?"}`)
+	a.event("commented", 1)
+	// A text edit that moves the anchor starts the feed's timer; the room ends before it fires.
+	p.insert(0, "x")
+	time.Sleep(commentsDelay / 4)
+	env.relay.CloseAll(protocol.RoomClosed, "")
+	a.event("room_ended", 1)
+	time.Sleep(2 * commentsDelay)
+	seen, after := false, 0
+	for _, f := range wholeFrames(a.out.String()) {
+		var e map[string]any
+		if f.kind != 4 || json.Unmarshal(f.payload, &e) != nil {
+			continue
+		}
+		if e["event"] == "room_ended" {
+			seen = true
+		} else if seen && e["event"] == "comments" {
+			after++
+		}
+	}
+	if after != 0 {
+		t.Fatalf("%d comments events after room_ended", after)
 	}
 }
