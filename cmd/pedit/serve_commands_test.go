@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -115,6 +117,19 @@ func (r *recorder) Close(context.Context) error { r.calls = append(r.calls, "clo
 func (r *recorder) Status(context.Context) error { r.calls = append(r.calls, "status"); return r.err }
 func (r *recorder) Keep(_ context.Context, d time.Duration) error {
 	r.calls = append(r.calls, "keep "+d.String())
+	return r.err
+}
+
+func (r *recorder) Comment(_ context.Context, from, to int, body string) error {
+	r.calls = append(r.calls, fmt.Sprintf("comment %d %d %q", from, to, body))
+	return r.err
+}
+func (r *recorder) Reply(_ context.Context, thread, body string) error {
+	r.calls = append(r.calls, fmt.Sprintf("reply %s %q", thread, body))
+	return r.err
+}
+func (r *recorder) Resolve(_ context.Context, thread string, resolved bool) error {
+	r.calls = append(r.calls, fmt.Sprintf("resolve %s %v", thread, resolved))
 	return r.err
 }
 
@@ -300,8 +315,49 @@ func trimToFrames(out string) string {
 	return string(bytes.Clone(b[:n]))
 }
 
+func (b *blocking) Comment(context.Context, int, int, string) error { b.note("comment"); return nil }
+func (b *blocking) Reply(context.Context, string, string) error     { b.note("reply"); return nil }
+func (b *blocking) Resolve(context.Context, string, bool) error     { b.note("resolve"); return nil }
+
 func (b *blocking) Status(context.Context) error { b.note("status"); return nil }
 func (b *blocking) Keep(context.Context, time.Duration) error {
 	b.note("keep")
 	return nil
+}
+
+func TestCommentCommandsGoToTheSharerWithATrimmedBody(t *testing.T) {
+	r := &recorder{}
+	events := runCommands(t, r,
+		`{"cmd":"comment","from":2,"to":5,"body":"  Why?\n","id":"a"}`,
+		`{"cmd":"reply","thread":"t1","body":" Because "}`,
+		`{"cmd":"resolve","thread":"t1","resolved":false}`)
+	want := []string{`comment 2 5 "Why?"`, `reply t1 "Because"`, `resolve t1 false`}
+	if !slices.Equal(r.calls, want) || len(events) != 0 {
+		t.Fatalf("calls %q, events %v", r.calls, events)
+	}
+}
+
+func TestCommentCommandsRefuseWrongFields(t *testing.T) {
+	for _, c := range []struct{ in, cmd, msg string }{
+		{`{"cmd":"comment","from":1,"to":2}`, "comment", "from, to and body"},
+		{`{"cmd":"comment","from":1,"body":"x"}`, "comment", "from, to and body"},
+		{`{"cmd":"comment","from":1,"to":2,"body":"x","thread":"t"}`, "comment", "from, to and body"},
+		{`{"cmd":"comment","from":3,"to":3,"body":"x"}`, "comment", "not empty"},
+		{`{"cmd":"comment","from":-1,"to":3,"body":"x"}`, "comment", "not empty"},
+		{`{"cmd":"comment","from":1.5,"to":3,"body":"x"}`, "comment", "not a command"},
+		{`{"cmd":"comment","from":1,"to":3,"body":"x","keep":"1d"}`, "comment", "share fields"},
+		{`{"cmd":"reply","thread":"t"}`, "reply", "thread and body"},
+		{`{"cmd":"reply","thread":"t","body":"x","resolved":true}`, "reply", "thread and body"},
+		{`{"cmd":"resolve","thread":"t"}`, "resolve", "thread and resolved"},
+		{`{"cmd":"resolve","thread":"t","resolved":true,"body":"x"}`, "resolve", "thread and resolved"},
+		{`{"cmd":"status","body":"x"}`, "status", "no fields"},
+		{`{"cmd":"keep","keep":"1d","thread":"t"}`, "keep", "keep takes"},
+		{`{"cmd":"share","body":"x"}`, "share", "no comment fields"},
+	} {
+		_, _, err := parseCommand([]byte(c.in))
+		var ce *commandError
+		if !errors.As(err, &ce) || ce.cmd != c.cmd || !strings.Contains(ce.err.Error(), c.msg) {
+			t.Errorf("%s: got %#v, want cmd %q and %q", c.in, err, c.cmd, c.msg)
+		}
+	}
 }

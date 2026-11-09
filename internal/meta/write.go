@@ -27,20 +27,11 @@ var (
 // it was, and the caller applies the update while holding the lock remote
 // updates are applied under, which it held while this ran.
 func ReplyUpdate(doc *crdt.Doc, thread, id, author, time, body string) ([]byte, error) {
-	if checkID(id) != nil {
-		return nil, ErrInvalidID
-	}
-	if strings.TrimSpace(body) == "" {
-		return nil, ErrEmptyBody
-	}
-	if units(body) > MaxBody {
-		return nil, ErrBodyTooLong
-	}
-	author = CutUnits(Clean(author, false), MaxAuthor)
-	msg := Message{Author: author, Time: time, Body: body}
-	if err := msg.check(); err != nil {
+	msg, err := newMessage(id, author, time, body)
+	if err != nil {
 		return nil, err
 	}
+	author = msg.Author
 	t, ok := shownByID(doc, thread)
 	if !ok {
 		return nil, ErrNoThread
@@ -136,4 +127,20 @@ func update(doc *crdt.Doc, change func(comments *crdt.YMap) func(*crdt.Transacti
 		return nil, err
 	}
 	return out, nil
+}
+
+// newMessage checks a comment about to be written and returns it, its author
+// cleaned and cut as the browser does.
+func newMessage(id, author, time, body string) (Message, error) {
+	if checkID(id) != nil {
+		return Message{}, ErrInvalidID
+	}
+	if strings.TrimSpace(body) == "" {
+		return Message{}, ErrEmptyBody
+	}
+	if units(body) > MaxBody {
+		return Message{}, ErrBodyTooLong
+	}
+	msg := Message{Author: CutUnits(Clean(author, false), MaxAuthor), Time: time, Body: body}
+	return msg, msg.check()
 }

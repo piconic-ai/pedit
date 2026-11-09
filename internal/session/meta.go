@@ -300,6 +300,11 @@ func (s *Session) addMeta(f *sharedFile) {
 		}
 	} else {
 		f.meta = m
+		if changed := s.opts.OnCommentsChanged; changed != nil {
+			notify := func([]byte, any) { changed() }
+			m.doc.OnUpdate(notify)
+			f.doc.OnUpdate(notify)
+		}
 		if s.opts.OnComments != nil {
 			watchComments(m.doc, f.path, &s.commentCalls, s.opts.OnComments)
 		}

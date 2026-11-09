@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -23,6 +24,11 @@ const (
 	cmdClose   = "close"
 	cmdStatus  = "status"
 	cmdKeep    = "keep"
+
+	// Comments from the app (docs/design/embedding.md, "Comments from the app").
+	cmdComment = "comment"
+	cmdReply   = "reply"
+	cmdResolve = "resolve"
 )
 
 // commandQueue is how many commands wait for the one that is running. The
@@ -39,6 +45,23 @@ type command struct {
 	Keep    *string  `json:"keep"`
 	Relay   *string  `json:"relay"`
 	Choice  *string  `json:"choice"`
+	// The fields of comment, reply and resolve.
+	From     *int    `json:"from"`
+	To       *int    `json:"to"`
+	Body     *string `json:"body"`
+	Thread   *string `json:"thread"`
+	Resolved *bool   `json:"resolved"`
+}
+
+// hasCommentFields tells whether the command carries a field of comment,
+// reply or resolve.
+func (c command) hasCommentFields() bool {
+	return c.From != nil || c.To != nil || c.Body != nil || c.Thread != nil || c.Resolved != nil
+}
+
+// hasShareFields tells whether the command carries a field of share or keep.
+func (c command) hasShareFields() bool {
+	return c.Origins != nil || c.Keep != nil || c.Relay != nil || c.Choice != nil
 }
 
 // shareRequest is a share command that passed the checks.
@@ -78,6 +101,11 @@ type sharer interface {
 	// now and answers with one.
 	Status(context.Context) error
 	Keep(context.Context, time.Duration) error
+	// Comment, Reply and Resolve write as the host while the file is shared
+	// and the host is connected, and answer with an event.
+	Comment(ctx context.Context, from, to int, body string) error
+	Reply(ctx context.Context, thread, body string) error
+	Resolve(ctx context.Context, thread string, resolved bool) error
 }
 
 // noSharer answers every command with an error, until sharing is built in.
@@ -90,6 +118,11 @@ func (noSharer) Unshare() error                            { return errNoSharing
 func (noSharer) Close(context.Context) error               { return errNoSharing }
 func (noSharer) Status(context.Context) error              { return errNoSharing }
 func (noSharer) Keep(context.Context, time.Duration) error { return errNoSharing }
+func (noSharer) Comment(context.Context, int, int, string) error {
+	return errNoSharing
+}
+func (noSharer) Reply(context.Context, string, string) error { return errNoSharing }
+func (noSharer) Resolve(context.Context, string, bool) error { return errNoSharing }
 
 // commandError is a command that was refused, with the command it named when
 // that is one pedit knows.
@@ -127,9 +160,11 @@ func parseCommand(payload []byte) (command, *shareRequest, error) {
 	case cmdShare:
 		req, err = parseShare(c)
 	case cmdUnshare, cmdClose, cmdStatus:
-		if c.Origins != nil || c.Keep != nil || c.Relay != nil || c.Choice != nil {
+		if c.hasShareFields() || c.hasCommentFields() {
 			err = fmt.Errorf("%s takes no fields but cmd", c.Cmd)
 		}
+	case cmdComment, cmdReply, cmdResolve:
+		err = parseComment(c)
 	case cmdKeep:
 		req, err = parseKeepCommand(c)
 	default:
@@ -144,7 +179,7 @@ func parseCommand(payload []byte) (command, *shareRequest, error) {
 // parseKeepCommand checks a keep command: it gives a request holding only
 // its Keep, which must not be 0 (a kept room cannot become live).
 func parseKeepCommand(c command) (*shareRequest, error) {
-	if c.Origins != nil || c.Relay != nil || c.Choice != nil {
+	if c.Origins != nil || c.Relay != nil || c.Choice != nil || c.hasCommentFields() {
 		return nil, errors.New("keep takes no fields but cmd, id and keep")
 	}
 	if c.Keep == nil {
@@ -160,8 +195,44 @@ func parseKeepCommand(c command) (*shareRequest, error) {
 	return &shareRequest{Keep: d}, nil
 }
 
+// parseComment checks the fields of a comment, reply or resolve command: those
+// it takes are there, and no other is. The text of what is written is checked
+// where it is written.
+func parseComment(c command) error {
+	if c.hasShareFields() {
+		return fmt.Errorf("%s takes no share fields", c.Cmd)
+	}
+	want := map[string][]bool{
+		cmdComment: {c.From != nil, c.To != nil, c.Body != nil},
+		cmdReply:   {c.Thread != nil, c.Body != nil},
+		cmdResolve: {c.Thread != nil, c.Resolved != nil},
+	}[c.Cmd]
+	names := map[string]string{cmdComment: "from, to and body", cmdReply: "thread and body", cmdResolve: "thread and resolved"}
+	if slices.Contains(want, false) || c.givenCommentFields() != len(want) {
+		return fmt.Errorf("%s takes exactly %s", c.Cmd, names[c.Cmd])
+	}
+	if c.Cmd == cmdComment && (*c.From < 0 || *c.To <= *c.From) {
+		return errors.New("from and to must make a range that is not empty: 0 <= from < to")
+	}
+	return nil
+}
+
+// givenCommentFields counts the comment fields the command carries.
+func (c command) givenCommentFields() int {
+	n := 0
+	for _, given := range []bool{c.From != nil, c.To != nil, c.Body != nil, c.Thread != nil, c.Resolved != nil} {
+		if given {
+			n++
+		}
+	}
+	return n
+}
+
 // parseShare checks a share command's fields and gives its request.
 func parseShare(c command) (*shareRequest, error) {
+	if c.hasCommentFields() {
+		return nil, errors.New("share takes no comment fields")
+	}
 	req := &shareRequest{Keep: defaultKeep}
 	origins, err := protocol.ParseOrigins(c.Origins)
 	if err != nil {
@@ -201,7 +272,7 @@ func knownCmd(payload []byte) string {
 	}
 	_ = json.NewDecoder(bytes.NewReader(payload)).Decode(&c) // the first value only
 	switch c.Cmd {
-	case cmdShare, cmdUnshare, cmdClose, cmdStatus, cmdKeep:
+	case cmdShare, cmdUnshare, cmdClose, cmdStatus, cmdKeep, cmdComment, cmdReply, cmdResolve:
 		return c.Cmd
 	}
 	return ""
@@ -300,6 +371,12 @@ func (c *commands) handle(ctx context.Context, payload []byte) {
 			err = c.sharer.Status(ctx)
 		case cmdKeep:
 			err = c.sharer.Keep(ctx, req.Keep)
+		case cmdComment:
+			err = c.sharer.Comment(ctx, *cmd.From, *cmd.To, strings.TrimSpace(*cmd.Body))
+		case cmdReply:
+			err = c.sharer.Reply(ctx, *cmd.Thread, strings.TrimSpace(*cmd.Body))
+		case cmdResolve:
+			err = c.sharer.Resolve(ctx, *cmd.Thread, *cmd.Resolved)
 		}
 		if err != nil {
 			err = &commandError{cmd.Cmd, cmd.ID, err}
