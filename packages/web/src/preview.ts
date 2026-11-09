@@ -762,6 +762,16 @@ function keepsEmbed(old: Element, fresh: Element): boolean {
   )
 }
 
+/** What an element looks like as rendered, ignoring line attributes; see domKey. */
+export function renderedKey(el: Element): string {
+  return domKey(el)
+}
+
+/** Copies the (nested) `data-line`s of `from` onto `to`, an element that looks the same. */
+export function copyRenderedLines(from: Element, to: Element): void {
+  copyLines(from, to)
+}
+
 /** Whether the element holds a loaded player or snippet, or a ticked "Always load" box. */
 export function holdsEmbed(el: Element): boolean {
   // The element may be the placeholder itself, a paragraph that is only an embed.

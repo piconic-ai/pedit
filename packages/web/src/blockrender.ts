@@ -2,12 +2,14 @@ import type { ImageResolver } from './core/attachments.ts'
 import {
   type Block,
   type BlockEnv,
+  copyRenderedLines,
   holdsEmbed,
   keyOf,
   pageMediaSources,
   parseBlocks,
   patchHeldEmbed,
   renderBlock,
+  renderedKey,
 } from './preview.ts'
 
 // What a pane needs besides BlockRenderer, so one module is all it loads.
@@ -155,8 +157,10 @@ function addTo(map: Map<string, Entry[]>, entry: Entry): void {
 }
 
 /**
- * Renders the blocks without an entry. One that is an edited block holding a
- * loaded embed keeps that element, patched; what is left unused is gone.
+ * Renders the blocks without an entry. A fresh block that renders as an unused old
+ * one did keeps the old element (a playing video, a loaded image or player, a
+ * ticked box, whatever else lives in it); one that is an edited block holding a
+ * loaded embed keeps its element, patched. What is left unused is gone.
  */
 function renderMissed(
   blocks: Block[],
@@ -165,7 +169,7 @@ function renderMissed(
   unused: Map<string, Entry[]>,
   env: BlockEnv,
 ): void {
-  let held: Entry[] | undefined
+  let old: Old | undefined
   for (let i = 0; i < blocks.length; i++) {
     if (entries[i]) continue
     const block = blocks[i] as Block
@@ -174,20 +178,55 @@ function renderMissed(
       block,
       env.images ? { ...env, images: watching(env.images, looked) } : env,
     )
-    held ??= [...unused.values()]
-      .flat()
-      .filter((e) => e.elements.length === 1 && holdsEmbed(e.elements[0] as Element))
-    const elements = keepHeld(held, fresh) ?? fresh
+    old ??= oldElements(unused)
+    const elements = keepOld(old, fresh) ?? fresh
     entries[i] = { key: keys[i] as string, images: looked, block, elements }
   }
 }
 
-// The elements of a held entry that `fresh` is an edit of, patched, or null.
-function keepHeld(held: Entry[], fresh: Element[]): Element[] | null {
+/** The unused single-element entries: by what they look like, and those holding an embed. */
+interface Old {
+  looks: Map<string, Entry[]>
+  held: Entry[]
+  taken: Set<Entry>
+}
+
+function oldElements(unused: Map<string, Entry[]>): Old {
+  const looks = new Map<string, Entry[]>()
+  const held: Entry[] = []
+  for (const list of unused.values()) {
+    for (const e of list) {
+      const el = e.elements[0]
+      if (e.elements.length !== 1 || !el) continue
+      const look = renderedKey(el)
+      const same = looks.get(look)
+      if (same) same.push(e)
+      else looks.set(look, [e])
+      if (holdsEmbed(el)) held.push(e)
+    }
+  }
+  return { looks, held, taken: new Set() }
+}
+
+// The elements of an old entry that `fresh` stands for, or null: one that looks the
+// same, else a held one that `fresh` is an edit of, patched.
+function keepOld(old: Old, fresh: Element[]): Element[] | null {
   const only = fresh[0]
   if (fresh.length !== 1 || !only) return null
-  const at = held.findIndex((e) => patchHeldEmbed(e.elements[0] as Element, only))
-  return at < 0 ? null : (held.splice(at, 1)[0] as Entry).elements
+  const list = old.looks.get(renderedKey(only))
+  let same = list?.shift()
+  while (same && old.taken.has(same)) same = list?.shift()
+  if (same) {
+    copyRenderedLines(only, same.elements[0] as Element)
+    old.taken.add(same)
+    return same.elements
+  }
+  const held = old.held.find(
+    (e) => !old.taken.has(e) && patchHeldEmbed(e.elements[0] as Element, only),
+  )
+  if (!held) return null
+  old.taken.add(held)
+  return held.elements
 }
 
 // Cached blocks do not look their images up again, so say that they are shown: the

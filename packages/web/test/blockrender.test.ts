@@ -688,3 +688,55 @@ describe('images on screen', () => {
     expect(looked).toEqual([img])
   })
 })
+
+describe('a block whose key is new but whose output is the same', () => {
+  const video = 'https://example.com/demo.mp4'
+  const withMedia = () => {
+    const container = document.createElement('article')
+    document.body.replaceChildren(container)
+    const renderer = new BlockRenderer(container)
+    return { container, update: (t: string, v = 0) => renderer.update(t, undefined, v, ['https:']) }
+  }
+
+  it('keeps a playing video when text is added after it', () => {
+    const { container, update } = withMedia()
+    update(video)
+    const el = container.querySelector('video') as HTMLVideoElement
+    el.currentTime = 30
+    update(`${video}\n\nmore`)
+    expect(container.querySelector('video')).toBe(el)
+    expect(el.currentTime).toBe(30)
+    expect(container.children).toHaveLength(2)
+  })
+
+  it('keeps a video in an image block when the images version changes', () => {
+    const { container, update } = withMedia()
+    update(`![demo](${video})\n\ntext`, 0)
+    const el = container.querySelector('video') as HTMLVideoElement
+    el.currentTime = 12
+    update(`![demo](${video})\n\ntext`, 1)
+    expect(container.querySelector('video')).toBe(el)
+    expect(el.currentTime).toBe(12)
+  })
+
+  it('keeps the element and restamps its lines', () => {
+    const { container, update } = withMedia()
+    update('# a\n\ntext\n')
+    const p = container.children[1] as Element
+    // Appending after the last line changes that block's key, not its output.
+    update('# a\n\ntext')
+    expect(container.children[1]).toBe(p)
+    update('new\n\n# a\n\ntext')
+    expect(container.children[2]).toBe(p)
+    expect(p.getAttribute('data-line')).toBe('4')
+  })
+
+  it('hands one old element to one block, identical blocks to separate elements', () => {
+    const { container, update } = withMedia()
+    update('same\n\nsame\n')
+    const before = [...container.children]
+    update('same\n\nsame')
+    const after = [...container.children]
+    expect(after).toEqual(before)
+  })
+})
