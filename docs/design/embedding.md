@@ -211,9 +211,11 @@ relay or on the wire.
     rest from `.pedit/meta/`.
 - `@pedit/serve` gives them as `comment(path, {from, to, body})`, `reply(path,
   thread, body)` and `resolve(path, thread, resolved)` beside `status` and
-  `keep`, and passes the event on as `comments`. A pedit without them answers
-  the unknown command with an error, which they reject with, saying pedit is
-  too old.
+  `keep`, and passes the event on as `comments`. A pedit without them
+  refuses the command with an error: pedit 0.8.x decodes a command strictly
+  before it looks at `cmd`, so it says `not a command: json: unknown field
+  "from"` (or `thread`) rather than `unknown cmd`. `@pedit/serve` takes both
+  for an old pedit and rejects, saying pedit is too old.
 
 #### Kept rooms keep one history
 
