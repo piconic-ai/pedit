@@ -9,7 +9,17 @@ import { HeldError } from './errors.ts'
 import { nativeRealpath, nativeRealpathSync } from './paths.ts'
 import { resolvePedit } from './resolve.ts'
 import { ServedFiles } from './served.ts'
-import type { Peer, Role, Shared, ShareOptions, ShareResult, ShareStatus } from './types.ts'
+import type {
+  CommentRange,
+  CommentThread,
+  Peer,
+  Role,
+  Shared,
+  ShareOptions,
+  ShareResult,
+  ShareStatus,
+  StartedThread,
+} from './types.ts'
 
 export type { Role }
 
@@ -40,6 +50,7 @@ export type PeditEvent =
   /** The room events: `id` is the one the routes last served the path under, or null. */
   | ({ type: 'shared'; id: string | null; path: string } & Omit<Shared, 'type'>)
   | { type: 'peers'; id: string | null; path: string; peers: Peer[]; more?: number }
+  | { type: 'comments'; id: string | null; path: string; threads: CommentThread[]; more?: number }
   | { type: 'room_ended'; id: string | null; path: string; reason: string }
   | { type: 'unshared'; id: string | null; path: string }
   | { type: 'update_available'; version: string; url: string; security: boolean }
@@ -56,6 +67,12 @@ export interface PeditRoutes {
   status(path: string): Promise<ShareStatus | null>
   /** Change the keep of the room this file shares now (`3d`; not `0`). */
   keep(path: string, keep: string): Promise<ShareStatus>
+  /** Start a thread on `[from, to)` of the text, as the host; only while the file is shared. */
+  comment(path: string, range: CommentRange): Promise<StartedThread>
+  /** Add a comment to a thread, as the host. */
+  reply(path: string, thread: string, body: string): Promise<{ message: string }>
+  /** Resolve a thread, or open it again, as the host. */
+  resolve(path: string, thread: string, resolved: boolean): Promise<void>
 }
 
 const ID = /^[A-Za-z0-9_-]{1,128}$/
@@ -157,6 +174,7 @@ export function peditRoutes<E extends Env = Env>(options: PeditOptions<E>): Hono
             else if (
               e.type === 'shared' ||
               e.type === 'peers' ||
+              e.type === 'comments' ||
               e.type === 'room_ended' ||
               e.type === 'unshared'
             )
@@ -378,5 +396,10 @@ export function peditRoutes<E extends Env = Env>(options: PeditOptions<E>): Hono
     },
     status: async (path: string) => (await sharable(path)).status(),
     keep: async (path: string, keep: string) => (await sharable(path)).keep(keep),
+    comment: async (path: string, range: CommentRange) => (await sharable(path)).comment(range),
+    reply: async (path: string, thread: string, body: string) =>
+      (await sharable(path)).reply(thread, body),
+    resolve: async (path: string, thread: string, resolved: boolean) =>
+      (await sharable(path)).resolve(thread, resolved),
   })
 }
