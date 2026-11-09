@@ -221,7 +221,7 @@ func TestOutdated(t *testing.T) {
 	out.Reset()
 	newUI(&out, false, false).outdated(protocol.StatusClientOutdated, "")
 	want = `  This pedit is too old for the server. Update it and run pedit again.
-  https://github.com/piconic-ai/pedit#install
+  https://github.com/piconic-ai/pedit/blob/main/docs/getting-started.md#install
 
 `
 	if out.String() != want {

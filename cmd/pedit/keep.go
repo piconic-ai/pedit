@@ -139,7 +139,7 @@ func printKeepHint(w io.Writer, room string, others bool, file string) {
 	if others {
 		resume += "  (or: pedit resume " + room + ")"
 	}
-	fmt.Fprintf(w, "Leave with Ctrl+C. To take in the edits later, run in this directory:\n  %s\n", resume)
+	fmt.Fprintf(w, "To take in the edits later, run in this directory:\n  %s\n", resume)
 }
 
 func describeKept(r session.KeptTextRecord) string {

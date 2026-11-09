@@ -101,7 +101,7 @@ func TestKeepHint(t *testing.T) {
 	}
 	var out bytes.Buffer
 	printKeepHint(&out, testRoom, false, "a.md")
-	if !strings.HasSuffix(out.String(), "run in this directory:\n  pedit a.md\n") || !strings.HasPrefix(out.String(), "Leave with Ctrl+C.") {
+	if out.String() != "To take in the edits later, run in this directory:\n  pedit a.md\n" {
 		t.Fatal(out.String())
 	}
 }
