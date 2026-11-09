@@ -15,7 +15,9 @@ carries the same version number. The pedit it needs depends on what you use:
 | Read or change a room's keep (`status`, `keep`) | 0.8.1 or later |
 | Comment as the host, and get the threads | 0.8.2 or later |
 
-A pedit that lacks a command rejects the call, saying it is too old; the child goes on.
+A pedit older than 0.6.0 (serve surface 1) rejects every room command with `sharing needs pedit
+serve 2; this pedit is older`; one that lacks a later command rejects it with `pedit is too old for
+status; update it` (or `keep`, `comment`, `reply`, `resolve`). The child goes on.
 
 ## Requirements
 
@@ -92,6 +94,9 @@ below. Mount it with `app.route(path, routes)`.
 | `allowRemote` | Accept peers that are not on loopback. Default `false`. |
 | `onEvent(event)` | See [events](#events). |
 
+Types: `PeditOptions`, `PeditRoutes`, `PeditEvent`, `Role`. The helpers `isLoopback(address)` and
+`inside(root, path)` are exported too.
+
 ### Methods on the routes
 
 Every method takes an absolute `path` to a file under `root`, checked as the routes check it: a
@@ -102,7 +107,7 @@ child.
 | --- | --- |
 | `share(path, opts?)` | Open a room for the file; see [sharing](#sharing). |
 | `unshare(path)` | Leave the room: a kept room stays kept, a live one ends. |
-| `close(path?)` | With a path, end that file's kept room for good. Without, stop every child. |
+| `close(path?)` | With a path, end that file's kept room for good (a live room is only left). Without, stop every child. |
 | `status(path)` | The file's room, shared now or kept without pedit; `null` when it has none. |
 | `keep(path, keep)` | Change how long the relay keeps the room after pedit leaves. |
 | `comment(path, range)`, `reply(path, thread, body)`, `resolve(path, thread, resolved)` | Take part in the file's comments as the host; see [comments](#comments). |
@@ -113,8 +118,8 @@ child.
 
 | Event | |
 | --- | --- |
-| `started` | `{ id, path, version?, serve? }`: a child is up. `version` is pedit's version and `serve` its surface version, when pedit reports them. |
-| `stopped` | `{ id, path, reason: 'idle' \| 'exited' \| 'shutdown' }` |
+| `started` | `{ id, path, version?, serve? }`: a child a page opened through an id is up. `version` is pedit's version and `serve` its surface version (2 from pedit 0.6.0), when pedit reports them. A child that `share` or `status` started before any page connected is not reported here; the `ServedFiles` layer reports every child. |
+| `stopped` | `{ id, path, reason: 'idle' \| 'exited' \| 'shutdown' }`, for the same children as `started`. |
 | `error` | `{ id, message }`; `id` is `null` when no id is involved. |
 | `update_available` | `{ version, url, security }`, once per version, when pedit finds a newer release. |
 | `shared` | The result of a `share`, with `path` and `id`. |
@@ -129,8 +134,8 @@ For the room events, `id` is the one the routes last served that path under, or 
 
 ### `connect(base, id, options?)`
 
-Opens `${base}/${id}`, where the routes are mounted: issues a session, connects, and resolves after
-the first sync with a `Connection`. It reconnects with a fresh token until the server says the
+Opens `${base}/${id}`, where `base` is the same-origin path the routes are mounted at (`'/edit'`, not
+a full URL): issues a session, connects, and resolves after the first sync with a `Connection`. It reconnects with a fresh token until the server says the
 document is gone. `options` is `{ name?, color? }` for awareness.
 
 ### `Connection`
@@ -146,9 +151,18 @@ document is gone. `options` is `{ name?, color? }` for awareness.
 
 ### `PeditError`
 
-`error.code` is one of `not-found`, `held` (another process holds the file), `busy` (the file has
-as many clients as it takes), `forbidden`, `gone` (pedit's saved state was discarded, so this page's
-copy cannot merge into the new document; the client stops), `unavailable`.
+`error.code` (a `PeditErrorCode`) is one of:
+
+| Code | |
+| --- | --- |
+| `not-found` | `resolve` returned `null` for the id. |
+| `held` | Another process holds the file, and the page's role is `edit`. |
+| `busy` | pedit could not serve the file just now: it is missing or not usable, the file or client limit is reached, the child failed to start, or another process holds a file the page would only read. The server reports the cause as an `error` event. |
+| `forbidden` | The Host or Origin did not match, or the peer is not on loopback. |
+| `gone` | pedit's saved state was discarded, so this page's copy cannot merge into the new document. The client stops. |
+| `unavailable` | The session request failed, or its answer could not be read. |
+
+Types: `Connection`, `Status`, `PeditErrorCode`, `Role`.
 
 ## `@pedit/serve`
 
@@ -156,17 +170,18 @@ The layer below the routes, for an app that is not on Hono or wants its own tran
 
 ### `ServedFiles`
 
-`new ServedFiles({ bin, app, idleMs?, graceMs?, onEvent? })`. `acquire(path)` starts a child for the
-file or reuses the one running, and resolves a `ServedFile`; `close()` ends every child. Its
-`onEvent` gets the same events as the routes, by `path` only: this layer knows paths, not ids.
+`new ServedFiles({ bin, app, idleMs?, graceMs?, onEvent? })` (`ServedFilesOptions`; `bin` must be an
+absolute path). `acquire(path)` starts a child for the file or reuses the one running, and resolves a
+`ServedFile`; `close()` ends every child. Its `onEvent` gets a `ServeEvent`, the same events as the
+routes but by `path` only: this layer knows paths, not ids, and reports every child.
 
 ### `ServedFile`
 
 | Member | |
 | --- | --- |
 | `path`, `generation` | `generation` names the document: the same after a restart that restored it, new when it started afresh. |
-| `dial(role)` | One stream to the child, as a `Bridge`; at most 8 per file (`LimitError`). |
-| `share(opts?)`, `unshare()`, `close()`, `status()`, `keep(keep)` | As the routes' methods, for this file; see [sharing](#sharing). |
+| `dial(role)` | One stream to the child, as a `Bridge` (`send(frame)`, `onframe`, `onclose(reason, code?)`, `close()`); at most 8 per file (`LimitError`). |
+| `share(opts?)`, `unshare()`, `close()`, `status()`, `keep(keep)` | As the routes' methods, for this file; see [sharing](#sharing). `close()` ends a kept room for good; a live one is only left. |
 | `comment(range)`, `reply(thread, body)`, `resolve(thread, resolved)` | See [comments](#comments). |
 
 ### `resolvePedit(options?)`, `MIN_PEDIT_VERSION`, `peditVersionOk(output)`
@@ -177,13 +192,17 @@ file or reuses the one running, and resolves a `ServedFile`; `close()` ends ever
 whether a `pedit --version` output is at least `MIN_PEDIT_VERSION` (development builds pass and are
 left to the feature checks).
 
+Types: `ServedFilesOptions`, `ServedFile`, `ServeEvent`, `Bridge`, `Installed`, `Verified`, and the
+share and comment types `ShareOptions`, `ShareResult` (`Shared`, `ShareChoice`, `ShareClosed`),
+`ShareStatus`, `Peer`, `CommentRange`, `CommentThread`, `CommentMessage`, `StartedThread`, `Role`.
+
 ### Errors
 
 | Class | |
 | --- | --- |
 | `HeldError` | Another process serves the file. |
 | `LimitError` | 32 files, or 8 clients on one file. |
-| `NoPeditError` | pedit is missing, too old, or could not be installed. |
+| `NoPeditError` | pedit is missing or not trustworthy (not an absolute path, not a regular file, owned by another user, writable by group or others, or `--version` failed), too old, or could not be installed. |
 
 ## Sharing
 
