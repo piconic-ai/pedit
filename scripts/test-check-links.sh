@@ -20,11 +20,7 @@ make_tree() {
 
 Text.
 EOF
-  cat > "$work/tree/README.md" <<EOF
-# Test
-
-[guide](docs/guide.md) [section](docs/guide.md#kept-rooms) [here](#test) $1
-EOF
+  printf '# Test\n\n[guide](docs/guide.md) [section](docs/guide.md#kept-rooms) [here](#test) %s\n' "$1" > "$work/tree/README.md"
 }
 
 expect() {
@@ -53,3 +49,12 @@ expect fail "a fragment of the page itself that names no heading fails"
 # A web link is not checked: offline mode skips it rather than failing.
 make_tree "[web](https://example.invalid/missing)"
 expect pass "web links are skipped"
+
+# A Markdown file in a directory the inputs do not cover must be reported,
+# or a moved directory would go unchecked.
+make_tree ""
+mkdir "$work/tree/guides"
+printf '# Guides\n\n[missing](nope.md)\n' > "$work/tree/guides/index.md"
+expect fail "a Markdown file outside the inputs fails"
+grep -q 'guides/index.md' "$work/out" || { echo "FAIL: the uncovered file is not named" >&2; cat "$work/out" >&2; exit 1; }
+echo "ok: the uncovered file is named"
