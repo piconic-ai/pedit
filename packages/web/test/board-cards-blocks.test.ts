@@ -310,7 +310,7 @@ describe('a loaded player in a list or quote', () => {
         expect(container.querySelector('iframe'), `seed ${seed} step ${step}: ${list}`).toBe(frame)
       }
     }
-  })
+  }, process.env.FUZZ ? 60_000 : 5_000)
 })
 
 function remote(doc: Y.Doc, fn: () => void) {
