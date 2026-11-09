@@ -6,8 +6,8 @@ a script or an AI agent reads and answers them from the command line.
 
 ## In the browser
 
-Select some text, a cell of a table (or a whole row or column), or a node of a
-canvas; a small button appears beside the selection (or press the shortcut)
+Select some text (in the editor or in the Markdown preview), a cell of a table
+(or a whole row or column), or a node of a canvas; a small button appears beside the selection (or press the shortcut)
 and opens a composer right there. Everyone in the room sees the comment at
 once, marked where it points. The panel beside the editor lists the threads,
 where anyone can reply or resolve them; resolved threads stay under Resolved,
