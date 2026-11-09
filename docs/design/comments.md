@@ -251,13 +251,39 @@ and addressed by its own file ID in signed log entries. The host loads
 `.pedit/meta/<path>.json` on `--keep` and writes it on `pedit resume`, with the same
 rules as above. See `docs/design/rooms-away.md`.
 
+## Comments in the Markdown preview
+
+A reader can select text in the rendered preview and comment on it with the
+same button and composer. The comment is an ordinary text anchor on the source,
+so nothing changes in the protocol or the storage.
+
+- **The source map:** the preview tags each block with `data-line` (its first
+  source line) and `data-line-end` (the line after its last).
+- **From selection to source:** `previewSelectionToSource`
+  (`packages/web/src/previewselect.ts`) takes the blocks that hold the start
+  and the end of the selection, and looks for the selected text inside their
+  source lines. It takes the occurrence that matches the selection's place in
+  the block, counted among the repeats. When markup splits the text (bold,
+  links, list markers, soft wraps), the start and the end fragments are found
+  one by one and the source between them is the selection. A selection that
+  cannot be placed this way, or one in an embed or the frontmatter, is not
+  commentable.
+- **The editor's selection:** `commentOnPreviewSelection`
+  (`packages/web/src/previewcomment.ts`) sets the result as the editor's
+  selection without focusing or scrolling it, so the preview and the reader's
+  selection stay put, and the target, the composer and the split view's
+  highlight are the editor's own. While that selection is the editor's current
+  one, the button is placed at the preview selection's last line, in the
+  preview's right margin; once the editor selection changes by itself, the
+  editor places it again.
+
 ## Not yet
 
 - Following a renamed file (a `pedit doctor` could list and repair).
 - Suggestions (tracked changes), as another key of the metadata file.
 - Merging edits made to the metadata file on disk while it is shared: pedit
   stops writing it and says so.
-- Comments in the Markdown preview, or on canvas edges. Scripts and agents
+- Comments on canvas edges. Scripts and agents
   read and answer comments from the command line as `comments-cli.md` says.
   An app that embeds pedit through `pedit serve` takes part as the host, live
   (`embedding.md`, "Comments from the app").

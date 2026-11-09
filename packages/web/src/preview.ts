@@ -180,11 +180,13 @@ md.core.ruler.after('linkify', 'embeds', (state) => {
   }
 })
 
-// Tag blocks with their first source line, for scroll sync.
+// Tag blocks with their first source line, for scroll sync, and the line after
+// their last (exclusive), for mapping a selection back to the source.
 md.core.ruler.push('source_lines', (state) => {
   for (const token of state.tokens) {
     if (token.map && token.nesting !== -1 && token.type !== 'inline') {
       token.attrSet('data-line', String(token.map[0]))
+      token.attrSet('data-line-end', String(token.map[1]))
     }
   }
 })
@@ -459,6 +461,15 @@ function showSnippet(
 
 const keys = new WeakMap<Node, string>()
 
+const LINE_ATTRS = ['data-line', 'data-line-end']
+
+function copyAttr(name: string, from: Element, to: Element): void {
+  const value = from.getAttribute(name)
+  if (to.getAttribute(name) === value) return
+  if (value === null) to.removeAttribute(name)
+  else to.setAttribute(name, value)
+}
+
 /** What a top-level node looks like, ignoring the line numbers that shift on every edit. */
 function keyOf(node: Node): string {
   let key = keys.get(node)
@@ -466,7 +477,7 @@ function keyOf(node: Node): string {
     const clone = node.cloneNode(true)
     if (clone instanceof Element) {
       for (const el of [clone, ...clone.querySelectorAll('[data-line]')]) {
-        el.removeAttribute('data-line')
+        for (const name of LINE_ATTRS) el.removeAttribute(name)
       }
       key = clone.outerHTML
     } else {
@@ -493,18 +504,15 @@ function copyLines(from: Node | undefined, to: Node): void {
   const source = elements(from)
   const target = elements(to)
   source.forEach((el, i) => {
-    const line = el.getAttribute('data-line')
     const to = target[i]
-    if (!to || to.getAttribute('data-line') === line) return
-    if (line === null) to.removeAttribute('data-line')
-    else to.setAttribute('data-line', line)
+    if (to) for (const name of LINE_ATTRS) copyAttr(name, el, to)
   })
 }
 
 /** An element's tag and attributes, apart from its line. */
 function shellOf(el: Element): string {
   const attributes = [...el.attributes]
-    .filter((a) => a.name !== 'data-line')
+    .filter((a) => !LINE_ATTRS.includes(a.name))
     .map((a) => `${a.name}=${a.value}`)
   return [el.tagName, ...attributes].join(' ')
 }
@@ -638,9 +646,7 @@ function patchChildren(container: Node, after: Node[]): void {
       // The old element now stands for the fresh one: note its key first, as
       // patching takes the fresh one's children.
       keys.set(old, keyOf(node))
-      const line = (node as Element).getAttribute('data-line')
-      if (line === null) old.removeAttribute('data-line')
-      else old.setAttribute('data-line', line)
+      for (const name of LINE_ATTRS) copyAttr(name, node as Element, old)
       patchChildren(old, [...node.childNodes])
     }
     next = head + i + 1
