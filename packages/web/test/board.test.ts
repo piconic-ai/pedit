@@ -735,3 +735,15 @@ describe('a text card', () => {
     }
   })
 })
+
+describe('telling what is placed by a node that it moved', () => {
+  it('counts a dragged node, which changes the nodes and not the epoch', async () => {
+    const view = setup(docOf([node('a')]))
+    await tick()
+    const before = view.moved.get()
+    const store = storeOf(view)
+    store.setNodes(store.nodes().map((n) => ({ ...n, position: { x: 40, y: 40 } })))
+    await tick()
+    expect(view.moved.get()).toBeGreaterThan(before)
+  })
+})

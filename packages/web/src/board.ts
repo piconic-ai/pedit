@@ -402,6 +402,8 @@ export class BoardView {
       createEffect(() => {
         store.viewport()
         store.positionEpoch()
+        // A dragged node changes the nodes, not the epoch.
+        store.nodes()
         untrack(() => this.moved.set(this.moved.get() + 1))
       })
       createEffect(() => {

@@ -236,7 +236,9 @@ async function joinRoom(
       },
       watchPlace(fn) {
         const ro = new ResizeObserver(fn)
-        ro.observe(t.element)
+        // The slot is display: contents; its scroller has the box that resizes.
+        const box = t.element.querySelector('.table-scroll')
+        if (box) ro.observe(box)
         const stop = t.parsed.subscribe(fn)
         return () => {
           ro.disconnect()
@@ -304,13 +306,16 @@ async function joinRoom(
         const node =
           at?.kind === 'node' &&
           board.element.querySelector(`.bf-flow__node[data-id="${CSS.escape(at.id)}"]`)
-        if (!node) return null
+        // The slot is display: contents and has no box; the board inside it does.
+        const clip = board.element.querySelector('.canvas-board')
+        if (!node || !clip) return null
         const r = node.getBoundingClientRect()
-        return { x: r.right, y: r.top, clip: board.element.getBoundingClientRect() }
+        return { x: r.right, y: r.top, clip: clip.getBoundingClientRect() }
       },
       watchPlace(fn) {
         const ro = new ResizeObserver(fn)
-        ro.observe(board.element)
+        const box = board.element.querySelector('.canvas-board')
+        if (box) ro.observe(box)
         const stop = board.moved.subscribe(fn)
         return () => {
           ro.disconnect()
