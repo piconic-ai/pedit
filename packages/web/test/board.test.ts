@@ -5,12 +5,12 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate } from 'y-protocols/awareness'
 import * as Y from 'yjs'
 import { AlwaysLoad } from '../src/alwaysload.ts'
+import * as blockrender from '../src/blockrender.ts'
 import { BoardView, setCanvasStatus } from '../src/board.ts'
 import { EDGES, NODES, read, TEXT } from '../src/canvas.ts'
 import type { ImageResolver } from '../src/core/attachments.ts'
 import { JsonPane } from '../src/jsonpane.ts'
-import { MAX_REMEMBERED_SNIPPETS, type Renderer } from '../src/pane.ts'
-import * as preview from '../src/preview.ts'
+import { MAX_REMEMBERED_SNIPPETS, type PaneRenderer } from '../src/pane.ts'
 
 beforeAll(() => {
   // jsdom has neither; xyflow measures with the first and the board waits on the second.
@@ -62,11 +62,11 @@ const awarenesses = new WeakMap<BoardView, Awareness>()
 const awarenessOf = (view: BoardView) => awarenesses.get(view) as Awareness
 
 // Loaded at once, so a card's text is there by the first tick.
-const loadMarkdown = async (): Promise<Renderer> => preview
+const loadMarkdown = async (): Promise<PaneRenderer> => blockrender
 
 function setup(
   doc: Y.Doc,
-  load: () => Promise<Renderer> = loadMarkdown,
+  load: () => Promise<PaneRenderer> = loadMarkdown,
   more: Omit<ConstructorParameters<typeof BoardView>[2], 'loadMarkdown'> = {},
 ) {
   const awareness = new Awareness(doc)
@@ -612,12 +612,12 @@ describe('a text card', () => {
   })
 
   it('shows no raw Markdown while the renderer loads, and the Markdown once it has', async () => {
-    let loaded: (r: Renderer) => void = () => {}
+    let loaded: (r: PaneRenderer) => void = () => {}
     const doc = docOf([node('a', { text: '[x](https://example.com)' })])
     const view = setup(doc, () => new Promise((resolve) => (loaded = resolve)))
     await tick()
     expect(texts(view)).toEqual([''])
-    loaded(preview)
+    loaded(blockrender)
     await tick()
     expect(view.element.querySelector('.canvas-body a')?.textContent).toBe('x')
   })

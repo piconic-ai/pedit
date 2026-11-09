@@ -1,6 +1,6 @@
 'use client'
 
-import { createEffect, useContext } from '@barefootjs/client'
+import { createEffect, onCleanup, useContext } from '@barefootjs/client'
 import { type EdgeBase, type NodeBase, Position } from '@barefootjs/xyflow'
 import { BoardContext, type BoardView, MAX_ZOOM, MIN_ZOOM } from '../board.ts'
 import { nodeText } from '../canvas.ts'
@@ -66,6 +66,7 @@ export function CanvasCard(props: NodeBase) {
       text: null,
       version: -1,
     }
+    onCleanup(() => v.releaseMarkdown(el))
     createEffect(() => {
       const draw = v.markdown.get()
       const version = v.markdownVersion.get()
@@ -74,7 +75,10 @@ export function CanvasCard(props: NodeBase) {
       if (draw === drawn.draw && text === drawn.text && version === drawn.version) return
       drawn = { draw, text, version }
       if (draw && text !== null) draw(el, text)
-      else el.replaceChildren()
+      else {
+        v.releaseMarkdown(el)
+        el.replaceChildren()
+      }
     })
   }
   // Others on this node; their colour is a hex colour, from participants().

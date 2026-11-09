@@ -36,12 +36,22 @@ interface Entry {
 export class BlockRenderer {
   #container: Element
   #breaks: boolean
+  #decorate: ((root: Element) => void) | undefined
   // The blocks shown, in order.
   #entries: Entry[] = []
 
-  constructor(container: Element, options: { breaks?: boolean } = {}) {
+  /**
+   * `decorate` is called on every root as it is rendered, before it is compared with
+   * the old ones, so what it adds is part of what a block looks like and a kept
+   * element, a loaded player in it too, carries it already.
+   */
+  constructor(
+    container: Element,
+    options: { breaks?: boolean; decorate?: (root: Element) => void } = {},
+  ) {
     this.#container = container
     this.#breaks = options.breaks ?? false
+    this.#decorate = options.decorate
   }
 
   /** Forgets every block, e.g. when the container is about to show another text. */
@@ -65,7 +75,7 @@ export class BlockRenderer {
     const keys = blocks.map((b) => keyOf(b, refs, imagesVersion, this.#breaks))
     const entries: (Entry | undefined)[] = new Array(blocks.length)
     const unused = claimKept(this.#entries, keys, entries)
-    renderMissed(blocks, keys, entries, unused, env)
+    renderMissed(blocks, keys, entries, unused, env, this.#decorate)
     const list = entries as Entry[]
     if (images) reportShown(list, images)
     this.#entries = list
@@ -168,6 +178,7 @@ function renderMissed(
   entries: (Entry | undefined)[],
   unused: Map<string, Entry[]>,
   env: BlockEnv,
+  decorate?: (root: Element) => void,
 ): void {
   let old: Old | undefined
   for (let i = 0; i < blocks.length; i++) {
@@ -178,6 +189,7 @@ function renderMissed(
       block,
       env.images ? { ...env, images: watching(env.images, looked) } : env,
     )
+    if (decorate) for (const root of fresh) decorate(root)
     old ??= oldElements(unused)
     const elements = keepOld(old, fresh) ?? fresh
     entries[i] = { key: keys[i] as string, images: looked, block, elements }

@@ -13,7 +13,6 @@ import {
   loadEmbed,
   loadSnippet,
   pageMediaSources,
-  patch,
   render,
   sanitize,
   toggleRemember,
@@ -22,6 +21,26 @@ import {
 function html(source: string): string {
   const div = document.createElement('div')
   div.append(render(source))
+  return div.innerHTML
+}
+
+// What the preview shows in a container, block by block, as it is kept between calls.
+const shown = new WeakMap<Element, blockrender.BlockRenderer>()
+function show(
+  container: Element,
+  source: string,
+  resolver?: ImageResolver,
+  sources?: readonly string[],
+): void {
+  let blocks = shown.get(container)
+  if (!blocks) shown.set(container, (blocks = new blockrender.BlockRenderer(container)))
+  blocks.update(source, resolver, 0, sources)
+}
+
+// The same, in a container of its own: what a fresh render of the source shows.
+function shownHtml(source: string): string {
+  const div = document.createElement('div')
+  show(div, source)
   return div.innerHTML
 }
 
@@ -474,7 +493,7 @@ describe('loadEmbed', () => {
   function mounted(source: string): HTMLElement {
     const div = document.createElement('div')
     document.body.append(div)
-    patch(div, render(source, undefined, []))
+    show(div, source, undefined, [])
     return div
   }
 
@@ -681,7 +700,7 @@ describe('provider embeds', () => {
   it.each(cases)('loads %s with only its own attributes', (href, src, id) => {
     const div = document.createElement('div')
     document.body.append(div)
-    patch(div, render(href, undefined, []))
+    show(div, href, undefined, [])
     const el = div.querySelector('[data-embed-src]') as Element
     expect(embedProvider(el)).toBe(id)
     const frame = loadEmbed(el)
@@ -930,18 +949,18 @@ describe('always load', () => {
   })
 })
 
-describe('patch', () => {
+describe('a container kept by BlockRenderer', () => {
   it('keeps a loaded player while someone types elsewhere, not once its URL changes', () => {
     const container = document.createElement('div')
-    patch(container, render('# A\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nold\n'))
+    show(container, '# A\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nold\n')
     const frame = loadEmbed(container.querySelector('[data-embed-src]') as Element)
     expect(frame).not.toBeNull()
 
-    patch(container, render('# A, edited\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nnew\n'))
+    show(container, '# A, edited\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nnew\n')
     expect(container.querySelector('iframe')).toBe(frame)
     expect(container.textContent).toContain('new')
 
-    patch(container, render('# A, edited\n\nhttps://youtu.be/dQw4w9WgXcQ?t=5\n\nnew\n'))
+    show(container, '# A, edited\n\nhttps://youtu.be/dQw4w9WgXcQ?t=5\n\nnew\n')
     expect(container.querySelector('iframe')).toBeNull()
     expect(container.querySelector('[data-embed-src]')?.getAttribute('data-embed-src')).toBe(
       'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?start=5',
@@ -950,17 +969,17 @@ describe('patch', () => {
 
   it('keeps a loaded player when a block is added above it and another changes below', () => {
     const container = document.createElement('div')
-    patch(container, render('a\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nb\n'))
+    show(container, 'a\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nb\n')
     const frame = loadEmbed(container.querySelector('[data-embed-src]') as Element)
     expect(frame).not.toBeNull()
 
-    patch(container, render('a\n\nnew\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nB\n'))
+    show(container, 'a\n\nnew\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nB\n')
     expect(container.querySelector('iframe')).toBe(frame)
     expect(container.textContent).toContain('new')
     expect(container.textContent).toContain('B')
 
-    patch(container, render('x y\n\nnew\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nB\n'))
-    patch(container, render('x\n\ny\n\nnew\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nb\n'))
+    show(container, 'x y\n\nnew\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nB\n')
+    show(container, 'x\n\ny\n\nnew\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nb\n')
     expect(container.querySelector('iframe')).toBe(frame)
     expect(container.querySelector('.embed')?.getAttribute('data-line')).toBe('6')
   })
@@ -968,17 +987,17 @@ describe('patch', () => {
   it('keeps a sized player while someone types elsewhere, not once its size changes', () => {
     const container = document.createElement('div')
     const url = 'https://youtu.be/dQw4w9WgXcQ#width=400'
-    patch(container, render(`a\n\n${url}\n\nb\n`))
+    show(container, `a\n\n${url}\n\nb\n`)
     const frame = loadEmbed(container.querySelector('[data-embed-src]') as Element)
     expect(frame).not.toBeNull()
 
-    patch(container, render(`a\n\nnew\n\n${url}\n\nB\n`))
+    show(container, `a\n\nnew\n\n${url}\n\nB\n`)
     expect(container.querySelector('iframe')).toBe(frame)
     expect(container.querySelector('.embed')?.getAttribute('style')).toBe(
       '--embed-w:400;--embed-rw:400;--embed-rh:225',
     )
 
-    patch(container, render('a\n\nnew\n\nhttps://youtu.be/dQw4w9WgXcQ#width=500\n\nB\n'))
+    show(container, 'a\n\nnew\n\nhttps://youtu.be/dQw4w9WgXcQ#width=500\n\nB\n')
     expect(container.querySelector('iframe')).toBeNull()
     expect(container.querySelector('.embed')?.getAttribute('style')).toBe(
       '--embed-w:500;--embed-rw:500;--embed-rh:281',
@@ -987,15 +1006,15 @@ describe('patch', () => {
 
   it('keeps a loaded player in a list while its other items change', () => {
     const container = document.createElement('div')
-    patch(container, render('a\n\n- https://youtu.be/dQw4w9WgXcQ\n- x\n\nb\n'))
+    show(container, 'a\n\n- https://youtu.be/dQw4w9WgXcQ\n- x\n\nb\n')
     const frame = loadEmbed(container.querySelector('[data-embed-src]') as Element)
     expect(frame).not.toBeNull()
 
-    patch(container, render('a\n\n- https://youtu.be/dQw4w9WgXcQ\n- xy\n\nb\n'))
+    show(container, 'a\n\n- https://youtu.be/dQw4w9WgXcQ\n- xy\n\nb\n')
     expect(container.querySelector('iframe')).toBe(frame)
     expect(container.querySelectorAll('li')[1]?.textContent).toBe('xy')
 
-    patch(container, render('> a\n\n- https://youtu.be/dQw4w9WgXcQ\n- xy\n- z\n\nb\n'))
+    show(container, '> a\n\n- https://youtu.be/dQw4w9WgXcQ\n- xy\n- z\n\nb\n')
     expect(container.querySelector('iframe')).toBe(frame)
     expect([...container.querySelectorAll('li')].map((li) => li.textContent)).toEqual([
       expect.anything(),
@@ -1004,10 +1023,10 @@ describe('patch', () => {
     ])
 
     // Editing the player's own item still turns it back into a placeholder.
-    patch(container, render('> a\n\n- https://youtu.be/dQw4w9WgXcQ?t=5\n- xy\n- z\n\nb\n'))
+    show(container, '> a\n\n- https://youtu.be/dQw4w9WgXcQ?t=5\n- xy\n- z\n\nb\n')
     expect(container.querySelector('iframe')).toBeNull()
     expect(container.innerHTML).toBe(
-      html('> a\n\n- https://youtu.be/dQw4w9WgXcQ?t=5\n- xy\n- z\n\nb\n'),
+      shownHtml('> a\n\n- https://youtu.be/dQw4w9WgXcQ?t=5\n- xy\n- z\n\nb\n'),
     )
   })
 
@@ -1018,11 +1037,11 @@ describe('patch', () => {
       ['> https://youtu.be/dQw4w9WgXcQ\n>\n> edited\n\nseparator\n\n> new quote\n', 0],
     ] as const) {
       const container = document.createElement('div')
-      patch(container, render('> https://youtu.be/dQw4w9WgXcQ\n>\n> old\n'))
+      show(container, '> https://youtu.be/dQw4w9WgXcQ\n>\n> old\n')
       const frame = loadEmbed(container.querySelector('[data-embed-src]') as Element)
       expect(frame).not.toBeNull()
 
-      patch(container, render(edited))
+      show(container, edited)
       expect(container.querySelector('iframe')).toBe(frame)
       const quotes = container.querySelectorAll('blockquote')
       expect(quotes[at]?.contains(frame)).toBe(true)
@@ -1033,47 +1052,49 @@ describe('patch', () => {
 
   it('keeps a ticked "Always load" box in a list while its other items change, not once its URL changes', () => {
     const container = document.createElement('div')
-    patch(container, render('- https://vimeo.com/76979871\n- Original sibling\n'))
+    show(container, '- https://vimeo.com/76979871\n- Original sibling\n')
     const box = () => container.querySelector('.embed-remember') as Element
     const ticked = box()
     expect(toggleRemember(ticked)).toBe(true)
 
-    patch(container, render('- https://vimeo.com/76979871\n- Edited sibling\n'))
+    show(container, '- https://vimeo.com/76979871\n- Edited sibling\n')
     expect(box()).toBe(ticked)
     expect(box().getAttribute('aria-checked')).toBe('true')
     expect(container.querySelectorAll('li')[1]?.textContent).toBe('Edited sibling')
 
-    patch(container, render('- https://vimeo.com/1\n- Edited sibling\n'))
+    show(container, '- https://vimeo.com/1\n- Edited sibling\n')
     expect(box().getAttribute('aria-checked')).toBe('false')
-    expect(container.innerHTML).toBe(html('- https://vimeo.com/1\n- Edited sibling\n'))
+    expect(container.innerHTML).toBe(shownHtml('- https://vimeo.com/1\n- Edited sibling\n'))
   })
 
   it('updates the lines after a loaded player in a list', () => {
     const container = document.createElement('div')
-    patch(container, render('a\n\n- https://youtu.be/dQw4w9WgXcQ\n- next\n'))
+    show(container, 'a\n\n- https://youtu.be/dQw4w9WgXcQ\n- next\n')
     loadEmbed(container.querySelector('[data-embed-src]') as Element)
 
-    patch(container, render('a\n\nb\n\n- https://youtu.be/dQw4w9WgXcQ\n- next\n'))
+    show(container, 'a\n\nb\n\n- https://youtu.be/dQw4w9WgXcQ\n- next\n')
+    // The list's root is on line 4; the lines inside it count from the list.
+    expect(container.querySelector('ul')?.getAttribute('data-line')).toBe('4')
     expect([...container.querySelectorAll('li')].map((li) => li.getAttribute('data-line'))).toEqual(
-      ['4', '5'],
+      ['0', '1'],
     )
-    expect(container.querySelector('.embed')?.getAttribute('data-line')).toBe('4')
+    expect(container.querySelector('.embed')?.getAttribute('data-line')).toBe('0')
   })
 
   it('keeps unchanged blocks in place and updates their lines', () => {
     const container = document.createElement('div')
-    patch(container, render('# A\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nold\n\nend\n'))
+    show(container, '# A\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nold\n\nend\n')
     const [title, embed] = [container.querySelector('h1'), container.querySelector('.embed')]
     const end = container.lastElementChild
 
-    patch(container, render('# A\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nnew\nlines\n\nend\n'))
+    show(container, '# A\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nnew\nlines\n\nend\n')
     expect(container.querySelector('h1')).toBe(title)
     expect(container.querySelector('.embed')).toBe(embed)
     expect(container.lastElementChild).toBe(end)
     expect(end?.getAttribute('data-line')).toBe('7')
     expect(container.textContent).toContain('new\nlines')
     expect(container.textContent).not.toContain('old')
-    expect(html('# A\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nnew\nlines\n\nend\n')).toBe(
+    expect(shownHtml('# A\n\nhttps://youtu.be/dQw4w9WgXcQ\n\nnew\nlines\n\nend\n')).toBe(
       container.innerHTML,
     )
   })
@@ -1089,27 +1110,27 @@ describe('patch', () => {
     ]
     const container = document.createElement('div')
     for (const step of steps) {
-      patch(container, render(step))
-      expect(container.innerHTML).toBe(html(step))
+      show(container, step)
+      expect(container.innerHTML).toBe(shownHtml(step))
     }
   })
 
   it('keeps blocks unchanged in the middle in place', () => {
     const container = document.createElement('div')
-    patch(container, render('a\n\nb\n\nc\n'))
+    show(container, 'a\n\nb\n\nc\n')
     const b = container.children[1]
-    patch(container, render('A\n\nb\n\nC\n'))
+    show(container, 'A\n\nb\n\nC\n')
     expect(container.children[1]).toBe(b)
   })
 
   it('handles inserting at the start and removing everything', () => {
     const container = document.createElement('div')
-    patch(container, render('a\n\nb\n'))
+    show(container, 'a\n\nb\n')
     const b = container.lastElementChild
-    patch(container, render('z\n\na\n\nb\n'))
+    show(container, 'z\n\na\n\nb\n')
     expect(container.lastElementChild).toBe(b)
-    expect(container.innerHTML).toBe(html('z\n\na\n\nb\n'))
-    patch(container, render(''))
+    expect(container.innerHTML).toBe(shownHtml('z\n\na\n\nb\n'))
+    show(container, '')
     expect(container.innerHTML).toBe('')
   })
 })
@@ -1142,7 +1163,7 @@ describe('snippets', () => {
   function mounted(source: string): HTMLElement {
     const div = document.createElement('div')
     document.body.append(div)
-    patch(div, render(source, undefined, []))
+    show(div, source, undefined, [])
     return div
   }
 
@@ -1152,7 +1173,7 @@ describe('snippets', () => {
     const div = mounted(`# Code\n\n${BLOB}#L3-L7`)
     const el = placeholderOf(div)
     expect(el.outerHTML).toBe(
-      `<div class="embed embed--snippet" data-line="2" data-embed-src="${RAW}" data-embed-lines="3-7">` +
+      `<div class="embed embed--snippet" data-line="2" data-embed-src="${RAW}" data-embed-lines="3-7" data-line-end="3">` +
         '<span class="embed-provider">GitHub</span>' +
         '<span class="embed-error" role="status"></span>' +
         '<span class="embed-actions">' +
@@ -1161,7 +1182,7 @@ describe('snippets', () => {
         `<a class="embed-link" href="${BLOB}#L3-L7" target="_blank" rel="noopener noreferrer">${BLOB}#L3-L7</a></div>`,
     )
     expect(embedProvider(el)).toBe('github')
-    patch(div, render(`# Code, edited\n\n${BLOB}#L3-L7`, undefined, []))
+    show(div, `# Code, edited\n\n${BLOB}#L3-L7`, undefined, [])
     expect(fetch).not.toHaveBeenCalled()
     expect(div.querySelector('pre')).toBeNull()
   })
@@ -1331,12 +1352,13 @@ describe('snippets', () => {
     const pre = div.querySelector('pre')
     expect(pre).not.toBeNull()
 
-    patch(div, render(`A\n\nnew\n\n- ${BLOB}#L1-L2\n- xy\n\nB\n`, undefined, []))
+    show(div, `A\n\nnew\n\n- ${BLOB}#L1-L2\n- xy\n\nB\n`, undefined, [])
     expect(div.querySelector('pre')).toBe(pre)
     expect(div.textContent).toContain('xy')
-    expect(placeholderOf(div).getAttribute('data-line')).toBe('4')
+    // The list's root is on line 4; the lines inside it count from the list.
+    expect(div.querySelector('ul')?.getAttribute('data-line')).toBe('4')
 
-    patch(div, render(`A\n\nnew\n\n- ${BLOB}#L1-L3\n- xy\n\nB\n`, undefined, []))
+    show(div, `A\n\nnew\n\n- ${BLOB}#L1-L3\n- xy\n\nB\n`, undefined, [])
     expect(div.querySelector('pre')).toBeNull()
     expect(placeholderOf(div).getAttribute('data-embed-lines')).toBe('1-3')
     expect(fetch).toHaveBeenCalledTimes(1)
@@ -1348,7 +1370,7 @@ describe('snippets', () => {
     const div = mounted(BLOB)
     const el = placeholderOf(div)
     const loading = loadSnippet(el)
-    patch(div, render(`${BLOB}#L1`, undefined, []))
+    show(div, `${BLOB}#L1`, undefined, [])
     answer(new Response(FILE))
     expect(await loading).toBe(true)
     expect(div.querySelector('pre')).toBeNull()

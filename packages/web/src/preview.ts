@@ -285,7 +285,8 @@ export function sanitize(html: string): DocumentFragment {
 }
 
 /**
- * Renders Markdown to sanitised nodes, ready for {@link patch}. `resolver`
+ * Renders a whole document to sanitised nodes in one go: the reference BlockRenderer's
+ * blocks add up to, and what its tests compare with. `resolver`
  * finds the images added during the session; `sources` are the relay's
  * MEDIA_SOURCES. `breaks` makes every line break in the text one in the page,
  * as a canvas card shows its text; a document keeps Markdown's paragraphs.
@@ -314,7 +315,7 @@ export function render(
 // parse, linkify, embeds, source_lines, the renderer, the sanitiser) is a pure
 // function of one block's tokens plus the references, the image resolver and the
 // `breaks` option, so it can run for one block at a time and be cached by
-// `keyOf`. Nothing calls this yet; render() and patch() are unchanged.
+// `keyOf` (BlockRenderer).
 //
 // Lines: `Block.line`/`lineEnd`/`offset` are absolute. Every `data-line` that
 // renderBlock produces, on the roots and nested, is relative to the block's first
@@ -545,7 +546,7 @@ export function embedProvider(placeholder: Element): ProviderId | null {
   return providerOf(placeholder.getAttribute('data-embed-src'))
 }
 
-// patch() compares blocks by the key noted for them as rendered. Note the keys
+// BlockRenderer compares blocks by the key noted for them as rendered. Note the keys
 // of a placeholder and the blocks it sits in, such as a list item, before it
 // changes, so it stays while the paragraph with its URL is unchanged.
 function noteKeys(placeholder: Element): void {
@@ -821,98 +822,37 @@ function affinity(old: Node, fresh: Node): number {
   return 0
 }
 
-// Beyond this many comparisons the middle of a patch is rebuilt rather than matched.
-const MATCH_LIMIT = 1 << 20
-
-/** Pairs old and fresh nodes in order, keeping as many (and as similar) as possible. */
-function match(before: Node[], after: Node[]): Map<number, [number, number]> {
-  const pairs = new Map<number, [number, number]>()
-  const [n, m] = [before.length, after.length]
-  if (n === 0 || m === 0 || n * m > MATCH_LIMIT) return pairs
-  const score = new Uint8Array(n * m)
-  const at = (i: number, j: number) => i * m + j
-  // best[i][j]: the most that before[i..] and after[j..] can keep.
-  const best = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1))
-  for (let i = n - 1; i >= 0; i--) {
-    for (let j = m - 1; j >= 0; j--) {
-      const s = affinity(before[i] as Node, after[j] as Node)
-      score[at(i, j)] = s
-      const row = best[i] as Uint32Array
-      const below = best[i + 1] as Uint32Array
-      row[j] = Math.max(
-        below[j] as number,
-        row[j + 1] as number,
-        s ? s + (below[j + 1] as number) : 0,
-      )
-    }
-  }
-  let [i, j] = [0, 0]
-  while (i < n && j < m) {
-    const s = score[at(i, j)] as number
-    const here = (best[i] as Uint32Array)[j] as number
-    if (s && here === s + ((best[i + 1] as Uint32Array)[j + 1] as number)) {
-      pairs.set(j, [i, s])
-      i++
-      j++
-    } else if (here === (best[i + 1] as Uint32Array)[j]) i++
-    else j++
-  }
-  return pairs
-}
-
 /**
- * Replaces the container's children with the fragment's, leaving unchanged
- * blocks in place so that images and players inside them do not reload while
- * someone types elsewhere.
+ * Makes `container`'s children those of `after`, keeping each old child that stands
+ * for a fresh one (see affinity), in order and without moving it, such as a loaded
+ * player: a frame reloads when it moves. The others are taken from `after` or dropped.
  */
-export function patch(container: Element, fragment: DocumentFragment): void {
-  patchChildren(container, [...fragment.childNodes])
-}
-
 function patchChildren(container: Node, after: Node[]): void {
   const before = [...container.childNodes]
-  const same = (a: Node | undefined, b: Node | undefined) =>
-    a !== undefined && b !== undefined && domKey(a) === domKey(b)
-  let head = 0
-  while (head < before.length && head < after.length && same(before[head], after[head])) head++
-  let tail = 0
-  while (
-    tail < before.length - head &&
-    tail < after.length - head &&
-    same(before.at(-1 - tail), after.at(-1 - tail))
-  ) {
-    tail++
-  }
-  const kept = [...before.slice(0, head), ...before.slice(before.length - tail)]
-  const fresh = [...after.slice(0, head), ...after.slice(after.length - tail)]
-  kept.forEach((node, i) => copyLines(fresh[i], node))
-  // In between, keep the blocks that are still there in the same order without
-  // moving them, such as a player someone loaded: a frame reloads when it moves.
-  const end = before.length - tail
-  const anchor = before[end] ?? null
-  const middle = after.slice(head, after.length - tail)
-  const pairs = match(before.slice(head, end), middle)
-  let next = head
-  middle.forEach((node, j) => {
-    const pair = pairs.get(j)
-    if (pair === undefined) {
-      container.insertBefore(node, next < end ? (before[next] as Node) : anchor)
-      return
+  let next = 0
+  for (const node of after) {
+    const at = before.findIndex((old, i) => i >= next && affinity(old, node) > 0)
+    if (at < 0) {
+      container.insertBefore(node, before[next] ?? null)
+      continue
     }
-    const [i, score] = pair
-    const old = before[head + i] as Element
-    for (const gone of before.slice(next, head + i)) gone.remove()
-    if (score === 2) copyLines(node, old)
+    for (const gone of before.slice(next, at)) gone.remove()
+    const old = before[at] as Node
+    if (affinity(old, node) === 2) copyLines(node, old)
     else {
       // The old element now stands for the fresh one: note its key first, as
       // patching takes the fresh one's children.
       keys.set(old, domKey(node))
-      const line = (node as Element).getAttribute('data-line')
-      if (line === null) old.removeAttribute('data-line')
-      else old.setAttribute('data-line', line)
+      copyLine(node as Element, old as Element)
       patchChildren(old, [...node.childNodes])
     }
-    next = head + i + 1
-  })
-  for (const old of before.slice(next, end)) old.remove()
+    next = at + 1
+  }
+  for (const old of before.slice(next)) old.remove()
+}
+
+function copyLine(from: Element, to: Element): void {
+  const line = from.getAttribute('data-line')
+  if (line === null) to.removeAttribute('data-line')
+  else to.setAttribute('data-line', line)
 }

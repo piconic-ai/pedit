@@ -10,10 +10,7 @@ export type EmbedRenderer = Pick<
   'loadEmbed' | 'embedProvider' | 'toggleRemember'
 >
 
-/** What the canvas cards load: the one-shot render and patch. */
-export type Renderer = EmbedRenderer & Pick<typeof import('./preview.ts'), 'render' | 'patch'>
-
-/** What the preview pane loads: the block renderer and the embed functions (blockrender.ts). */
+/** What the preview pane and the canvas cards load: the block renderer and the embed functions (blockrender.ts). */
 export type PaneRenderer = EmbedRenderer & { BlockRenderer: typeof BlockRenderer }
 
 /** The most snippets "Always load" loads on one page; the rest load on a click. */
