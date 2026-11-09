@@ -18,7 +18,7 @@ Your own relay starts with wider defaults, and you set the limits yourself:
 | Guests in a room, besides the host | 4 | 31 |
 | One image | 5 MiB | 10 MiB |
 | Images of a session | 50 MiB | 100 MiB, 500 images |
-| One host session | 24 hours | no limit |
+| One host session | 24 hours | none of its own; the room still ends 7 days after it opened |
 | New rooms from one network | 20 a minute | 20 a minute |
 | Connections from one network | 60 a minute | 60 a minute |
 
