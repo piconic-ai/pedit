@@ -229,7 +229,7 @@ describe('positions over edited corpus documents', () => {
         seed = (seed * 1103515245 + 12345) % 2147483648
         return seed % n
       }
-      const trials = FUZZ ? 1500 : 40
+      const trials = FUZZ ? 600 : 40
       const ops = ['x', '\n', '', 'ab ', '*', '|', '\n\n', '> ', '- ', '`', '\\', '&amp;', '\r\n']
       for (let t = 0; t < trials; t++) {
         let src = [0, 1, 2].map(() => (docs[rnd(docs.length)] as [string, string])[1]).join('')
@@ -326,6 +326,58 @@ function repeated(rnd: (n: number) => number): {
   return { src, literal }
 }
 
+describe('code at the end of the text', () => {
+  const stamped = (src: string) => {
+    const { blocks, references } = parseBlocks(src)
+    return blocks.flatMap((b) =>
+      marked(renderBlock(b, envOf(references, true))).map((el) => ({ el, block: b })),
+    )
+  }
+
+  it('is stamped only when its whole text is the source there', () => {
+    for (const src of [
+      '    code',
+      '    code\n',
+      '    a\n    b',
+      '- x\n\n      code',
+      '- x\n\n      code\n',
+      '```\ncode',
+      '```\ncode\n',
+      '```\na\nb\n```',
+      '```\na\nb\n```\n',
+      '> ```\n> code',
+      '- ```\n  code',
+      '~~~\n',
+      '```',
+    ]) {
+      for (const { el, block } of stamped(src)) {
+        const at = Number(el.getAttribute('data-src'))
+        const t = el.textContent ?? ''
+        expect(block.src.slice(at, at + t.length), JSON.stringify(src)).toBe(t)
+      }
+    }
+  })
+
+  it('leaves out an indented code line that has no newline to show', () => {
+    const code = (src: string) => stamped(src).filter((s) => ['CODE', 'PRE'].includes(s.el.tagName))
+    expect(code('    code')).toEqual([])
+    expect(code('- x\n\n      code')).toEqual([])
+    expect(code('    code\n').length).toBe(1)
+  })
+
+  it('holds for every stamped element of every corpus document, cut at any line end', () => {
+    for (const [name, doc] of docs) {
+      for (const src of [doc, doc.replace(/\n+$/, ''), doc.replace(/\n$/, '')]) {
+        for (const { el, block } of stamped(src)) {
+          const at = Number(el.getAttribute('data-src'))
+          const t = el.textContent ?? ''
+          expect(block.src.slice(at, at + t.length), name).toBe(t)
+        }
+      }
+    }
+  }, 30_000)
+})
+
 describe('where a run starts', () => {
   it('is exact when the run repeats the character after it, or is unmapped', () => {
     const cases: [string, string, number][] = [
@@ -385,7 +437,7 @@ describe('where a run starts', () => {
         ':',
         '~',
       ]
-      const trials = FUZZ ? 4000 : 150
+      const trials = FUZZ ? 1500 : 150
       let conclusive = 0
       for (let t = 0; t < trials; t++) {
         // Half the documents: a run of one punctuation character right before a

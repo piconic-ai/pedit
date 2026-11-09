@@ -207,6 +207,8 @@ function markCode(token: Token, child: Token, stamp: Stamp, map: RunMap): void {
 }
 
 // A code block: whole lines of the source, or one line that ends as the source's does.
+// The element's whole text (`content`, newline included) must be the source there, so
+// a block that ends without a newline, whose text has one added, is left out.
 function markBlockCode(lines: Lines, token: Token): void {
   if (!token.map || !token.content) return
   const row = token.map[0] + (token.type === 'fence' ? 1 : 0)
@@ -217,7 +219,9 @@ function markBlockCode(lines: Lines, token: Token): void {
     const source = lines.src.slice(first, lines.end(row))
     if (source.endsWith(line)) base = first + source.length - line.length
   }
-  if (base >= 0) token.attrSet('data-src', String(base))
+  if (base >= 0 && lines.src.startsWith(token.content, base)) {
+    token.attrSet('data-src', String(base))
+  }
 }
 
 // The cells of the row that opens at tokens[i]. Only for a table at the top: one in
