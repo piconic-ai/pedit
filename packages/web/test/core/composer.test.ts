@@ -33,32 +33,34 @@ function setup() {
     },
   }
   const locked = new Store(false)
+  const visible = { v: { width: 800, height: 600, top: 0 } }
   let panelOpened = 0
   const composer = new CommentComposer(
     files as unknown as FileSet,
     locked,
     () => panelOpened++,
-    () => ({
-      width: 800,
-      height: 600,
-    }),
+    () => visible.v,
   )
   const container = document.createElement('div')
   document.body.append(container)
   render(container, 'CommentComposer', {
     button: composer.button,
     composing: composer.composing,
+    visible: composer.visible,
     onOpen: () => composer.open(),
     onSend: (b: string) => composer.send(b),
     onCancel: () => composer.cancel(),
   })
   const $ = <T extends Element>(sel: string) => container.querySelector(sel) as T
-  return { content, view, files, locked, composer, $, opened: () => panelOpened }
+  return { visible, content, view, files, locked, composer, $, opened: () => panelOpened }
 }
 
 const click = (el: Element) => (el as HTMLElement).click()
 const keydown = (el: Element, init: KeyboardEventInit) =>
   el.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, ...init }))
+
+/** The top of an element in px, whatever form jsdom keeps the clamp in. */
+const topOf = (el: HTMLElement) => Number(/(-?\d+)px/.exec(el.style.top)?.[1])
 
 describe('CommentComposer', () => {
   it('shows the button by the selection only when there is something to comment on', () => {
@@ -111,6 +113,29 @@ describe('CommentComposer', () => {
     const [thread] = view.threads.get()
     expect(thread?.quote).toBe('hello')
     expect(content.getText('content').toString().slice(thread?.from, thread?.to)).toBe('hello')
+  })
+
+  it('keeps the composer in the visible part of the screen when a keyboard shrinks it', () => {
+    const { $, files, composer, visible } = setup()
+    files.place = { x: 40, y: 560, clip: new DOMRect(0, 0, 800, 600) }
+    files.target.set({ kind: 'text', from: 0, to: 5 })
+    click($('.comment-add'))
+    const box = $<HTMLTextAreaElement>('.comment-compose textarea')
+    box.value = 'typed so far'
+    const el = $<HTMLElement>('.comment-compose')
+    // 600 high: below the selection would be 578, clamped to 600 - 170.
+    expect(topOf(el)).toBe(430)
+    // The keyboard comes up: 300 visible, panned by 0.
+    visible.v = { width: 800, height: 300, top: 0 }
+    composer.place()
+    expect(topOf(el)).toBe(130)
+    // Panned down by 100.
+    visible.v = { width: 800, height: 300, top: 100 }
+    composer.place()
+    expect(topOf(el)).toBe(230)
+    expect($('.comment-compose textarea')).toBe(box)
+    expect(box.value).toBe('typed so far')
+    expect(composer.composing.get()?.draft.quote).toBe('hello')
   })
 
   it('closes when the view mode changes', () => {

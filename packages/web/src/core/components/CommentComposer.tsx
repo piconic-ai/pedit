@@ -9,6 +9,8 @@ export interface CommentComposerProps {
   button: Readable<Anchor | null>
   /** The composer open now, or null. */
   composing: Readable<Composing | null>
+  /** The part of the screen in sight, which a soft keyboard shrinks. */
+  visible: Readable<{ top: number; height: number }>
   /** The add button was pressed. */
   onOpen: () => void
   /** Sends the text; true once it is sent. */
@@ -44,6 +46,8 @@ export function CommentComposer(props: CommentComposerProps) {
         <ComposerBox
           x={props.composing.get()?.x ?? 0}
           y={props.composing.get()?.y ?? 0}
+          top={props.visible.get().top}
+          height={props.visible.get().height}
           placeholder={promptFor(props.composing.get()?.target as NonNullable<Composing['target']>)}
           onSend={props.onSend}
           onCancel={props.onCancel}
@@ -56,6 +60,9 @@ export function CommentComposer(props: CommentComposerProps) {
 interface ComposerBoxProps {
   x: number
   y: number
+  /** The visible part of the screen. */
+  top: number
+  height: number
   placeholder: string
   onSend: (body: string) => boolean
   onCancel: () => void
@@ -72,7 +79,7 @@ function ComposerBox(props: ComposerBoxProps) {
       className="comment-compose"
       role="group"
       aria-label="New comment"
-      style={`left: clamp(8px, ${props.x - 20}px, calc(100vw - 300px)); top: clamp(8px, ${props.y + 18}px, calc(100vh - 170px))`}
+      style={`left: clamp(8px, ${props.x - 20}px, calc(100vw - 300px)); top: clamp(${props.top + 8}px, ${props.y + 18}px, ${props.top + props.height - 170}px)`}
     >
       <textarea
         ref={(el) => {

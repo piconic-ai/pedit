@@ -9,6 +9,14 @@ export interface Anchor {
   y: number
 }
 
+/** The part of the screen that can be seen: the visual viewport, which a soft keyboard shrinks. */
+export interface Visible {
+  width: number
+  height: number
+  /** Its top edge in the layout viewport, which the page pans it by. */
+  top: number
+}
+
 /** What a comment composer holds on to from the moment it opens. */
 export interface Composing extends Anchor {
   /** What the comment goes on: frozen, so what happens to the selection afterwards does not move it. */
@@ -44,11 +52,13 @@ export class CommentComposer {
   readonly button = new Store<Anchor | null>(null)
   /** The composer open now, with the target it froze. */
   readonly composing = new Store<Composing | null>(null)
+  /** The visible part of the screen, for the composer to stay in. */
+  readonly visible = new Store<{ top: number; height: number }>({ top: 0, height: 0 })
 
   readonly #files: FileSet
   readonly #locked: Readable<boolean>
   readonly #show: () => void
-  readonly #viewport: () => { width: number; height: number }
+  readonly #viewport: () => Visible
   readonly #stops: (() => void)[] = []
   /** Whether the target last asked about can take a thread. */
   #draftable: { target: CommentTarget; ok: boolean } | null = null
@@ -62,7 +72,7 @@ export class CommentComposer {
     files: FileSet,
     locked: Readable<boolean>,
     show: () => void,
-    viewport: () => { width: number; height: number },
+    viewport: () => Visible,
   ) {
     this.#viewport = viewport
     this.#files = files
@@ -104,14 +114,21 @@ export class CommentComposer {
   /** Works out where the button goes: when the target moved, or the page scrolled or resized. */
   place(): void {
     let next: Anchor | null = null
+    const vp = this.#viewport()
+    const v = this.visible.get()
+    if (v.top !== vp.top || v.height !== vp.height)
+      this.visible.set({ top: vp.top, height: vp.height })
     const target = this.#files.target.get()
     if (!this.composing.get() && target && this.#canWrite() && this.#canDraft(target)) {
       const p = this.#files.targetPlace()
-      const { width, height } = this.#viewport()
       // Not when it is scrolled out of sight, in the view or in the page.
       const inside = (r: { left: number; right: number; top: number; bottom: number }) =>
         !!p && p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom
-      if (p && inside(p.clip) && inside({ left: 0, right: width, top: 0, bottom: height })) {
+      if (
+        p &&
+        inside(p.clip) &&
+        inside({ left: 0, right: vp.width, top: vp.top, bottom: vp.top + vp.height })
+      ) {
         next = { x: p.x, y: p.y }
       }
     }
@@ -131,8 +148,8 @@ export class CommentComposer {
     const target = this.#files.target.get()
     const draft = target && this.#files.comments.get()?.draft(target)
     if (!target || !draft || !this.#canWrite()) return false
-    const { width, height } = this.#viewport()
-    const at = this.button.get() ?? { x: width / 2, y: height / 3 }
+    const { width, height, top } = this.#viewport()
+    const at = this.button.get() ?? { x: width / 2, y: top + height / 3 }
     this.composing.set({ target, draft, x: at.x, y: at.y })
     this.place()
     return true

@@ -65,7 +65,7 @@ async function mount(access: 'edit' | 'read' = 'edit', relay = new Relay()) {
     keyTarget: root,
     floating: {
       host: root,
-      viewport: () => ({ width: 800, height: 600 }),
+      viewport: () => ({ width: 800, height: 600, top: 0 }),
       onFrame: (fn) => fn(),
       onChange: () => () => {},
     },

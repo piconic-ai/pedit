@@ -7,7 +7,7 @@ import {
 } from './comments.ts'
 import './components/CommentComposer.tsx'
 import './components/CommentsPanel.tsx'
-import { CommentComposer } from './composer.ts'
+import { CommentComposer, type Visible } from './composer.ts'
 import type { FileSet } from './files.ts'
 import { ContextMenu } from './menu.ts'
 import type { Room } from './open-room.ts'
@@ -19,8 +19,8 @@ import type { Readable, Store } from './store.ts'
 export interface Floating {
   /** Where they are added: the page's body, or the shadow root of the panel. */
   host: HTMLElement | ShadowRoot
-  /** The size of the viewport they are fixed in. */
-  viewport(): { width: number; height: number }
+  /** The part of the screen that can be seen (the visual viewport, which a soft keyboard shrinks). */
+  viewport(): Visible
   /** Runs `fn` before the next paint (requestAnimationFrame). */
   onFrame(fn: () => void): void
   /** Calls `fn` when the page scrolls or the viewport resizes; returns how to stop. */
@@ -100,6 +100,7 @@ export function mountComments(opts: CommentsMountOptions): CommentsMount {
   const unmountComposer = mountComponent(floatHost, 'CommentComposer', {
     button: composer.button,
     composing: composer.composing,
+    visible: composer.visible,
     onOpen: () => composer.open(),
     onSend: (body: string) => composer.send(body),
     onCancel: () => composer.cancel(),
@@ -143,8 +144,12 @@ export function mountComments(opts: CommentsMountOptions): CommentsMount {
       stopChanges = null
     }
   }
-  const stopListening = files.target.subscribe((t) => listen(t !== null))
-  listen(files.target.get() !== null)
+  // While a composer is open too: the keyboard can come with it.
+  const active = () => files.target.get() !== null || composer.composing.get() !== null
+  const stopListening = [files.target, composer.composing].map((s) =>
+    s.subscribe(() => listen(active())),
+  )
+  listen(active())
   keyTarget.addEventListener('keydown', onKey)
   return {
     open: panel.open,
@@ -152,7 +157,7 @@ export function mountComments(opts: CommentsMountOptions): CommentsMount {
     toggle: () => panel.toggle(),
     dispose() {
       keyTarget.removeEventListener('keydown', onKey)
-      stopListening()
+      for (const stop of stopListening) stop()
       listen(false)
       composer.dispose()
       unmountComposer()

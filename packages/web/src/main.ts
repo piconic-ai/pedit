@@ -397,12 +397,21 @@ async function joinRoom(
     keyTarget: document,
     floating: {
       host: document.body,
-      viewport: () => ({ width: window.innerWidth, height: window.innerHeight }),
+      viewport() {
+        const v = window.visualViewport
+        return v
+          ? { width: v.width, height: v.height, top: v.offsetTop }
+          : { width: window.innerWidth, height: window.innerHeight, top: 0 }
+      },
       onFrame: (fn) => void requestAnimationFrame(fn),
       onChange(fn) {
         window.addEventListener('scroll', fn, true)
         window.addEventListener('resize', fn)
+        window.visualViewport?.addEventListener('resize', fn)
+        window.visualViewport?.addEventListener('scroll', fn)
         return () => {
+          window.visualViewport?.removeEventListener('resize', fn)
+          window.visualViewport?.removeEventListener('scroll', fn)
           window.removeEventListener('scroll', fn, true)
           window.removeEventListener('resize', fn)
         }

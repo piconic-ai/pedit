@@ -311,16 +311,25 @@ export class PeditReview extends HTMLElement {
       keyTarget: root,
       floating: {
         host: root,
-        viewport: () => ({ width: window.innerWidth, height: window.innerHeight }),
+        viewport() {
+          const v = window.visualViewport
+          return v
+            ? { width: v.width, height: v.height, top: v.offsetTop }
+            : { width: window.innerWidth, height: window.innerHeight, top: 0 }
+        },
         onFrame: (fn) => void requestAnimationFrame(fn),
         onChange(fn) {
           // The page around scrolls the button's place; so can the shadow root's own parts.
           window.addEventListener('scroll', fn, true)
           window.addEventListener('resize', fn)
+          window.visualViewport?.addEventListener('resize', fn)
+          window.visualViewport?.addEventListener('scroll', fn)
           root.addEventListener('scroll', fn, true)
           return () => {
             window.removeEventListener('scroll', fn, true)
             window.removeEventListener('resize', fn)
+            window.visualViewport?.removeEventListener('resize', fn)
+            window.visualViewport?.removeEventListener('scroll', fn)
             root.removeEventListener('scroll', fn, true)
           }
         },
