@@ -288,29 +288,35 @@ describe('a loaded player in a list or quote', () => {
     expect(box.getAttribute('aria-checked')).toBe('true')
   })
 
-  it('keeps it through random edits to the other items', () => {
-    const items = ['a', 'b', 'a', 'x y', '']
-    const [seeds, steps] = process.env.FUZZ ? [200, 6] : [20, 4]
-    for (let seed = 1; seed <= seeds; seed++) {
-      const next = rng(seed)
-      const pick = () => items[Math.floor(next() * items.length)] as string
-      const list = [pick(), YT, pick()]
-      const { container, blocks, frame } = loaded(list.map((i) => `- ${i}`).join('\n'))
-      for (let step = 0; step < steps; step++) {
-        const at = Math.floor(next() * (list.length + 1))
-        const kind = next()
-        const hold = list.indexOf(YT)
-        if (kind < 0.6 || list.length < 3) list.splice(at, 0, pick())
-        else {
-          const other = list.findIndex((v, i) => v !== YT && i === at % list.length)
-          if (other >= 0) list.splice(other, 1)
+  it(
+    'keeps it through random edits to the other items',
+    () => {
+      const items = ['a', 'b', 'a', 'x y', '']
+      const [seeds, steps] = process.env.FUZZ ? [200, 6] : [20, 4]
+      for (let seed = 1; seed <= seeds; seed++) {
+        const next = rng(seed)
+        const pick = () => items[Math.floor(next() * items.length)] as string
+        const list = [pick(), YT, pick()]
+        const { container, blocks, frame } = loaded(list.map((i) => `- ${i}`).join('\n'))
+        for (let step = 0; step < steps; step++) {
+          const at = Math.floor(next() * (list.length + 1))
+          const kind = next()
+          const hold = list.indexOf(YT)
+          if (kind < 0.6 || list.length < 3) list.splice(at, 0, pick())
+          else {
+            const other = list.findIndex((v, i) => v !== YT && i === at % list.length)
+            if (other >= 0) list.splice(other, 1)
+          }
+          expect(hold).toBeGreaterThanOrEqual(0)
+          blocks.update(list.map((i) => `- ${i}`).join('\n'), undefined, 0, [])
+          expect(container.querySelector('iframe'), `seed ${seed} step ${step}: ${list}`).toBe(
+            frame,
+          )
         }
-        expect(hold).toBeGreaterThanOrEqual(0)
-        blocks.update(list.map((i) => `- ${i}`).join('\n'), undefined, 0, [])
-        expect(container.querySelector('iframe'), `seed ${seed} step ${step}: ${list}`).toBe(frame)
       }
-    }
-  }, process.env.FUZZ ? 60_000 : 5_000)
+    },
+    process.env.FUZZ ? 60_000 : 5_000,
+  )
 })
 
 function remote(doc: Y.Doc, fn: () => void) {
