@@ -73,6 +73,14 @@ export interface OpenFile {
 
 export type FileViewFactory = (file: OpenFile) => FileView
 
+/** What a view that selects text outside the editor gives the set: the place of its own selection. */
+export interface PreviewPlace {
+  /** Where the button goes while the text selection is the one made in this view, else null. */
+  place(): Place | null
+  /** Calls `fn` when what the view draws moves; returns how to stop. */
+  watch(fn: () => void): () => void
+}
+
 /** What the text editor gives the set (see `mountTextEditor`). */
 export interface EditorHooks {
   textTarget(): CommentTarget | null
@@ -121,6 +129,7 @@ export class FileSet {
   readonly #opened = new Map<number, OpenFile>()
   readonly #factories: FileViewFactory[] = []
   #editor: EditorHooks | undefined
+  #preview: PreviewPlace | undefined
   #stopThreads = () => {}
   #disposed = false
   #started = false
@@ -213,6 +222,17 @@ export class FileSet {
     }
   }
 
+  /**
+   * Lets a page that selects text outside the editor (the Markdown preview) place
+   * the button for that selection; returns how to let go.
+   */
+  attachPreview(hooks: PreviewPlace): () => void {
+    this.#preview = hooks
+    return () => {
+      if (this.#preview === hooks) this.#preview = undefined
+    }
+  }
+
   /** Works out what a new comment would go on, when the selection, the view or the file changes. */
   aim(): void {
     let next: CommentTarget | null | undefined
@@ -231,12 +251,12 @@ export class FileSet {
     for (const v of this.shown.get().views) {
       if (v.target?.() !== undefined) return v.targetPlace?.() ?? null
     }
-    return this.#editor?.textPlace?.() ?? null
+    return this.#preview?.place() ?? this.#editor?.textPlace?.() ?? null
   }
 
   /** Calls `fn` when the editor or a view of the files moves what it draws; returns how to stop. */
   watchPlace(fn: () => void): () => void {
-    const stops = [this.#editor?.watchText?.(fn)]
+    const stops = [this.#editor?.watchText?.(fn), this.#preview?.watch(fn)]
     for (const f of this.#opened.values()) for (const v of f.views) stops.push(v.watchPlace?.(fn))
     return () => {
       for (const stop of stops) stop?.()
