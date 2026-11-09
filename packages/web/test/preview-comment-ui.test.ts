@@ -211,6 +211,25 @@ describe('commentOnPreviewSelection', () => {
     t.stop()
   })
 
+  it('tells the watchers when the preview takes the same range over, and gives it back', () => {
+    const t = setup('Hello brave world\n')
+    t.view.dispatch({ selection: { anchor: 6, head: 11 } })
+    const moved = vi.fn()
+    const stopWatch = t.hooks().watch(moved)
+    expect(t.hooks().place()).toBeNull()
+    t.select('brave')
+    // The offsets did not change, the owner of the selection did.
+    expect(t.main()).toEqual([6, 11])
+    expect(moved).toHaveBeenCalled()
+    expect(t.hooks().place()).not.toBeNull()
+    moved.mockClear()
+    t.view.dispatch({ selection: { anchor: 6, head: 11 } })
+    expect(moved).toHaveBeenCalled()
+    expect(t.hooks().place()).toBeNull()
+    stopWatch()
+    t.stop()
+  })
+
   it('sits in the padding of a narrow preview', () => {
     const t = setup('Hello brave world\n')
     t.root.style.paddingRight = '16px'
