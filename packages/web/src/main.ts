@@ -223,6 +223,13 @@ async function joinRoom(
         if (!sameSet(cells, t.commented.get())) t.commented.set(cells)
       },
       target: () => (t.active ? cellsTarget(t) : undefined),
+      targetRect() {
+        const at = cellsTarget(t)
+        const end = at?.kind === 'cells' ? at.to : null
+        const cell =
+          end && t.element.querySelector(`[data-row="${end.row}"][data-col="${end.col}"]`)
+        return cell?.getBoundingClientRect() ?? null
+      },
       hide() {
         t.active = false
       },
@@ -279,6 +286,13 @@ async function joinRoom(
         if (!sameSet(nodes, board.commented.get())) board.commented.set(nodes)
       },
       target: () => (board.active ? nodeTarget(board.selected.get()) : undefined),
+      targetRect() {
+        const at = nodeTarget(board.selected.get())
+        const node =
+          at?.kind === 'node' &&
+          board.element.querySelector(`.bf-flow__node[data-id="${CSS.escape(at.id)}"]`)
+        return node ? node.getBoundingClientRect() : null
+      },
       hide() {
         board.active = false
       },
@@ -351,6 +365,18 @@ async function joinRoom(
     editor,
     parent: parts.comments,
     keyTarget: document,
+    floating: {
+      host: document.body,
+      viewport: () => ({ width: window.innerWidth, height: window.innerHeight }),
+      onChange(fn) {
+        window.addEventListener('scroll', fn, true)
+        window.addEventListener('resize', fn)
+        return () => {
+          window.removeEventListener('scroll', fn, true)
+          window.removeEventListener('resize', fn)
+        }
+      },
+    },
     narrow: isNarrow,
     prefs: defaultStore(),
     // The table and the board show a thread on their own cell or node.

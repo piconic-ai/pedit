@@ -78,8 +78,7 @@
   margin: 0;
   padding: 0;
 }
-/* A card: the new comment, and each thread. */
-.comments-new,
+/* A card: each thread. */
 .comment-thread {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -87,15 +86,11 @@
   padding: 10px 12px;
   margin-bottom: 8px;
 }
-.comment-thread[aria-current="true"],
-.comments-new[data-composing] {
+.comment-thread[aria-current="true"] {
   border-color: transparent;
   box-shadow:
     0 1px 2px rgb(0 0 0 / 0.12),
     0 2px 8px rgb(0 0 0 / 0.12);
-}
-.comments-new:not([data-composing]) .comment-buttons {
-  display: none;
 }
 .comment-buttons {
   display: flex;
@@ -294,4 +289,68 @@
 }
 .comment-count[hidden] {
   display: none;
+}
+
+/* Comment in place: a button by the selection, and the composer it opens. */
+.comment-float [hidden] {
+  display: none;
+}
+.comment-add {
+  position: fixed;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  color: var(--accent);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.2);
+}
+.comment-add:hover {
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel));
+}
+.comment-add svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.comment-compose {
+  position: fixed;
+  z-index: 21;
+  box-sizing: border-box;
+  width: 292px;
+  padding: 10px 12px;
+  color: var(--ink);
+  font: 13px / 1.45 var(--sans);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow:
+    0 2px 6px rgb(0 0 0 / 0.16),
+    0 6px 18px rgb(0 0 0 / 0.16);
+}
+.comment-compose textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  font: inherit;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+.comment-compose textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.comment-compose button {
+  font: inherit;
 }

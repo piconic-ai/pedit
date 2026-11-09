@@ -36,6 +36,8 @@ export interface FileView {
    * undefined when it is not, so the next view (or the text) answers.
    */
   target?(): CommentTarget | null | undefined
+  /** Where the target is on screen (the viewport's coordinates), for the button that comments on it. */
+  targetRect?(): DOMRect | null
   /** The file went off screen. */
   hide?(): void
   dispose?(): void
@@ -63,6 +65,8 @@ export type FileViewFactory = (file: OpenFile) => FileView
 /** What the text editor gives the set (see `mountTextEditor`). */
 export interface EditorHooks {
   textTarget(): CommentTarget | null
+  /** Where the end of the selection is on screen, or null when it is not drawn. */
+  textRect?(): DOMRect | null
   onStatus(status: RoomStatus, wasLocked: boolean): void
 }
 
@@ -205,6 +209,14 @@ export class FileSet {
     // null, and a comment must not go on the hidden editor's selection then.
     if (next === undefined) next = (this.#editor?.textTarget ?? this.#opts.textTarget)?.() ?? null
     if (!sameTarget(next, this.target.get())) this.target.set(next)
+  }
+
+  /** Where the target is on screen, asked of the view that answers for it. */
+  targetRect(): DOMRect | null {
+    for (const v of this.shown.get().views) {
+      if (v.target?.() !== undefined) return v.targetRect?.() ?? null
+    }
+    return this.#editor?.textRect?.() ?? null
   }
 
   /** Lets go of every file's comments and views. */

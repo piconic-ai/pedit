@@ -309,6 +309,21 @@ export class PeditReview extends HTMLElement {
       editor: editor.view,
       parent: commentsHost,
       keyTarget: root,
+      floating: {
+        host: root,
+        viewport: () => ({ width: window.innerWidth, height: window.innerHeight }),
+        onChange(fn) {
+          // The page around scrolls the button's place; so can the shadow root's own parts.
+          window.addEventListener('scroll', fn, true)
+          window.addEventListener('resize', fn)
+          root.addEventListener('scroll', fn, true)
+          return () => {
+            window.removeEventListener('scroll', fn, true)
+            window.removeEventListener('resize', fn)
+            root.removeEventListener('scroll', fn, true)
+          }
+        },
+      },
       narrow,
       prefs: null,
     })

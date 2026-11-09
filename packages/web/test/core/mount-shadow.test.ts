@@ -56,6 +56,11 @@ async function mount(access: 'edit' | 'read' = 'edit', relay = new Relay()) {
     editor: editor.view,
     parent: commentsEl as HTMLElement,
     keyTarget: root,
+    floating: {
+      host: root,
+      viewport: () => ({ width: 800, height: 600 }),
+      onChange: () => () => {},
+    },
     narrow: new Store(false),
     prefs: null,
   })
@@ -206,17 +211,13 @@ describe('the core in a shadow root', () => {
     expect(added).toEqual(baseline)
   })
 
-  it('opens the comments panel on the platform key inside the shadow root and focuses its box', async () => {
+  it('opens the composer on the platform key inside the shadow root and focuses its box', async () => {
     const m = await mount()
     m.room.connect()
     m.manifest()
     await vi.waitFor(() => expect(m.files.commentable.get()).toBe(true))
     m.comments.open.set(false)
-    // A selection to comment on shows the new comment's box.
     m.files.target.set({ kind: 'text', from: 0, to: 1 })
-    await vi.waitFor(() =>
-      expect(m.root.querySelector<HTMLElement>('.comments-new')?.hidden).toBe(false),
-    )
     // Not a Mac: Ctrl, and Command alone does nothing.
     const meta = key({ metaKey: true })
     m.root.dispatchEvent(meta)
@@ -225,10 +226,9 @@ describe('the core in a shadow root', () => {
     const ctrl = key({ ctrlKey: true })
     m.root.dispatchEvent(ctrl)
     expect(ctrl.defaultPrevented).toBe(true)
-    expect(m.comments.open.get()).toBe(true)
-    const box = m.root.querySelector<HTMLTextAreaElement>('.comments-new textarea')
+    const box = m.root.querySelector<HTMLTextAreaElement>('.comment-compose textarea')
     expect(box).not.toBeNull()
-    expect(m.root.activeElement).toBe(box)
+    await vi.waitFor(() => expect(m.root.activeElement).toBe(box))
   })
 
   it('takes Command, not Ctrl, on a Mac', async () => {
@@ -240,14 +240,15 @@ describe('the core in a shadow root', () => {
     m.manifest()
     await vi.waitFor(() => expect(m.files.commentable.get()).toBe(true))
     m.comments.open.set(false)
+    m.files.target.set({ kind: 'text', from: 0, to: 1 })
     const ctrl = key({ ctrlKey: true })
     m.root.dispatchEvent(ctrl)
     expect(ctrl.defaultPrevented).toBe(false)
-    expect(m.comments.open.get()).toBe(false)
+    expect(m.root.querySelector('.comment-compose')).toBeNull()
     const meta = key({ metaKey: true })
     m.root.dispatchEvent(meta)
     expect(meta.defaultPrevented).toBe(true)
-    expect(m.comments.open.get()).toBe(true)
+    expect(m.root.querySelector('.comment-compose')).not.toBeNull()
   })
 
   it.each(['edit', 'read'] as const)(

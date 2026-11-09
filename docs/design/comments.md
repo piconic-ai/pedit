@@ -216,7 +216,10 @@ else: a guest, or a teammate through Git. Every peer checks it the same way.
   the web editor's comments panel (`packages/web/src/comments.ts`,
   `components/CommentsPanel.tsx`) on the selection, the table's cells or the
   board's node; marks in the text (`commentmarks.ts`), the table and the
-  board. The panel shows threads as cards, the open ones or the resolved
+  board. A new comment is written where the selection is: a small button
+  beside it (or the shortcut) opens a composer there, which freezes the
+  target when it opens (`core/composer.ts`, `CommentComposer.tsx`); the panel
+  only lists. The panel shows threads as cards, the open ones or the resolved
   ones; one's own comments are edited or deleted from a menu, deleting only
   once confirmed. Each file's tab counts its open threads: the editor joins
 the comments doc of every file the host lists, not the file itself, as soon

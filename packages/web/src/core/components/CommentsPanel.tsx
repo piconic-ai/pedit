@@ -5,7 +5,6 @@ import { initials } from '../avatar.ts'
 import {
   COMMENT_LIMITS,
   type CommentsView,
-  type CommentTarget,
   fullTime,
   type ShownMessage,
   type ShownThread,
@@ -19,8 +18,6 @@ import type { Readable, Store } from '../store.ts'
 export interface CommentsPanelProps {
   /** The comments of the file on screen, or null when it has none. */
   comments: Readable<CommentsView | null>
-  /** What a new comment goes on: the editor's selection or the table's cells; null for nothing. */
-  target: Readable<CommentTarget | null>
   /** No new comments, replies or changes: the room has ended or waits. */
   locked: Readable<boolean>
   /** The thread in focus, marked in the text too. */
@@ -68,41 +65,14 @@ export function CommentsPanel(props: CommentsPanelProps) {
   const canWrite = () => !props.locked.get() && (view()?.roomForMore.get() ?? false)
   const canChange = () => !props.locked.get()
   const colorOfAuthor = (name: string) => props.colors.get().get(name) ?? colorOf(name)
-  const prompt = () => {
-    const t = props.target.get()
-    if (!t) return ''
-    if (t.kind === 'text') return 'Comment on the selection'
-    if (t.kind === 'node') return 'Comment on the node'
-    const one = t.from.row === t.to.row && t.from.col === t.to.col
-    return one ? 'Comment on the cell' : 'Comment on the cells'
-  }
-  // The new comment's box grows once the reader starts on it.
-  const [composing, setComposing] = createSignal(false)
   const [action, setAction] = createSignal<Action | null>(null)
   const acting = (m: ShownMessage, kind: Action['kind']) => {
     const a = action()
     return a !== null && a.message === m.id && a.kind === kind
   }
-  let draft: HTMLTextAreaElement | undefined
-
   const pick = (list: ThreadList) => {
     props.list.set(list)
     props.focus.set(null)
-  }
-  const start = () => {
-    const v = view()
-    const t = props.target.get()
-    if (!v || !draft || !t) return
-    const id = v.startOn(t, draft.value)
-    if (id) {
-      draft.value = ''
-      setComposing(false)
-      props.focus.set(id)
-    }
-  }
-  const cancel = () => {
-    if (draft) draft.value = ''
-    setComposing(false)
   }
   const openMenu = (e: MouseEvent, m: ShownMessage) => {
     const at = (e.currentTarget as HTMLElement).getBoundingClientRect()
@@ -157,33 +127,6 @@ export function CommentsPanel(props: CommentsPanelProps) {
         >
           Resolved{counts().resolved > 0 ? ` ${counts().resolved}` : ''}
         </button>
-      </div>
-      <div
-        className="comments-new"
-        hidden={!canWrite() || props.target.get() === null || tab() !== 'open'}
-        data-composing={composing() ? 'true' : undefined}
-      >
-        <textarea
-          ref={(el) => {
-            draft = el
-          }}
-          rows={composing() ? 3 : 1}
-          maxlength={COMMENT_LIMITS.body}
-          placeholder={prompt()}
-          onFocus={() => setComposing(true)}
-          onBlur={() => {
-            if (!draft?.value) setComposing(false)
-          }}
-          onKeyDown={(e) => keys(e, start, cancel)}
-        />
-        <div className="comment-buttons">
-          <button type="button" className="comment-text-button" onClick={cancel}>
-            Cancel
-          </button>
-          <button type="button" className="comment-primary" onClick={start}>
-            Comment
-          </button>
-        </div>
       </div>
       <p className="comments-full" hidden={!canChange() || (view()?.roomForMore.get() ?? true)}>
         This file has as many comments as it can hold.

@@ -111,6 +111,10 @@ export function mountTextEditor(opts: TextEditorOptions): TextEditor {
   }
   const detach = files.attachEditor({
     textTarget: () => textTarget(selection.get()),
+    textRect: () => {
+      const c = view.coordsAtPos(view.state.selection.main.to)
+      return c ? new DOMRect(c.left, c.top, c.right - c.left, c.bottom - c.top) : null
+    },
     onStatus,
   })
   const stop = selection.subscribe(() => files.aim())
