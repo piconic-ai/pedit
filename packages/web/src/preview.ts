@@ -344,7 +344,7 @@ export interface Block {
 }
 
 /** What renderBlock needs besides the block, as render() takes it. */
-type References = NonNullable<Env['references']>
+export type References = NonNullable<Env['references']>
 
 export interface BlockEnv {
   images?: ImageResolver
@@ -381,14 +381,85 @@ function coreRules(): { block: CoreRule[]; rest: CoreRule[] } {
   return { block: blockOnly, rest: afterBlock }
 }
 
+/** A reference definition found by the block parse, with the line it starts on. */
+export interface Def {
+  label: string
+  ref: unknown
+  line: number
+}
+
+// Where the reference rule below reports the definitions it parses, while a block
+// parse that wants them runs. A window's definitions cannot be told apart from the
+// rest in env.references (the first one of a label wins, a later one is dropped), so
+// they are kept one by one, with their lines, to put env.references together again.
+let defSink: Def[] | undefined
+
+const referenceRule = md.block.ruler.__rules__.find((r) => r.name === 'reference')
+if (referenceRule) {
+  const original = referenceRule.fn
+  md.block.ruler.at(
+    'reference',
+    (state, start, end, silent) => {
+      if (!defSink || silent) return original(state, start, end, silent)
+      const outer = state.env
+      const scratch: Env = {}
+      state.env = scratch
+      let ok: boolean
+      try {
+        ok = original(state, start, end, silent)
+      } finally {
+        state.env = outer
+      }
+      if (ok) {
+        for (const [label, ref] of Object.entries(scratch.references ?? {}))
+          defSink.push({ label, ref, line: start })
+      }
+      return ok
+    },
+    { alt: referenceRule.alt },
+  )
+}
+
+/** What markdown-it's env.references is for these definitions, in document order. */
+export function referencesOf(defs: readonly Def[]): References {
+  const references: References = {}
+  for (const d of defs) {
+    if (typeof references[d.label] === 'undefined') references[d.label] = d.ref as never
+  }
+  return references
+}
+
+/** The digest of a set of references, as keyOf wants it. */
+export const digestOfReferences = (references: References): string =>
+  digestOf(JSON.stringify(references))
+
 /**
  * Parses the whole document into top-level blocks without the inline parse.
  * Lines between blocks (blank lines, reference definitions) belong to no block.
  */
 export function parseBlocks(source: string): ParsedBlocks {
-  const env: Env = {}
-  const state = new md.core.State(source, md, env)
-  for (const rule of coreRules().block) rule(state)
+  const defs: Def[] = []
+  const blocks = parseSegment(source, 0, 0, defs)
+  const references = referencesOf(defs)
+  return { blocks, references, refs: digestOfReferences(references) }
+}
+
+/**
+ * The block parse of `source`, which is a part of a document that starts at line
+ * `line0`, offset `offset0` (a part that starts where a block does and where nothing
+ * before it can reach in). Blocks come with absolute lines and offsets; `defs`
+ * receives the reference definitions with absolute lines.
+ */
+export function parseSegment(source: string, line0: number, offset0: number, defs: Def[]): Block[] {
+  const state = new md.core.State(source, md, {})
+  const known = defs.length
+  defSink = defs
+  try {
+    for (const rule of coreRules().block) rule(state)
+  } finally {
+    defSink = undefined
+  }
+  for (let i = known; i < defs.length; i++) (defs[i] as Def).line += line0
   // Line starts in the original text; markdown-it's newline is \r\n, \r or \n.
   const starts = [0]
   for (const m of source.matchAll(/\r\n?|\n/g)) starts.push(m.index + m[0].length)
@@ -409,13 +480,19 @@ export function parseBlocks(source: string): ParsedBlocks {
     // These tokens are ours (the document's state is discarded), so shift in place.
     const own = tokens.slice(i, end)
     for (const t of own) if (t.map) t.map = [t.map[0] - line, t.map[1] - line]
-    const offset = starts[line] ?? source.length
-    const text = source.slice(offset, starts[lineEnd] ?? source.length)
-    blocks.push({ tokens: own, line, lineEnd, offset, src: text, unmapped: /[\r\0]/.test(text) })
+    const at = starts[line] ?? source.length
+    const text = source.slice(at, starts[lineEnd] ?? source.length)
+    blocks.push({
+      tokens: own,
+      line: line0 + line,
+      lineEnd: line0 + lineEnd,
+      offset: offset0 + at,
+      src: text,
+      unmapped: /[\r\0]/.test(text),
+    })
     i = end
   }
-  const references = env.references ?? {}
-  return { blocks, references, refs: digestOf(JSON.stringify(references)) }
+  return blocks
 }
 
 function copyToken(state: StateCore, t: Token): Token {

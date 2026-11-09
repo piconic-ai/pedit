@@ -1,3 +1,4 @@
+import { BlockParser, replaceRange } from './blockparse.ts'
 import type { ImageResolver } from './core/attachments.ts'
 import {
   type Block,
@@ -6,7 +7,6 @@ import {
   holdsEmbed,
   keyOf,
   pageMediaSources,
-  parseBlocks,
   patchHeldEmbed,
   renderBlock,
   renderedKey,
@@ -37,18 +37,26 @@ export class BlockRenderer {
   #container: Element
   #breaks: boolean
   #decorate: ((root: Element) => void) | undefined
-  // The blocks shown, in order.
+  #parser: BlockParser
+  // The blocks shown, in order: one entry per block of the parser.
   #entries: Entry[] = []
+  // What the keys were made with; a key is only reused while these are the same.
+  #refs = ''
+  #imagesVersion = 0
+  // The entries that looked an image up.
+  #withImages = new Set<Entry>()
 
   /**
    * `decorate` is called on every root as it is rendered, before it is compared with
    * the old ones, so what it adds is part of what a block looks like and a kept
-   * element, a loaded player in it too, carries it already.
+   * element, a loaded player in it too, carries it already. A text shorter than
+   * `windowAbove` characters is parsed whole on every update (see BlockParser).
    */
   constructor(
     container: Element,
-    options: { breaks?: boolean; decorate?: (root: Element) => void } = {},
+    options: { breaks?: boolean; decorate?: (root: Element) => void; windowAbove?: number } = {},
   ) {
+    this.#parser = new BlockParser(options.windowAbove)
     this.#container = container
     this.#breaks = options.breaks ?? false
     this.#decorate = options.decorate
@@ -57,12 +65,16 @@ export class BlockRenderer {
   /** Forgets every block, e.g. when the container is about to show another text. */
   reset(): void {
     this.#entries = []
+    this.#withImages.clear()
+    this.#parser.reset()
     this.#container.replaceChildren()
   }
 
   /**
    * Shows `source`, rebuilding only the blocks that changed. Bump `imagesVersion`
-   * when the resolver would answer differently for the same text.
+   * when the resolver would answer differently for the same text. What is done
+   * besides parsing the edited part is proportional to the blocks that changed (and
+   * the lines of those below, when the edit moved them).
    */
   update(
     source: string,
@@ -70,36 +82,57 @@ export class BlockRenderer {
     imagesVersion = 0,
     media: readonly string[] = pageMediaSources(),
   ): void {
-    const { blocks, references, refs } = parseBlocks(source)
+    const parsed = this.#parser.update(source)
+    const { blocks, references, refs } = parsed
+    let { from, oldTo, to } = parsed
+    const stale = this.#entries.length - (oldTo - from) !== blocks.length - (to - from)
+    if (stale || refs !== this.#refs || imagesVersion !== this.#imagesVersion) {
+      // The keys of the blocks that did not change are not the keys they would get now.
+      from = 0
+      oldTo = this.#entries.length
+      to = blocks.length
+    }
+    this.#refs = refs
+    this.#imagesVersion = imagesVersion
     const env: BlockEnv = { images, media, breaks: this.#breaks, references }
-    const keys = blocks.map((b) => keyOf(b, refs, imagesVersion, this.#breaks))
-    const entries: (Entry | undefined)[] = new Array(blocks.length)
-    const unused = claimKept(this.#entries, keys, entries)
-    renderMissed(blocks, keys, entries, unused, env, this.#decorate)
+    const fresh = blocks.slice(from, to)
+    const keys = fresh.map((b) => keyOf(b, refs, imagesVersion, this.#breaks))
+    const old = this.#entries.slice(from, oldTo)
+    const entries: (Entry | undefined)[] = new Array(fresh.length)
+    const unused = claimKept(old, keys, entries)
+    renderMissed(fresh, keys, entries, unused, env, this.#decorate)
     const list = entries as Entry[]
-    if (images) reportShown(list, images)
-    this.#entries = list
-    this.#reconcile(stampLines(list, blocks))
+    for (const e of old) this.#withImages.delete(e)
+    for (const e of list) if (e.images.length) this.#withImages.add(e)
+    if (images) for (const e of this.#withImages) for (const src of e.images) images.lookup(src)
+    this.#entries = replaceRange(this.#entries, from, oldTo, list)
+    const roots = stampFresh(list, fresh)
+    const end = from + list.length
+    if (parsed.lineShift !== 0)
+      for (let i = end; i < this.#entries.length; i++) stamp(this.#entries[i] as Entry)
+    this.#reconcile(roots, edgeRoot(this.#entries, from - 1, -1), edgeRoot(this.#entries, end, 1))
   }
 
-  // Makes the container's children exactly `roots`, in order, moving as little as
-  // possible: a node that stays is never moved, as a frame reloads when it moves.
-  #reconcile(roots: Element[]): void {
+  // Makes the children of the container between `after` and `before` (the roots of
+  // blocks that did not change, or null for the ends) exactly `roots`, in order,
+  // moving as little as possible: a node that stays is never moved, as a frame
+  // reloads when it moves.
+  #reconcile(roots: Element[], after: Node | null, before: Node | null): void {
     const container = this.#container
     const wanted = new Set<Node>(roots)
-    let cur = container.firstChild
+    let cur = after ? after.nextSibling : container.firstChild
     for (const el of roots) {
-      while (cur && !wanted.has(cur)) {
+      while (cur && cur !== before && !wanted.has(cur)) {
         const next = cur.nextSibling
         cur.remove()
         cur = next
       }
       if (cur === el) cur = cur.nextSibling
-      else if (cur && wanted.has(cur) && el.parentNode === container)
-        return this.#reorder(roots, wanted)
+      else if (cur && cur !== before && el.parentNode === container)
+        return this.#reorder(roots, wanted, after, before)
       else container.insertBefore(el, cur)
     }
-    while (cur) {
+    while (cur && cur !== before) {
       const next = cur.nextSibling
       cur.remove()
       cur = next
@@ -107,18 +140,23 @@ export class BlockRenderer {
   }
 
   // Some block moved: keep the longest run of blocks already in order, move the rest.
-  #reorder(roots: Element[], wanted: Set<Node>): void {
+  #reorder(roots: Element[], wanted: Set<Node>, after: Node | null, before: Node | null): void {
     const container = this.#container
-    for (const node of [...container.childNodes]) if (!wanted.has(node)) node.remove()
+    const first = after ? after.nextSibling : container.firstChild
     const at = new Map<Node, number>()
     let n = 0
-    for (let c = container.firstChild; c; c = c.nextSibling) at.set(c, n++)
+    for (let c = first; c && c !== before; ) {
+      const next = c.nextSibling
+      if (wanted.has(c)) at.set(c, n++)
+      else c.remove()
+      c = next
+    }
     const stay = longestRun(roots.map((el) => at.get(el) ?? -1))
-    let before: Node | null = null
+    let next: Node | null = before
     for (let i = roots.length - 1; i >= 0; i--) {
       const el = roots[i] as Element
-      if (!stay.has(i)) container.insertBefore(el, before)
-      before = el
+      if (!stay.has(i)) container.insertBefore(el, next)
+      next = el
     }
   }
 }
@@ -254,24 +292,31 @@ function keepOld(old: Old, fresh: Element[]): Element[] | null {
   return held.elements
 }
 
-// Cached blocks do not look their images up again, so say that they are shown: the
-// resolver keeps what is on screen from being evicted.
-function reportShown(list: Entry[], images: ImageResolver): void {
-  for (const e of list) for (const src of e.images) images.lookup(src)
-}
-
 /** Points each entry at its block now, stamps the roots' lines, returns the roots. */
-function stampLines(list: Entry[], blocks: Block[]): Element[] {
+function stampFresh(list: Entry[], blocks: Block[]): Element[] {
   const roots: Element[] = []
   list.forEach((entry, i) => {
     entry.block = blocks[i] as Block
-    for (const el of entry.elements) {
-      set(el, 'data-line', String(entry.block.line))
-      set(el, 'data-line-end', String(entry.block.lineEnd))
-      roots.push(el)
-    }
+    stamp(entry)
+    roots.push(...entry.elements)
   })
   return roots
+}
+
+function stamp(entry: Entry): void {
+  for (const el of entry.elements) {
+    set(el, 'data-line', String(entry.block.line))
+    set(el, 'data-line-end', String(entry.block.lineEnd))
+  }
+}
+
+// The root nearest to entry `i` in direction `dir` (-1 up, 1 down), or null.
+function edgeRoot(entries: Entry[], i: number, dir: 1 | -1): Element | null {
+  for (let k = i; k >= 0 && k < entries.length; k += dir) {
+    const els = (entries[k] as Entry).elements
+    if (els.length) return (dir < 0 ? els.at(-1) : els[0]) ?? null
+  }
+  return null
 }
 
 // The resolver, noting the links it is asked about.
