@@ -24,7 +24,7 @@ pedit or reload the page.
 | --- | --- | --- |
 | 6 | A kind byte in front of every binary message, for rooms kept while the host is away | [rooms-away.md](../design/rooms-away.md#wire-format-protocol-version-6) |
 | 7 | Canvas board edits in kept rooms; the relay no longer serves older peers, which cannot replay them | [rooms-away.md](../design/rooms-away.md#canvas-scope-and-replay) |
-| 8 | The relay admits comment links as commenters, who may write comment entries while the host is away | [kept-comments.md](../design/kept-comments.md) |
+| 8 | The relay admits comment links as commenters, with a token of their own, and comment-signed kept entries let them write comments while the host is away | [kept-comments.md](../design/kept-comments.md) |
 
 While pedit is 0.x, patch releases keep the wire format compatible. Additive
 changes (a new message type or kind that older peers skip) do not change the
@@ -129,11 +129,12 @@ The relay closes a WebSocket with one of these codes
 | `4002` | The client speaks an older version than the relay | Do not reconnect; update pedit or reload the page |
 | `4003` | The client speaks a newer version than the relay | Do not reconnect; the relay has to be updated |
 | `4004` | The room already has as many guests as the relay allows | Do not reconnect by themselves |
-| `4005` | Too many connections from the client's network just now | Reconnect, after a longer wait than for a dropped connection (the CLI waits 10 seconds) |
+| `4005` | Too many connections from the client's network just now | Reconnect after 5 to 10 seconds, longer than after a dropped connection |
 | `4006` | The relay is closed for maintenance | Stop; reconnect only when the person asks (Reconnect in the editor, Enter in the host's pedit) |
 | `4007` | The room reached the relay's time limit, from its host's first connection | Do not reconnect; the room ID is never reopened |
-| `4008` | Sent by a host that ends the session on purpose (Ctrl+C); the relay then closes the room with `4001` for everyone else | |
-| `4009` | The page's origin is not one the room admits ([per-room origins](../design/embedding.md)) | Do not reconnect; the host has to list the origin first |
+| `4008` | Sent by a host that ends the session on purpose (Ctrl+C). The relay then keeps the room if it can ([rooms-away.md](../design/rooms-away.md)), and otherwise closes it with `4001` for everyone else | |
+| `4009` | The page's origin is not one the room admits ([per-room origins](../design/embedding.md)); only a browser can receive it | Do not reconnect; the host has to list the origin first |
+| `1009` | A message over 1 MiB (`MessageTooBig`) | Do not reconnect: the client has left the room for good, and a host's session ends |
 
 The relay also sends a few text frames of its own, the only frames not from a
 peer and not encrypted: `host away` and `host back` around a host's grace
