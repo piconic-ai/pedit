@@ -602,53 +602,66 @@ describe('editing back a block that holds a loaded player', () => {
       'more text',
       '- [ ] task',
     ]
-    for (let seed = 1; seed <= 12; seed++) {
-      const next = rng(seed * 7 + 3)
-      const pick = <T>(xs: T[]) => xs[Math.floor(next() * xs.length)] as T
-      const { container, update } = setup()
-      let lines = Array.from({ length: 8 }, () => pick(pieces))
-      update(lines.join('\n'))
-      for (let step = 0; step < 50; step++) {
-        const holders = [...container.querySelectorAll('[data-embed-src]:not(.embed--loaded)')]
-        if (holders.length && next() < 0.4) {
-          const h = pick(holders)
-          const box = h.querySelector('.embed-remember')
-          if (next() < 0.5) loadEmbed(h, false)
-          else if (box) toggleRemember(box)
+    // jsdom builds a window for every iframe, which is slow: a plain element stands in.
+    const create = document.createElement.bind(document)
+    const stub = vi
+      .spyOn(document, 'createElement')
+      .mockImplementation((tag: string, o?: ElementCreationOptions) =>
+        create(tag === 'iframe' ? 'span' : tag, o),
+      )
+    // A longer run: FUZZ=1.
+    const [seeds, steps] = process.env.FUZZ ? [12, 50] : [6, 40]
+    try {
+      for (let seed = 1; seed <= seeds; seed++) {
+        const next = rng(seed * 7 + 3)
+        const pick = <T>(xs: T[]) => xs[Math.floor(next() * xs.length)] as T
+        const { container, update } = setup()
+        let lines = Array.from({ length: 8 }, () => pick(pieces))
+        update(lines.join('\n'))
+        for (let step = 0; step < steps; step++) {
+          const holders = [...container.querySelectorAll('[data-embed-src]:not(.embed--loaded)')]
+          if (holders.length && next() < 0.4) {
+            const h = pick(holders)
+            const box = h.querySelector('.embed-remember')
+            if (next() < 0.5) loadEmbed(h, false)
+            else if (box) toggleRemember(box)
+          }
+          const at = Math.floor(next() * (lines.length + 1))
+          if (next() < 0.5) lines.splice(at, 0, pick(pieces))
+          else lines.splice(at, 1 + Math.floor(next() * 2))
+          // Often return to the form an earlier edit had: back and forth.
+          if (next() < 0.2) lines = lines.slice()
+          const source = lines.join('\n')
+          update(source)
+          const expected = [...render(source, undefined, MEDIA).children].map(masked)
+          expect(
+            roots(container)
+              .map((r) => {
+                const copy = r.cloneNode(true) as Element
+                const base = Number(r.getAttribute('data-line'))
+                copy.removeAttribute('data-line-end')
+                for (const e of copy.querySelectorAll('[data-line]')) {
+                  e.setAttribute('data-line', String(base + Number(e.getAttribute('data-line'))))
+                }
+                return masked(copy)
+              })
+              .map((h, i) => {
+                const t = document.createElement('div')
+                t.innerHTML = expected[i] ?? ''
+                if (!t.firstElementChild?.hasAttribute('data-line')) {
+                  const c = document.createElement('div')
+                  c.innerHTML = h
+                  c.firstElementChild?.removeAttribute('data-line')
+                  return c.innerHTML
+                }
+                return h
+              }),
+            `seed ${seed} step ${step}: ${JSON.stringify(source)}`,
+          ).toEqual(expected)
         }
-        const at = Math.floor(next() * (lines.length + 1))
-        if (next() < 0.5) lines.splice(at, 0, pick(pieces))
-        else lines.splice(at, 1 + Math.floor(next() * 2))
-        // Often return to the form an earlier edit had: back and forth.
-        if (next() < 0.2) lines = lines.slice()
-        const source = lines.join('\n')
-        update(source)
-        const expected = [...render(source, undefined, MEDIA).children].map(masked)
-        expect(
-          roots(container)
-            .map((r) => {
-              const copy = r.cloneNode(true) as Element
-              const base = Number(r.getAttribute('data-line'))
-              copy.removeAttribute('data-line-end')
-              for (const e of copy.querySelectorAll('[data-line]')) {
-                e.setAttribute('data-line', String(base + Number(e.getAttribute('data-line'))))
-              }
-              return masked(copy)
-            })
-            .map((h, i) => {
-              const t = document.createElement('div')
-              t.innerHTML = expected[i] ?? ''
-              if (!t.firstElementChild?.hasAttribute('data-line')) {
-                const c = document.createElement('div')
-                c.innerHTML = h
-                c.firstElementChild?.removeAttribute('data-line')
-                return c.innerHTML
-              }
-              return h
-            }),
-          `seed ${seed} step ${step}: ${JSON.stringify(source)}`,
-        ).toEqual(expected)
       }
+    } finally {
+      stub.mockRestore()
     }
   })
 })
