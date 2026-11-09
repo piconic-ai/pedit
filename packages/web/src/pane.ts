@@ -111,6 +111,7 @@ export class PreviewPane {
   #frame = 0
   #onRender: () => void
   #rendered = new Set<() => void>()
+  #source: string | null = null
   #images: ImageResolver | undefined
   #alwaysLoad: AlwaysLoad | undefined
 
@@ -238,11 +239,17 @@ export class PreviewPane {
     if (!this.#active || !this.#dirty) return
     this.#dirty = false
     const { render, patch } = this.#renderer
-    patch(this.element, render(this.#text.toString(), this.#images))
+    this.#source = this.#text.toString()
+    patch(this.element, render(this.#source, this.#images))
     this.#loadRemembered()
     this.#images?.rendered?.()
     this.#onRender()
     for (const fn of [...this.#rendered]) fn()
+  }
+
+  /** The text the page shows now (what was last rendered), or null before the first render. */
+  get renderedSource(): string | null {
+    return this.#source
   }
 
   /** Calls `fn` after every render; returns how to stop. */

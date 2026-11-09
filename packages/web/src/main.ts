@@ -196,7 +196,7 @@ async function joinRoom(
   })
   attachments.version.subscribe(() => preview.refresh())
   // A selection in the preview can be commented on as the editor's own.
-  const stopPreviewComments = commentOnPreviewSelection({ pane: preview, editor, files })
+  const stopPreviewComments = commentOnPreviewSelection({ pane: preview, textEditor, files })
   const splitter = new Splitter(main, { onResize: followEditor })
   // Each file's table error; the view shows the one of the file on screen.
   const tableErrors = new TableErrors(0, (error) =>

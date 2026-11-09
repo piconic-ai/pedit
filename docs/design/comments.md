@@ -259,15 +259,19 @@ so nothing changes in the protocol or the storage.
 
 - **The source map:** the preview tags each block with `data-line` (its first
   source line) and `data-line-end` (the line after its last).
-- **From selection to source:** while rendering, each run of visible text
-  that the source holds verbatim gets its offset (`data-src`), found in order
-  inside its block and past link destinations and image sources. Entities,
-  escapes and anything not found as shown get no offset, and are never guessed.
+- **From selection to source:** positions come from the parser, never from
+  searching. markdown-it's inline state is extended to tell where each run of
+  text starts in its inline token's content; a block's content lines are then
+  tied to its source lines (each is the end of its source line, as markdown-it
+  only takes prefixes and blanks away), and a table row's cells are split as
+  markdown-it splits them. A run gets its source offset (`data-src`) only if it
+  is the source as shown: entities, escapes, linkified URLs, code with padding
+  or a line break, and cells with an escaped pipe are left out.
   `previewSelectionToSource` (`packages/web/src/previewselect.ts`) maps the
   start and the end of the selection on their own, each by its run; a boundary
-  between blocks moves to the nearest text inside the selection. A selection
-  that starts or ends in an unmapped run, or in an embed or the frontmatter, is
-  not commentable.
+  at a run's edge or between blocks moves to the nearest text inside the
+  selection. A selection that starts or ends in an unmapped run, or in an embed
+  or the frontmatter, is not commentable.
 - **The editor's selection:** `commentOnPreviewSelection`
   (`packages/web/src/previewcomment.ts`) sets the result as the editor's
   selection without focusing or scrolling it, so the preview and the reader's

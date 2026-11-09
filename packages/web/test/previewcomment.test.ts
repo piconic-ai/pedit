@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 
 import { EditorState } from '@codemirror/state'
-import { EditorView } from '@codemirror/view'
+import { EditorView, type ViewUpdate } from '@codemirror/view'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { TextEditor } from '../src/core/editor.ts'
 import type { FileSet, PreviewPlace } from '../src/core/files.ts'
+import { Store } from '../src/core/store.ts'
 import type { PreviewPane } from '../src/pane.ts'
 import { render } from '../src/preview.ts'
 import { commentOnPreviewSelection } from '../src/previewcomment.ts'
@@ -24,13 +26,35 @@ function setup(source: string) {
   const root = document.createElement('article')
   root.append(render(source))
   document.body.replaceChildren(root)
-  const editor = new EditorView({ state: EditorState.create({ doc: source }) })
+  const updates = new Set<(u: ViewUpdate) => void>()
+  const editor = new EditorView({
+    state: EditorState.create({
+      doc: source,
+      extensions: [EditorView.updateListener.of((u) => updates.forEach((fn) => fn(u)))],
+    }),
+  })
+  const textEditor = {
+    view: editor,
+    onUpdate: (fn: (u: ViewUpdate) => void) => (updates.add(fn), () => void updates.delete(fn)),
+  } as unknown as TextEditor
   let hooks: PreviewPlace | undefined
+  const shown = new Store(0)
   const files = {
+    shown,
     attachPreview: (h: PreviewPlace) => ((hooks = h), () => {}),
   } as unknown as FileSet
-  const pane = { element: root, active: true, onRendered: () => () => {} } as unknown as PreviewPane
-  const stop = commentOnPreviewSelection({ pane, editor, files })
+  const rendered = new Set<() => void>()
+  const pane = {
+    element: root,
+    active: true,
+    renderedSource: source as string | null,
+    onRendered: (fn: () => void) => (rendered.add(fn), () => void rendered.delete(fn)),
+  }
+  const stop = commentOnPreviewSelection({
+    pane: pane as unknown as PreviewPane,
+    textEditor,
+    files,
+  })
   const select = (text: string) => {
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
     for (let n = walker.nextNode() as Text | null; n; n = walker.nextNode() as Text | null) {
@@ -46,7 +70,16 @@ function setup(source: string) {
     }
     throw new Error('no text')
   }
-  return { editor, hooks: () => hooks as PreviewPlace, select, stop }
+  return {
+    editor,
+    hooks: () => hooks as PreviewPlace,
+    select,
+    stop,
+    pane,
+    shown,
+    rendered,
+    updates,
+  }
 }
 
 afterEach(() => {
@@ -82,6 +115,36 @@ describe('commentOnPreviewSelection', () => {
     editor.dispatch({ selection: { anchor: 0, head: 5 } })
     expect(hooks().place()).toBeNull()
     stop()
+  })
+
+  it('maps nothing while the page shows an older text, and maps once it renders', () => {
+    vi.useFakeTimers()
+    const { editor, select, pane, rendered, stop } = setup('Hello brave world\n')
+    pane.renderedSource = 'Hello world\n'
+    select('brave')
+    document.dispatchEvent(new Event('selectionchange'))
+    vi.advanceTimersByTime(100)
+    expect(editor.state.selection.main.empty).toBe(true)
+    pane.renderedSource = 'Hello brave world\n'
+    for (const fn of rendered) fn()
+    vi.advanceTimersByTime(100)
+    expect(editor.state.selection.main.empty).toBe(false)
+    stop()
+  })
+
+  it('lets go of the range on another file and stops listening', () => {
+    vi.useFakeTimers()
+    const { editor, select, hooks, shown, updates, rendered, stop } = setup('Hello brave world\n')
+    select('brave')
+    document.dispatchEvent(new Event('selectionchange'))
+    vi.advanceTimersByTime(100)
+    expect(hooks().place()).not.toBeNull()
+    shown.set(1)
+    expect(hooks().place()).toBeNull()
+    stop()
+    expect(updates.size).toBe(0)
+    expect(rendered.size).toBe(0)
+    editor.dispatch({ selection: { anchor: 0 } })
   })
 
   it('drops the selection it made once the preview selection is gone', () => {

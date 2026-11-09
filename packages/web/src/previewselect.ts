@@ -55,6 +55,15 @@ function pieces(root: Element, range: Selected): { node: Text; from: number; to:
   return found
 }
 
+/** `offset` in `node`, moved by `step` if it is inside a surrogate pair. */
+function whole(node: Text, offset: number, step: -1 | 1): number {
+  const before = node.data.charCodeAt(offset - 1)
+  const after = node.data.charCodeAt(offset)
+  return before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff
+    ? offset + step
+    : offset
+}
+
 /** Whether the non-blank characters of `text` appear in order in `within`. */
 function inOrder(text: string, within: string): boolean {
   let at = 0
@@ -88,24 +97,28 @@ export function previewSelectionToSource(
     const el = node instanceof Element ? node : node.parentElement
     if (el?.closest('.frontmatter, [data-embed-src]')) return null
   }
-  // A boundary in a run is exact. Between blocks it moves to the nearest text
-  // inside the selection, past blanks.
-  const direct = (node: Node) => node.nodeType === Node.TEXT_NODE && runOf(root, node) !== null
+  // A boundary inside a run is exact. One at a run's edge (the end of the text
+  // a selection starts in, the start of the one it ends in) or between blocks
+  // moves to the nearest text inside the selection, past blanks.
+  const inRun = (node: Node) => node.nodeType === Node.TEXT_NODE && runOf(root, node) !== null
   let from: number | null
-  if (direct(sc)) from = sourceAt(root, sc, range.startOffset)
-  else {
+  if (inRun(sc) && range.startOffset < (sc as Text).data.length) {
+    from = sourceAt(root, sc, whole(sc as Text, range.startOffset, -1))
+  } else {
     const lead = first.node.data.length - first.node.data.slice(first.from).trimStart().length
-    from = sourceAt(root, first.node, Math.max(first.from, lead))
+    from = sourceAt(root, first.node, whole(first.node, Math.max(first.from, lead), -1))
   }
   let to: number | null
-  if (direct(ec)) to = sourceAt(root, ec, range.endOffset)
-  else {
-    to = sourceAt(
-      root,
-      last.node,
-      last.from + last.node.data.slice(last.from, last.to).trimEnd().length,
-    )
+  if (inRun(ec) && range.endOffset > 0) {
+    to = sourceAt(root, ec, whole(ec as Text, range.endOffset, 1))
+  } else {
+    const end = last.from + last.node.data.slice(last.from, last.to).trimEnd().length
+    to = sourceAt(root, last.node, whole(last.node, end, 1))
   }
   if (from === null || to === null || to <= from) return null
+  // The blanks at the ends of the selection are not what is quoted.
+  while (from < to && /\s/.test(source[from] ?? '')) from++
+  while (to > from && /\s/.test(source[to - 1] ?? '')) to--
+  if (to <= from) return null
   return inOrder(range.toString(), source.slice(from, to)) ? { from, to } : null
 }

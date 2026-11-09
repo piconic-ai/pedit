@@ -1,5 +1,4 @@
-import { StateEffect } from '@codemirror/state'
-import { EditorView } from '@codemirror/view'
+import type { TextEditor } from './core/editor.ts'
 import type { FileSet } from './core/files.ts'
 import type { PreviewPane } from './pane.ts'
 import { previewSelectionToSource } from './previewselect.ts'
@@ -18,23 +17,24 @@ const SETTLE_MS = 80
  */
 export function commentOnPreviewSelection(opts: {
   pane: PreviewPane
-  editor: EditorView
+  textEditor: TextEditor
   files: FileSet
 }): () => void {
-  const { pane, editor, files } = opts
+  const { pane, textEditor, files } = opts
+  const editor = textEditor.view
   const root = pane.element
   const doc = root.ownerDocument
   let current: { range: Range; from: number; to: number } | null = null
 
   // The range follows the edits of others, as the editor's selection does.
-  editor.dispatch({
-    effects: StateEffect.appendConfig.of(
-      EditorView.updateListener.of((u) => {
-        if (!current || !u.docChanged) return
-        current.from = u.changes.mapPos(current.from, 1)
-        current.to = u.changes.mapPos(current.to, -1)
-      }),
-    ),
+  const stopUpdates = textEditor.onUpdate((u) => {
+    if (!current || !u.docChanged) return
+    current.from = u.changes.mapPos(current.from, 1)
+    current.to = u.changes.mapPos(current.to, -1)
+  })
+  // Another file: its text has other places.
+  const stopShown = files.shown.subscribe(() => {
+    current = null
   })
   const ours = () => {
     const s = editor.state.selection.main
@@ -45,9 +45,10 @@ export function commentOnPreviewSelection(opts: {
     const sel = doc.getSelection()
     const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null
     if (!range || !root.contains(range.commonAncestorContainer)) return
-    const at = range.collapsed
-      ? null
-      : previewSelectionToSource(root, range, editor.state.doc.toString())
+    const source = editor.state.doc.toString()
+    // The page shows an older text than the editor holds: its places are not the editor's. Once it renders again, this runs again.
+    if (pane.renderedSource !== source) return
+    const at = range.collapsed ? null : previewSelectionToSource(root, range, source)
     if (!at) {
       // Nothing to comment on any more: drop the selection this view made.
       if (ours()) {
@@ -66,6 +67,7 @@ export function commentOnPreviewSelection(opts: {
     timer = setTimeout(settle, SETTLE_MS)
   }
   doc.addEventListener('selectionchange', onSelection)
+  const stopRendered = pane.onRendered(onSelection)
 
   const stopFiles = files.attachPreview({
     place() {
@@ -95,6 +97,9 @@ export function commentOnPreviewSelection(opts: {
   return () => {
     clearTimeout(timer)
     doc.removeEventListener('selectionchange', onSelection)
+    stopRendered()
+    stopUpdates()
+    stopShown()
     stopFiles()
   }
 }

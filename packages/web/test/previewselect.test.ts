@@ -149,12 +149,12 @@ describe('previewSelectionToSource', () => {
     const source = '**bold** and 2 \\* 3\n'
     const root = mount(source)
     // The text around the escape is exact; the escape itself is not mapped.
-    expect(map(source, 'and 2 ')).toBe('and 2 ')
-    expect(map(source, ' 3')).toBe(' 3')
+    expect(map(source, 'and 2 ')).toBe('and 2')
+    expect(map(source, ' 3')).toBe('3')
     expect(previewSelectionToSource(root, select(root, '*'), source)).toBeNull()
     const entity = 'fish &amp; chips\n'
-    expect(map(entity, 'fish ')).toBe('fish ')
-    expect(map(entity, ' chips')).toBe(' chips')
+    expect(map(entity, 'fish ')).toBe('fish')
+    expect(map(entity, ' chips')).toBe('chips')
   })
 
   it('maps selections across markup by each boundary', () => {
@@ -187,6 +187,116 @@ describe('previewSelectionToSource', () => {
     range.setStart(p1 as Element, 0)
     range.setEnd(p2 as Element, 0)
     expect(previewSelectionToSource(root, range, source)).toEqual({ from: 0, to: 10 })
+  })
+
+  // Each case: [source, from text, to text, nth of each, the source text expected (null: not placed)].
+  // None may give another range than the one the reader selected.
+  const cases: [string, string, string, [number, number], string | null][] = [
+    ['see [a b](u "t (x)") then a b end\n', 'then a b', 'then a b', [0, 0], 'then a b'],
+    ['x [lbl](http://u "t)x") lbl tail\n', 'lbl tail', 'lbl tail', [0, 0], 'lbl tail'],
+    ['x [lbl](http://u/(a)) lbl tail\n', 'lbl tail', 'lbl tail', [0, 0], 'lbl tail'],
+    ['x [lbl](<a)b>) lbl tail\n', 'lbl tail', 'lbl tail', [0, 0], 'lbl tail'],
+    ['[t](<u)> y) y\n', 'y) y', 'y) y', [0, 0], null],
+    ['x [foo][r] foo\n\n[r]: /u "foo"\n', 'foo', 'foo', [1, 1], 'foo'],
+    ['x [foo][a\\]b] foo\n\n[a\\]b]: /u\n', 'foo', 'foo', [1, 1], 'foo'],
+    ['[foo](x y) z\n(x y) z\n\n[foo]: /u\n', '(x y) z', '(x y) z', [1, 1], '(x y) z'],
+    ['![alt](i.png) alt\n', ' alt', ' alt', [0, 0], 'alt'],
+    ['---\ntitle: x\n---\n\nx\n', 'x', 'x', [1, 1], 'x'],
+    ['x `a\nb` a b\n', 'a b', 'a b', [0, 0], null],
+    ['x ` a ` a\n', 'a', 'a', [0, 0], null],
+    ['| x \\| y | x | y |\n|---|---|---|\n', 'y', 'y', [0, 0], null],
+    ['| a | b |\n|---|---|\n| x \\| y | z |\n', 'z', 'z', [0, 0], 'z'],
+    [
+      '<https://ex.com/%41> https://ex.com/A\n',
+      'https://ex.com/A',
+      'https://ex.com/A',
+      [0, 0],
+      null,
+    ],
+    ['a \\*b\\* *b*\n', 'b', 'b', [1, 1], 'b'],
+    ['a😀 **😀b** 😀b\n', '😀b', '😀b', [1, 1], '😀b'],
+    ['a 2 * 3 b * c\n', 'b', 'b', [0, 0], 'b'],
+    ['snake_case_name here\n', 'case', 'case', [0, 0], 'case'],
+    ['- [ ] todo\n- [x] done\n', 'done', 'done', [0, 0], null],
+  ]
+  it.each(cases)('never maps to another place: %j', (source, from, to, nth, want) => {
+    const root = mount(source)
+    let got: string | null = null
+    try {
+      const r = previewSelectionToSource(root, select(root, from, to, nth), source)
+      got = r && source.slice(r.from, r.to)
+    } catch {
+      // The text is not in the page as written: nothing to select.
+      return
+    }
+    expect(got === null || got === want).toBe(true)
+    if (want !== null) expect(got).toBe(want)
+  })
+
+  it('keeps the same range for each repeat of a text that is also in a link', () => {
+    const source = 'see [the docs](https://example.com/docs) for docs.\n'
+    const root = mount(source)
+    const one = find(root, 'docs', 0)
+    const two = find(root, 'docs', 1)
+    const pick = (n: { node: Text; at: number }) => {
+      const r = document.createRange()
+      r.setStart(n.node, n.at)
+      r.setEnd(n.node, n.at + 4)
+      return previewSelectionToSource(root, r, source)
+    }
+    expect(pick(one)).toEqual({ from: 9, to: 13 })
+    expect(pick(two)).toEqual({ from: 45, to: 49 })
+  })
+
+  it('treats a run edge as no more than the selected text', () => {
+    // Ends at the start of the next text: stops at the last selected character.
+    expect(map('a *b*\n', 'a ', 'b', [0, 0])).toBe('a *b')
+    const source = 'a *b*\n'
+    const root = mount(source)
+    const range = select(root, 'a ')
+    const b = find(root, 'b')
+    range.setEnd(b.node, 0)
+    expect(previewSelectionToSource(root, range, source)).toEqual({ from: 0, to: 1 })
+    // Starts at the end of a text: begins at the next selected character.
+    const s2 = '*a* b\n'
+    const r2 = mount(s2)
+    const a = find(r2, 'a')
+    const range2 = select(r2, ' b')
+    range2.setStart(a.node, 1)
+    expect(previewSelectionToSource(r2, range2, s2)).toEqual({ from: 4, to: 5 })
+    // Up to the start of the next block.
+    const s3 = '# foo\n\nbar\n'
+    const r3 = mount(s3)
+    const foo = find(r3, 'foo')
+    const bar = find(r3, 'bar')
+    const range3 = document.createRange()
+    range3.setStart(foo.node, 0)
+    range3.setEnd(bar.node, 0)
+    expect(previewSelectionToSource(r3, range3, s3)).toEqual({ from: 2, to: 5 })
+  })
+
+  it('does not split a surrogate pair', () => {
+    const source = 'a😀b\n'
+    const root = mount(source)
+    const a = find(root, 'a😀b')
+    const range = document.createRange()
+    range.setStart(a.node, 0)
+    range.setEnd(a.node, 2)
+    expect(previewSelectionToSource(root, range, source)).toEqual({ from: 0, to: 3 })
+  })
+
+  it('renders a long document in a time that does not grow with the square of it', () => {
+    const lines = (n: number) =>
+      Array.from({ length: n }, (_, i) => `| a${i} | b \\| ${i} |\n`).join('')
+    const time = (n: number) => {
+      const t = performance.now()
+      render(`| a | b |\n|---|---|\n${lines(n)}`)
+      return performance.now() - t
+    }
+    time(200)
+    const small = Math.max(time(500), 1)
+    // 4 times the rows: far under 16 times the time.
+    expect(time(2000)).toBeLessThan(small * 12 + 50)
   })
 
   it('tags blocks with their last line too', () => {
