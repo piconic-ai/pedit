@@ -48,8 +48,9 @@ const answer = async (c) => {
       keep: c.cmd === 'keep' ? 259200 : 3600, host: typeof away !== 'undefined' ? 'away' : 'here', ends: 20, lifeEnd: 30,
     })
   } else if (c.cmd === 'comment' || c.cmd === 'reply' || c.cmd === 'resolve') {
+    // pedit 0.8.x decodes strictly before it looks at cmd.
     if (typeof oldPedit !== 'undefined')
-      return reply({ event: 'error', cmd: '', message: 'unknown cmd' })
+      return reply({ event: 'error', cmd: '', message: 'not a command: json: unknown field "' + (c.cmd === 'comment' ? 'from' : 'thread') + '"' })
     if (c.body === 'refuse')
       return reply({ event: 'error', cmd: c.cmd, message: 'not shared, or the host is away' })
     if (c.cmd === 'comment') {

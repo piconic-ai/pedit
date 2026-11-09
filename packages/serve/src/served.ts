@@ -143,6 +143,14 @@ function sharedOf(ev: Record<string, unknown>): Shared {
   }
 }
 
+/** The commands that bring fields an earlier pedit's strict decoder does not know. */
+const WITH_NEW_FIELDS: readonly Cmd[] = ['comment', 'reply', 'resolve']
+
+/** An earlier pedit refusing a command for its new fields. */
+function strictRefusal(cmd: Cmd, message: string): boolean {
+  return WITH_NEW_FIELDS.includes(cmd) && message.startsWith('not a command: json: unknown field')
+}
+
 /** A thread of pedit's `comments` event, with each field made the type it is. */
 function threadOf(t: Record<string, unknown>): CommentThread {
   const place = (v: unknown) => (typeof v === 'number' ? v : null)
@@ -531,14 +539,16 @@ export class ServedFiles {
   }
 
   /**
-   * status and keep: an earlier release of pedit with serve 2 lacks them and answers with an
-   * `unknown cmd` error, which is said as what it means.
+   * status, keep, comment, reply and resolve: an earlier release of pedit with serve 2 lacks them.
+   * It answers status and keep with `unknown cmd`; it decodes the others strictly before it looks
+   * at `cmd`, so it answers them with `not a command: json: unknown field "from"` (or `thread`).
+   * Both are said as what they mean.
    */
   async #newer(entry: Entry, cmd: Cmd, fields: object = {}): Promise<Record<string, unknown>> {
     try {
       return await this.#command(entry, cmd, fields)
     } catch (e) {
-      if (e instanceof Error && e.message === 'unknown cmd')
+      if (e instanceof Error && (e.message === 'unknown cmd' || strictRefusal(cmd, e.message)))
         throw new Error(`pedit is too old for ${cmd}; update it`)
       throw e
     }
