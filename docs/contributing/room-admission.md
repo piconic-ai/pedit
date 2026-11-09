@@ -28,11 +28,11 @@ signatures the relay cannot see.
 WebSocket clients offer the protocol versions they speak, newest first, and the capability:
 
 ```text
-Sec-WebSocket-Protocol: pedit-v6, pedit-v5, pedit-admission.<token>
+Sec-WebSocket-Protocol: pedit-v8, pedit-v7, pedit-admission.<token>
 ```
 
-The server selects the newest version it serves (`pedit-v6`, or `pedit-v5` for a client or
-relay that has no kind byte), never echoes the capability, and rejects
+The server selects the newest version it serves
+([versions](protocol.md#versions)), never echoes the capability, and rejects
 missing, malformed, or multiple admission tokens. Browsers use the standard
 WebSocket protocols argument; the Go client uses its handshake options.
 Blob GET and PUT requests send `X-Pedit-Admission: <token>`. A blob PUT

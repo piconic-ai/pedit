@@ -266,7 +266,7 @@ func TestDecodeMessageKnowsTheFilesType(t *testing.T) {
 	if err != nil || typ != protocol.MessageFiles {
 		t.Fatalf("type %d, %v", typ, err)
 	}
-	// CONTRIBUTING.md lists it as type 4, as packages/protocol does.
+	// docs/contributing/protocol.md lists it as type 4, as packages/protocol does.
 	if protocol.MessageFiles != 4 {
 		t.Fatalf("MessageFiles = %d", protocol.MessageFiles)
 	}

@@ -68,6 +68,8 @@ Why each feature works the way it does. Written while building; they say
 - [Deployment](contributing/deployment.md): releases, previews and the lab
   Worker.
 - [Homebrew releases](contributing/homebrew.md).
+- [Wire protocol](contributing/protocol.md): frames, signatures, message
+  types, versions and close codes, shared by the Go and TypeScript sides.
 - [Room admission protocol](contributing/room-admission.md).
 - [Relay logs](contributing/relay-logs.md): what the public relay's logs
   were seen to hold, and the checks still open.
