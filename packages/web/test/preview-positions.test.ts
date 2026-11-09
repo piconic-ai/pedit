@@ -283,6 +283,49 @@ function visible(src: string): string {
   return blocks.map((b) => text(renderBlock(b, envOf(references)))).join('')
 }
 
+const CONSTRUCTS: [string, string][] = [
+  ['[', '[a](u)'],
+  ['[', '[a] b'],
+  ['!', '![Img](i)'],
+  ['<', '<https://x.y>'],
+  ['&', '&amp;'],
+  ['*', '*em* w'],
+  ['*', '**b** w'],
+  ['_', '_em_ w'],
+  ['`', '`c` w'],
+  ['~', '~~s~~ w'],
+]
+const WRAPS: [string, string][] = [
+  ['', ''],
+  ['- ', ''],
+  ['> ', ''],
+  ['1. ', ''],
+  ['| h | ', ' |\n|---|---|\n| x | y |'],
+  ['| h | k |\n|---|---|\n| ', ' | y |'],
+]
+
+/**
+ * Lines of a repeated punctuation character followed by a construct starting with it.
+ * `literal` lists, for the characters that always stay text (`[`, `!`, `<`, `&`), where
+ * the repeats start and how many there are: one run starts there, none inside.
+ */
+function repeated(rnd: (n: number) => number): {
+  src: string
+  literal: { at: number; count: number }[]
+} {
+  let src = ''
+  const literal: { at: number; count: number }[] = []
+  for (let lines = 1 + rnd(3); lines > 0; lines--) {
+    const [c, construct] = CONSTRUCTS[rnd(CONSTRUCTS.length)] as [string, string]
+    const [pre, post] = WRAPS[rnd(WRAPS.length)] as [string, string]
+    const lead = rnd(2) ? 'x ' : ''
+    const count = 1 + rnd(4)
+    if ('[!<&'.includes(c)) literal.push({ at: src.length + pre.length + lead.length, count })
+    src += `${pre}${lead}${c.repeat(count)}${construct}${post}\n`
+  }
+  return { src, literal }
+}
+
 describe('where a run starts', () => {
   it('is exact when the run repeats the character after it, or is unmapped', () => {
     const cases: [string, string, number][] = [
@@ -345,12 +388,19 @@ describe('where a run starts', () => {
       const trials = FUZZ ? 4000 : 150
       let conclusive = 0
       for (let t = 0; t < trials; t++) {
+        // Half the documents: a run of one punctuation character right before a
+        // construct that starts with it, in a paragraph, item, quote or table cell.
         let src = ''
-        for (let n = 1 + rnd(14); n > 0; n--) src += alphabet[rnd(alphabet.length)]
+        let literal: { at: number; count: number }[] = []
+        if (t % 2 === 0) ({ src, literal } = repeated(rnd))
+        else for (let n = 1 + rnd(14); n > 0; n--) src += alphabet[rnd(alphabet.length)]
         const base = visible(src)
         for (const r of runsOf(src)) {
           expect(r.block.src.slice(r.at, r.at + r.text.length), JSON.stringify(src)).toBe(r.text)
           const abs = r.block.offset + r.at
+          // No run starts inside a repeat of a literal character, after its first.
+          for (const l of literal)
+            expect(abs > l.at && abs <= l.at + l.count, JSON.stringify(src)).toBe(false)
           const c = src[abs] === 'Z' ? 'Y' : 'Z'
           const mutated = visible(src.slice(0, abs) + c + src.slice(abs + 1))
           if (mutated.length !== base.length) continue
