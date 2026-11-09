@@ -128,27 +128,31 @@ const PIECES = [
 ]
 
 describe('a card on the block renderer', () => {
-  it('shows what a whole render with line breaks shows, after random edits', async () => {
-    const { doc, view } = boardOf({ a: 'start', b: 'other' })
-    await tick()
-    const [seeds, steps] = process.env.FUZZ ? [8, 30] : [2, 8]
-    for (let seed = 1; seed <= seeds; seed++) {
-      const next = rng(seed)
-      for (let step = 0; step < steps; step++) {
-        const count = 1 + Math.floor(next() * 5)
-        const parts = Array.from(
-          { length: count },
-          () => PIECES[Math.floor(next() * PIECES.length)],
-        )
-        const text = parts.join(next() < 0.8 ? '\n\n' : '\n')
-        setText(doc, 'a', text)
-        await tick()
-        expect(shape(cards(view)[0] as Element), `seed ${seed} step ${step}`).toEqual(whole(text))
+  it(
+    'shows what a whole render with line breaks shows, after random edits',
+    async () => {
+      const { doc, view } = boardOf({ a: 'start', b: 'other' })
+      await tick()
+      const [seeds, steps] = process.env.FUZZ ? [8, 30] : [2, 8]
+      for (let seed = 1; seed <= seeds; seed++) {
+        const next = rng(seed)
+        for (let step = 0; step < steps; step++) {
+          const count = 1 + Math.floor(next() * 5)
+          const parts = Array.from(
+            { length: count },
+            () => PIECES[Math.floor(next() * PIECES.length)],
+          )
+          const text = parts.join(next() < 0.8 ? '\n\n' : '\n')
+          setText(doc, 'a', text)
+          await tick()
+          expect(shape(cards(view)[0] as Element), `seed ${seed} step ${step}`).toEqual(whole(text))
+        }
       }
-    }
-    // The other card never changed.
-    expect(shape(cards(view)[1] as Element)).toEqual(whole('other'))
-  })
+      // The other card never changed.
+      expect(shape(cards(view)[1] as Element)).toEqual(whole('other'))
+    },
+    process.env.FUZZ ? 60_000 : 5_000,
+  )
 
   it('keeps a loaded player through edits elsewhere in its card and in other cards', async () => {
     const { doc, view } = boardOf({ a: `top\n\n${YT}\n\nbottom`, b: 'other' })
