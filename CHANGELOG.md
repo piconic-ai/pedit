@@ -1,5 +1,12 @@
 # Changelog
 
+## [v0.8.2](https://github.com/piconic-ai/pedit/compare/v0.8.1...v0.8.2) - 2026-11-09
+
+### Changes
+- Design: comments from an embedding app (#492) by @kfly8 in https://github.com/piconic-ai/pedit/pull/493
+- serve: comment, reply, resolve and the comments event (#492) by @kfly8 in https://github.com/piconic-ai/pedit/pull/494
+- @pedit/serve: comment, reply, resolve and the comments event (#492) by @kfly8 in https://github.com/piconic-ai/pedit/pull/495
+
 ## [v0.8.1](https://github.com/piconic-ai/pedit/compare/v0.8.0...v0.8.1) - 2026-11-08
 
 ### Changes
