@@ -698,6 +698,8 @@ function domKey(node: Node): string {
       for (const el of [clone, ...clone.querySelectorAll('[data-line]')]) {
         el.removeAttribute('data-line')
       }
+      // BlockRenderer's stamp on a root.
+      clone.removeAttribute('data-line-end')
       key = clone.outerHTML
     } else {
       key = `${node.nodeType}:${node.textContent}`
@@ -734,7 +736,7 @@ function copyLines(from: Node | undefined, to: Node): void {
 /** An element's tag and attributes, apart from its line. */
 function shellOf(el: Element): string {
   const attributes = [...el.attributes]
-    .filter((a) => a.name !== 'data-line')
+    .filter((a) => a.name !== 'data-line' && a.name !== 'data-line-end')
     .map((a) => `${a.name}=${a.value}`)
   return [el.tagName, ...attributes].join(' ')
 }
@@ -758,6 +760,30 @@ function keepsEmbed(old: Element, fresh: Element): boolean {
   return [...fresh.querySelectorAll('[data-embed-src]')].some((el) =>
     held.has(el.getAttribute('data-embed-src')),
   )
+}
+
+/** Whether the element holds a loaded player or snippet, or a ticked "Always load" box. */
+export function holdsEmbed(el: Element): boolean {
+  // The element may be the placeholder itself, a paragraph that is only an embed.
+  return el.classList.contains('embed--loaded') || heldEmbeds(el).length > 0
+}
+
+/**
+ * When `fresh` is the same block as `old` with some other part changed (a list
+ * whose other item was edited) and still renders an embed `old` holds, patches
+ * `old`'s children to match and returns true, so a loaded player stays where it
+ * is; so does an `old` that looks as it did when rendered, apart from the player.
+ * Otherwise leaves both alone and returns false.
+ */
+export function patchHeldEmbed(old: Element, fresh: Element): boolean {
+  // Looks as it did when it was rendered (a key noted before its player loaded): keep it.
+  if (domKey(old) === domKey(fresh)) {
+    copyLines(fresh, old)
+    return true
+  }
+  if (shellOf(old) !== shellOf(fresh) || !keepsEmbed(old, fresh)) return false
+  patchChildren(old, [...fresh.childNodes])
+  return true
 }
 
 /**

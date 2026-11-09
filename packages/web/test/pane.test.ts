@@ -135,7 +135,7 @@ describe('PreviewPane', () => {
     pane.active = true
     await vi.waitFor(() => expect(pane.element.textContent).toContain('could not be loaded'))
     text.insert(2, '!')
-    await vi.waitFor(() => expect(pane.element.textContent).toBe('hi!\n'))
+    await vi.waitFor(() => expect(pane.element.textContent).toBe('hi!'))
   })
 })
 

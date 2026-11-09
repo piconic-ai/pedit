@@ -1,6 +1,7 @@
 import type { EditorView } from '@codemirror/view'
 import type * as Y from 'yjs'
 import type { AlwaysLoad } from './alwaysload.ts'
+import type { BlockRenderer } from './blockrender.ts'
 import type { ImageResolver } from './core/attachments.ts'
 
 export type Renderer = Pick<
@@ -105,6 +106,9 @@ export class PreviewPane {
   #text: Y.Text
   #load: () => Promise<Renderer>
   #renderer: Renderer | null = null
+  // Keeps the article's blocks between renders (blockrender.ts); made once the renderer is loaded.
+  #blocks: BlockRenderer | null = null
+  #imagesVersion = 0
   #loading: Promise<Renderer> | null = null
   #active = false
   #dirty = true
@@ -152,6 +156,8 @@ export class PreviewPane {
     if (text === this.#text) return
     this.#text.unobserve(this.#changed)
     this.#text = text
+    // Another text shares no blocks with the last one, not even a loaded player.
+    this.#blocks?.reset()
     text.observe(this.#changed)
     this.#changed()
   }
@@ -167,6 +173,8 @@ export class PreviewPane {
 
   /** Renders again though the text did not change, e.g. once an image arrives. */
   refresh(): void {
+    // Blocks with an image render again: the resolver may answer differently now.
+    this.#imagesVersion++
     this.#dirty = true
     this.#schedule()
   }
@@ -186,10 +194,20 @@ export class PreviewPane {
       return
     }
     const origin = pane.getBoundingClientRect().top - pane.scrollTop
-    const anchors = [...pane.querySelectorAll<HTMLElement>('[data-line]')].map((el) => ({
-      line: Number(el.dataset.line),
-      top: el.getBoundingClientRect().top - origin,
-    }))
+    // A root carries its block's first line in the document; the lines nested in it
+    // count from there (blockrender.ts).
+    const anchors: Anchor[] = []
+    for (const root of pane.children) {
+      if (!(root instanceof HTMLElement) || root.dataset.line === undefined) continue
+      const base = Number(root.dataset.line)
+      anchors.push({ line: base, top: root.getBoundingClientRect().top - origin })
+      for (const el of root.querySelectorAll<HTMLElement>('[data-line]')) {
+        anchors.push({
+          line: base + Number(el.dataset.line),
+          top: el.getBoundingClientRect().top - origin,
+        })
+      }
+    }
     anchors.push({ line: view.state.doc.lines, top: pane.scrollHeight })
     pane.scrollTop = Math.min(max, scrollTarget(monotonic(anchors), topLine(view)))
   }
@@ -222,10 +240,12 @@ export class PreviewPane {
       try {
         this.#loading ??= this.#load()
         this.#renderer = await this.#loading
+        this.#blocks ??= new (await import('./blockrender.ts')).BlockRenderer(this.element)
       } catch {
         // Offline or a stale deploy: try again on the next change.
         this.#loading = null
-        // The article's content is rendered Markdown, patched in place (preview.ts),
+        this.#renderer = null
+        // The article's content is rendered Markdown, kept block by block (blockrender.ts),
         // so this message goes in the same way rather than through a component.
         const message = document.createElement('p')
         message.className = 'preview-error'
@@ -236,8 +256,7 @@ export class PreviewPane {
     }
     if (!this.#active || !this.#dirty) return
     this.#dirty = false
-    const { render, patch } = this.#renderer
-    patch(this.element, render(this.#text.toString(), this.#images))
+    this.#blocks?.update(this.#text.toString(), this.#images, this.#imagesVersion)
     this.#loadRemembered()
     this.#images?.rendered?.()
     this.#onRender()
