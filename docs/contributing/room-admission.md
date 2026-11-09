@@ -7,17 +7,21 @@ someone who knows only the ID from exhausting a room's peer or blob quota.
 
 ## Derivation and transport
 
-A room has two capabilities (#122). Both Go and TypeScript derive each as 32
-bytes with HKDF-SHA256 and an empty salt (see `internal/protocol/access.go`):
+A room has three capabilities (#122, and version 8 for the third). Both Go
+and TypeScript derive each as 32 bytes with HKDF-SHA256 and an empty salt
+(see `internal/protocol/access.go`):
 
 - the **editor token**, from the edit secret in an edit link, info
   `pedit v5 edit admission`;
 - the **reader token**, from the room's frame key, which every link derives,
-  info `pedit v5 read admission`.
+  info `pedit v5 read admission`;
+- the **comment admission token**, from the comment secret, which edit and
+  comment links have, info `pedit v8 comment admission`
+  ([kept comments](../design/kept-comments.md)).
 
 Encode each as unpadded base64url (43 characters). The dedicated info strings
 separate these capabilities from the AES-GCM frame key and both attachment
-keys. A comment-only or read-only link yields only the reader token. Never
+keys. A read-only link yields only the reader token. Never
 send a link's secrets or reuse an encryption key as a capability.
 
 Editors offer the editor token, and comment-only and read-only links the
@@ -28,11 +32,11 @@ signatures the relay cannot see.
 WebSocket clients offer the protocol versions they speak, newest first, and the capability:
 
 ```text
-Sec-WebSocket-Protocol: pedit-v6, pedit-v5, pedit-admission.<token>
+Sec-WebSocket-Protocol: pedit-v8, pedit-v7, pedit-admission.<token>
 ```
 
-The server selects the newest version it serves (`pedit-v6`, or `pedit-v5` for a client or
-relay that has no kind byte), never echoes the capability, and rejects
+The server selects the newest version it serves
+([versions](protocol.md#versions)), never echoes the capability, and rejects
 missing, malformed, or multiple admission tokens. Browsers use the standard
 WebSocket protocols argument; the Go client uses its handshake options.
 Blob GET and PUT requests send `X-Pedit-Admission: <token>`. A blob PUT
@@ -43,8 +47,10 @@ reader token in `X-Pedit-Read-Admission`, and logs that keep request headers
 keep these three headers. The public relay's Workers Logs do, in plain text,
 for the 7 days the logs are kept ([public relay](../public-relay.md#logs)).
 The public relay accepts this: a token cannot decrypt anything, admits only
-to its room, and stops working when the room ends, within 24 hours, since the
-room's verifiers go with it and its ID cannot be used again. A relay that
+to its room, and stops working when the room ends (within 24 hours while the
+host is connected, or at a kept room's deadline, at most 7 days after the
+host left), since the room's verifiers go with it and its ID cannot be used
+again. A relay that
 should not keep them turns off its request logs or redacts these headers.
 
 ## Registration and lifetime
@@ -76,7 +82,8 @@ registers a verifier again. Clients released before 4007 existed treat it as
 an ordinary drop and reconnect with backoff; every current client stops.
 The verifier survives hibernation and is removed with the quota when the
 last host leaves. A host that leaves on purpose closes with 4008 and the room
-ends at once; a host whose connection drops otherwise gets a grace period
+ends at once, unless the relay can keep it ([rooms-away.md](../design/rooms-away.md));
+a host whose connection drops otherwise gets a grace period
 (`HOST_GRACE_SECONDS`, two minutes by default): the relay keeps the session,
 admits guests, sends them the text frame `host away` (and `host back` when the
 host returns), and ends the room with 4001 only if the host does not come back
