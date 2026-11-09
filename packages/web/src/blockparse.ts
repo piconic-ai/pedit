@@ -226,16 +226,24 @@ function commonSuffix(a: string, b: string, prefix: number): number {
   return i
 }
 
+// What at the start of a line could make it an item of a list: a bullet or an ordered
+// number (any digits: more than nine are no list, which only makes this stricter) with
+// a delimiter and then a space, a tab or the end of the line.
+const MARKER = /(?:[-+*]|\d+[.)])(?:[ \t\r\n]|$)/y
+const FRONT = /\uFEFF?---[\t ]*(?:\r\n?|\n|$)/y
+
 /**
  * Whether a parse can start afresh at the line starting at `pos`: its first character
- * is not blank or one that could continue a list or open the frontmatter, and the
- * line above is blank.
+ * is not blank, a byte order mark, the start of a list item (which could join the list
+ * above) or of what opens frontmatter, and the line above is blank. A thematic break
+ * such as `***` is a block of its own and is fine; so are `**bold**`, `-x` and `2026`.
  */
 function safeStart(text: string, pos: number): boolean {
   const c = text.charCodeAt(pos)
-  // Above a space; not a list marker (- + *) or a digit; not a byte order mark.
-  if (!(c > 32) || c === 0xfeff || c === 45 || c === 43 || c === 42 || (c >= 48 && c <= 57))
-    return false
+  if (!(c > 32) || c === 0xfeff) return false
+  MARKER.lastIndex = pos
+  FRONT.lastIndex = pos
+  if (MARKER.test(text) || FRONT.test(text)) return false
   let i = pos - 1
   if (text[i] !== '\n' && text[i] !== '\r') return false
   if (text[i] === '\n' && text[i - 1] === '\r') i--

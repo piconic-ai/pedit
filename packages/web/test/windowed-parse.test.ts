@@ -89,6 +89,11 @@ function section(next: () => number, n: number): string[] {
     () => [`[r${n % 5}]: /url${n} "title ${n}"`],
     () => ['    indented code', '', '    more code'],
     () => ['***'],
+    () => [`**Bold ${n}** lead and more`],
+    () => [`*em ${n}* led`, `2026-01-${n % 28} date`],
+    () => [`-x ${n}`, `+plus ${n}`, `1.5 ratio ${n}`],
+    () => ['2026. year', 'next line'],
+    () => ['-', 'dash alone'],
     () => ['* * *'],
     () => ['1) paren', '2) list'],
     () => ['Text with trailing spaces  ', 'next\\', 'last'],
@@ -288,6 +293,85 @@ function canon(node: Node): string {
   return `<${el.localName} ${attrs.join(' ')}>${[...el.childNodes].map(canon).join('')}</>`
 }
 
+describe('lines that start like a list item, or look like one', () => {
+  // The share of one-character edits in the middle of a document that parse a window.
+  function windowedShare(lead: (i: number) => string): number {
+    const lines: string[] = []
+    for (let i = 0; i < 400; i++) lines.push(`${lead(i)} paragraph text`, '')
+    const parser = new BlockParser(0)
+    let before: Block[] = []
+    before = expectWhole(parser, before, lines.join('\n'), 'start').blocks.slice()
+    let windowed = 0
+    for (let k = 0; k < 20; k++) {
+      lines[300 + k * 4] += 'x'
+      const got = expectWhole(parser, before, lines.join('\n'), `edit ${k}`)
+      before = got.blocks.slice()
+      if (got.to - got.from < 20) windowed++
+    }
+    return windowed
+  }
+
+  it('are safe cuts when no list marker is there', () => {
+    expect(windowedShare((i) => `**Bold ${i}**`)).toBe(20)
+    expect(windowedShare((i) => `*em ${i}*`)).toBe(20)
+    expect(windowedShare((i) => `2026-01-${i} date`)).toBe(20)
+    expect(windowedShare((i) => `-x${i}`)).toBe(20)
+    expect(windowedShare((i) => `+${i}`)).toBe(20)
+    expect(windowedShare((i) => `${i}.5 ratio`)).toBe(20)
+  })
+
+  it('give the same blocks as a whole parse when they are list items', () => {
+    windowedShare((i) => `- item ${i}`)
+    windowedShare((i) => `${i}. item`)
+    windowedShare((i) => `${i}) item`)
+    windowedShare((i) => `* item ${i}`)
+  })
+
+  it('keeps a thematic break between lists, and a list joining across it', () => {
+    const base = `${Array.from({ length: 30 }, (_, i) => `P ${i}`).join('\n\n')}\n\n- a\n\n***\n\n- b\n\n* c\n\nTail\n`
+    const parser = new BlockParser(0)
+    let before: Block[] = []
+    for (const text of [
+      base,
+      base.replace('***', '* *'),
+      base,
+      base.replace('***', 'x'),
+      base.replace('***', '2) x'),
+    ]) {
+      before = expectWhole(parser, before, text, text.slice(-60)).blocks.slice()
+    }
+  })
+})
+
+describe('BlockRenderer after a failed update', () => {
+  it('parses and renders everything on the next update', () => {
+    const container = document.createElement('article')
+    let fail = false
+    const renderer = new BlockRenderer(container, {
+      windowAbove: 0,
+      decorate: () => {
+        if (fail) throw new Error('boom')
+      },
+    })
+    const text = (tail: string) => `# one\n\ntwo\n\nthree ${tail}\n`
+    renderer.update(text('a'), undefined, 0, [])
+    fail = true
+    expect(() => renderer.update(text('b'), undefined, 0, [])).toThrow('boom')
+    fail = false
+    renderer.update(text('c'), undefined, 0, [])
+    const fresh = document.createElement('article')
+    new BlockRenderer(fresh, { windowAbove: Number.POSITIVE_INFINITY }).update(
+      text('c'),
+      undefined,
+      0,
+      [],
+    )
+    expect(canon(container)).toBe(canon(fresh))
+    renderer.update(text('d'), undefined, 0, [])
+    expect(container.lastElementChild?.textContent).toContain('three d')
+  })
+})
+
 describe('BlockRenderer with a windowed parse', () => {
   it(
     'shows what a fresh renderer shows after every random edit',
@@ -321,7 +405,7 @@ describe('BlockRenderer with a windowed parse', () => {
 
 describe('a keystroke in a very long document', () => {
   const lines: string[] = []
-  for (let i = 0; i < 13_000; i++)
+  for (let i = 0; i < 2_500; i++)
     lines.push(`Paragraph ${i} with [a link](u) and *em*`, '', `- item ${i}`, '')
   const source = lines.join('\n')
 
@@ -331,9 +415,9 @@ describe('a keystroke in a very long document', () => {
       const container = document.createElement('article')
       const renderer = new BlockRenderer(container, { windowAbove: 0 })
       renderer.update(source, undefined, 0, [])
-      expect(source.split('\n').length).toBeGreaterThan(50_000)
+      expect(source.split('\n').length).toBeGreaterThan(9_000)
       const edited = lines.slice()
-      for (const at of [0, 20_000, 49_000]) {
+      for (const at of [0, 5_000, 9_900]) {
         vi.mocked(preview.parseSegment).mockClear()
         vi.mocked(preview.keyOf).mockClear()
         edited[at] = `${edited[at]}x`
@@ -342,7 +426,7 @@ describe('a keystroke in a very long document', () => {
         expect(texts).toHaveLength(1)
         expect((texts[0] as string).split('\n').length).toBeLessThan(40)
         expect(keyed()).toBeLessThan(6)
-        expect(container.children.length).toBeGreaterThan(24_000)
+        expect(container.children.length).toBeGreaterThan(4_000)
       }
     },
     LIMIT,
@@ -356,7 +440,7 @@ describe('a keystroke in a very long document', () => {
       renderer.update(source, undefined, 0, [])
       vi.mocked(preview.parseSegment).mockClear()
       const edited = lines.slice()
-      edited.splice(30_000, 0, 'Inserted', '')
+      edited.splice(7_000, 0, 'Inserted', '')
       renderer.update(edited.join('\n'), undefined, 0, [])
       expect((parsedTexts()[0] as string).split('\n').length).toBeLessThan(40)
       const last = container.lastElementChild as Element

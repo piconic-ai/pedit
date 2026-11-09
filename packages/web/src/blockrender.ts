@@ -82,6 +82,24 @@ export class BlockRenderer {
     imagesVersion = 0,
     media: readonly string[] = pageMediaSources(),
   ): void {
+    try {
+      this.#apply(source, images, imagesVersion, media)
+    } catch (error) {
+      // The parser may be ahead of the entries: start over, so the next update parses
+      // and renders everything (the container is put right by its reconcile).
+      this.#entries = []
+      this.#withImages.clear()
+      this.#parser.reset()
+      throw error
+    }
+  }
+
+  #apply(
+    source: string,
+    images: ImageResolver | undefined,
+    imagesVersion: number,
+    media: readonly string[],
+  ): void {
     const parsed = this.#parser.update(source)
     const { blocks, references, refs } = parsed
     let { from, oldTo, to } = parsed
