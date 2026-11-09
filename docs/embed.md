@@ -12,11 +12,12 @@ author of the app; the packages' READMEs have the API.
 - **The file stays saved.** pedit writes the file as edits come in, merges a
   save made by another editor, and recovers the document across restarts of
   the app or of itself. The app never writes a sync engine or a save loop.
-- **Comments.** People comment on the text; the app can read the threads and
-  write comments as the host. Comments never go into the file.
 - **People from outside, when wanted.** The app can share the file beyond its
   own pages: through a link on `edit.piconic.ai` or a relay of your own, or
   through a review page on the app's own domain, in its look.
+- **Comments, once the file is shared.** People in the room comment on the
+  text; the app reads the threads and writes comments as the host. Comments
+  never go into the file.
 
 The app keeps owning the file: which files exist, who may open which, and in
 what role, are the app's decisions. pedit holds the document and does the
@@ -29,9 +30,10 @@ writing.
                                (Hono routes)                   (one per file)
 ```
 
-- `pedit serve <file>` is a subcommand of the `pedit` CLI. It holds one file's
-  document, writes the file, and listens on a local socket for the app. No
-  room, relay or network is involved.
+- `pedit serve` is a subcommand of the `pedit` CLI. It holds one file's
+  document, writes the file, and talks to the app over its standard input and
+  output. Nothing else can reach it: no socket, no port, and no room or relay
+  until the app shares the file.
 - [`@pedit/serve`](../packages/serve/README.md) is the npm package for the
   app. It starts `pedit serve` for each file an app's page asks for, checks
   every request (which ids exist, which role, which origins), bridges the
@@ -46,7 +48,8 @@ writing.
 
 ## Requirements
 
-- `pedit` 0.5.0 or later on the PATH, or a path the app passes. The app can
+- `pedit` on the PATH, or a path the app passes: 0.5.0 or later edits, sharing
+  needs 0.6.0 and comments 0.8.2, so match the package's version. The app can
   also [install it for the user](../packages/serve/README.md#installing-pedit-for-the-user)
   when none is found, if it opts in.
 - Node 22 or later, on macOS, Linux or Windows.
@@ -57,8 +60,10 @@ writing.
 
 ## What changes for your users
 
-Inside the app nothing leaves the machine: pages talk to the app, the app to
-pedit, pedit to the file. Once the app shares a file, the relay sees
+Inside the app no document content leaves the machine: pages talk to the app,
+the app to pedit, pedit to the file (pedit still asks `api.github.com` once a
+day for a newer release, unless started with `--no-update-check`). Once the
+app shares a file, the relay sees
 ciphertext, as it does for any pedit room, and whoever holds the link can do
 what the link allows. On a review page of your own, the reviewers trust your
 page's JavaScript rather than the relay's; see

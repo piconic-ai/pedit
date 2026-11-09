@@ -156,6 +156,8 @@ AES-GCM rejects a frame made or altered without the key.
   person's access cannot be revoked.
 - **Comments are not checked by author.** Anyone with a comment-only or edit
   link can change or delete any comment.
+- **No control over copies.** Closing a room does not erase copies
+  participants have made, and you must also trust their devices and browsers.
 
 ## Where a link can leak
 

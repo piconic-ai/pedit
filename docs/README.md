@@ -58,7 +58,8 @@ Why each feature works the way it does. Written while building; they say
   line](design/comments-cli.md)
 - [Rooms that stay open while the host is away](design/rooms-away.md) and
   [comments in kept rooms](design/kept-comments.md)
-- [Canvas while away](design/async-canvas.md), [async](design/async.md)
+- [Canvas while away](design/async-canvas.md), and the
+  [removed polling mode](design/async.md) (history)
 - [`pedit serve`](design/serve.md) and [embedding](design/embedding.md)
 
 ## Contributing

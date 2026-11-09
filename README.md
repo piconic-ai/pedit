@@ -23,21 +23,23 @@ and every edit is saved back to your file as it comes in.
   ● Alice and Bob are here
 ```
 
-- **Your file, right now.** No account, no upload, nothing for the others to
+- **Your file, right now.** No account for anyone, nothing for the others to
   install. The edits land in the local file you named, ready for your editor,
   your agent or your next commit.
 - **Nobody in the middle can read it.** Updates are encrypted end to end with
   a key that lives in the link and never reaches the server. The relay passes
-  ciphertext along and keeps nothing once you have taken the edits in.
+  ciphertext along; what it holds for a room that stays open is encrypted, and
+  none of it is needed once you have taken the edits in.
 - **Comments, not just edits.** People comment on text, cells and canvas
   nodes; comments stay out of the file. Hand out links that can only comment
   or only read, and let scripts and agents answer from the command line.
 - **Markdown, CSV and Canvas.** A live preview, a table, or a board of nodes
-  and edges, in the browser, or from the command line in an editor of your own.
+  and edges in the browser; from the command line, the same files as text in
+  an editor of your own.
 - **Build it into your own app.** A local app that works on files can get
-  live editing, several people in one document, and comments by running
-  pedit beside it, instead of writing a sync engine of its own. The app keeps
-  owning the file; pedit keeps it saved.
+  live editing and several people in one document by running pedit beside
+  it, and comments once it shares the file, instead of writing a sync engine
+  of its own. The app keeps owning the file; pedit keeps it saved.
 
 <table>
   <tr>
@@ -82,11 +84,11 @@ their browsers. They do not need to set up your development environment.
 The edits land in the same local file, ready for your next agent task,
 review or commit.
 
-## Try it
+## Install
 
 ```sh
 curl -fsSL https://edit.piconic.ai/install.sh | sh
-pedit notes.md
+pedit notes.md    # or any text file you have; `pedit` alone starts a new note
 ```
 
 Send the printed link and watch the file change. Press Ctrl+C when you are
@@ -100,8 +102,10 @@ done. Other ways to install, and what to do next, are in
 The relay sees the room ID and encrypted bytes, never the key or the text.
 Anyone with the link can do what the link allows, so send it as you would
 send the file. In a browser you run the editor the relay serves, so you trust
-its operator; join from the command line, or self-host, to run no code from
-the relay. [Security design](docs/security-design.md) has the details and
+its operator. To run no code from the relay, join from the command line with
+a pedit from Homebrew, `go install` or a verified release archive (the
+install scripts come from the relay too), or self-host.
+[Security design](docs/security-design.md) has the details and
 what pedit does not protect against; [the public relay](docs/public-relay.md)
 says what `edit.piconic.ai` logs and keeps; [what pedit does on your
 computer](docs/local-files.md) lists every file it touches. To report a
@@ -111,25 +115,27 @@ vulnerability, see [SECURITY.md](SECURITY.md).
 
 An app that edits local files, a CMS, a notes tool, an agent's workbench, can
 hand the editing to pedit. Its pages get a live document that several people
-edit at once, with cursors and comments, and the file on disk stays saved by
-pedit, so the app never writes a sync engine or a save loop of its own.
+edit at once, with cursors, and the file on disk stays saved by pedit, so the
+app never writes a sync engine or a save loop of its own.
 
 `pedit serve` runs beside the app and holds the document; the `@pedit/serve`
 package connects it to the app's pages. When the app wants people from
 outside, it shares the same document through a link, or through a review
-page on the app's own domain. Both are experimental (0.x) and versioned with
-pedit. Start with [Embedding](docs/embed.md).
+page on the app's own domain, and gets comments with it. `@pedit/serve` and
+`@pedit/review` are experimental (0.x) and released with each pedit version.
+Start with [Embedding](docs/embed.md).
 
 ## Self-host
 
-The public relay is shared, so rooms are small. Deploy your own to raise the
-limits, or to put it behind Cloudflare Access so only people you allow can
-join.
+The public relay is shared, so rooms are small: the host and 4 guests, files
+under about 1 MiB. Deploy your own to raise the limits, or to put it behind
+Cloudflare Access so only people you allow can join.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https%3A%2F%2Fgithub.com%2Fpiconic-ai%2Fpedit%2Ftree%2Fmain%2Fpackages)
 
-Then set `server` in `.pedit/config.yaml` to your Worker's URL.
-[Self-hosting](docs/self-hosting.md) covers Access, limits and maintenance.
+Then set `server` in [`.pedit/config.yaml`](docs/configuration.md) to your
+Worker's URL. [Self-hosting](docs/self-hosting.md) covers Access, limits and
+maintenance.
 
 ## Documentation
 

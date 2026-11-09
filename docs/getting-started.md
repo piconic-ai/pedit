@@ -47,7 +47,7 @@ mise:
 mise use -g github:piconic-ai/pedit
 ```
 
-Go 1.25+:
+Go 1.26+:
 
 ```sh
 go install github.com/piconic-ai/pedit/cmd/pedit@latest
@@ -92,7 +92,8 @@ A room opened from existing files is kept for a day after you leave: the link
 keeps working, and what guests write while you are away waits on the relay,
 encrypted. Run `pedit notes.md` again (or `pedit resume`) to take their edits
 in and carry on, `pedit rooms` to list kept rooms, and `pedit close` to end
-one for good (resume and close are not available on Windows yet). `--keep 7d`
+one for good. (Kept rooms are not available on Windows yet: there a room ends
+when you leave.) `--keep 7d`
 keeps it longer (7 days at most on the public relay); `--keep 0` opens a room
 that ends when you leave. See [sessions](sessions.md) for how reconnecting,
 saving and kept rooms work.
@@ -106,9 +107,11 @@ between them with the tabs above the editor:
 ❯ pedit agenda.md docs/spec.md board.canvas
 ```
 
-While sharing, type the path of another file and press Enter to add it to the
-room, without a new link: a meeting can start with the agenda and bring in the
-spec when it comes up. Only the host adds files; nobody in the room can ask for
+Name every file when you start: a kept room (the default) shares the files it
+started with. In a room that is not kept (`--keep 0`), you can also type the
+path of another file and press Enter while sharing to add it to the room,
+without a new link: a meeting can start with the agenda and bring in the spec
+when it comes up. Only the host adds files; nobody in the room can ask for
 one. A room shares up to 20 files, each a regular UTF-8 file, as when sharing
 one. Paths are shown relative to the directory `pedit` runs in.
 
@@ -162,7 +165,9 @@ copied to `01-docs-spec.md`. A canvas comes as its JSON Canvas, under `.json`
 for how copies are named and synced.
 
 Joining from the command line also runs no code from the relay, which matters
-if you do not trust whoever serves the browser editor; see
+if you do not trust whoever serves the browser editor. For that, use a pedit
+from Homebrew, `go install` or a [verified release archive](verifying-releases.md),
+not the install scripts, which the relay serves; see
 [security design](security-design.md#in-a-browser-you-trust-the-relay).
 
 ## Next
