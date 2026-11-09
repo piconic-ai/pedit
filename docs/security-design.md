@@ -2,7 +2,7 @@
 
 How pedit encrypts a room, what the relay can see and do, and what pedit does
 not protect against. The short version is in
-[privacy and security](../README.md#privacy-and-security).
+[privacy and security](../README.md#how-it-stays-private).
 
 ## In a browser, you trust the relay
 
