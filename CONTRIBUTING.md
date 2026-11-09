@@ -27,6 +27,7 @@ pnpm typecheck
 pnpm lint
 pnpm test:deploy # self-host deployment orchestration
 PEDIT_INTEROP=1 go test -race ./...    # the CLI; its interop test drives the web client's RoomClient with Node.js
+PERF=1 pnpm --dir packages/web exec vitest run test/perf/preview.bench.test.ts  # preview benchmark (skipped without PERF=1)
 go vet ./...
 cccc .           # cognitive complexity per function; cccc.toml sets the limit CI enforces
 scripts/check-links.sh  # links between the Markdown files and their #fragments (needs lychee)
@@ -35,6 +36,17 @@ scripts/check-links.sh  # links between the Markdown files and their #fragments 
 [cccc](https://github.com/moznion/cccc) comes with `mise install` (`mise.toml`)
 or from its releases. When a function goes over the limit, split it into
 steps with names rather than raising the limit.
+
+The preview benchmark (`packages/web/test/perf/preview.bench.test.ts`) renders
+generated documents of 2,000, 10,000 and 35,000 lines and prints a table of the
+first render, a keystroke at the top, middle and end, Enter, and following the
+editor. It fails when an edit starts working on the whole document: on counts
+that do not depend on the machine (blocks rendered, lines parsed, keys computed,
+layout reads per keystroke), and on times compared with a whole-document render
+or a smaller document from the same run, never on fixed milliseconds alone. The
+`Bench` workflow runs it weekly and on pull requests that touch the preview code,
+and writes the table to the job summary; run it on a branch you changed that code
+on with the command above.
 
 Run everything locally:
 
