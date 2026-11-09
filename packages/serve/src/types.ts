@@ -50,6 +50,43 @@ export interface ShareStatus {
   lifeEnd: number
 }
 
+/** One comment of a thread. `time` is RFC 3339 in UTC. Text is cleaned as the browser cleans it. */
+export interface CommentMessage {
+  id: string
+  author: string
+  time: string
+  body: string
+}
+
+/**
+ * A thread of the shared file. `from` and `to` are where its anchor is in the text now, in UTF-16
+ * code units of the room's document (a file with CRLF line endings counts a line break as one),
+ * or `null` when it cannot be placed: its text was deleted, or it is on cells or a node. `cut`
+ * counts the oldest comments left out so that the event fits.
+ */
+export interface CommentThread {
+  id: string
+  quote: string
+  resolved: boolean
+  from: number | null
+  to: number | null
+  cut?: number
+  messages: CommentMessage[]
+}
+
+/** What a started thread is called, and its first comment. */
+export interface StartedThread {
+  thread: string
+  message: string
+}
+
+/** The range of a new thread: `[from, to)` of the text, in UTF-16 code units, and its first comment. */
+export interface CommentRange {
+  from: number
+  to: number
+  body: string
+}
+
 export type ShareResult = Shared | ShareChoice | ShareClosed
 
 export interface Peer {
@@ -66,6 +103,12 @@ export type ServeEvent =
   | { type: 'update_available'; version: string; url: string; security: boolean }
   /** Who is in the room, when it changed. `more` counts people pedit left out of the list. */
   | { type: 'peers'; path: string; peers: Peer[]; more?: number }
+  /**
+   * The file's threads as they are, while it is shared: once when sharing starts, and when the
+   * comments, or the text they point into, change. `more` counts threads pedit left out so that
+   * the event fits.
+   */
+  | { type: 'comments'; path: string; threads: CommentThread[]; more?: number }
   /** The room ended, possibly without the app asking: the relay expired or closed it. */
   | { type: 'room_ended'; path: string; reason: string }
   | ({ path: string } & Omit<Shared, 'type'> & { type: 'shared' })

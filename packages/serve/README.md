@@ -83,13 +83,13 @@ const extensions = [yCollab(conn.text, conn.awareness)] // plus basicSetup, Edit
 | Export | |
 | --- | --- |
 | `ServedFiles` | The layer below the routes: `acquire(path)` starts or reuses a child, `close()` ends all. |
-| `ServedFile.share(opts)`, `unshare()`, `close()`, `status()`, `keep(keep)` | Open a room for the file (needs pedit with `serve` 2; the child is not idle-stopped while shared). `share` resolves `{ type: 'shared', room, links, keptUntil, resumed }`, or `{ type: 'choice', room, choices }` when the file has a kept room of another history (share again with `choice`). A link is `<room>.<fragment>`: put your page URL and `#` before it. `onEvent` also gets `peers`, `room_ended` and `shared`. `status()` and `keep(keep)` are described under Sharing. |
+| `ServedFile.share(opts)`, `unshare()`, `close()`, `status()`, `keep(keep)`, `comment(range)`, `reply(thread, body)`, `resolve(thread, resolved)` | Open a room for the file (needs pedit with `serve` 2; the child is not idle-stopped while shared). `share` resolves `{ type: 'shared', room, links, keptUntil, resumed }`, or `{ type: 'choice', room, choices }` when the file has a kept room of another history (share again with `choice`). A link is `<room>.<fragment>`: put your page URL and `#` before it. `onEvent` also gets `peers`, `room_ended` and `shared`. `status()` and `keep(keep)` are described under Sharing; the comment methods under Comments. |
 | `resolvePedit({ bin, install })`, `MIN_PEDIT_VERSION` | Finds pedit, checks the binary and its version. With `install: true`, downloads it when none is usable (see above) and returns `installed`. |
 | `HeldError`, `LimitError`, `NoPeditError` | Another process serves the file; 32 files or 8 clients; pedit missing or too old. |
 
 ## Sharing
 
-`peditRoutes(...)` also returns `share(path, opts)`, `unshare(path)`, `close(path)`, `status(path)` and `keep(path, keep)`. `path` is an absolute path to a file under `root`, checked as the routes check it (a path outside `root`, a link out of it or a missing file rejects with `file not found`, and starts no child). Sharing needs pedit with `serve` 2; the child is not stopped for idleness while the file is shared.
+`peditRoutes(...)` also returns `share(path, opts)`, `unshare(path)`, `close(path)`, `status(path)`, `keep(path, keep)`, `comment(path, range)`, `reply(path, thread, body)` and `resolve(path, thread, resolved)`. `path` is an absolute path to a file under `root`, checked as the routes check it (a path outside `root`, a link out of it or a missing file rejects with `file not found`, and starts no child). Sharing needs pedit with `serve` 2; the child is not stopped for idleness while the file is shared.
 
 ```ts
 const result = await routes.share('/home/me/notes/a.md', {
@@ -118,6 +118,22 @@ if (result.type === 'shared') {
 A pedit that has no `status` or `keep` (an earlier release with `serve` 2) answers the unknown command with an error, and both reject with `pedit is too old for status; update it` (or `keep`). The child goes on.
 
 `onEvent` also gets `shared`, `peers` (`{ peers: [{ name, access }], more? }`, `more` counts people left out of the list), `room_ended` (`reason`: `closed`, `expired` or `maintenance`, also when the relay ended the room unasked) and `unshared`. Each carries `path` and `id`: the id the routes last served that path under, or `null`.
+
+## Comments
+
+While the app shares a file, it can take part in the file's comments as the host, and gets the threads live. Comments follow `docs/design/comments.md`: the same limits (a body of 1 to 4,000 characters, 500 threads, 200 comments a thread), written under the host's name as the room shows it.
+
+```ts
+const { thread } = await routes.comment('/home/me/notes/a.md', { from: 6, to: 10, body: 'Why wide?' })
+await routes.reply('/home/me/notes/a.md', thread, 'Because it is.')
+await routes.resolve('/home/me/notes/a.md', thread, true) // false opens it again
+```
+
+- `comment(path, { from, to, body })` starts a thread on `[from, to)` of the file's text, in UTF-16 code units (what `String.prototype.slice` and Yjs count). It resolves `{ thread, message }`. Only text and Markdown files take it; an empty range, one outside the text or one over 1,000 characters rejects. A file with CRLF line endings counts a line break as one unit, as your page's `Y.Text` does.
+- `reply(path, thread, body)` resolves `{ message }`. `resolve(path, thread, resolved)` resolves nothing; setting the state a thread has already is not an error.
+- They work only while the file is shared and pedit is connected to the room. Not shared, a room kept with `host: 'away'`, or a connection that is down rejects with pedit's reason: a comment written while nobody can see it would look delivered. What is saved stays readable in `.pedit/meta/`.
+- `onEvent` gets `{ type: 'comments', path, id, threads, more? }`: the file's threads as they are, once when sharing starts (and on a resume) and again whenever the comments, or the text they point into, change. A thread is `{ id, quote, resolved, from, to, cut?, messages: [{ id, author, time, body }] }`. `from` and `to` are where its anchor is in the text now, or `null` when it cannot be placed (its text was deleted, or it is on cells or a node). The event fits 64 KiB: open threads come first, `more` counts threads left out, and `cut` counts a thread's oldest comments left out. The event that shows a write comes before the call resolves.
+- A pedit without these commands makes them reject with `pedit is too old for comment; update it` (or `reply`, `resolve`).
 
 ## Installing pedit for the user
 

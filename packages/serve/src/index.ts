@@ -4,6 +4,9 @@ export type { Installed, Verified } from './install.ts'
 export { MIN_PEDIT_VERSION, peditVersionOk, resolvePedit } from './resolve.ts'
 export { type ServedFile, ServedFiles, type ServedFilesOptions } from './served.ts'
 export type {
+  CommentMessage,
+  CommentRange,
+  CommentThread,
   Peer,
   Role,
   ServeEvent,
@@ -13,4 +16,5 @@ export type {
   ShareOptions,
   ShareResult,
   ShareStatus,
+  StartedThread,
 } from './types.ts'

@@ -8,6 +8,8 @@ import { HeldError, LimitError, NoPeditError } from './errors.ts'
 import { nativeRealpath } from './paths.ts'
 import { peditEnv } from './resolve.ts'
 import type {
+  CommentRange,
+  CommentThread,
   Peer,
   Role,
   ServeEvent,
@@ -15,6 +17,7 @@ import type {
   ShareOptions,
   ShareResult,
   ShareStatus,
+  StartedThread,
 } from './types.ts'
 
 const MAX_FILES = 32
@@ -68,9 +71,20 @@ export interface ServedFile {
    * live, or the relay refuses.
    */
   keep(keep: string): Promise<ShareStatus>
+  /**
+   * Start a thread, as the host, on `[from, to)` of the file's text (text and Markdown files).
+   * Needs the file shared with the host connected: it rejects otherwise, and for a range pedit
+   * refuses (empty, outside the text, over 1,000 characters). A pedit without comments rejects,
+   * saying it is too old.
+   */
+  comment(range: CommentRange): Promise<StartedThread>
+  /** Add a comment to a thread, as the host. Resolves with the comment's id. */
+  reply(thread: string, body: string): Promise<{ message: string }>
+  /** Resolve a thread, or open it again, as the host. */
+  resolve(thread: string, resolved: boolean): Promise<void>
 }
 
-type Cmd = 'share' | 'unshare' | 'close' | 'status' | 'keep'
+type Cmd = 'share' | 'unshare' | 'close' | 'status' | 'keep' | 'comment' | 'reply' | 'resolve'
 
 /** A command waiting for pedit's answer: the event that carries its id. */
 interface Pending {
@@ -126,6 +140,26 @@ function sharedOf(ev: Record<string, unknown>): Shared {
     links: { edit: links.edit, read: links.read, ...(links.comment && { comment: links.comment }) },
     keptUntil: Number(ev.keptUntil) || 0,
     resumed: ev.resumed === true,
+  }
+}
+
+/** A thread of pedit's `comments` event, with each field made the type it is. */
+function threadOf(t: Record<string, unknown>): CommentThread {
+  const place = (v: unknown) => (typeof v === 'number' ? v : null)
+  const messages = Array.isArray(t.messages) ? t.messages : []
+  return {
+    id: String(t.id),
+    quote: String(t.quote),
+    resolved: t.resolved === true,
+    from: place(t.from),
+    to: place(t.to),
+    ...(typeof t.cut === 'number' && { cut: t.cut }),
+    messages: messages.map((m: Record<string, unknown>) => ({
+      id: String(m?.id),
+      author: String(m?.author),
+      time: String(m?.time),
+      body: String(m?.body),
+    })),
   }
 }
 
@@ -304,6 +338,16 @@ export class ServedFiles {
           if (!status) throw new Error('the room has ended')
           return status
         },
+        comment: async ({ from, to, body }) => {
+          const ev = await this.#newer(entry, 'comment', { from, to, body })
+          return { thread: String(ev.thread), message: String(ev.message) }
+        },
+        reply: async (thread, body) => {
+          const ev = await this.#newer(entry, 'reply', { thread, body })
+          return { message: String(ev.message) }
+        },
+        resolve: async (thread, resolved) =>
+          void (await this.#newer(entry, 'resolve', { thread, resolved })),
       },
     }
     this.#byPath.set(path, entry)
@@ -368,6 +412,18 @@ export class ServedFiles {
         emitRoom(ev, { path, ...sharedOf(ev) })
       },
       resume_choice: (ev) => this.#answer(entry, ev),
+      commented: (ev) => this.#answer(entry, ev),
+      replied: (ev) => this.#answer(entry, ev),
+      resolved: (ev) => this.#answer(entry, ev),
+      comments: (ev) => {
+        if (!Array.isArray(ev.threads)) return
+        this.#emit({
+          type: 'comments',
+          path,
+          threads: ev.threads.map(threadOf),
+          ...(typeof ev.more === 'number' && { more: ev.more }),
+        })
+      },
       status: (ev) => this.#answer(entry, ev),
       unshared: (ev) => {
         this.#left(entry)

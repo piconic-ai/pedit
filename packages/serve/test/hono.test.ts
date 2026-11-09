@@ -443,6 +443,11 @@ process.stdin.on('data', (d) => {
     send({ event: 'shared', id, room: 'r1', links: { edit: 'r1.e', read: 'r1.r' }, keptUntil: 0, resumed: false })
     send({ event: 'peers', peers: [{ name: 'ada', access: 'edit' }] })
   } else if (cmd === 'unshare') send({ event: 'unshared', id })
+  else if (cmd === 'comment') {
+    send({ event: 'comments', threads: [{ id: 't1', quote: 'q', resolved: false, from: 1, to: 4, messages: [] }] })
+    send({ event: 'commented', id, thread: 't1', message: 'm1' })
+  } else if (cmd === 'reply') send({ event: 'replied', id, thread: 't1', message: 'm2' })
+  else if (cmd === 'resolve') send({ event: 'resolved', id, thread: 't1', resolved: true })
   else if (cmd === 'status' || cmd === 'keep')
     send({ event: 'status', id, room: 'r1', links: { edit: 'r1.e', read: 'r1.r' }, keep: 60, host: 'away', ends: 5, lifeEnd: 9 })
   else send({ event: 'room_ended', id, reason: 'closed' })
@@ -494,6 +499,29 @@ process.stdin.on('end', () => process.exit(0))
     expect(log()).toEqual(['{"cmd":"status","id":"c1"}', '{"cmd":"keep","id":"c2","keep":"3d"}'])
   })
 
+  it('starts, answers and resolves threads by path', async () => {
+    const { bin, log } = sharer()
+    const f = await start({ bin })
+    const path = join(f.root, 'a.md')
+    expect(await f.routes.comment(path, { from: 1, to: 4, body: 'Hm' })).toEqual({
+      thread: 't1',
+      message: 'm1',
+    })
+    expect(f.events).toContainEqual({
+      type: 'comments',
+      id: null, // the path was not served under an id
+      path: expect.any(String),
+      threads: [{ id: 't1', quote: 'q', resolved: false, from: 1, to: 4, messages: [] }],
+    })
+    expect(await f.routes.reply(path, 't1', 'Yes')).toEqual({ message: 'm2' })
+    await f.routes.resolve(path, 't1', true)
+    expect(log()).toEqual([
+      '{"cmd":"comment","id":"c1","from":1,"to":4,"body":"Hm"}',
+      '{"cmd":"reply","id":"c2","thread":"t1","body":"Yes"}',
+      '{"cmd":"resolve","id":"c3","thread":"t1","resolved":true}',
+    ])
+  })
+
   it('refuses a path the routes would refuse, without starting a child', async () => {
     const { bin, log } = sharer()
     const f = await start({ bin })
@@ -507,6 +535,11 @@ process.stdin.on('end', () => process.exit(0))
       await expect(f.routes.share(p), p).rejects.toThrow('file not found')
       await expect(f.routes.status(p), p).rejects.toThrow('file not found')
       await expect(f.routes.keep(p, '1d'), p).rejects.toThrow('file not found')
+      await expect(f.routes.comment(p, { from: 0, to: 1, body: 'x' }), p).rejects.toThrow(
+        'file not found',
+      )
+      await expect(f.routes.reply(p, 't', 'x'), p).rejects.toThrow('file not found')
+      await expect(f.routes.resolve(p, 't', true), p).rejects.toThrow('file not found')
     }
     await expect(f.routes.share('a.md')).rejects.toThrow(/absolute/)
     expect(f.events.filter((e) => e.type === 'started')).toEqual([])

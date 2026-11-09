@@ -47,6 +47,20 @@ const answer = async (c) => {
       event: 'status', room: 'r1', links: { edit: 'r1.e', comment: 'r1.c', read: 'r1.r' },
       keep: c.cmd === 'keep' ? 259200 : 3600, host: typeof away !== 'undefined' ? 'away' : 'here', ends: 20, lifeEnd: 30,
     })
+  } else if (c.cmd === 'comment' || c.cmd === 'reply' || c.cmd === 'resolve') {
+    if (typeof oldPedit !== 'undefined')
+      return reply({ event: 'error', cmd: '', message: 'unknown cmd' })
+    if (c.body === 'refuse')
+      return reply({ event: 'error', cmd: c.cmd, message: 'not shared, or the host is away' })
+    if (c.cmd === 'comment') {
+      // The event that shows the write comes before its answer.
+      send({ event: 'comments', more: 2, threads: [
+        { id: 't1', quote: 'wide', resolved: false, from: 6, to: 10, junk: 1, messages: [{ id: 'm1', author: 'me', time: 'T', body: c.body, junk: 1 }] },
+        { id: 't0', quote: 'gone', resolved: true, from: null, to: null, cut: 3, messages: [] },
+      ] })
+      reply({ event: 'commented', thread: 't1', message: 'm1' })
+    } else if (c.cmd === 'reply') reply({ event: 'replied', thread: c.thread, message: 'm2' })
+    else reply({ event: 'resolved', thread: c.thread, resolved: c.resolved })
   } else if (typeof failClose !== 'undefined') {
     // The share ended before the relay refused.
     send({ event: 'unshared' })
@@ -310,5 +324,60 @@ send({ event: 'peers', peers: [{ name: 'x'.repeat(10 * 1024), access: 'read' }] 
     await expect(served.keep('1d')).rejects.toThrow(/serve 2/)
     await sleep(100)
     expect(log()).toEqual([])
+  })
+
+  it('starts, answers and resolves threads, and passes the comments event on', async () => {
+    const { dir, files, events, log } = setup(script(2))
+    const served = await files.acquire(write(dir, 'a.md'))
+    expect(await served.comment({ from: 6, to: 10, body: 'Why wide?' })).toEqual({
+      thread: 't1',
+      message: 'm1',
+    })
+    expect(await served.reply('t1', 'Because')).toEqual({ message: 'm2' })
+    await expect(served.resolve('t1', true)).resolves.toBeUndefined()
+    expect(log()).toEqual([
+      '5 0 {"cmd":"comment","id":"c1","from":6,"to":10,"body":"Why wide?"}',
+      '5 0 {"cmd":"reply","id":"c2","thread":"t1","body":"Because"}',
+      '5 0 {"cmd":"resolve","id":"c3","thread":"t1","resolved":true}',
+    ])
+    // Fields pedit does not list are dropped, and an unplaced thread has null offsets.
+    expect(events.filter((e) => e.type === 'comments')).toEqual([
+      {
+        type: 'comments',
+        path: served.path,
+        more: 2,
+        threads: [
+          {
+            id: 't1',
+            quote: 'wide',
+            resolved: false,
+            from: 6,
+            to: 10,
+            messages: [{ id: 'm1', author: 'me', time: 'T', body: 'Why wide?' }],
+          },
+          { id: 't0', quote: 'gone', resolved: true, from: null, to: null, cut: 3, messages: [] },
+        ],
+      },
+    ])
+  })
+
+  it("rejects with pedit's reason when it refuses a comment", async () => {
+    const { dir, files } = setup(script(2))
+    const served = await files.acquire(write(dir, 'a.md'))
+    await expect(served.comment({ from: 0, to: 1, body: 'refuse' })).rejects.toThrow('host is away')
+    await expect(served.reply('t1', 'refuse')).rejects.toThrow('host is away')
+  })
+
+  it('says a pedit without comments is too old, and refuses them against serve 1', async () => {
+    const old = setup(script(2, 'const oldPedit = true'))
+    const a = await old.files.acquire(write(old.dir, 'a.md'))
+    await expect(a.comment({ from: 0, to: 1, body: 'x' })).rejects.toThrow(/too old for comment/)
+    await expect(a.reply('t', 'x')).rejects.toThrow(/too old for reply/)
+    await expect(a.resolve('t', true)).rejects.toThrow(/too old for resolve/)
+    const one = setup(script(1))
+    const b = await one.files.acquire(write(one.dir, 'a.md'))
+    await expect(b.comment({ from: 0, to: 1, body: 'x' })).rejects.toThrow(/serve 2/)
+    await sleep(100)
+    expect(one.log()).toEqual([])
   })
 })
