@@ -4,6 +4,7 @@ import { PROVIDERS, type ProviderId } from '@pedit/protocol/csp'
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
 import * as Y from 'yjs'
 import { ALWAYS_LOAD_KEY, AlwaysLoad } from '../src/alwaysload.ts'
+import * as blockrender from '../src/blockrender.ts'
 import type { ImageResolver } from '../src/core/attachments.ts'
 import { MAX_REMEMBERED_SNIPPETS, PreviewPane } from '../src/pane.ts'
 import * as preview from '../src/preview.ts'
@@ -555,7 +556,7 @@ describe('loadEmbed', () => {
   describe('from the preview pane', () => {
     async function pane(source: string) {
       const text = new Y.Doc().getText('content')
-      const p = new PreviewPane(text, { load: () => Promise.resolve(preview) })
+      const p = new PreviewPane(text, { load: () => Promise.resolve(blockrender) })
       document.body.append(p.element)
       text.insert(0, source)
       p.active = true
@@ -738,7 +739,10 @@ describe('always load', () => {
 
   async function pane(source: string, always: AlwaysLoad) {
     const text = new Y.Doc().getText('content')
-    const p = new PreviewPane(text, { load: () => Promise.resolve(preview), alwaysLoad: always })
+    const p = new PreviewPane(text, {
+      load: () => Promise.resolve(blockrender),
+      alwaysLoad: always,
+    })
     document.body.append(p.element)
     text.insert(0, source)
     p.active = true
@@ -1365,7 +1369,10 @@ describe('snippets', () => {
 
     async function pane(source: string, always = new AlwaysLoad(memory())) {
       const text = new Y.Doc().getText('content')
-      const p = new PreviewPane(text, { load: () => Promise.resolve(preview), alwaysLoad: always })
+      const p = new PreviewPane(text, {
+        load: () => Promise.resolve(blockrender),
+        alwaysLoad: always,
+      })
       document.body.append(p.element)
       text.insert(0, source)
       p.active = true

@@ -10,9 +10,14 @@ import {
   renderBlock,
 } from './preview.ts'
 
+// What a pane needs besides BlockRenderer, so one module is all it loads.
+export { embedProvider, loadEmbed, toggleRemember } from './preview.ts'
+
 /** A rendered block: its key, its elements and its block as of the last render. */
 interface Entry {
   key: string
+  /** The image links this block's render looked up, to say they are still on screen. */
+  images: string[]
   block: Block
   elements: Element[]
 }
@@ -103,7 +108,8 @@ export class BlockRenderer {
     let held: Entry[] | undefined
     for (const i of missed) {
       const block = blocks[i] as Block
-      const fresh = renderBlock(block, env)
+      const looked: string[] = []
+      const fresh = renderBlock(block, images ? { ...env, images: watching(images, looked) } : env)
       held ??= [...unused.values()]
         .flat()
         .filter((e) => e.elements.length === 1 && holdsEmbed(e.elements[0] as Element))
@@ -113,10 +119,15 @@ export class BlockRenderer {
         const at = held.findIndex((e) => patchHeldEmbed(e.elements[0] as Element, only))
         if (at >= 0) elements = (held.splice(at, 1)[0] as Entry).elements
       }
-      entries[i] = { key: keys[i] as string, block, elements }
+      entries[i] = { key: keys[i] as string, images: looked, block, elements }
     }
 
     const list = entries as Entry[]
+    // Cached blocks do not look their images up again, so say that they are shown:
+    // the resolver keeps what is on screen from being evicted.
+    if (images) {
+      for (const e of list) for (const src of e.images) images.lookup(src)
+    }
     const roots: Element[] = []
     for (let i = 0; i < n; i++) {
       const entry = list[i] as Entry
@@ -169,6 +180,17 @@ export class BlockRenderer {
       if (!stay.has(i)) container.insertBefore(el, before)
       before = el
     }
+  }
+}
+
+// The resolver, noting the links it is asked about.
+function watching(images: ImageResolver, looked: string[]): ImageResolver {
+  return {
+    lookup: (src) => {
+      looked.push(src)
+      return images.lookup(src)
+    },
+    owns: (url) => images.owns(url),
   }
 }
 

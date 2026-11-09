@@ -4,10 +4,17 @@ import type { AlwaysLoad } from './alwaysload.ts'
 import type { BlockRenderer } from './blockrender.ts'
 import type { ImageResolver } from './core/attachments.ts'
 
-export type Renderer = Pick<
+/** What acting on an embed placeholder needs. */
+export type EmbedRenderer = Pick<
   typeof import('./preview.ts'),
-  'render' | 'patch' | 'loadEmbed' | 'embedProvider' | 'toggleRemember'
+  'loadEmbed' | 'embedProvider' | 'toggleRemember'
 >
+
+/** What the canvas cards load: the one-shot render and patch. */
+export type Renderer = EmbedRenderer & Pick<typeof import('./preview.ts'), 'render' | 'patch'>
+
+/** What the preview pane loads: the block renderer and the embed functions (blockrender.ts). */
+export type PaneRenderer = EmbedRenderer & { BlockRenderer: typeof BlockRenderer }
 
 /** The most snippets "Always load" loads on one page; the rest load on a click. */
 export const MAX_REMEMBERED_SNIPPETS = 20
@@ -20,7 +27,7 @@ export const MAX_REMEMBERED_SNIPPETS = 20
 export function onEmbedControl(
   event: Event,
   container: Element,
-  renderer: Renderer | null,
+  renderer: EmbedRenderer | null,
   alwaysLoad?: AlwaysLoad,
 ): void {
   const target = event.target instanceof Element ? event.target : null
@@ -45,7 +52,11 @@ export function onEmbedControl(
  * MAX_REMEMBERED_SNIPPETS: each may hold a large file, and a file of many
  * links would have them all fetched. The rest wait for a click.
  */
-export function loadRemembered(container: Element, renderer: Renderer, always: AlwaysLoad): void {
+export function loadRemembered(
+  container: Element,
+  renderer: EmbedRenderer,
+  always: AlwaysLoad,
+): void {
   let snippets = container.querySelectorAll('.embed--snippet.embed--loaded').length
   for (const placeholder of container.querySelectorAll('[data-embed-src]:not(.embed--loaded)')) {
     if (!always.has(renderer.embedProvider(placeholder))) continue
@@ -104,8 +115,8 @@ export function topLine(view: EditorView): number {
 export class PreviewPane {
   readonly element: HTMLElement
   #text: Y.Text
-  #load: () => Promise<Renderer>
-  #renderer: Renderer | null = null
+  #load: () => Promise<PaneRenderer>
+  #renderer: PaneRenderer | null = null
   // Keeps the article's blocks between renders (blockrender.ts); made once the renderer is loaded.
   #blocks: BlockRenderer | null = null
   #imagesVersion = 0
@@ -121,7 +132,7 @@ export class PreviewPane {
   constructor(
     text: Y.Text,
     options: {
-      load?: () => Promise<Renderer>
+      load?: () => Promise<PaneRenderer>
       onRender?: () => void
       /** Finds the images added during the session. */
       images?: ImageResolver
@@ -132,7 +143,7 @@ export class PreviewPane {
     } = {},
   ) {
     this.#text = text
-    this.#load = options.load ?? (() => import('./preview.ts'))
+    this.#load = options.load ?? (() => import('./blockrender.ts'))
     this.#onRender = options.onRender ?? (() => {})
     this.#images = options.images
     this.element = options.element ?? document.createElement('article')
@@ -237,9 +248,9 @@ export class PreviewPane {
   }
 
   async #ready(): Promise<void> {
-    const [renderer, blockrender] = await Promise.all([this.#load(), import('./blockrender.ts')])
+    const renderer = await this.#load()
     this.#renderer = renderer
-    this.#blocks ??= new blockrender.BlockRenderer(this.element)
+    this.#blocks ??= new renderer.BlockRenderer(this.element)
   }
 
   async #render(): Promise<void> {

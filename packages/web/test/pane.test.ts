@@ -2,8 +2,8 @@
 import type { EditorView } from '@codemirror/view'
 import { describe, expect, it, vi } from 'vitest'
 import * as Y from 'yjs'
+import * as preview from '../src/blockrender.ts'
 import { monotonic, PreviewPane, scrollTarget } from '../src/pane.ts'
-import * as preview from '../src/preview.ts'
 
 describe('scrollTarget', () => {
   const anchors = [

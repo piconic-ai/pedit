@@ -4,10 +4,10 @@ import type { EditorView } from '@codemirror/view'
 import MarkdownIt from 'markdown-it'
 import { describe, expect, it, vi } from 'vitest'
 import * as Y from 'yjs'
+import * as preview from '../src/blockrender.ts'
 import { BlockRenderer } from '../src/blockrender.ts'
 import type { ImageResolver } from '../src/core/attachments.ts'
 import { PreviewPane } from '../src/pane.ts'
-import * as preview from '../src/preview.ts'
 import { loadEmbed, render, toggleRemember } from '../src/preview.ts'
 import corpus from './fixtures/preview-corpus.json'
 
@@ -534,5 +534,144 @@ describe('PreviewPane follow with relative lines', () => {
     expect(pane.element.scrollTop).toBe(70)
     pane.follow(editorAt(9, 12))
     expect(pane.element.scrollTop).toBe(90)
+  })
+})
+
+describe('editing back a block that holds a loaded player', () => {
+  const li = (c: Element) => [...c.querySelectorAll('li')].map((x) => x.textContent?.trim())
+
+  it('shows the earlier form again, not the patched one (loaded)', () => {
+    const { container, update } = setup(`- ${YT}\n- one\n`)
+    const placeholder = container.querySelector('.embed') as HTMLElement
+    const frame = loadEmbed(placeholder)
+    update(`- ${YT}\n- one edited\n`)
+    expect(li(container)).toEqual(['', 'one edited'])
+    update(`- ${YT}\n- one\n`)
+    expect(li(container)).toEqual(['', 'one'])
+    expect(placeholder.firstElementChild).toBe(frame)
+  })
+
+  it('shows the earlier form again, not the patched one (ticked)', () => {
+    const { container, update } = setup(`- ${YT}\n- one\n`)
+    toggleRemember(container.querySelector('.embed-remember') as Element)
+    update(`- ${YT}\n- one edited\n`)
+    update(`- ${YT}\n- one\n`)
+    expect(li(container)).toHaveLength(2)
+    expect(li(container)[1]).toBe('one')
+    expect(container.querySelector('.embed-remember')?.getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('does not keep an item that was added and removed again', () => {
+    const { container, update } = setup(`intro\n\n- ${YT}\n- x\n`)
+    loadEmbed(container.querySelector('.embed') as HTMLElement)
+    update(`intro\n\n- a\n\n- ${YT}\n- x\n`)
+    update(`intro\n\n- ${YT}\n- x\n`)
+    expect(container.querySelectorAll('li')).toHaveLength(2)
+  })
+
+  // Embeds are masked: a loaded one differs from main's placeholder by design.
+  function masked(el: Element): string {
+    const copy = el.cloneNode(true) as Element
+    for (const e of [copy, ...copy.querySelectorAll('[data-embed-src]')]) {
+      if (!e.hasAttribute('data-embed-src')) continue
+      const src = e.getAttribute('data-embed-src') ?? ''
+      const line = e.getAttribute('data-line')
+      e.replaceChildren()
+      for (const a of [...e.attributes]) e.removeAttribute(a.name)
+      e.setAttribute('data-embed-src', src)
+      if (line !== null) e.setAttribute('data-line', line)
+    }
+    return copy.outerHTML
+  }
+
+  it('equals a full render after random edits with players loaded and ticked', () => {
+    const pieces = [
+      '# Head',
+      'text',
+      '',
+      '',
+      '- item',
+      '  - nested',
+      '1. one',
+      '> quote',
+      YT,
+      `- ${YT}`,
+      '- x',
+      'https://www.youtube.com/watch?v=aaaaaaaaaaa',
+      '```',
+      'more text',
+      '- [ ] task',
+    ]
+    for (let seed = 1; seed <= 12; seed++) {
+      const next = rng(seed * 7 + 3)
+      const pick = <T>(xs: T[]) => xs[Math.floor(next() * xs.length)] as T
+      const { container, update } = setup()
+      let lines = Array.from({ length: 8 }, () => pick(pieces))
+      update(lines.join('\n'))
+      for (let step = 0; step < 50; step++) {
+        const holders = [...container.querySelectorAll('[data-embed-src]:not(.embed--loaded)')]
+        if (holders.length && next() < 0.4) {
+          const h = pick(holders)
+          const box = h.querySelector('.embed-remember')
+          if (next() < 0.5) loadEmbed(h, false)
+          else if (box) toggleRemember(box)
+        }
+        const at = Math.floor(next() * (lines.length + 1))
+        if (next() < 0.5) lines.splice(at, 0, pick(pieces))
+        else lines.splice(at, 1 + Math.floor(next() * 2))
+        // Often return to the form an earlier edit had: back and forth.
+        if (next() < 0.2) lines = lines.slice()
+        const source = lines.join('\n')
+        update(source)
+        const expected = [...render(source, undefined, MEDIA).children].map(masked)
+        expect(
+          roots(container)
+            .map((r) => {
+              const copy = r.cloneNode(true) as Element
+              const base = Number(r.getAttribute('data-line'))
+              copy.removeAttribute('data-line-end')
+              for (const e of copy.querySelectorAll('[data-line]')) {
+                e.setAttribute('data-line', String(base + Number(e.getAttribute('data-line'))))
+              }
+              return masked(copy)
+            })
+            .map((h, i) => {
+              const t = document.createElement('div')
+              t.innerHTML = expected[i] ?? ''
+              if (!t.firstElementChild?.hasAttribute('data-line')) {
+                const c = document.createElement('div')
+                c.innerHTML = h
+                c.firstElementChild?.removeAttribute('data-line')
+                return c.innerHTML
+              }
+              return h
+            }),
+          `seed ${seed} step ${step}: ${JSON.stringify(source)}`,
+        ).toEqual(expected)
+      }
+    }
+  })
+})
+
+describe('images on screen', () => {
+  it('a block that is kept still tells the resolver its images are shown', () => {
+    const looked: string[] = []
+    const images: ImageResolver = {
+      lookup: (src) => {
+        looked.push(src)
+        return { url: 'blob:http://localhost/1' }
+      },
+      owns: (u) => u === 'blob:http://localhost/1',
+    }
+    const img = 'assets/0123456789abcdef0123456789abcdef.png'
+    const { container, update } = setup()
+    update(`text\n\n![](${img})\n\nmore\n`, images, 0)
+    expect(new Set(looked)).toEqual(new Set([img]))
+    looked.length = 0
+    const before = container.children[1]
+    update(`text edited\n\n![](${img})\n\nmore\n`, images, 0)
+    expect(container.children[1]).toBe(before)
+    // The image block was not rendered again, yet its image was looked up.
+    expect(looked).toEqual([img])
   })
 })

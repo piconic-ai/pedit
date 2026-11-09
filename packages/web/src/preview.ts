@@ -782,6 +782,9 @@ export function patchHeldEmbed(old: Element, fresh: Element): boolean {
     return true
   }
   if (shellOf(old) !== shellOf(fresh) || !keepsEmbed(old, fresh)) return false
+  // The old element now stands for the fresh one: note its key first, as patching
+  // takes the fresh one's children (else a later edit back would find a stale key).
+  keys.set(old, domKey(fresh))
   patchChildren(old, [...fresh.childNodes])
   return true
 }
