@@ -223,6 +223,28 @@ async function joinRoom(
         if (!sameSet(cells, t.commented.get())) t.commented.set(cells)
       },
       target: () => (t.active ? cellsTarget(t) : undefined),
+      targetPlace() {
+        // The first cell, so a row or column is marked at its start; at the cell's top-right corner.
+        const at = cellsTarget(t)
+        const from = at?.kind === 'cells' ? at.from : null
+        const cell =
+          from && t.element.querySelector(`[data-row="${from.row}"][data-col="${from.col}"]`)
+        const clip = t.element.querySelector('.table-scroll')
+        if (!cell || !clip) return null
+        const r = cell.getBoundingClientRect()
+        return { x: r.right, y: r.top, clip: clip.getBoundingClientRect() }
+      },
+      watchPlace(fn) {
+        const ro = new ResizeObserver(fn)
+        // The slot is display: contents; its scroller has the box that resizes.
+        const box = t.element.querySelector('.table-scroll')
+        if (box) ro.observe(box)
+        const stop = t.parsed.subscribe(fn)
+        return () => {
+          ro.disconnect()
+          stop()
+        }
+      },
       hide() {
         t.active = false
       },
@@ -279,6 +301,27 @@ async function joinRoom(
         if (!sameSet(nodes, board.commented.get())) board.commented.set(nodes)
       },
       target: () => (board.active ? nodeTarget(board.selected.get()) : undefined),
+      targetPlace() {
+        const at = nodeTarget(board.selected.get())
+        const node =
+          at?.kind === 'node' &&
+          board.element.querySelector(`.bf-flow__node[data-id="${CSS.escape(at.id)}"]`)
+        // The slot is display: contents and has no box; the board inside it does.
+        const clip = board.element.querySelector('.canvas-board')
+        if (!node || !clip) return null
+        const r = node.getBoundingClientRect()
+        return { x: r.right, y: r.top, clip: clip.getBoundingClientRect() }
+      },
+      watchPlace(fn) {
+        const ro = new ResizeObserver(fn)
+        const box = board.element.querySelector('.canvas-board')
+        if (box) ro.observe(box)
+        const stop = board.moved.subscribe(fn)
+        return () => {
+          ro.disconnect()
+          stop()
+        }
+      },
       hide() {
         board.active = false
       },
@@ -300,6 +343,7 @@ async function joinRoom(
   })
   showView = (mode) => {
     main.dataset.view = mode
+    files.mode.set(mode)
     preview.active = mode === 'split' || mode === 'preview'
     tableOf(shown()).active = mode === 'table'
     boardOf(shown()).active = mode === 'canvas'
@@ -351,6 +395,28 @@ async function joinRoom(
     editor,
     parent: parts.comments,
     keyTarget: document,
+    floating: {
+      host: document.body,
+      viewport() {
+        const v = window.visualViewport
+        return v
+          ? { width: v.width, height: v.height, top: v.offsetTop }
+          : { width: window.innerWidth, height: window.innerHeight, top: 0 }
+      },
+      onFrame: (fn) => void requestAnimationFrame(fn),
+      onChange(fn) {
+        window.addEventListener('scroll', fn, true)
+        window.addEventListener('resize', fn)
+        window.visualViewport?.addEventListener('resize', fn)
+        window.visualViewport?.addEventListener('scroll', fn)
+        return () => {
+          window.visualViewport?.removeEventListener('resize', fn)
+          window.visualViewport?.removeEventListener('scroll', fn)
+          window.removeEventListener('scroll', fn, true)
+          window.removeEventListener('resize', fn)
+        }
+      },
+    },
     narrow: isNarrow,
     prefs: defaultStore(),
     // The table and the board show a thread on their own cell or node.

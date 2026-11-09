@@ -1,18 +1,31 @@
 import type { EditorView } from '@codemirror/view'
 import {
   CommentsPanelState,
-  isCommentKey,
   loadCommentsOpen,
   type ShownThread,
   saveCommentsOpen,
 } from './comments.ts'
+import './components/CommentComposer.tsx'
 import './components/CommentsPanel.tsx'
+import { CommentComposer, type Visible } from './composer.ts'
 import type { FileSet } from './files.ts'
-import { ContextMenu, isMac } from './menu.ts'
+import { ContextMenu } from './menu.ts'
 import type { Room } from './open-room.ts'
 import type { Prefs } from './prefs.ts'
 import { mountComponent } from './render.ts'
 import type { Readable, Store } from './store.ts'
+
+/** What the button and composer, drawn over the page by the selection, need of the page they are in. */
+export interface Floating {
+  /** Where they are added: the page's body, or the shadow root of the panel. */
+  host: HTMLElement | ShadowRoot
+  /** The part of the screen that can be seen (the visual viewport, which a soft keyboard shrinks). */
+  viewport(): Visible
+  /** Runs `fn` before the next paint (requestAnimationFrame). */
+  onFrame(fn: () => void): void
+  /** Calls `fn` when the page scrolls or the viewport resizes; returns how to stop. */
+  onChange(fn: () => void): () => void
+}
 
 export interface CommentsMountOptions {
   room: Room
@@ -27,13 +40,14 @@ export interface CommentsMountOptions {
   narrow: Readable<boolean>
   /** Where the panel's open state is remembered; null for nowhere. */
   prefs: Prefs | null
+  floating: Floating
   /** Shows a thread's place in a view the page adds (a table, a board); true once it has. */
   onShow?: (thread: ShownThread) => boolean
 }
 
 export interface CommentsMount {
   open: Store<boolean>
-  /** Opens the panel and puts the cursor in the new comment's box. */
+  /** Opens the composer on the selection, or just the panel when there is nothing to comment on. */
   focus(): void
   /** The reader folds or unfolds the panel. */
   toggle(): void
@@ -42,7 +56,7 @@ export interface CommentsMount {
 
 /** The room's comments panel, with its open state and the shortcut that comments on the selection. */
 export function mountComments(opts: CommentsMountOptions): CommentsMount {
-  const { room, files, editor, parent, keyTarget, narrow, prefs } = opts
+  const { room, files, editor, parent, keyTarget, narrow, prefs, floating } = opts
   const panel = new CommentsPanelState(
     files.focus,
     !narrow.get() && (loadCommentsOpen(prefs) ?? true),
@@ -54,7 +68,6 @@ export function mountComments(opts: CommentsMountOptions): CommentsMount {
   const menu = new ContextMenu()
   const unmount = mountComponent(parent, 'CommentsPanel', {
     comments: files.comments,
-    target: files.target,
     locked: room.locked,
     focus: files.focus,
     list: files.list,
@@ -72,17 +85,71 @@ export function mountComments(opts: CommentsMountOptions): CommentsMount {
       editor.focus()
     },
   })
+  // The composer and its button float over the page, beside the selection.
+  const composer = new CommentComposer(
+    files,
+    room.locked,
+    () => {
+      files.list.set('open')
+      panel.open.set(true)
+    },
+    floating.viewport,
+  )
+  const floatHost = parent.ownerDocument.createElement('div')
+  floating.host.append(floatHost)
+  const unmountComposer = mountComponent(floatHost, 'CommentComposer', {
+    button: composer.button,
+    composing: composer.composing,
+    visible: composer.visible,
+    onOpen: () => composer.open(),
+    onSend: (body: string) => composer.send(body),
+    onCancel: () => composer.cancel(),
+  })
   const focus = () => {
+    // Already writing: back to the box.
+    const box = floatHost.querySelector<HTMLTextAreaElement>('.comment-compose textarea')
+    if (box) return box.focus()
+    if (composer.open()) return
     files.list.set('open')
     panel.open.set(true)
-    parent.querySelector<HTMLTextAreaElement>('.comments-new textarea')?.focus()
   }
   const onKey = (e: Event) => {
     const k = e as KeyboardEvent
-    if (!isCommentKey(k, isMac()) || !files.commentable.get()) return
+    if (!composer.isKey(k) || !files.commentable.get()) return
     k.preventDefault()
     focus()
   }
+  // The button follows the selection as the page scrolls or resizes; these
+  // are heard only while there is a selection to comment on.
+  const place = () => composer.place()
+  let stopChanges: (() => void) | null = null
+  let pending = false
+  // What the views draw settles after their own events: placed a frame later.
+  const later = () => {
+    if (pending) return
+    pending = true
+    floating.onFrame(() => {
+      pending = false
+      place()
+    })
+  }
+  const listen = (on: boolean) => {
+    if (on && !stopChanges) {
+      const stops = [floating.onChange(place), files.watchPlace(later)]
+      stopChanges = () => {
+        for (const stop of stops) stop()
+      }
+    } else if (!on && stopChanges) {
+      stopChanges()
+      stopChanges = null
+    }
+  }
+  // While a composer is open too: the keyboard can come with it.
+  const active = () => files.target.get() !== null || composer.composing.get() !== null
+  const stopListening = [files.target, composer.composing].map((s) =>
+    s.subscribe(() => listen(active())),
+  )
+  listen(active())
   keyTarget.addEventListener('keydown', onKey)
   return {
     open: panel.open,
@@ -90,6 +157,11 @@ export function mountComments(opts: CommentsMountOptions): CommentsMount {
     toggle: () => panel.toggle(),
     dispose() {
       keyTarget.removeEventListener('keydown', onKey)
+      for (const stop of stopListening) stop()
+      listen(false)
+      composer.dispose()
+      unmountComposer()
+      floatHost.remove()
       panel.dispose()
       menu.dispose()
       unmount()

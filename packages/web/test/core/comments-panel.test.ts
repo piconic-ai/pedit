@@ -16,6 +16,10 @@ import { colorOf, colorsByName } from '../../src/core/room.ts'
 import { Store } from '../../src/core/store.ts'
 import { parsedAs } from '../parsed.ts'
 
+let last:
+  | { selection: Store<CommentTarget | null>; view: CommentsView; focus: Store<string | null> }
+  | undefined
+
 function mount(text = 'hello world!\n', delimiter: string | null = null) {
   const meta = new Y.Doc()
   const content = new Y.Doc()
@@ -41,7 +45,6 @@ function mount(text = 'hello world!\n', delimiter: string | null = null) {
   document.body.append(container)
   render(container, 'CommentsPanel', {
     comments,
-    target: selection,
     locked,
     focus,
     onShow: (t: ShownThread) => shown.push(t),
@@ -53,7 +56,7 @@ function mount(text = 'hello world!\n', delimiter: string | null = null) {
   })
   const $ = <T extends Element>(sel: string) => container.querySelector(sel) as T
   const $$ = (sel: string) => [...container.querySelectorAll(sel)] as HTMLElement[]
-  return {
+  const m = {
     meta,
     view,
     comments,
@@ -68,6 +71,8 @@ function mount(text = 'hello world!\n', delimiter: string | null = null) {
     $,
     $$,
   }
+  last = m
+  return m
 }
 
 /** The items of the comment menu open now, by label. */
@@ -84,26 +89,24 @@ function choose(more: Element, label: string) {
 
 const click = (el: Element) => (el as HTMLElement).click()
 
-describe('CommentsPanel', () => {
-  /** Starts a thread on the selection through the new comment's card. */
-  function comment($: ReturnType<typeof mount>['$'], body: string) {
-    $<HTMLTextAreaElement>('.comments-new textarea').value = body
-    click($('.comments-new .comment-primary'))
-  }
+/** Starts a thread on the selection, as the composer does. */
+function comment(body: string) {
+  const m = last as NonNullable<typeof last>
+  const t = m.selection.get()
+  if (!t) throw new Error('no selection')
+  const id = m.view.startOn(t, body)
+  if (id) m.focus.set(id)
+}
 
-  it('offers a new comment only on a selection, then lists the thread', () => {
+describe('CommentsPanel', () => {
+  it('lists a thread started on a selection, and has no box for new comments', () => {
     const { $, $$, selection, focus, view } = mount()
-    expect($<HTMLElement>('.comments-new').hidden).toBe(true)
+    expect($('.comments-new')).toBeNull()
     expect($('.comments-empty').textContent).toBe(
       'No comments yet. Select something to comment on it.',
     )
     selection.set({ kind: 'text', from: 6, to: 11 })
-    expect($<HTMLElement>('.comments-new').hidden).toBe(false)
-    expect($<HTMLTextAreaElement>('.comments-new textarea').placeholder).toBe(
-      'Comment on the selection',
-    )
-    comment($, 'Which world?')
-    expect($<HTMLTextAreaElement>('.comments-new textarea').value).toBe('')
+    comment('Which world?')
     const [thread] = $$('.comment-thread')
     expect(thread?.querySelector('q')?.textContent).toBe('world')
     expect(thread?.querySelector('.comment-body')?.textContent).toBe('Which world?')
@@ -117,35 +120,10 @@ describe('CommentsPanel', () => {
     expect($<HTMLElement>('.comments-empty').hidden).toBe(true)
   })
 
-  it('grows the new comment as it is written, and lets it go on Cancel', () => {
-    const { $, selection } = mount()
-    selection.set({ kind: 'text', from: 0, to: 5 })
-    const card = $<HTMLElement>('.comments-new')
-    const box = $<HTMLTextAreaElement>('.comments-new textarea')
-    expect(card.dataset.composing).toBeUndefined()
-    box.dispatchEvent(new FocusEvent('focus'))
-    expect(card.dataset.composing).toBe('true')
-    box.value = 'never mind'
-    click($('.comments-new .comment-text-button'))
-    expect(box.value).toBe('')
-    expect(card.dataset.composing).toBeUndefined()
-  })
-
-  it('sends with Ctrl or Cmd and Enter', () => {
-    const { $, $$, selection } = mount()
-    selection.set({ kind: 'text', from: 0, to: 5 })
-    const box = $<HTMLTextAreaElement>('.comments-new textarea')
-    box.value = 'quick'
-    box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-    expect($$('.comment-thread')).toHaveLength(0)
-    box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true }))
-    expect($$('.comment-body').map((b) => b.textContent)).toEqual(['quick'])
-  })
-
   it('takes a reply on the thread in focus only, and shows a thread in the text', () => {
     const { $, $$, selection, focus, shown } = mount()
     selection.set({ kind: 'text', from: 0, to: 5 })
-    comment($, 'first')
+    comment('first')
     expect($<HTMLElement>('.comment-reply').hidden).toBe(false)
     const reply = $<HTMLTextAreaElement>('.comment-reply textarea')
     reply.value = 'second'
@@ -162,7 +140,7 @@ describe('CommentsPanel', () => {
   it('resolves a thread into the resolved list, to look back at and reopen', () => {
     const { $, $$, selection, focus } = mount()
     selection.set({ kind: 'text', from: 0, to: 5 })
-    comment($, 'done?')
+    comment('done?')
     click($('.comment-resolve'))
     expect(focus.get()).toBeNull()
     expect($$('.comment-thread')).toHaveLength(0)
@@ -171,7 +149,6 @@ describe('CommentsPanel', () => {
     expect(resolvedTab?.textContent).toBe('Resolved 1')
     click(resolvedTab as Element)
     expect(resolvedTab?.getAttribute('aria-selected')).toBe('true')
-    expect($<HTMLElement>('.comments-new').hidden).toBe(true)
     expect($$('.comment-thread')).toHaveLength(1)
     expect($('.comment-resolve').getAttribute('aria-label')).toBe('Reopen')
     click($('.comment-resolve'))
@@ -184,7 +161,7 @@ describe('CommentsPanel', () => {
   it('shows the list of the thread in focus', () => {
     const { $, $$, selection, focus, view } = mount()
     selection.set({ kind: 'text', from: 0, to: 5 })
-    comment($, 'open one')
+    comment('open one')
     const id = focus.get() as string
     click($$('.comments-tabs button')[1] as Element)
     expect($$('.comment-thread')).toHaveLength(0)
@@ -197,7 +174,7 @@ describe('CommentsPanel', () => {
   it('deletes a comment of ones own only once asked again', () => {
     const { $, $$, selection, view, menu } = mount()
     selection.set({ kind: 'text', from: 0, to: 5 })
-    comment($, 'first')
+    comment('first')
     $<HTMLTextAreaElement>('.comment-reply textarea').value = 'second'
     click($('.comment-reply .comment-primary'))
     const more = $$('.comment-more')
@@ -225,9 +202,9 @@ describe('CommentsPanel', () => {
   it('puts a thread in focus from its quote, and keeps the list on screen once it is resolved', () => {
     const { $, $$, selection, focus, view } = mount()
     selection.set({ kind: 'text', from: 0, to: 5 })
-    comment($, 'one')
+    comment('one')
     selection.set({ kind: 'text', from: 6, to: 11 })
-    comment($, 'two')
+    comment('two')
     focus.set(null)
     click($$('.comment-quote')[1] as Element)
     expect(focus.get()).toBe(view.threads.get()[1]?.id)
@@ -240,7 +217,7 @@ describe('CommentsPanel', () => {
   it('keeps an edit open while another menu is looked at', () => {
     const { $, $$, selection, menu } = mount()
     selection.set({ kind: 'text', from: 0, to: 5 })
-    comment($, 'first')
+    comment('first')
     $<HTMLTextAreaElement>('.comment-reply textarea').value = 'second'
     click($('.comment-reply .comment-primary'))
     choose($$('.comment-more')[0] as Element, 'Edit')
@@ -253,7 +230,7 @@ describe('CommentsPanel', () => {
   it('offers no edit once the file is full', () => {
     const { $, selection, view } = mount()
     selection.set({ kind: 'text', from: 0, to: 5 })
-    comment($, 'first')
+    comment('first')
     view.roomForMore.set(false)
     click($('.comment-more'))
     expect(menuItems().Edit?.disabled).toBe(true)
@@ -263,7 +240,7 @@ describe('CommentsPanel', () => {
   it('edits a comment of ones own', () => {
     const { $, $$, selection, view } = mount()
     selection.set({ kind: 'text', from: 0, to: 5 })
-    comment($, 'frist')
+    comment('frist')
     choose($('.comment-more'), 'Edit')
     expect($('.comment-body')).toBeNull()
     const box = $<HTMLTextAreaElement>('.comment-editing textarea')
@@ -277,7 +254,7 @@ describe('CommentsPanel', () => {
   it('lets an edit go on Escape', () => {
     const { $, selection } = mount()
     selection.set({ kind: 'text', from: 0, to: 5 })
-    comment($, 'kept')
+    comment('kept')
     choose($('.comment-more'), 'Edit')
     $('.comment-editing textarea').dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
@@ -348,7 +325,6 @@ describe('CommentsPanel', () => {
     const { $, locked, comments, selection } = mount()
     selection.set({ kind: 'text', from: 0, to: 5 })
     locked.set(true)
-    expect($<HTMLElement>('.comments-new').hidden).toBe(true)
     expect($('.comments-empty').textContent).toBe('No comments yet.')
     comments.set(null)
     expect($<HTMLElement>('.comments').hidden).toBe(true)
@@ -357,18 +333,11 @@ describe('CommentsPanel', () => {
   it('comments on a cell of a table', () => {
     const { $, $$, selection, shown } = mount('name,age\nAda,36\n', ',')
     selection.set({ kind: 'cells', from: { row: 1, col: 1 }, to: { row: 1, col: 1 } })
-    expect($<HTMLTextAreaElement>('.comments-new textarea').placeholder).toBe('Comment on the cell')
-    comment($, 'Really?')
+    comment('Really?')
     const [thread] = $$('.comment-thread')
     expect(thread?.querySelector('q')?.textContent).toBe('36')
     click(thread?.querySelector('.comment-quote') as Element)
     expect(shown.at(-1)?.cells).toEqual({ from: { row: 1, col: 1 }, to: { row: 1, col: 1 } })
-  })
-
-  it('offers to comment on a node', () => {
-    const { $, selection } = mount()
-    selection.set({ kind: 'node', id: 'n1' })
-    expect($<HTMLTextAreaElement>('.comments-new textarea').placeholder).toBe('Comment on the node')
   })
 })
 
@@ -389,8 +358,7 @@ describe('CommentsPanel colours', () => {
   it('gives an author in the room the colour they have in the header', () => {
     const { $, selection, colors } = mount()
     selection.set({ kind: 'text', from: 0, to: 5 })
-    $<HTMLTextAreaElement>('.comments-new textarea').value = 'hi'
-    click($('.comments-new .comment-primary'))
+    comment('hi')
     colors.set(new Map([['Ada', '#123456']]))
     expect($<HTMLElement>('.comment-avatar').style.getPropertyValue('--c')).toBe('#123456')
   })

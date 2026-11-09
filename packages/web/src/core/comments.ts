@@ -100,6 +100,12 @@ export interface CommentsOptions {
   }
 }
 
+/** What a new thread holds on to before its comment is written (see `CommentsView.draft`). */
+export interface Draft {
+  readonly quote: string
+  readonly anchor: Record<string, unknown>
+}
+
 /**
  * Follows the comments of one text file: publishes its threads, each placed
  * on the text, and makes the changes people ask for. Threads are worked out
@@ -172,13 +178,7 @@ export class CommentsView {
    * a quote or body over the limits, or no room for more.
    */
   start(from: number, to: number, body: string): string | null {
-    const quote = this.#text.toString().slice(from, to)
-    if (quote.length === 0) return null
-    return this.#begin(quote, body, {
-      type: 'text',
-      start: position(this.#text, from, 0),
-      end: position(this.#text, to, -1),
-    })
+    return this.#startOn(this.#textDraft(from, to), body)
   }
 
   /**
@@ -187,18 +187,7 @@ export class CommentsView {
    * corner is not a cell of the table now.
    */
   startCells(a: Position, b: Position, body: string): string | null {
-    const table = this.#table(this.#text.toString())
-    const from = table?.rows[Math.min(a.row, b.row)]?.cells[Math.min(a.col, b.col)]
-    const to = table?.rows[Math.max(a.row, b.row)]?.cells[Math.max(a.col, b.col)]
-    // The host saves no corner longer than a quote; it would lose the cells.
-    const long = (c: Cell) => c.to - c.from > COMMENT_LIMITS.quote
-    if (!table || !from || !to || long(from) || long(to)) return null
-    // A range's raw text quotes it, cut to the limit, so a long column takes one too.
-    return this.#begin(cutQuote(table.text.slice(from.from, to.to)), body, {
-      type: 'cells',
-      from: this.#cell(from),
-      to: this.#cell(to),
-    })
+    return this.#startOn(this.#cellsDraft(a, b), body)
   }
 
   /**
@@ -207,17 +196,66 @@ export class CommentsView {
    * is no such node.
    */
   startNode(id: string, body: string): string | null {
-    const shown = this.#nodes().get(id)
-    // The host keeps no thread on an id longer, in UTF-8, than this.
-    if (shown === undefined || utf8.encode(id).length > MAX_NODE_ID) return null
-    return this.#begin(cutQuote(shown), body, { type: 'node', id })
+    return this.#startOn(this.#nodeDraft(id), body)
   }
 
   /** Starts a thread on a target, as start, startCells or startNode. */
   startOn(target: CommentTarget, body: string): string | null {
-    if (target.kind === 'text') return this.start(target.from, target.to, body)
-    if (target.kind === 'node') return this.startNode(target.id, body)
-    return this.startCells(target.from, target.to, body)
+    return this.#startOn(this.draft(target), body)
+  }
+
+  /**
+   * What a thread on the target would quote and hold on to, as of now: the
+   * anchor follows later edits, so a draft can wait for its comment while
+   * others type. Null when there can be no thread on it.
+   */
+  draft(target: CommentTarget): Draft | null {
+    if (target.kind === 'text') return this.#textDraft(target.from, target.to)
+    if (target.kind === 'node') return this.#nodeDraft(target.id)
+    return this.#cellsDraft(target.from, target.to)
+  }
+
+  /** Starts a thread on a draft; the id, or null as for start. */
+  startDraft(draft: Draft, body: string): string | null {
+    return this.#begin(draft.quote, body, draft.anchor)
+  }
+
+  #startOn(draft: Draft | null, body: string): string | null {
+    return draft ? this.startDraft(draft, body) : null
+  }
+
+  #textDraft(from: number, to: number): Draft | null {
+    const quote = this.#text.toString().slice(from, to)
+    if (quote.length === 0) return null
+    return {
+      quote,
+      anchor: {
+        type: 'text',
+        start: position(this.#text, from, 0),
+        end: position(this.#text, to, -1),
+      },
+    }
+  }
+
+  #cellsDraft(a: Position, b: Position): Draft | null {
+    const table = this.#table(this.#text.toString())
+    const from = table?.rows[Math.min(a.row, b.row)]?.cells[Math.min(a.col, b.col)]
+    const to = table?.rows[Math.max(a.row, b.row)]?.cells[Math.max(a.col, b.col)]
+    // The host saves no corner longer than a quote; it would lose the cells.
+    const long = (c: Cell) => c.to - c.from > COMMENT_LIMITS.quote
+    if (!table || !from || !to || long(from) || long(to)) return null
+    // A range's raw text quotes it, cut to the limit, so a long column takes one too.
+    return {
+      quote: cutQuote(table.text.slice(from.from, to.to)),
+      anchor: { type: 'cells', from: this.#cell(from), to: this.#cell(to) },
+    }
+  }
+
+  #nodeDraft(id: string): Draft | null {
+    const shown = this.#nodes().get(id)
+    // The host keeps no thread on an id longer, in UTF-8, than this.
+    if (shown === undefined || utf8.encode(id).length > MAX_NODE_ID) return null
+    return { quote: cutQuote(shown), anchor: { type: 'node', id } }
   }
 
   /** What each node of the canvas shows, by id; none for a file that is no canvas. */

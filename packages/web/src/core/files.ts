@@ -36,9 +36,22 @@ export interface FileView {
    * undefined when it is not, so the next view (or the text) answers.
    */
   target?(): CommentTarget | null | undefined
+  /** Where the button that comments on the target goes, while this view is the one on screen. */
+  targetPlace?(): Place | null
+  /** Calls `fn` when what the view draws moves (resize, pan, new rows); returns how to stop. */
+  watchPlace?(fn: () => void): () => void
   /** The file went off screen. */
   hide?(): void
   dispose?(): void
+}
+
+/** Where the button that comments on the target goes, in the viewport's coordinates. */
+export interface Place {
+  /** The centre of the button. */
+  x: number
+  y: number
+  /** The part of the screen the view shows: the button is hidden outside it. */
+  clip: DOMRect
 }
 
 /** A file of the room this page has opened. */
@@ -63,6 +76,10 @@ export type FileViewFactory = (file: OpenFile) => FileView
 /** What the text editor gives the set (see `mountTextEditor`). */
 export interface EditorHooks {
   textTarget(): CommentTarget | null
+  /** Where the button goes for the selection, or null when it is not drawn. */
+  textPlace?(): Place | null
+  /** Calls `fn` when the editor's text or layout changes; returns how to stop. */
+  watchText?(fn: () => void): () => void
   onStatus(status: RoomStatus, wasLocked: boolean): void
 }
 
@@ -94,6 +111,8 @@ export class FileSet {
   readonly list = new Store<ThreadList>('open')
   /** Whether the file on screen has comments. */
   readonly commentable = new Store(false)
+  /** The view mode on screen (text, table, canvas...), set by the page. */
+  readonly mode = new Store('')
   /** What a new comment goes on, following the view on screen. */
   readonly target = new Store<CommentTarget | null>(null)
 
@@ -205,6 +224,23 @@ export class FileSet {
     // null, and a comment must not go on the hidden editor's selection then.
     if (next === undefined) next = (this.#editor?.textTarget ?? this.#opts.textTarget)?.() ?? null
     if (!sameTarget(next, this.target.get())) this.target.set(next)
+  }
+
+  /** Where the button for the target goes, asked of the view that answers for it. */
+  targetPlace(): Place | null {
+    for (const v of this.shown.get().views) {
+      if (v.target?.() !== undefined) return v.targetPlace?.() ?? null
+    }
+    return this.#editor?.textPlace?.() ?? null
+  }
+
+  /** Calls `fn` when the editor or a view of the files moves what it draws; returns how to stop. */
+  watchPlace(fn: () => void): () => void {
+    const stops = [this.#editor?.watchText?.(fn)]
+    for (const f of this.#opened.values()) for (const v of f.views) stops.push(v.watchPlace?.(fn))
+    return () => {
+      for (const stop of stops) stop?.()
+    }
   }
 
   /** Lets go of every file's comments and views. */
