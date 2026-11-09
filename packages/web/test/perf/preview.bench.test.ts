@@ -10,6 +10,11 @@
 // machine. Times are only compared with other times of the same run (a whole-
 // document render, the same edit in a smaller document), plus loose ceilings.
 // The numbers go to stdout as a Markdown table, and to GITHUB_STEP_SUMMARY when set.
+//
+// The `Bench` workflow runs this weekly, on manual dispatch and on pull requests
+// touching the preview code; a failure makes that run red. It prints the same
+// table to the job summary. Run it locally after changing preview.ts,
+// blockrender.ts, blockparse.ts or pane.ts.
 
 import { appendFileSync } from 'node:fs'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
