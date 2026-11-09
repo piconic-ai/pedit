@@ -298,30 +298,39 @@ describe('keyOf', () => {
     const block = parsed.blocks[0] as Block
     // Count the work by doubling the input: a quadratic key would grow four-fold.
     const half = parseBlocks(list.slice(0, list.length / 2)).blocks[0] as Block
+    // The best of several runs, so a busy machine does not decide.
     const time = (b: Block) => {
-      const t = performance.now()
-      for (let i = 0; i < 5; i++) keyOf(b, parsed.refs, 0, false)
-      return performance.now() - t
+      let best = Number.POSITIVE_INFINITY
+      for (let run = 0; run < 9; run++) {
+        const t = performance.now()
+        keyOf(b, parsed.refs, 0, false)
+        best = Math.min(best, performance.now() - t)
+      }
+      return best
     }
     time(half)
     const [small, big] = [time(half), time(block)]
     expect(big / Math.max(small, 0.05)).toBeLessThan(3.5)
   })
 
-  it('costs less than the block parse on a large document', () => {
+  it('costs well under the block parse on a large document', () => {
     const src = mixed(10000)
     const run = (fn: () => void) => {
       fn()
-      const t = performance.now()
-      for (let i = 0; i < 3; i++) fn()
-      return performance.now() - t
+      let best = Number.POSITIVE_INFINITY
+      for (let i = 0; i < 5; i++) {
+        const t = performance.now()
+        fn()
+        best = Math.min(best, performance.now() - t)
+      }
+      return best
     }
     const parsed = parseBlocks(src)
     const parse = run(() => parseBlocks(src))
     const key = run(() => {
       for (const b of parsed.blocks) keyOf(b, parsed.refs, 0, false)
     })
-    expect(key).toBeLessThan(parse)
+    expect(key).toBeLessThan(parse * 0.5)
   })
 
   it('keeps the key length-prefixed so fields cannot run together', () => {

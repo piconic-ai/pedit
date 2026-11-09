@@ -506,14 +506,17 @@ export function keyOf(block: Block, refs: string, imagesVersion: number, breaks:
   ha = 0x811c9dc5
   hb = 0x9747b28c
   hnum(breaks ? 1 : 0)
-  let links = false
-  let image = false
+  // Token content is not hashed: it is a function of `src` (which the key holds in
+  // full) and of the structure hashed here, so equal keys cannot differ in content.
+  // Content only ever has a `[` or `![` that src has, so src decides the two
+  // dependencies below (conservatively).
+  const links = block.src.includes('[')
+  const image = links && block.src.includes('![')
   for (const t of block.tokens) {
     hstr(t.type)
     hstr(t.tag)
     hstr(t.markup)
     hstr(t.info)
-    hstr(t.content)
     hnum(t.nesting)
     hnum(t.level)
     hnum((t.hidden ? 1 : 0) | (t.block ? 2 : 0))
@@ -528,8 +531,6 @@ export function keyOf(block: Block, refs: string, imagesVersion: number, breaks:
       }
     }
     hnum(-1)
-    if (!links && t.content.includes('[')) links = true
-    if (!image && t.content.includes('![')) image = true
   }
   if (links) hstr(refs)
   if (image) hnum(imagesVersion)
