@@ -16,7 +16,11 @@ class FakeResize {
 function setup(source: string) {
   vi.stubGlobal('ResizeObserver', FakeResize)
   // jsdom has no layout.
-  Range.prototype.getClientRects = () => [{ top: 10, bottom: 30 }] as unknown as DOMRectList
+  Range.prototype.getClientRects = () =>
+    [
+      { top: 10, bottom: 30, width: 5, height: 20 },
+      { top: 40, bottom: 40, width: 0, height: 0 },
+    ] as unknown as DOMRectList
   const root = document.createElement('article')
   root.append(render(source))
   document.body.replaceChildren(root)
@@ -25,7 +29,7 @@ function setup(source: string) {
   const files = {
     attachPreview: (h: PreviewPlace) => ((hooks = h), () => {}),
   } as unknown as FileSet
-  const pane = { element: root, active: true } as unknown as PreviewPane
+  const pane = { element: root, active: true, onRendered: () => () => {} } as unknown as PreviewPane
   const stop = commentOnPreviewSelection({ pane, editor, files })
   const select = (text: string) => {
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
@@ -51,6 +55,19 @@ afterEach(() => {
 })
 
 describe('commentOnPreviewSelection', () => {
+  it('keeps the selection it made through edits by others', () => {
+    vi.useFakeTimers()
+    const { editor, select, hooks, stop } = setup('Hello brave world\n')
+    select('brave')
+    document.dispatchEvent(new Event('selectionchange'))
+    vi.advanceTimersByTime(100)
+    editor.dispatch({ changes: { from: 0, insert: 'Oh! ' } })
+    const s = editor.state.selection.main
+    expect([s.from, s.to]).toEqual([10, 15])
+    expect(hooks().place()).not.toBeNull()
+    stop()
+  })
+
   it('makes the preview selection the editor selection, without focusing it', () => {
     vi.useFakeTimers()
     const { editor, select, hooks, stop } = setup('Hello brave world\n')
@@ -74,7 +91,7 @@ describe('commentOnPreviewSelection', () => {
     document.dispatchEvent(new Event('selectionchange'))
     vi.advanceTimersByTime(100)
     const sel = document.getSelection()
-    const text = document.querySelector('article p')?.firstChild as Text
+    const text = document.querySelector('article p span')?.firstChild as Text
     sel?.collapse(text, 2)
     document.dispatchEvent(new Event('selectionchange'))
     vi.advanceTimersByTime(100)

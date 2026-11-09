@@ -191,6 +191,106 @@ md.core.ruler.push('source_lines', (state) => {
   }
 })
 
+/** The index after the `]` closing a bracket opened just before `from`, or -1. */
+function closeBracket(src: string, from: number, limit: number): number {
+  for (let i = from, depth = 0; i < limit; i++) {
+    const c = src[i]
+    if (c === '\\') i++
+    else if (c === '[') depth++
+    else if (c === ']' && depth-- === 0) return i
+  }
+  return -1
+}
+
+/** Past the `(destination "title")` or `[reference]` that follows a link's `]` at `p`; -1 when unsure. */
+function skipTail(src: string, p: number, limit: number): number {
+  if (src[p] === '(') {
+    for (let i = p, depth = 0; i < limit; i++) {
+      const c = src[i]
+      if (c === '\\') i++
+      else if (c === '(') depth++
+      else if (c === ')' && --depth === 0) return i + 1
+    }
+    return -1
+  }
+  if (src[p] === '[') {
+    const j = src.indexOf(']', p)
+    return j >= 0 && j < limit ? j + 1 : -1
+  }
+  return p
+}
+
+// Gives each run of visible text its offset in the source (`data-src`), so a
+// selection in the page can be mapped back exactly. Tokens are matched in
+// order, verbatim, past link destinations and image sources; a run that is not
+// found as it is shown (entities, escapes) gets no offset and is never guessed.
+md.core.ruler.before('text_join', 'source_offsets', (state) => {
+  const src = state.src
+  const starts = [0]
+  for (let i = src.indexOf('\n'); i >= 0; i = src.indexOf('\n', i + 1)) starts.push(i + 1)
+  const at = (line: number) => starts[line] ?? src.length
+  let cursor = 0
+  let row: [number, number] | null = null
+  for (const token of state.tokens) {
+    if (token.type === 'tr_open') row = token.map
+    // A table cell's text has no lines of its own: its row's.
+    const map = token.map ?? (token.type === 'inline' ? row : null)
+    if (!map) continue
+    const limit = at(map[1])
+    const find = (text: string, from: number) => {
+      const i = text ? src.indexOf(text, from) : -1
+      return i >= 0 && i + text.length <= limit ? i : -1
+    }
+    if (token.type === 'fence' || token.type === 'code_block') {
+      // Not the opening fence line, which holds the info string.
+      const i = find(token.content, Math.max(cursor, at(map[0] + (token.type === 'fence' ? 1 : 0))))
+      if (i >= 0) {
+        token.attrSet('data-src', String(i))
+        cursor = i + token.content.length
+      }
+      continue
+    }
+    if (token.type !== 'inline' || !token.children) continue
+    cursor = Math.max(cursor, at(map[0]))
+    const autos: boolean[] = []
+    for (const child of token.children) {
+      if (child.type === 'text' || child.type === 'code_inline') {
+        const i = find(child.content, cursor)
+        if (i < 0) continue
+        cursor = i + child.content.length
+        if (child.type === 'text') {
+          child.type = 'src_text'
+          child.meta = { offset: i }
+        } else child.attrSet('data-src', String(i))
+      } else if (child.type === 'text_special') {
+        const i = find(child.markup, cursor)
+        if (i >= 0) cursor = i + child.markup.length
+      } else if (child.type === 'link_open') {
+        autos.push(child.info === 'auto')
+        if (child.info !== 'auto') {
+          const i = find('[', cursor)
+          cursor = i < 0 ? limit : i + 1
+        }
+      } else if (child.type === 'link_close' || child.type === 'image') {
+        let end = -1
+        if (child.type === 'image') {
+          const i = find('![', cursor)
+          end = i < 0 ? -1 : closeBracket(src, i + 2, limit)
+        } else if (!autos.pop()) end = closeBracket(src, cursor, limit)
+        else continue
+        end = end < 0 ? -1 : skipTail(src, end + 1, limit)
+        // Lost track of the source: map nothing more of this block.
+        cursor = end < 0 ? limit : end
+      }
+    }
+  }
+})
+
+md.renderer.rules.src_text = (tokens, idx) => {
+  const token = tokens[idx]
+  return `<span data-src="${(token?.meta as { offset: number }).offset}">${escape(token?.content ?? '')}</span>`
+}
+
 md.renderer.rules.embed = (tokens, idx) => {
   const { embed, href, line } = tokens[idx]?.meta as { embed: Embed; href: string; line?: number }
   return embedHtml(embed, href, line)
@@ -461,7 +561,8 @@ function showSnippet(
 
 const keys = new WeakMap<Node, string>()
 
-const LINE_ATTRS = ['data-line', 'data-line-end']
+// Positions in the source, which shift on every edit: data-src is the offset of a run of text.
+const LINE_ATTRS = ['data-line', 'data-line-end', 'data-src']
 
 function copyAttr(name: string, from: Element, to: Element): void {
   const value = from.getAttribute(name)
@@ -476,7 +577,7 @@ function keyOf(node: Node): string {
   if (key === undefined) {
     const clone = node.cloneNode(true)
     if (clone instanceof Element) {
-      for (const el of [clone, ...clone.querySelectorAll('[data-line]')]) {
+      for (const el of [clone, ...clone.querySelectorAll('[data-line], [data-src]')]) {
         for (const name of LINE_ATTRS) el.removeAttribute(name)
       }
       key = clone.outerHTML

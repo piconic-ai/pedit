@@ -1,4 +1,5 @@
-import type { EditorView } from '@codemirror/view'
+import { StateEffect } from '@codemirror/state'
+import { EditorView } from '@codemirror/view'
 import type { FileSet } from './core/files.ts'
 import type { PreviewPane } from './pane.ts'
 import { previewSelectionToSource } from './previewselect.ts'
@@ -25,6 +26,16 @@ export function commentOnPreviewSelection(opts: {
   const doc = root.ownerDocument
   let current: { range: Range; from: number; to: number } | null = null
 
+  // The range follows the edits of others, as the editor's selection does.
+  editor.dispatch({
+    effects: StateEffect.appendConfig.of(
+      EditorView.updateListener.of((u) => {
+        if (!current || !u.docChanged) return
+        current.from = u.changes.mapPos(current.from, 1)
+        current.to = u.changes.mapPos(current.to, -1)
+      }),
+    ),
+  })
   const ours = () => {
     const s = editor.state.selection.main
     return current !== null && s.from === current.from && s.to === current.to
@@ -59,8 +70,10 @@ export function commentOnPreviewSelection(opts: {
   const stopFiles = files.attachPreview({
     place() {
       if (!current || !ours()) return null
-      const rects = current.range.getClientRects()
-      const last = rects[rects.length - 1]
+      // A selection that ends at the start of the next block has an empty last rect.
+      const last = [...current.range.getClientRects()]
+        .reverse()
+        .find((r) => r.width > 0 && r.height > 0)
       if (!last) return null
       const clip = root.getBoundingClientRect()
       // In the right margin of the preview, so the button covers no text.
@@ -70,7 +83,10 @@ export function commentOnPreviewSelection(opts: {
       root.addEventListener('scroll', fn)
       const ro = new ResizeObserver(fn)
       ro.observe(root)
+      // What the preview draws moves when it renders again.
+      const stopRender = pane.onRendered(fn)
       return () => {
+        stopRender()
         root.removeEventListener('scroll', fn)
         ro.disconnect()
       }

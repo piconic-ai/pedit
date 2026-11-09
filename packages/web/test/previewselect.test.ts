@@ -127,6 +127,68 @@ describe('previewSelectionToSource', () => {
     expect(map(source, 'body text')).toBe('body text')
   })
 
+  it('never anchors on a link destination, alt text or fence info', () => {
+    const link = 'See [the docs](https://example.com/docs) for docs.\n'
+    const root = mount(link)
+    const second = find(root, 'docs', 1)
+    const range = document.createRange()
+    range.setStart(second.node, second.at)
+    range.setEnd(second.node, second.at + 4)
+    expect(previewSelectionToSource(root, range, link)).toEqual({ from: 45, to: 49 })
+    const image = '![cat](cat.png) a cat\n'
+    const r2 = mount(image)
+    const sel = select(r2, 'a cat')
+    expect(previewSelectionToSource(r2, sel, image)).toEqual({ from: 16, to: 21 })
+    const fence = '```python\nimport python\n```\n'
+    const r3 = mount(fence)
+    const f = select(r3, 'python')
+    expect(previewSelectionToSource(r3, f, fence)).toEqual({ from: 17, to: 23 })
+  })
+
+  it('maps an escaped character as nothing guessed', () => {
+    const source = '**bold** and 2 \\* 3\n'
+    const root = mount(source)
+    // The text around the escape is exact; the escape itself is not mapped.
+    expect(map(source, 'and 2 ')).toBe('and 2 ')
+    expect(map(source, ' 3')).toBe(' 3')
+    expect(previewSelectionToSource(root, select(root, '*'), source)).toBeNull()
+    const entity = 'fish &amp; chips\n'
+    expect(map(entity, 'fish ')).toBe('fish ')
+    expect(map(entity, ' chips')).toBe(' chips')
+  })
+
+  it('maps selections across markup by each boundary', () => {
+    const source = 'Hello [world](https://x.org) and **x**\n'
+    expect(map(source, 'world', 'x')).toBe('world](https://x.org) and **x')
+  })
+
+  it('maps across the soft wraps of a blockquote and a list item', () => {
+    expect(map('> quoted line one\n> quoted line two\n', 'line one', 'line two')).toBe(
+      'line one\n> quoted line two',
+    )
+    expect(map('- item one\n  continued here\n', 'one', 'continued')).toBe('one\n  continued')
+  })
+
+  it('maps table cells and repeated cell text', () => {
+    const source = '| a | b |\n|---|---|\n| x | x |\n'
+    const root = mount(source)
+    const second = find(root, 'x', 1)
+    const range = document.createRange()
+    range.setStart(second.node, 0)
+    range.setEnd(second.node, 1)
+    expect(previewSelectionToSource(root, range, source)).toEqual({ from: 26, to: 27 })
+  })
+
+  it('moves a boundary between blocks to the nearest text', () => {
+    const source = 'First para\n\nSecond para\n'
+    const root = mount(source)
+    const [p1, p2] = root.querySelectorAll('p')
+    const range = document.createRange()
+    range.setStart(p1 as Element, 0)
+    range.setEnd(p2 as Element, 0)
+    expect(previewSelectionToSource(root, range, source)).toEqual({ from: 0, to: 10 })
+  })
+
   it('tags blocks with their last line too', () => {
     const root = mount('a\nb\n\n- c\n- d\n')
     expect(

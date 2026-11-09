@@ -259,15 +259,15 @@ so nothing changes in the protocol or the storage.
 
 - **The source map:** the preview tags each block with `data-line` (its first
   source line) and `data-line-end` (the line after its last).
-- **From selection to source:** `previewSelectionToSource`
-  (`packages/web/src/previewselect.ts`) takes the blocks that hold the start
-  and the end of the selection, and looks for the selected text inside their
-  source lines. It takes the occurrence that matches the selection's place in
-  the block, counted among the repeats. When markup splits the text (bold,
-  links, list markers, soft wraps), the start and the end fragments are found
-  one by one and the source between them is the selection. A selection that
-  cannot be placed this way, or one in an embed or the frontmatter, is not
-  commentable.
+- **From selection to source:** while rendering, each run of visible text
+  that the source holds verbatim gets its offset (`data-src`), found in order
+  inside its block and past link destinations and image sources. Entities,
+  escapes and anything not found as shown get no offset, and are never guessed.
+  `previewSelectionToSource` (`packages/web/src/previewselect.ts`) maps the
+  start and the end of the selection on their own, each by its run; a boundary
+  between blocks moves to the nearest text inside the selection. A selection
+  that starts or ends in an unmapped run, or in an embed or the frontmatter, is
+  not commentable.
 - **The editor's selection:** `commentOnPreviewSelection`
   (`packages/web/src/previewcomment.ts`) sets the result as the editor's
   selection without focusing or scrolling it, so the preview and the reader's

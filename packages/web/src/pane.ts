@@ -110,6 +110,7 @@ export class PreviewPane {
   #dirty = true
   #frame = 0
   #onRender: () => void
+  #rendered = new Set<() => void>()
   #images: ImageResolver | undefined
   #alwaysLoad: AlwaysLoad | undefined
 
@@ -241,5 +242,12 @@ export class PreviewPane {
     this.#loadRemembered()
     this.#images?.rendered?.()
     this.#onRender()
+    for (const fn of [...this.#rendered]) fn()
+  }
+
+  /** Calls `fn` after every render; returns how to stop. */
+  onRendered(fn: () => void): () => void {
+    this.#rendered.add(fn)
+    return () => void this.#rendered.delete(fn)
   }
 }
