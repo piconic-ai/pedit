@@ -8,7 +8,7 @@ import * as blockrender from '../src/blockrender.ts'
 import { BoardView } from '../src/board.ts'
 import { EDGES, NODES, TEXT } from '../src/canvas.ts'
 import type { PaneRenderer } from '../src/pane.ts'
-import { render } from '../src/preview.ts'
+import { loadEmbed, render, toggleRemember } from '../src/preview.ts'
 
 beforeAll(() => {
   Range.prototype.getClientRects ??= () => [] as unknown as DOMRectList
@@ -92,16 +92,14 @@ function shape(card: Element): string[] {
   })
 }
 
-const clean = (html: string) =>
-  html
-    .replace(/ ?nodrag nowheel/g, '')
-    .replace(/ class=""/g, '')
-    .replace(/<pre data-line="\d+">/g, '<pre>')
+const clean = (html: string) => html.replace(/<pre data-line="\d+">/g, '<pre>')
 
 function whole(text: string): string[] {
-  return [...render(text, undefined, [], { breaks: true }).children].map((el) =>
-    clean(el.outerHTML),
-  )
+  const fragment = render(text, undefined, [], { breaks: true })
+  // What the board adds to a card's links and players.
+  for (const el of fragment.querySelectorAll('a, video, .embed'))
+    el.classList.add('nodrag', 'nowheel')
+  return [...fragment.children].map((el) => clean(el.outerHTML))
 }
 
 // A seeded generator, so a failing sequence can be replayed.
@@ -116,6 +114,10 @@ function rng(seed: number): () => number {
 }
 
 const PIECES = [
+  '[a link](https://example.com/x) and https://example.com/y',
+  `${YT}`,
+  '- https://vimeo.com/76979871\n- item',
+  '![](assets/x.png)',
   '# T',
   'a line',
   'two\nlines',
@@ -201,6 +203,113 @@ describe('a card on the block renderer', () => {
     expect(release).toHaveBeenCalledWith(second)
     expect(view.hasRenderer(second as HTMLElement)).toBe(false)
     expect(view.hasRenderer(first as HTMLElement)).toBe(true)
+  })
+})
+
+describe('a card whose type changes, and a deleted card brought back', () => {
+  it('releases the renderer when the card stops being text, and makes one again', async () => {
+    const { doc, view } = boardOf({ a: `one\n\n${YT}` })
+    await tick()
+    const el = cards(view)[0] as HTMLElement
+    expect(view.hasRenderer(el)).toBe(true)
+    const node = doc.getArray(NODES).get(0) as Y.Map<unknown>
+    doc.transact(() => node.set('type', 'file'), 'remote')
+    await tick()
+    expect(view.hasRenderer(el)).toBe(false)
+    expect(cards(view).every((c) => c.children.length === 0)).toBe(true)
+    doc.transact(() => node.set('type', 'text'), 'remote')
+    await tick()
+    const back = cards(view)[0] as HTMLElement
+    expect(view.hasRenderer(back)).toBe(true)
+    expect(shape(back)).toEqual(whole(`one\n\n${YT}`))
+  })
+
+  it('draws a card again when its deletion is undone', async () => {
+    const { view } = boardOf({ a: 'one\n\ntwo', b: 'x' })
+    await tick()
+    const store = view.store as unknown as { nodes: () => { id: string }[] }
+    view.onNodesDelete(store.nodes().filter((n) => n.id === 'a') as never)
+    await tick()
+    expect(cards(view)).toHaveLength(1)
+    view.onKey(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true }))
+    await tick()
+    expect(cards(view)).toHaveLength(2)
+    const shown = cards(view).map((c) => shape(c))
+    expect(shown).toContainEqual(whole('one\n\ntwo'))
+    for (const c of cards(view)) expect(view.hasRenderer(c as HTMLElement)).toBe(true)
+  })
+})
+
+describe('a loaded player in a list or quote', () => {
+  const REPROS: [string, string][] = [
+    [`- a\n- ${YT}\n- a`, `- a\n- a\n- ${YT}\n- a`],
+    [`- x\n- ${YT}\n- y`, `- y\n- x\n- ${YT}\n- y`],
+    [`- a\n- ${YT}\n- `, `- \n- a\n- ${YT}\n- `],
+    [`> b\n>\n> ${YT}\n>\n> a`, `> a\n>\n> b\n>\n> ${YT}\n>\n> a`],
+  ]
+
+  function loaded(text: string) {
+    const container = document.createElement('div')
+    document.body.append(container)
+    const blocks = new blockrender.BlockRenderer(container, { breaks: true })
+    blocks.update(text, undefined, 0, [])
+    const placeholder = container.querySelector('[data-embed-src]') as Element
+    const frame = loadEmbed(placeholder)
+    return { container, blocks, frame }
+  }
+
+  it.each(REPROS)('keeps it when an item is added above: %j', (before, after) => {
+    const { container, blocks, frame } = loaded(before)
+    expect(frame).not.toBeNull()
+    blocks.update(after, undefined, 0, [])
+    expect(container.querySelector('iframe')).toBe(frame)
+  })
+
+  it.each(REPROS)('keeps it in a card too: %j', async (before, after) => {
+    const { doc, view } = boardOf({ a: before })
+    await tick()
+    ;(view.element.querySelector('.embed-load') as HTMLElement).click()
+    const frame = view.element.querySelector('iframe')
+    expect(frame).not.toBeNull()
+    setText(doc, 'a', after)
+    await tick()
+    expect(view.element.querySelector('iframe')).toBe(frame)
+  })
+
+  it('keeps a ticked "Always load" box when an item is added above', () => {
+    const before = '- x\n- https://vimeo.com/76979871\n- y'
+    const container = document.createElement('div')
+    const blocks = new blockrender.BlockRenderer(container)
+    blocks.update(before, undefined, 0, [])
+    const box = container.querySelector('.embed-remember') as Element
+    toggleRemember(box)
+    blocks.update('- y\n- x\n- https://vimeo.com/76979871\n- y', undefined, 0, [])
+    expect(container.querySelector('.embed-remember')).toBe(box)
+    expect(box.getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('keeps it through random edits to the other items', () => {
+    const items = ['a', 'b', 'a', 'x y', '']
+    const [seeds, steps] = process.env.FUZZ ? [200, 6] : [20, 4]
+    for (let seed = 1; seed <= seeds; seed++) {
+      const next = rng(seed)
+      const pick = () => items[Math.floor(next() * items.length)] as string
+      const list = [pick(), YT, pick()]
+      const { container, blocks, frame } = loaded(list.map((i) => `- ${i}`).join('\n'))
+      for (let step = 0; step < steps; step++) {
+        const at = Math.floor(next() * (list.length + 1))
+        const kind = next()
+        const hold = list.indexOf(YT)
+        if (kind < 0.6 || list.length < 3) list.splice(at, 0, pick())
+        else {
+          const other = list.findIndex((v, i) => v !== YT && i === at % list.length)
+          if (other >= 0) list.splice(other, 1)
+        }
+        expect(hold).toBeGreaterThanOrEqual(0)
+        blocks.update(list.map((i) => `- ${i}`).join('\n'), undefined, 0, [])
+        expect(container.querySelector('iframe'), `seed ${seed} step ${step}: ${list}`).toBe(frame)
+      }
+    }
   })
 })
 
