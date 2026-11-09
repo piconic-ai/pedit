@@ -352,6 +352,7 @@ md.core.ruler.before('text_join', 'source_offsets', (state) => {
       }
     }
   }
+  let tableLevel = 0
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i] as Token
     if (token.type === 'fence' || token.type === 'code_block') {
@@ -365,7 +366,10 @@ md.core.ruler.before('text_join', 'source_offsets', (state) => {
         if (source.endsWith(line)) base = first + source.length - line.length
       }
       if (base >= 0) token.attrSet('data-src', String(base))
-    } else if (token.type === 'tr_open' && token.map) {
+    } else if (token.type === 'table_open') {
+      tableLevel = token.level
+    } else if (token.type === 'tr_open' && token.map && tableLevel === 0) {
+      // A table in a quote or a list has a prefix before its rows: left out.
       const row = src.slice(at(token.map[0]), lineEnd(token.map[0])).trim()
       const base =
         at(token.map[0]) + src.slice(at(token.map[0]), lineEnd(token.map[0])).search(/\S/)

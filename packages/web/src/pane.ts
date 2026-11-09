@@ -239,8 +239,9 @@ export class PreviewPane {
     if (!this.#active || !this.#dirty) return
     this.#dirty = false
     const { render, patch } = this.#renderer
-    this.#source = this.#text.toString()
-    patch(this.element, render(this.#source, this.#images))
+    const source = this.#text.toString()
+    patch(this.element, render(source, this.#images))
+    this.#source = source
     this.#loadRemembered()
     this.#images?.rendered?.()
     this.#onRender()

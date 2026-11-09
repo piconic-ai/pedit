@@ -299,6 +299,27 @@ describe('previewSelectionToSource', () => {
     expect(time(2000)).toBeLessThan(small * 12 + 50)
   })
 
+  it('leaves tables inside a quote or a list unmapped, never at a neighbour', () => {
+    for (const source of [
+      '> | x | x |\n> |---|---|\n> | y | y |\n',
+      '- | a | a |\n  |---|---|\n  | b | b |\n',
+      '1. | a | a |\n   |---|---|\n   | b | b |\n',
+      '> > | a | a |\n> > |---|---|\n> > | b | b |\n',
+      '- x\n- | q | q |\n  |---|---|\n  | r | r |\n',
+      '> p\n>\n> | a | a |\n> |---|---|\n> | b | b |\n',
+    ]) {
+      const root = mount(source)
+      const cells = root.querySelectorAll('td, th')
+      expect(cells.length).toBeGreaterThan(0)
+      for (const cell of cells) {
+        const range = document.createRange()
+        range.selectNodeContents(cell)
+        const got = previewSelectionToSource(root, range, source)
+        expect(got).toBeNull()
+      }
+    }
+  })
+
   it('tags blocks with their last line too', () => {
     const root = mount('a\nb\n\n- c\n- d\n')
     expect(
