@@ -83,7 +83,7 @@ Commands:
                             session started with --json
   pedit doctor <url>        Check a review page: its CSP, scripts and component version
   pedit self-update         Replace this pedit with the latest release, after checking it
-  pedit serve <file>        EXPERIMENTAL: hold a file's document for a local app, on a Unix socket
+  pedit serve <file>        EXPERIMENTAL: hold a file's document for a local app, over stdin and stdout
 Run pedit <command> --help for its details. To share a file named like a
 command, write ./close or pedit -- close.
 
@@ -212,6 +212,7 @@ func runShare(opts commandArgs, stdout, stderr io.Writer) int {
 	// Enter picks it up again in the same room, once the relay is back.
 	resumable := isTerminal(os.Stdin)
 	out.resumable = resumable
+	out.kept = opts.Keep > 0 || opts.Resume != ""
 	var ended atomic.Value // the final protocol.Status, once the server turned us away
 	shown := func(path string) string { return shownPath(path, file, arg, cwd) }
 	more, later := splitMore(opts)
@@ -546,6 +547,9 @@ func runJoin(opts commandArgs, out *ui, ev *events, stderr io.Writer) int {
 		return 1
 	}
 	file := displayPath(s.File())
+	// Before joined draws the live line: a room that is already kept said so
+	// during the join, and the line depends on what this link may do.
+	out.setEditor(s.Client.Keys().Access == protocol.AccessEdit)
 	out.joined(file, opts.Room, s.Temporary(), !opts.JSON && clipboard.Copy(s.File()))
 	if s.Client.Keys().Access != protocol.AccessEdit {
 		out.above("This link can comment only: edits to the copies are not sent.")

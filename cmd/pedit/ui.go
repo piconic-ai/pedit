@@ -34,6 +34,11 @@ type ui struct {
 	signingIn bool
 	// resumable is set when Enter picks a session up again after maintenance.
 	resumable bool
+	// kept is set for the host of a kept room, whose files are fixed when it
+	// opens (session.canShare), so the hint to add one is not shown.
+	kept bool
+	// editor is set for a guest whose link can edit, once the link is read.
+	editor bool
 	// keptUntil is when the relay stops keeping the room, once it said so.
 	keptUntil time.Time
 	// typing is set while the host types on a line of its own below the live
@@ -154,7 +159,9 @@ func (u *ui) sharing(files []string, url string, copied, scratch bool) {
 	}
 	lines = append(lines, "  "+roomLine(url), "", u.dim("Press Ctrl+C when you are done. "+saved))
 	if u.resumable {
-		lines = append(lines, u.dim("To share another file in this room, type its path and press Enter."))
+		if !u.kept {
+			lines = append(lines, u.dim("To share another file in this room, type its path and press Enter."))
+		}
 		lines = append(lines, u.dim("Press Ctrl+L for links that can only comment or read."))
 	}
 	lines = append(lines, "")
@@ -267,7 +274,7 @@ func (u *ui) expired(host bool, limit time.Duration) {
 }
 
 // installURL explains every way to install, and so to update, pedit.
-const installURL = "https://github.com/piconic-ai/pedit#install"
+const installURL = "https://github.com/piconic-ai/pedit/blob/main/docs/getting-started.md#install"
 
 // left confirms the copy is saved after leaving a room.
 func (u *ui) left(file string) {
@@ -277,6 +284,14 @@ func (u *ui) left(file string) {
 // leftTemporary confirms nothing is left behind after leaving a room.
 func (u *ui) leftTemporary() {
 	u.print("", u.green("✓")+" Left the room. The temporary copies were removed.", "")
+}
+
+// setEditor says whether this guest's link can edit, so the line for a kept
+// room can say what becomes of its edits (internal/session/kept_guest.go).
+func (u *ui) setEditor(editor bool) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.editor = editor
 }
 
 func (u *ui) setKeptUntil(until time.Time) {
@@ -539,6 +554,9 @@ func (u *ui) liveLine() string {
 		until := "for them"
 		if !u.keptUntil.IsZero() {
 			until = "until " + u.keptUntil.Format(time.RFC3339)
+		}
+		if u.editor {
+			return u.yellow("○") + " The host is away. The room is kept " + until + "; your edits wait on the relay until they are back."
 		}
 		return u.yellow("○") + " The host is away. The room is kept " + until + "; your copy is read-only until they are back."
 	case protocol.StatusDisconnected:
