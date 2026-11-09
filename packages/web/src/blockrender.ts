@@ -184,12 +184,16 @@ function renderMissed(
   }
 }
 
-/** The unused single-element entries: by what they look like, and those holding an embed. */
+/** The unused single-element entries: by a cheap look at their text, and those holding an embed. */
 interface Old {
   looks: Map<string, Entry[]>
   held: Entry[]
   taken: Set<Entry>
 }
+
+// What is cheap to read from an element and equal for elements that look the same;
+// only elements with the same sketch have their (costlier) rendered keys compared.
+const sketch = (el: Element) => `${el.tagName}${el.textContent}`
 
 function oldElements(unused: Map<string, Entry[]>): Old {
   const looks = new Map<string, Entry[]>()
@@ -198,7 +202,7 @@ function oldElements(unused: Map<string, Entry[]>): Old {
     for (const e of list) {
       const el = e.elements[0]
       if (e.elements.length !== 1 || !el) continue
-      const look = renderedKey(el)
+      const look = sketch(el)
       const same = looks.get(look)
       if (same) same.push(e)
       else looks.set(look, [e])
@@ -208,14 +212,23 @@ function oldElements(unused: Map<string, Entry[]>): Old {
   return { looks, held, taken: new Set() }
 }
 
+// The first unused old entry that renders as `only`, or null.
+function lookAlike(old: Old, only: Element): Entry | null {
+  const list = old.looks.get(sketch(only))
+  if (!list) return null
+  const key = renderedKey(only)
+  const at = list.findIndex(
+    (e) => !old.taken.has(e) && renderedKey(e.elements[0] as Element) === key,
+  )
+  return at < 0 ? null : (list.splice(at, 1)[0] as Entry)
+}
+
 // The elements of an old entry that `fresh` stands for, or null: one that looks the
 // same, else a held one that `fresh` is an edit of, patched.
 function keepOld(old: Old, fresh: Element[]): Element[] | null {
   const only = fresh[0]
   if (fresh.length !== 1 || !only) return null
-  const list = old.looks.get(renderedKey(only))
-  let same = list?.shift()
-  while (same && old.taken.has(same)) same = list?.shift()
+  const same = lookAlike(old, only)
   if (same) {
     copyRenderedLines(only, same.elements[0] as Element)
     old.taken.add(same)

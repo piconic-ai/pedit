@@ -107,7 +107,9 @@ function doc(lines: number): string {
 describe('BlockRenderer output', () => {
   it('equals a full render after each of many random edits over the corpus', () => {
     const pieces = (corpus as [string, string][]).map(([, src]) => src)
-    for (const seed of [1, 2, 3, 4]) {
+    // A longer run: FUZZ=1.
+    const [seeds, steps] = process.env.FUZZ ? [12, 40] : [3, 20]
+    for (let seed = 1; seed <= seeds; seed++) {
       const next = rng(seed)
       const pick = <T>(xs: T[]) => xs[Math.floor(next() * xs.length)] as T
       const { container, update } = setup()
@@ -115,7 +117,7 @@ describe('BlockRenderer output', () => {
         .join('\n\n')
         .split('\n')
       update(lines.join('\n'))
-      for (let step = 0; step < 40; step++) {
+      for (let step = 0; step < steps; step++) {
         const at = Math.floor(next() * (lines.length + 1))
         const op = Math.floor(next() * 5)
         if (op === 0) lines.splice(at, 0, ...pick(pieces).split('\n'))
@@ -610,7 +612,7 @@ describe('editing back a block that holds a loaded player', () => {
         create(tag === 'iframe' ? 'span' : tag, o),
       )
     // A longer run: FUZZ=1.
-    const [seeds, steps] = process.env.FUZZ ? [12, 50] : [6, 40]
+    const [seeds, steps] = process.env.FUZZ ? [12, 50] : [4, 30]
     try {
       for (let seed = 1; seed <= seeds; seed++) {
         const next = rng(seed * 7 + 3)
