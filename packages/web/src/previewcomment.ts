@@ -40,11 +40,22 @@ export function commentOnPreviewSelection(opts: {
     const s = editor.state.selection.main
     return current !== null && s.from === current.from && s.to === current.to
   }
+  // Drops the editor selection this view made, if it still is the editor's.
+  const drop = () => {
+    if (!ours()) return
+    current = null
+    editor.dispatch({ selection: { anchor: editor.state.selection.main.head } })
+  }
   const settle = () => {
     if (!pane.active) return
     const sel = doc.getSelection()
     const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null
-    if (!range || !root.contains(range.commonAncestorContainer)) return
+    if (!range || !root.contains(range.commonAncestorContainer)) {
+      // The selection left the preview (a drag past its edge, Select all, the
+      // comments panel): what this view set is no longer what is selected.
+      drop()
+      return
+    }
     const blocks = pane.blocks
     const source = editor.state.doc.toString()
     // The page shows another text than the editor holds: its places are not the
@@ -53,10 +64,7 @@ export function commentOnPreviewSelection(opts: {
     const at = previewSelectionToSource(blocks, range, source)
     if (!at) {
       // Nothing to comment on any more: drop the selection this view made.
-      if (ours()) {
-        current = null
-        editor.dispatch({ selection: { anchor: editor.state.selection.main.head } })
-      }
+      drop()
       return
     }
     // Before the dispatch: the target is worked out, and the button placed, by it.
@@ -80,8 +88,11 @@ export function commentOnPreviewSelection(opts: {
         .find((r) => r.width > 0 && r.height > 0)
       if (!last) return null
       const clip = root.getBoundingClientRect()
-      // In the right margin of the preview, so the button covers no text.
-      return { x: clip.left + root.clientWidth - 16, y: (last.top + last.bottom) / 2, clip }
+      // In the right padding of the preview, so the button covers no text; on a
+      // narrow screen the padding is small and the button sits in the middle of it.
+      const pad = Number.parseFloat(doc.defaultView?.getComputedStyle(root).paddingRight ?? '')
+      const inset = Number.isFinite(pad) ? Math.min(16, Math.max(8, pad / 2)) : 16
+      return { x: clip.left + root.clientWidth - inset, y: (last.top + last.bottom) / 2, clip }
     },
     watch(fn) {
       root.addEventListener('scroll', fn)

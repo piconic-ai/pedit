@@ -2,10 +2,13 @@
 
 import { EditorState } from '@codemirror/state'
 import { EditorView, type ViewUpdate } from '@codemirror/view'
+import { editKeys, Relay, TEST_ROOM } from '@pedit/protocol/testing'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { BlockRenderer } from '../src/blockrender.ts'
 import { textTarget } from '../src/core/comments.ts'
-import type { PreviewPlace } from '../src/core/files.ts'
+import { mountTextEditor } from '../src/core/editor.ts'
+import { FileSet, type PreviewPlace } from '../src/core/files.ts'
+import { openRoom } from '../src/core/open-room.ts'
 import { Store } from '../src/core/store.ts'
 import { commentOnPreviewSelection } from '../src/previewcomment.ts'
 
@@ -157,6 +160,7 @@ describe('commentOnPreviewSelection', () => {
 
   it('places the button by the preview rect, in its margin, clipped to it', () => {
     const t = setup('Hello brave world\n')
+    t.root.style.paddingRight = '40px'
     t.select('brave')
     const place = t.hooks().place()
     // The last non-empty rect (10-30), 16px inside the right edge of the preview.
@@ -188,6 +192,33 @@ describe('commentOnPreviewSelection', () => {
     t.stop()
   })
 
+  it('drops the selection it made when the selection leaves the preview', () => {
+    const t = setup('Hello brave world\n')
+    t.select('brave')
+    const outside = document.createElement('p')
+    outside.textContent = 'panel'
+    document.body.append(outside)
+    document.getSelection()?.selectAllChildren(outside)
+    document.dispatchEvent(new Event('selectionchange'))
+    vi.advanceTimersByTime(100)
+    expect(t.view.state.selection.main.empty).toBe(true)
+    expect(t.hooks().place()).toBeNull()
+    // Nothing of someone else's selection is touched.
+    t.view.dispatch({ selection: { anchor: 0, head: 5 } })
+    document.dispatchEvent(new Event('selectionchange'))
+    vi.advanceTimersByTime(100)
+    expect(t.main()).toEqual([0, 5])
+    t.stop()
+  })
+
+  it('sits in the padding of a narrow preview', () => {
+    const t = setup('Hello brave world\n')
+    t.root.style.paddingRight = '16px'
+    t.select('brave')
+    expect(t.hooks().place()?.x).toBe(100 + 380 - 8)
+    t.stop()
+  })
+
   it('stops listening', () => {
     const t = setup('Hello brave world\n')
     t.select('brave')
@@ -197,5 +228,52 @@ describe('commentOnPreviewSelection', () => {
     t.view.dispatch({ selection: { anchor: 0 } })
     t.select('world')
     expect(t.main()).toEqual([0, 0])
+  })
+})
+
+describe('with the real editor', () => {
+  it('keeps the button placed in the subscribers of a remote insert above the selection', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('ResizeObserver', FakeResize)
+    Range.prototype.getClientRects = () =>
+      [{ top: 10, bottom: 30, width: 5, height: 20 }] as unknown as DOMRectList
+    Range.prototype.getBoundingClientRect ??= () => new DOMRect()
+    const keys = await editKeys()
+    const room = await openRoom({
+      relay: new URL('https://relay.test'),
+      roomId: TEST_ROOM,
+      fragment: keys.fragments.edit as string,
+      me: { name: 'Guest' },
+      createSocket: new Relay().create,
+    })
+    const files = new FileSet(room, { name: 'Guest' })
+    const host = document.body.appendChild(document.createElement('div'))
+    const textEditor = mountTextEditor({ room, files, parent: host })
+    textEditor.view.dispatch({ changes: { from: 0, insert: 'Hello brave world\n' } })
+    const root = document.body.appendChild(document.createElement('article'))
+    const blocks = new BlockRenderer(root)
+    blocks.update('Hello brave world\n', undefined, 0, [])
+    const stop = commentOnPreviewSelection({
+      pane: { element: root, active: true, blocks, onRendered: () => () => {} },
+      textEditor,
+      files,
+    })
+    const text = root.querySelector('p')?.firstChild as Text
+    const range = document.createRange()
+    range.setStart(text, 6)
+    range.setEnd(text, 11)
+    document.getSelection()?.removeAllRanges()
+    document.getSelection()?.addRange(range)
+    document.dispatchEvent(new Event('selectionchange'))
+    vi.advanceTimersByTime(100)
+    expect(textEditor.view.state.selection.main.from).toBe(6)
+    // What the composer does on a change of the selection: ask where the button goes.
+    const seen: boolean[] = []
+    textEditor.selection.subscribe(() => seen.push(files.targetPlace() !== null))
+    textEditor.view.dispatch({ changes: { from: 0, insert: 'Oh! ' } })
+    expect(seen).toEqual([true])
+    stop()
+    textEditor.dispose()
+    await room.dispose()
   })
 })

@@ -78,9 +78,11 @@ export function mountTextEditor(opts: TextEditorOptions): TextEditor {
       EditorView.updateListener.of((u) => {
         const s = u.state.selection.main
         const was = selection.get()
+        // Before the selection store: its subscribers aim the button, and what
+        // follows the edits (see onUpdate) must have caught up by then.
+        for (const fn of [...updated]) fn(u)
         if (s.from !== was.from || s.to !== was.to) selection.set({ from: s.from, to: s.to })
         if (u.docChanged || u.geometryChanged) for (const fn of [...moved]) fn()
-        for (const fn of [...updated]) fn(u)
       }),
       imagePaste({
         blocked: room.noImages,
