@@ -102,6 +102,21 @@ describe('followTarget', () => {
     }
   })
 
+  it('starts at the first of several roots sharing a line', () => {
+    const pane = document.createElement('article')
+    Object.defineProperty(pane, 'scrollHeight', { value: 5000 })
+    const lines = [0, 5, 5, 5, 9, 9, 14]
+    lines.forEach((l, i) => {
+      const p = document.createElement('p')
+      p.dataset.line = String(l)
+      tops.set(p, i * 300)
+      pane.append(p)
+    })
+    for (const line of [0, 4.5, 5, 6, 8.9, 9, 10, 13, 14, 20]) {
+      expect(followTarget(pane, line, 16), `line ${line}`).toBeCloseTo(full(pane, line, 16), 9)
+    }
+  })
+
   it('scrolls an empty preview to the top', () => {
     const pane = document.createElement('article')
     Object.defineProperty(pane, 'scrollHeight', { value: 0 })

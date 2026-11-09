@@ -102,7 +102,12 @@ function lineOf(el: Element | undefined): number | undefined {
     : undefined
 }
 
-/** The index of the last child whose first line is at or before `line`, or -1. Children without a line are skipped. */
+/**
+ * The index of the first of the children sharing the last first line at or before
+ * `line`, or -1. Children without a line are skipped. Roots must be in document
+ * order with non-decreasing lines; when several share a line (one block rendered
+ * to several roots) the first is returned, so none of them is missed.
+ */
 function rootAt(children: HTMLCollection, line: number): number {
   let found = -1
   let lo = 0
@@ -120,6 +125,13 @@ function rootAt(children: HTMLCollection, line: number): number {
     } else {
       hi = mid - 1
     }
+  }
+  // Step back over roots that share the found line.
+  for (let j = found - 1; found >= 0 && j >= 0; j--) {
+    const at = lineOf(children[j])
+    if (at === undefined) continue
+    if (at !== lineOf(children[found])) break
+    found = j
   }
   return found
 }
