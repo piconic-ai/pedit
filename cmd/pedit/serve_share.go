@@ -49,6 +49,7 @@ type liveShare struct {
 	// kept: the room outlives the share, with a record.
 	kept   bool
 	bridge *bridge
+	feed   *commentsFeed
 	last   []session.Person
 	pmu    sync.Mutex
 }
@@ -105,6 +106,7 @@ func (l *liveSharer) Share(ctx context.Context, req shareRequest) error {
 		}
 	}
 	ls := &liveShare{kept: req.Keep > 0, bridge: &bridge{onError: func(err error) { fmt.Fprintln(l.stderr, "pedit:", err) }}}
+	ls.feed = newCommentsFeed(func(ev map[string]any) { l.st.Event("comments", ev) })
 	ls.peer, err = l.srv.AttachPeer(serve.PeerHandler{
 		Update: func(u []byte) {
 			ls.bridge.run(func(s *session.Session) error { return s.FromSource(u) })
@@ -152,8 +154,10 @@ func (l *liveSharer) Share(ctx context.Context, req shareRequest) error {
 			default:
 			}
 		},
-		OnPeers:         func(p []session.Person) { l.peers(ls, p) },
-		OnRoomAwareness: func(_ uint64, _ protocol.Access, u []byte) { _ = ls.peer.ApplyAwareness(u) },
+		OnPeers: func(p []session.Person) { l.peers(ls, p) },
+		// The app is told the threads, and where they point, as they change.
+		OnCommentsChanged: ls.feed.poke,
+		OnRoomAwareness:   func(_ uint64, _ protocol.Access, u []byte) { _ = ls.peer.ApplyAwareness(u) },
 	})
 	if err != nil {
 		ls.peer.Close()
@@ -170,6 +174,7 @@ func (l *liveSharer) Share(ctx context.Context, req shareRequest) error {
 		links["comment"] = room + "." + comment
 	}
 	l.st.Event("shared", answerWith(ctx, map[string]any{"room": room, "links": links, "keptUntil": keptUntil(ctx, s, req, kept), "resumed": resume != ""}))
+	ls.feed.start(s)
 	return nil
 }
 
@@ -334,6 +339,8 @@ func (l *liveSharer) ended(ls *liveShare, st protocol.Status) {
 	case protocol.StatusMaintenance:
 		reason = "maintenance"
 	}
+	// The feed stops first: no comments event may follow room_ended.
+	l.cur.feed.stop()
 	l.st.Event("room_ended", map[string]any{"reason": reason})
 	l.leave()
 }
@@ -571,6 +578,7 @@ func (l *liveSharer) leave() {
 	ls := l.cur
 	l.cur = nil
 	ls.bridge.close()
+	ls.feed.stop()
 	// Serve saves the file before the last record is written.
 	l.flush()
 	if err := ls.session.Stop(); err != nil {

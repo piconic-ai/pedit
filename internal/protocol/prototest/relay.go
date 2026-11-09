@@ -437,6 +437,8 @@ func (c *Conn) Leave() error {
 
 // Subprotocol is the version the relay speaks.
 func (c *Conn) Subprotocol() string {
+	c.relay.mu.Lock()
+	defer c.relay.mu.Unlock()
 	if c.relay.Keep > 0 {
 		return "pedit-v7"
 	}

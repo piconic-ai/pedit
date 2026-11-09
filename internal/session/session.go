@@ -70,6 +70,11 @@ type Options struct {
 	// included; not with the comments there when a file was added. It must
 	// not call into the Session.
 	OnComments func(CommentChange)
+	// OnCommentsChanged is called when a comments doc, or the text its
+	// anchors point into, was updated, so that PlacedThreads may differ. It
+	// runs under the doc's lock: it must be quick, and must not call into the
+	// Session.
+	OnCommentsChanged func()
 
 	// Keep asks the relay to keep the room open for this long after the host
 	// leaves on purpose (docs/design/rooms-away.md), and has Start write the
