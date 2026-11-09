@@ -174,7 +174,8 @@ describe('parseBlocks', () => {
     expect(blocks).toHaveLength(1)
     expect(blocks[0]?.tokens.find((t) => t.type === 'inline')?.children).toEqual([])
     expect(Object.keys(references)).toEqual(['X'])
-    expect(refs).toContain('/y')
+    expect(refs).toMatch(/^\w+\.\w+$/)
+    expect(parseBlocks('a *b*\n\n[x]: /z\n').refs).not.toBe(refs)
   })
 
   it('gives nested data-line relative to the block', () => {
@@ -208,8 +209,28 @@ describe('keyOf', () => {
     expect(k[0]).not.toBe(k[1])
   })
 
-  it('does not depend on map', () => {
-    expect(keys('a\n\nb\n')[0]).toBe(keys('x\n\n\n\na\n')[1])
+  it('is the same for the same block elsewhere, whatever lies around it', () => {
+    expect(keys('a *x*\n\nb\n')[0]).toBe(keys('z\n\n\n\na *x*\n')[1])
+    expect(keys('x\n\n- a\n  - b\n')[1]).toBe(keys('y\n\ny\n\n- a\n  - b\n')[2])
+  })
+
+  it.each([
+    ['- a\n\n- b\n', '- a\n\n\n- b\n'],
+    ['> a\n>\n> b\n', '> a\n>\n>\n> b\n'],
+    ['- a\n\n  b\n', '- a\n\n\n  b\n'],
+    [
+      '- https://www.youtube.com/watch?v=dQw4w9WgXcQ\n\n- b\n',
+      '- https://www.youtube.com/watch?v=dQw4w9WgXcQ\n\n\n- b\n',
+    ],
+    ['- a\n', '-   a\n'],
+    ['# h\n', '#   h  #\n'],
+    ['> a\n', '>    a\n'],
+    ['a\n', '   a\n'],
+    ['***\n', '* * *\n'],
+  ])('tells %j from %j (the output or its source map differs)', (a, b) => {
+    expect(keys(a)).toHaveLength(1)
+    expect(keys(b)).toHaveLength(1)
+    expect(keys(a)[0]).not.toBe(keys(b)[0])
   })
 
   it('re-keys only blocks with [ when a reference definition changes', () => {
@@ -268,6 +289,39 @@ describe('keyOf', () => {
 
   it('tells ordered list starts apart', () => {
     expect(keys('1. a\n')[0]).not.toBe(keys('3. a\n')[0])
+  })
+
+  it('costs about one pass over the block, not more', () => {
+    const list = `${Array.from({ length: 40000 }, (_, i) => `- item ${i}`).join('\n')}\n`
+    const parsed = parseBlocks(list)
+    expect(parsed.blocks).toHaveLength(1)
+    const block = parsed.blocks[0] as Block
+    // Count the work by doubling the input: a quadratic key would grow four-fold.
+    const half = parseBlocks(list.slice(0, list.length / 2)).blocks[0] as Block
+    const time = (b: Block) => {
+      const t = performance.now()
+      for (let i = 0; i < 5; i++) keyOf(b, parsed.refs, 0, false)
+      return performance.now() - t
+    }
+    time(half)
+    const [small, big] = [time(half), time(block)]
+    expect(big / Math.max(small, 0.05)).toBeLessThan(3.5)
+  })
+
+  it('costs less than the block parse on a large document', () => {
+    const src = mixed(10000)
+    const run = (fn: () => void) => {
+      fn()
+      const t = performance.now()
+      for (let i = 0; i < 3; i++) fn()
+      return performance.now() - t
+    }
+    const parsed = parseBlocks(src)
+    const parse = run(() => parseBlocks(src))
+    const key = run(() => {
+      for (const b of parsed.blocks) keyOf(b, parsed.refs, 0, false)
+    })
+    expect(key).toBeLessThan(parse)
   })
 
   it('keeps the key length-prefixed so fields cannot run together', () => {

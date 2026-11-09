@@ -357,7 +357,7 @@ export interface ParsedBlocks {
   blocks: Block[]
   /** The reference definitions the block parse found. */
   references: References
-  /** A string that changes when the definitions do; pass it to keyOf. */
+  /** A short digest that changes when the definitions do; pass it to keyOf. */
   refs: string
 }
 
@@ -414,7 +414,7 @@ export function parseBlocks(source: string): ParsedBlocks {
     i = end
   }
   const references = env.references ?? {}
-  return { blocks, references, refs: JSON.stringify(references) }
+  return { blocks, references, refs: digestOf(JSON.stringify(references)) }
 }
 
 function copyToken(state: StateCore, t: Token): Token {
@@ -455,28 +455,85 @@ export function renderBlock(block: Block, env: BlockEnv): Element[] {
   }
 }
 
-/** Escapes nothing; length-prefixes, so no two different field lists join alike. */
-const field = (s: string) => `${s.length}:${s}`
+// Two 32-bit FNV-1a style hashes run together (different bases and multipliers),
+// 64 bits in all, over strings and numbers, with no string building. Module-level
+// state, not an object per key: this runs for every block on every render.
+let ha = 0
+let hb = 0
+
+function hnum(n: number): void {
+  ha = Math.imul(ha ^ n, 0x01000193)
+  hb = Math.imul(hb ^ n, 0x85ebca6b) ^ (hb >>> 15)
+}
+
+function hstr(s: string): void {
+  // The length first, so no two field lists feed alike.
+  const n = s.length
+  hnum(n)
+  let a = ha
+  let b = hb
+  for (let i = 0; i < n; i++) {
+    const c = s.charCodeAt(i)
+    a = Math.imul(a ^ c, 0x01000193)
+    b = Math.imul(b ^ c, 0x85ebca6b) ^ (b >>> 15)
+  }
+  ha = a
+  hb = b
+}
+
+function digestOf(s: string): string {
+  ha = 0x811c9dc5
+  hb = 0x9747b28c
+  hstr(s)
+  return hashDigest()
+}
+
+function hashDigest(): string {
+  return `${(ha >>> 0).toString(36)}.${(hb >>> 0).toString(36)}`
+}
 
 /**
- * What decides how a block renders: every block-level token field but `map`, and
- * only for the blocks that can depend on it, the references (a `[` in the text),
- * the images' state (`![`), and always `breaks`. Equal keys mean equal output
- * (up to the block's first line).
+ * What decides how a block renders, exactly: the block's original `src` plus a
+ * hash of everything else the output (and anything a later step caches from it)
+ * depends on: every block-level token field including its block-relative `map`
+ * (nested data-line and embed lines come from it; a frontmatter block is its own
+ * token type, so it never equals the same text later), the references (when some text has a `[`), the images'
+ * state (`![`) and `breaks`. Equal keys mean equal output, and a hash collision
+ * can only matter between blocks with identical source. `refs` is the digest
+ * parseBlocks returns.
  */
 export function keyOf(block: Block, refs: string, imagesVersion: number, breaks: boolean): string {
-  let key = breaks ? 'b' : 'n'
+  ha = 0x811c9dc5
+  hb = 0x9747b28c
+  hnum(breaks ? 1 : 0)
   let links = false
   let image = false
   for (const t of block.tokens) {
-    key += `|${t.type},${t.tag},${t.nesting},${t.level},${field(t.markup)},${field(t.info)},${t.hidden ? 1 : 0},${t.block ? 1 : 0},${field(t.content)}`
-    if (t.attrs) for (const [k, v] of t.attrs) key += `,${field(k)}=${field(String(v))}`
+    hstr(t.type)
+    hstr(t.tag)
+    hstr(t.markup)
+    hstr(t.info)
+    hstr(t.content)
+    hnum(t.nesting)
+    hnum(t.level)
+    hnum((t.hidden ? 1 : 0) | (t.block ? 2 : 0))
+    if (t.map) {
+      hnum(t.map[0] + 1)
+      hnum(t.map[1] + 1)
+    } else hnum(0)
+    if (t.attrs) {
+      for (const [k, v] of t.attrs) {
+        hstr(k)
+        hstr(String(v))
+      }
+    }
+    hnum(-1)
     if (!links && t.content.includes('[')) links = true
     if (!image && t.content.includes('![')) image = true
   }
-  if (links) key += `|refs:${refs}`
-  if (image) key += `|img:${imagesVersion}`
-  return key
+  if (links) hstr(refs)
+  if (image) hnum(imagesVersion)
+  return `${hashDigest()}:${block.src}`
 }
 
 /**
