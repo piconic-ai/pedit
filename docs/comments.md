@@ -7,10 +7,12 @@ a script or an AI agent reads and answers them from the command line.
 ## In the browser
 
 Select some text, a cell of a table (or a whole row or column), or a node of a
-canvas, and write a comment in the panel beside it. Everyone in the room sees
-it at once, marked where it points, and can reply or resolve it; resolved
-threads stay under Resolved, to read again or reopen. You can edit or delete
-your own comments from their ⋮ menu (deleting asks first).
+canvas; a small button appears beside the selection (or press the shortcut)
+and opens a composer right there. Everyone in the room sees the comment at
+once, marked where it points. The panel beside the editor lists the threads,
+where anyone can reply or resolve them; resolved threads stay under Resolved,
+to read again or reopen. You can edit or delete your own comments from their
+⋮ menu (deleting asks first).
 
 Each file's tab (or its name, in a room of one file) shows how many of its
 comments are still open. The speech bubble in the header, or Ctrl/⌘+Alt+M,
