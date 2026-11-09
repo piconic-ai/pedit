@@ -2,7 +2,7 @@
 
 How pedit encrypts a room, what the relay can see and do, and what pedit does
 not protect against. The short version is in
-[privacy and security](../README.md#privacy-and-security).
+[privacy and security](../README.md#how-it-stays-private).
 
 ## In a browser, you trust the relay
 
@@ -156,6 +156,8 @@ AES-GCM rejects a frame made or altered without the key.
   person's access cannot be revoked.
 - **Comments are not checked by author.** Anyone with a comment-only or edit
   link can change or delete any comment.
+- **No control over copies.** Closing a room does not erase copies
+  participants have made, and you must also trust their devices and browsers.
 
 ## Where a link can leak
 
