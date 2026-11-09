@@ -37,7 +37,8 @@ Entries looked at in the dashboard, and what each keeps:
 
 The relay keeps these logs to see which routes fail, and accepts that they
 hold the admission tokens: a token cannot decrypt anything, and stops
-working when its room ends, within 24 hours
+working when its room ends: within 24 hours while the host is connected, or
+at a kept room's deadline, at most 7 days after the host left
 ([room admission](room-admission.md)).
 
 ## Room IDs in paths

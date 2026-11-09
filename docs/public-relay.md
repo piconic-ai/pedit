@@ -104,7 +104,8 @@ country, city, postal code, coordinates, time zone, network (ASN and
 organization), and the TLS version, cipher and client fingerprints. The
 request headers include the admission tokens (`sec-websocket-protocol`,
 `x-pedit-admission`, `x-pedit-read-admission`), stored in plain text for the
-7 days; the host token (`authorization`) is masked. The relay accepts that: a
+7 days; the host token (`authorization`) was masked in the entries looked at.
+The relay accepts that: a
 token cannot decrypt anything, and stops working when its room ends
 ([room admission](contributing/room-admission.md)).
 
@@ -251,8 +252,8 @@ approximate ([Cloudflare](https://developers.cloudflare.com/workers/runtime-apis
 The new-room limit counts `POST /api/rooms` requests. The relay derives a
 room's ID from its host token without remembering which tokens it issued, so a
 live client can make its own and skip that creation request; WebSocket clients
-are still held to the connection limit. A guest over the rate limits is disconnected and
-reconnects; a host over them ends the session. A live room ends 24 hours after its
+are still held to the connection limit. A client over the rate limits is disconnected and
+reconnects, with backoff; a host's room waits for it as for any dropped host. A live room ends 24 hours after its
 host's connection began, even if the host is still connected or has reconnected
 since: everyone is disconnected and its link stops working. Running pedit
 again starts a new room with a new link. A pedit released before this limit

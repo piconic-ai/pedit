@@ -25,7 +25,9 @@ Your own relay starts with wider defaults, and you set the limits yourself:
 A network is one IP address, or for IPv6 one /64, so everyone behind the same
 NAT or Wi-Fi counts together. A person never gets near 20 new rooms a minute,
 but a class or workshop starting pedit at the same moment on one Wi-Fi can:
-the CLI then says to try again in a minute. [Room limits](#room-limits) says
+the CLI then says to try again in a minute. A guest who finds the room full
+is told so in the editor. A client over the connection limit shows the relay
+as busy and reconnects on its own after a few seconds. [Room limits](#room-limits) says
 how to change each value; the public relay's full list is in
 [the public relay](public-relay.md#limits).
 
@@ -44,9 +46,12 @@ namespace and an R2 bucket for it. The new repository has `wrangler.json` at
 its root; the paths on this page are in that repository. The relay is public
 until you set up Access.
 
-Later deploys run `pnpm run deploy` in that repository. It publishes the
-Worker and applies the image cleanup rules
-([attachment cleanup](#attachment-cleanup)).
+The button also connects the repository to Workers Builds, which deploys on
+each push. Check in its build settings that the deploy command is
+`pnpm run deploy`: that publishes the Worker and applies the image cleanup
+rules ([attachment cleanup](#attachment-cleanup)); a plain `wrangler deploy`
+does not apply them. `pnpm run deploy` by hand in the repository does the
+same.
 
 ## Point the CLI at it
 
@@ -134,7 +139,10 @@ bindings `ROOM_CREATION_LIMIT` and `CONNECTION_LIMIT`, in `ratelimits` in
 raise them, for example for a class that starts pedit together, or remove a
 binding to drop that limit. Their `namespace_id` must not be used by another
 Worker in the same Cloudflare account. The limits are counted per Cloudflare
-location and are approximate.
+location and are approximate. The public relay also limits requests about
+kept rooms (`KEEP_REQUEST_LIMIT`, 1,200 a minute from one network); the
+template has no such binding, so those requests are unlimited unless you add
+one with that name.
 
 ## Keeping the server and CLIs in step
 
@@ -143,8 +151,8 @@ they connect. Patch releases never change it; a minor release may. When it
 changes, a CLI older than the server is told to update pedit, and a CLI newer
 than the server says the server is older. Update the server when your CLIs
 move to a new minor release. The CLI offers versions 8 and 7
-(`internal/protocol/admission.go`), so it still works with a server one
-version behind; a server older than that refuses it.
+(`internal/protocol/admission.go` in this repository), so it still works with
+a server one version behind; a server older than that refuses it.
 
 ## Attachment cleanup
 
@@ -185,9 +193,10 @@ If you put a proxy, tracing or logging in front of the relay, treat the
 `X-Pedit-Admission`, `X-Pedit-Read-Admission` and `Sec-WebSocket-Protocol`
 request headers as secrets, and never put the token in a URL or query
 parameter. Image requests and CLI WebSocket handshakes refuse redirects, so
-configure the CLI with the final URL. The relay refuses browser WebSockets
-whose `Origin` differs from the URL it is served at, so a proxy must keep the
-`Host` header. Workers Logs, if you turn them on (`observability` in
+configure the CLI with the final URL. The relay refuses a browser WebSocket
+whose `Origin` differs from the URL it is served at, unless the room's host
+let that origin in (a page of an app's own, [review page](review-page.md)), so
+a proxy must keep the `Host` header. Workers Logs, if you turn them on (`observability` in
 `wrangler.json`), keep request headers, these included; what the public
 relay's logs hold is in [relay logs](contributing/relay-logs.md).
 
