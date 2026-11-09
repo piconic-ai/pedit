@@ -126,7 +126,12 @@ export class BlockRenderer {
    * offsets in `block.src`; `offset` is where that starts in the text.
    */
   twin(at: number | Element): Twin | null {
-    const entry = typeof at === 'number' ? this.#entries[at] : this.#byRoot.get(at)
+    const entry =
+      typeof at === 'number'
+        ? this.#entries[at]
+        : at.parentNode === this.#container
+          ? this.#byRoot.get(at)
+          : undefined
     if (!entry) return null
     const elements = renderBlock(entry.block, { ...this.#env, breaks: this.#breaks, spans: true })
     if (this.#decorate) for (const root of elements) this.#decorate(root)

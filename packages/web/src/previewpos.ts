@@ -35,14 +35,23 @@ function posState(Base: InlineStateClass): InlineStateClass {
   return class PosState extends Base {
     #pending = ''
     #start = 0
+    // Where `pos` was when `pending` was last read, until it is written. Every append
+    // is `pending += text`: it reads, may advance `pos` (the fallback in markdown-it's
+    // tokenize does `pending += src[pos++]`, so `pos` has moved by the time it is
+    // written), then writes. The read is where the text begins.
+    #readAt = -1
     constructor(...args: ConstructorParameters<InlineStateClass>) {
       super(...args)
       Object.defineProperty(this, 'pending', {
         configurable: true,
         enumerable: true,
-        get: () => this.#pending,
+        get: () => {
+          this.#readAt = this.pos
+          return this.#pending
+        },
         set: (value: string) => {
-          if (value && !this.#pending) this.#start = this.pos
+          if (value && !this.#pending) this.#start = this.#readAt >= 0 ? this.#readAt : this.pos
+          this.#readAt = -1
           this.#pending = value
         },
       })

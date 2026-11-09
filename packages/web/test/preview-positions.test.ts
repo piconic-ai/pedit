@@ -251,3 +251,137 @@ describe('positions over edited corpus documents', () => {
     FUZZ ? 600_000 : 20_000,
   )
 })
+
+/** The runs of a block's twin: text, offset, and where its first character is in the block's text. */
+function runsOf(src: string): { text: string; at: number; index: number; block: Block }[] {
+  const { blocks, references } = parseBlocks(src)
+  const out: { text: string; at: number; index: number; block: Block }[] = []
+  for (const block of blocks) {
+    const roots = renderBlock(block, envOf(references, true))
+    const texts: Text[] = []
+    for (const root of roots) {
+      const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+      for (let n = w.nextNode(); n; n = w.nextNode()) texts.push(n as Text)
+    }
+    for (const el of marked(roots)) {
+      const first = texts.find((t) => el.contains(t))
+      if (!first) continue
+      const index = texts.slice(0, texts.indexOf(first)).reduce((n, t) => n + t.data.length, 0)
+      out.push({
+        text: el.textContent ?? '',
+        at: Number(el.getAttribute('data-src')),
+        index,
+        block,
+      })
+    }
+  }
+  return out
+}
+
+function visible(src: string): string {
+  const { blocks, references } = parseBlocks(src)
+  return blocks.map((b) => text(renderBlock(b, envOf(references)))).join('')
+}
+
+describe('where a run starts', () => {
+  it('is exact when the run repeats the character after it, or is unmapped', () => {
+    const cases: [string, string, number][] = [
+      ['[[a](u)', '[', 0],
+      ['!![a](u)', '!', 0],
+      ['!!!![Img](i)', '!!!', 0],
+      ['<<https://x.y> w', '<', 0],
+      ['&&amp; z', '&', 0],
+      ['x\n[[[b](u) y', '[[', 2],
+    ]
+    for (const [src, run, at] of cases) {
+      const hit = runsOf(src).find((r) => r.text.startsWith(run) && r.at !== undefined)
+      if (hit) expect([src, hit.at]).toEqual([src, at])
+    }
+  })
+
+  it('maps a run that starts with a bracket', () => {
+    for (const [src, want, at] of [
+      ['- [ ] Todo\n', '[ ] Todo', 2],
+      ['[a] b\n', '[a] b', 0],
+      ['x [a] b\n', 'x [a] b', 0],
+      ['[[a](u)\n', '[', 0],
+    ] as const) {
+      const r = runsOf(src).find((x) => x.text.includes(want.slice(0, 1)) && x.at === at)
+      expect(r, src).toBeDefined()
+      expect(r?.block.src.slice(r.at, r.at + r.text.length), src).toBe(r?.text)
+    }
+  })
+
+  it(
+    'is the first unconsumed character: changing it changes the run at index 0',
+    () => {
+      let seed = 5
+      const rnd = (n: number) => {
+        seed = (seed * 1103515245 + 12345) % 2147483648
+        return seed % n
+      }
+      const alphabet = [
+        '[',
+        ']',
+        '(',
+        ')',
+        '!',
+        '<',
+        '>',
+        '&',
+        '*',
+        '_',
+        '`',
+        '\\',
+        'a',
+        'b',
+        ' ',
+        '\n',
+        '#',
+        '|',
+        ':',
+        '~',
+      ]
+      const trials = FUZZ ? 4000 : 150
+      let conclusive = 0
+      for (let t = 0; t < trials; t++) {
+        let src = ''
+        for (let n = 1 + rnd(14); n > 0; n--) src += alphabet[rnd(alphabet.length)]
+        const base = visible(src)
+        for (const r of runsOf(src)) {
+          expect(r.block.src.slice(r.at, r.at + r.text.length), JSON.stringify(src)).toBe(r.text)
+          const abs = r.block.offset + r.at
+          const c = src[abs] === 'Z' ? 'Y' : 'Z'
+          const mutated = visible(src.slice(0, abs) + c + src.slice(abs + 1))
+          if (mutated.length !== base.length) continue
+          const diffs = [...base].flatMap((ch, i) => (ch === mutated[i] ? [] : [i]))
+          if (diffs.length !== 1) continue
+          conclusive++
+          expect(diffs[0], JSON.stringify(src)).toBe(blockStart(src, r.block) + r.index)
+        }
+      }
+      expect(conclusive).toBeGreaterThan(20)
+    },
+    FUZZ ? 600_000 : 20_000,
+  )
+
+  it('does not give a twin or a block to an element that left the container', () => {
+    const { renderer, container } = mount('a *b*\n\nc\n')
+    const gone = container.children[1] as Element
+    expect(renderer.twin(gone)).not.toBeNull()
+    gone.remove()
+    expect(renderer.twin(gone)).toBeNull()
+    expect(renderer.blockAt(gone)).toBeNull()
+  })
+})
+
+/** Where a block's text starts in the visible text of the document. */
+function blockStart(src: string, block: Block): number {
+  const { blocks, references } = parseBlocks(src)
+  let n = 0
+  for (const b of blocks) {
+    if (b === block || b.offset === block.offset) return n
+    n += text(renderBlock(b, envOf(references))).length
+  }
+  return n
+}
