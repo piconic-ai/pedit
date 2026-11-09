@@ -36,6 +36,10 @@ which then reads what the host saved last (below).
 Starting a thread is not offered: an anchor is a place the browser selects,
 and a reply, resolving and reopening are what #212 asks for.
 
+An app that embeds pedit through `pedit serve` can also start threads, on a
+range of the text, and gets the threads live: see docs/design/embedding.md,
+"Comments from the app" (#492).
+
 ## The name (#213)
 
 `--name <name>` sets the session's name, for the host and for a guest. It is
