@@ -386,6 +386,92 @@ describe('previewSelectionToSource', () => {
   })
 })
 
+describe('a render that is not the text given', () => {
+  it('returns null unless the source is the text the renderer last showed', () => {
+    const s1 = 'ab\n\nab\n'
+    const s2 = 'zz\n\nab\n\nab\n'
+    const page = mount(s1)
+    const range = select(page.container, 'ab', 'ab', [1, 1])
+    expect(pick(page, range)).toEqual({ from: 4, to: 6 })
+    // Same text in another string: fine.
+    expect(previewSelectionToSource(page.renderer, range, s1.split('').join(''))).toEqual({
+      from: 4,
+      to: 6,
+    })
+    // A newer text with an identical block at the old offset is not the render's.
+    expect(previewSelectionToSource(page.renderer, range, s2)).toBeNull()
+    // And the other way round.
+    const page2 = mount(s2)
+    const r2 = select(page2.container, 'ab', 'ab', [1, 1])
+    expect(pick(page2, r2)).toEqual({ from: 8, to: 10 })
+    expect(previewSelectionToSource(page2.renderer, r2, s1)).toBeNull()
+    page2.update(s1)
+    expect(previewSelectionToSource(page2.renderer, select(page2.container, 'ab'), s1)).toEqual({
+      from: 0,
+      to: 2,
+    })
+  })
+})
+
+describe('a boundary between the blocks', () => {
+  const source = 'one\n\ntwo *x*\n\nthree\n'
+
+  it('maps a select-all to the whole text', () => {
+    const page = mount(source)
+    const range = document.createRange()
+    range.selectNodeContents(page.container)
+    expect(pick(page, range)).toEqual({ from: 0, to: source.length - 1 })
+  })
+
+  it('maps a drag that ends or starts in the gap to the block next to it', () => {
+    const page = mount(source)
+    const c = page.container
+    const kids = [...c.childNodes]
+    const second = kids.findIndex((n) => n.textContent?.startsWith('two'))
+    const one = find(c, 'one')
+    expect(pick(page, between(one.node, 0, c, second))).toEqual({ from: 0, to: 3 })
+    expect(pick(page, between(one.node, 0, c, second + 1))).toEqual({ from: 0, to: 11 })
+    const three = find(c, 'three')
+    expect(pick(page, between(c, second + 1, three.node, 5))).toEqual({ from: 14, to: 19 })
+    // Only a gap, or after the last block: nothing selected.
+    expect(pick(page, between(c, second, c, second + 1))).toEqual({ from: 5, to: 11 })
+    expect(pick(page, between(c, c.childNodes.length, c, c.childNodes.length))).toBeNull()
+    expect(pick(page, between(c, 0, c, 0))).toBeNull()
+  })
+})
+
+describe('the twin is kept', () => {
+  it('is not rendered again for a second selection, and is after an edit', () => {
+    const container = document.createElement('article')
+    document.body.replaceChildren(container)
+    let rendered = 0
+    const renderer = new BlockRenderer(container, { decorate: () => rendered++ })
+    const first = 'alpha beta\n\ngamma\n'
+    renderer.update(first, undefined, 0, [])
+    const page = { container, renderer, source: first } as Page
+    const live = rendered
+    expect(pick(page, select(container, 'alpha'))).toEqual({ from: 0, to: 5 })
+    const once = rendered
+    expect(once).toBeGreaterThan(live)
+    expect(pick(page, select(container, 'beta'))).toEqual({ from: 6, to: 10 })
+    expect(pick(page, select(container, 'alpha', 'beta'))).toEqual({ from: 0, to: 10 })
+    expect(rendered).toBe(once)
+    // Another block has its own twin.
+    expect(pick(page, select(container, 'gamma'))).toEqual({ from: 12, to: 17 })
+    expect(rendered).toBeGreaterThan(once)
+    // An edit of the block gives a new twin; the other block keeps its one.
+    const next = 'alpha BETA\n\ngamma\n'
+    renderer.update(next, undefined, 0, [])
+    page.source = next
+    const before = rendered
+    expect(pick(page, select(container, 'BETA'))).toEqual({ from: 6, to: 10 })
+    const after = rendered
+    expect(after).toBeGreaterThan(before)
+    expect(pick(page, select(container, 'BETA'))).toEqual({ from: 6, to: 10 })
+    expect(rendered).toBe(after)
+  })
+})
+
 // ---------------------------------------------------------------------------
 // The selections of every kind, checked against the text itself: the source is
 // changed at the offset claimed for a visible character, and exactly that

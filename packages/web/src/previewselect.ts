@@ -21,7 +21,7 @@ type Selected = Pick<
   'collapsed' | 'startContainer' | 'startOffset' | 'endContainer' | 'endOffset' | 'toString'
 >
 
-type Renderer = Pick<BlockRenderer, 'blockAt' | 'twin'>
+type Renderer = Pick<BlockRenderer, 'blockAt' | 'twin' | 'source'>
 
 /** A point of the selection: a live root and the offset in its text. */
 interface Edge {
@@ -73,9 +73,26 @@ function textBefore(root: Element, node: Node, offset: number): number {
   return count
 }
 
-function edgeOf(renderer: Renderer, node: Node, offset: number): Edge | null {
+/**
+ * A point between the roots, in the container: a start takes the next root from its
+ * start, an end the previous root up to its end (a boundary between blocks, or a
+ * select-all). Null when there is no such root.
+ */
+function betweenRoots(renderer: Renderer, node: Node, offset: number, start: boolean): Edge | null {
+  const kids = node.childNodes
+  for (let i = start ? offset : offset - 1; i >= 0 && i < kids.length; i += start ? 1 : -1) {
+    const kid = kids[i] as Node
+    if (kid instanceof Element && renderer.blockAt(kid)?.element === kid) {
+      return { root: kid, offset: start ? 0 : (kid.textContent ?? '').length }
+    }
+  }
+  return null
+}
+
+function edgeOf(renderer: Renderer, node: Node, offset: number, start: boolean): Edge | null {
   const hit = renderer.blockAt(node)
-  return hit && { root: hit.element, offset: textBefore(hit.element, node, offset) }
+  if (hit) return { root: hit.element, offset: textBefore(hit.element, node, offset) }
+  return node instanceof Element ? betweenRoots(renderer, node, offset, start) : null
 }
 
 /** The first (or last) non-blank character of `text` from `from` up to `to`, or -1. */
@@ -159,6 +176,8 @@ class Views {
   }
 
   #make(root: Element): View | null {
+    // What the twin's offsets are in is the text the renderer showed: not a newer one.
+    if (this.#source !== this.#renderer.source) return null
     const hit = this.#renderer.blockAt(root)
     if (hit?.element !== root) return null
     const { block } = hit
@@ -230,8 +249,10 @@ export function previewSelectionToSource(
   source: string,
 ): SourceRange | null {
   if (range.collapsed) return null
-  const a = edgeOf(renderer, range.startContainer, range.startOffset)
-  const b = edgeOf(renderer, range.endContainer, range.endOffset)
+  const a = edgeOf(renderer, range.startContainer, range.startOffset, true)
+  const b = edgeOf(renderer, range.endContainer, range.endOffset, false)
+  // Clamped to roots, the ends may have crossed (both in one gap).
+  if (a && b && a.root !== b.root && a.root.compareDocumentPosition(b.root) & 2) return null
   const first = a && b && edgeChar(a, b, true)
   const last = a && b && edgeChar(a, b, false)
   if (!first || !last) return null

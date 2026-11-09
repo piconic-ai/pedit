@@ -22,6 +22,8 @@ interface Entry {
   images: string[]
   block: Block
   elements: Element[]
+  /** The twin of `block`, made with `env`; kept until the block or the env changes. */
+  twin?: { block: Block; env: object; elements: Element[] }
 }
 
 /** A block rendered again with source positions, detached (see BlockRenderer.twin). */
@@ -58,6 +60,8 @@ export class BlockRenderer {
   #byRoot = new WeakMap<Element, Entry>()
   // What the last update rendered with, for twin.
   #env: Pick<BlockEnv, 'images' | 'media' | 'references'> = { media: [], references: {} }
+  // The text of the last update that succeeded; null before one, and after a failed one.
+  #source: string | null = null
 
   /**
    * `decorate` is called on every root as it is rendered, before it is compared with
@@ -77,6 +81,7 @@ export class BlockRenderer {
 
   /** Forgets every block, e.g. when the container is about to show another text. */
   reset(): void {
+    this.#source = null
     this.#entries = []
     this.#withImages.clear()
     this.#parser.reset()
@@ -97,7 +102,9 @@ export class BlockRenderer {
   ): void {
     try {
       this.#apply(source, images, imagesVersion, media)
+      this.#source = source
     } catch (error) {
+      this.#source = null
       // The parser may be ahead of the entries: start over, so the next update parses
       // and renders everything (the container is put right by its reconcile).
       this.#entries = []
@@ -105,6 +112,11 @@ export class BlockRenderer {
       this.#parser.reset()
       throw error
     }
+  }
+
+  /** The text the last update showed (null if there is none): what offsets in a twin are in. */
+  get source(): string | null {
+    return this.#source
   }
 
   /**
@@ -123,7 +135,8 @@ export class BlockRenderer {
    * tokens with source positions on, into detached elements: the same pipeline as the
    * live block, so its text equals the live text (check it; a block that was patched
    * since, or has `unmapped`, may differ and carries no positions). Positions are
-   * offsets in `block.src`; `offset` is where that starts in the text.
+   * offsets in `block.src`; `offset` is where that starts in the text. The elements are
+   * shared by the calls until the block or the next update changes them: read only.
    */
   twin(at: number | Element): Twin | null {
     const entry =
@@ -133,8 +146,16 @@ export class BlockRenderer {
           ? this.#byRoot.get(at)
           : undefined
     if (!entry) return null
-    const elements = renderBlock(entry.block, { ...this.#env, breaks: this.#breaks, spans: true })
-    if (this.#decorate) for (const root of elements) this.#decorate(root)
+    // Kept for the next call: a block is rendered again for each selection in it otherwise.
+    const kept = entry.twin
+    let elements: Element[]
+    if (kept && kept.block === entry.block && kept.env === this.#env) {
+      elements = kept.elements
+    } else {
+      elements = renderBlock(entry.block, { ...this.#env, breaks: this.#breaks, spans: true })
+      if (this.#decorate) for (const root of elements) this.#decorate(root)
+      entry.twin = { block: entry.block, env: this.#env, elements }
+    }
     return { elements, offset: entry.block.offset, block: entry.block }
   }
 
