@@ -46,7 +46,7 @@ func (l *liveSharer) Comment(ctx context.Context, from, to int, body string) err
 	if _, err := ls.session.StartThread(thread, message, from, to, body); err != nil {
 		return err
 	}
-	ls.feed.flush()
+	ls.feed.flushWith(thread)
 	l.st.Event("commented", answerWith(ctx, map[string]any{"thread": thread, "message": message}))
 	return nil
 }
@@ -63,7 +63,7 @@ func (l *liveSharer) Reply(ctx context.Context, thread, body string) error {
 	if _, err := ls.session.Reply("", thread, message, body); err != nil {
 		return err
 	}
-	ls.feed.flush()
+	ls.feed.flushWith(thread)
 	l.st.Event("replied", answerWith(ctx, map[string]any{"thread": thread, "message": message}))
 	return nil
 }
@@ -79,7 +79,7 @@ func (l *liveSharer) Resolve(ctx context.Context, thread string, resolved bool) 
 	if _, err := ls.session.Resolve("", thread, resolved); err != nil {
 		return err
 	}
-	ls.feed.flush()
+	ls.feed.flushWith(thread)
 	l.st.Event("resolved", answerWith(ctx, map[string]any{"thread": thread, "resolved": resolved}))
 	return nil
 }
@@ -133,7 +133,12 @@ func (f *commentsFeed) poke() {
 }
 
 // flush sends the threads now, unless they are as last sent.
-func (f *commentsFeed) flush() {
+func (f *commentsFeed) flush() { f.flushWith("") }
+
+// flushWith is flush for a command that wrote to thread: the event lists it
+// first, so it is never left out to fit, and the answer that follows finds
+// the app holding it.
+func (f *commentsFeed) flushWith(thread string) {
 	f.mu.Lock()
 	if f.timer != nil {
 		f.timer.Stop()
@@ -145,7 +150,7 @@ func (f *commentsFeed) flush() {
 	if f.stopped || f.src == nil {
 		return
 	}
-	ev := commentsEvent(f.src.PlacedThreads())
+	ev := commentsEvent(f.src.PlacedThreads(), thread)
 	now, _ := json.Marshal(ev)
 	if bytes.Equal(now, f.last) {
 		return
@@ -197,10 +202,11 @@ func viewOf(t session.PlacedThread) threadView {
 }
 
 // commentsEvent is the payload of the comments event. It fits maxCommentsEvent:
-// open threads come first, then resolved ones, each in the order of threads;
+// the thread named first (a command's, or none) comes first, then open
+// threads, then resolved ones, each in the order of threads;
 // one that does not fit is counted in "more", and one whose oldest comments
 // do not fit lists the latest ones, "cut" counting those left out.
-func commentsEvent(threads []session.PlacedThread) map[string]any {
+func commentsEvent(threads []session.PlacedThread, first string) map[string]any {
 	views := make([]threadView, len(threads))
 	for i, t := range threads {
 		views[i] = viewOf(t)
@@ -209,7 +215,13 @@ func commentsEvent(threads []session.PlacedThread) map[string]any {
 	for i := range order {
 		order[i] = i
 	}
-	slices.SortStableFunc(order, func(a, b int) int { return boolRank(views[a].Resolved) - boolRank(views[b].Resolved) })
+	rank := func(v threadView) int {
+		if first != "" && v.ID == first {
+			return 0
+		}
+		return 1 + boolRank(v.Resolved)
+	}
+	slices.SortStableFunc(order, func(a, b int) int { return rank(views[a]) - rank(views[b]) })
 	room := maxCommentsEvent - 128
 	shown := map[int]threadView{}
 	for _, i := range order {
