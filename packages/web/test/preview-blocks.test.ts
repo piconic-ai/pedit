@@ -90,9 +90,10 @@ const keys = (source: string, refs?: string, version = 0, breaks = false) => {
 }
 
 describe('renderBlock over parseBlocks equals render', () => {
+  // A whole render of 2,000 lines plus every block: ~2 s locally, near 5 s on a busy CI runner.
   it('the mixed document', () => {
     expectSame(mixed(2000))
-  })
+  }, 30_000)
 
   it.each(corpus as [string, string][])('corpus: %s', (_name, src) => {
     expectSame(src)
