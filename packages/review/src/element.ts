@@ -312,6 +312,7 @@ export class PeditReview extends HTMLElement {
       floating: {
         host: root,
         viewport: () => ({ width: window.innerWidth, height: window.innerHeight }),
+        onFrame: (fn) => void requestAnimationFrame(fn),
         onChange(fn) {
           // The page around scrolls the button's place; so can the shadow root's own parts.
           window.addEventListener('scroll', fn, true)

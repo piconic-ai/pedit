@@ -157,6 +157,8 @@ export class BoardView {
   readonly peers = new Store<Readonly<Record<string, NodePeers>>>({})
   /** The ids of the nodes selected here. */
   readonly selected = new Store<readonly string[]>([])
+  /** Counts the pans, zooms and node moves, for what is placed by a node. */
+  readonly moved = new Store(0)
   /** The nodes open comments are on. */
   readonly commented = new Store<ReadonlySet<string>>(new Set())
   /**
@@ -396,6 +398,11 @@ export class BoardView {
           this.#share({ ...this.#presence, selected })
           if (!sameItems(selected, this.selected.get())) this.selected.set(selected)
         })
+      })
+      createEffect(() => {
+        store.viewport()
+        store.positionEpoch()
+        untrack(() => this.moved.set(this.moved.get() + 1))
       })
       createEffect(() => {
         this.#edgesChanged.get()

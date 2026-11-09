@@ -32,7 +32,7 @@ export function CommentComposer(props: CommentComposerProps) {
         title={addCommentTitle()}
         aria-label={addCommentTitle()}
         hidden={props.button.get() === null}
-        style={`left: min(${(props.button.get()?.x ?? 0) + 4}px, calc(100vw - 40px)); top: min(${(props.button.get()?.y ?? 0) + 4}px, calc(100vh - 40px))`}
+        style={`left: ${props.button.get()?.x ?? 0}px; top: ${props.button.get()?.y ?? 0}px`}
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => props.onOpen()}
       >
@@ -72,7 +72,7 @@ function ComposerBox(props: ComposerBoxProps) {
       className="comment-compose"
       role="group"
       aria-label="New comment"
-      style={`left: min(${props.x + 4}px, calc(100vw - 296px)); top: min(${props.y + 4}px, calc(100vh - 150px))`}
+      style={`left: clamp(8px, ${props.x - 20}px, calc(100vw - 300px)); top: clamp(8px, ${props.y + 18}px, calc(100vh - 170px))`}
     >
       <textarea
         ref={(el) => {

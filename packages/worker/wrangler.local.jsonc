@@ -1,0 +1,156 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "edit",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-20",
+  // Production is served only on the custom domain below.
+  "workers_dev": false,
+  // preview_urls defaults to workers_dev (false here), so it needs to be
+  // opted back in explicitly — otherwise branch Previews
+  // (<branch>-edit.<subdomain>.workers.dev) and version URLs never get a
+  // *.workers.dev URL to view at all.
+  "preview_urls": true,
+  // Custom domain — requires piconic.ai to be on Cloudflare DNS.
+  // Cloudflare auto-provisions the CNAME and TLS certificate.
+  // The web editor (built by @pedit/web) is served by Workers Assets. Every request
+  // goes through the Worker script first, which adds the Content-Security-Policy to
+  // HTML (src/page.ts). No path skips it: under a skipped path, a missing file would
+  // fall back to index.html without the policy.
+  "assets": {
+    "directory": "../web/dist",
+    "not_found_handling": "single-page-application",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  // Keep invocation logs in Workers Logs (Cloudflare dashboard → `edit` Worker →
+  // Observability): one for each request, with its path, status and `cf`
+  // properties, and one for each event in a Room, WebSocket messages included
+  // (docs/public-relay.md). The key lives in the URL fragment and never
+  // reaches the Worker.
+  "observability": { "enabled": true },
+  "durable_objects": {
+    "bindings": [{ "name": "ROOM", "class_name": "Room" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }],
+  // Encrypted attachments, kept only while a room's host is connected. Each
+  // bucket needs a lifecycle rule expiring `rooms/` after a day, as a backstop
+  // for deletion (see docs/contributing/deployment.md and docs/self-hosting.md).
+  // A kept room's images live under `kept/` until the room expires: the public
+  // bucket also needs a rule expiring `kept/` after 8 days, added by hand.
+  "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "edit-blobs" }],
+  // The public relay is a demo: the host and 4 guests per room, images up to
+  // 5 MiB each and 50 MiB per session, and rooms that end 24 hours after their
+  // host first connected. Self-hosted relays (packages/wrangler.json
+  // and the lab) keep the defaults in Limits (packages/worker/src/room.ts).
+  // MAINTENANCE (no-new-rooms or closed) is set in the dashboard when the relay
+  // has to stop (docs/contributing/deployment.md); keep_vars keeps it across
+  // deploys.
+  "keep_vars": true,
+  // MEDIA_SOURCES (external images and videos in the preview) is deliberately unset
+  // here, in previews.vars and in the lab: unset is the strict code default. The
+  // sites the preview may frame are the providers in packages/protocol/src/embeds.
+  "vars": {
+    "ROOM_GUESTS": "4",
+    "BLOB_MAX_BYTES": "5242880",
+    "BLOB_QUOTA_BYTES": "52428800",
+    "KEEP_MAX_SECONDS": "604800",
+    "ROOM_LIFE_SECONDS": "604800",
+    "ROOM_MAX_SECONDS": "86400"
+  },
+  // Per client IP (an IPv6 /64) and Cloudflare location; see docs/self-hosting.md.
+  "ratelimits": [
+    {
+      "name": "ROOM_CREATION_LIMIT",
+      "namespace_id": "1001",
+      "simple": { "limit": 20, "period": 60 }
+    },
+    { "name": "CONNECTION_LIMIT", "namespace_id": "1002", "simple": { "limit": 60, "period": 60 } },
+    {
+      "name": "KEEP_REQUEST_LIMIT",
+      "namespace_id": "1005",
+      "simple": { "limit": 1200, "period": 60 }
+    }
+  ],
+  // Worker Previews: every push to a branch other than `release` makes (or
+  // updates) that branch's Preview via Cloudflare Workers Builds, whose
+  // Preview command runs `pnpm run preview`. Previews never become the
+  // production deployment. They inherit no bindings from the settings above,
+  // so the bindings are declared again here; each Preview gets its own
+  // Durable Object namespace automatically. All Previews share one bucket:
+  // blobs live under their room's Durable Object id, which differs per namespace.
+  "previews": {
+    "durable_objects": {
+      "bindings": [{ "name": "ROOM", "class_name": "Room" }]
+    },
+    "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "edit-blobs-preview" }],
+    // Previews run with the public relay's limits, so they show what it does.
+    "vars": {
+      "ROOM_GUESTS": "4",
+      "BLOB_MAX_BYTES": "5242880",
+      "BLOB_QUOTA_BYTES": "52428800",
+      "KEEP_MAX_SECONDS": "604800",
+      "ROOM_LIFE_SECONDS": "604800",
+      "ROOM_MAX_SECONDS": "86400"
+    },
+    "ratelimits": [
+      {
+        "name": "ROOM_CREATION_LIMIT",
+        "namespace_id": "1011",
+        "simple": { "limit": 20, "period": 60 }
+      },
+      {
+        "name": "CONNECTION_LIMIT",
+        "namespace_id": "1012",
+        "simple": { "limit": 60, "period": 60 }
+      },
+      {
+        "name": "KEEP_REQUEST_LIMIT",
+        "namespace_id": "1015",
+        "simple": { "limit": 1200, "period": 60 }
+      }
+    ],
+    // Per-Preview logs and traces: Cloudflare dashboard → `edit` Worker →
+    // Previews → <branch> → Observability. (`wrangler tail` can't target
+    // Previews.)
+    "observability": {
+      "enabled": true,
+      "logs": { "enabled": true, "invocation_logs": true },
+      "traces": { "enabled": true, "head_sampling_rate": 1 }
+    }
+  },
+  "env": {
+    // A separate Worker (`edit-lab`) for trying things that should not touch
+    // production, such as putting the whole host behind Cloudflare Access.
+    // It is also a rehearsal of self-hosting: a second copy of pedit deployed
+    // from this repository. Deploy it by hand with `pnpm run deploy:lab`;
+    // Workers Builds never deploys it.
+    "lab": {
+      "name": "edit-lab",
+      "workers_dev": false,
+      "preview_urls": false,
+      "routes": [{ "pattern": "edit-lab.piconic.ai", "custom_domain": true }],
+      "durable_objects": {
+        "bindings": [{ "name": "ROOM", "class_name": "Room" }]
+      },
+      "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }],
+      "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "edit-lab-blobs" }],
+      "ratelimits": [
+        {
+          "name": "ROOM_CREATION_LIMIT",
+          "namespace_id": "1021",
+          "simple": { "limit": 20, "period": 60 }
+        },
+        {
+          "name": "CONNECTION_LIMIT",
+          "namespace_id": "1022",
+          "simple": { "limit": 60, "period": 60 }
+        },
+        {
+          "name": "KEEP_REQUEST_LIMIT",
+          "namespace_id": "1025",
+          "simple": { "limit": 1200, "period": 60 }
+        }
+      ]
+    }
+  }
+}

@@ -56,6 +56,7 @@ export function mountTextEditor(opts: TextEditorOptions): TextEditor {
   const { room, files } = opts
   const editable = new Compartment()
   const selection = new Store({ from: 0, to: 0 })
+  const moved = new Set<() => void>()
 
   const extensions = (file: OpenFile, from?: EditorState): Extension[] => {
     const extra = opts.extra?.(file, from) ?? {}
@@ -75,6 +76,7 @@ export function mountTextEditor(opts: TextEditorOptions): TextEditor {
         const s = u.state.selection.main
         const was = selection.get()
         if (s.from !== was.from || s.to !== was.to) selection.set({ from: s.from, to: s.to })
+        if (u.docChanged || u.geometryChanged) for (const fn of [...moved]) fn()
       }),
       imagePaste({
         blocked: room.noImages,
@@ -111,9 +113,24 @@ export function mountTextEditor(opts: TextEditorOptions): TextEditor {
   }
   const detach = files.attachEditor({
     textTarget: () => textTarget(selection.get()),
-    textRect: () => {
-      const c = view.coordsAtPos(view.state.selection.main.to)
-      return c ? new DOMRect(c.left, c.top, c.right - c.left, c.bottom - c.top) : null
+    textPlace: () => {
+      const { from, to } = view.state.selection.main
+      // A selection that ends at a line start is on the line before.
+      const end = to > from && view.state.doc.lineAt(to).from === to ? to - 1 : to
+      const c = view.coordsAtPos(end)
+      if (!c) return null
+      const clip = view.scrollDOM.getBoundingClientRect()
+      // In the right margin of the line, so the button covers no text.
+      return { x: clip.left + view.scrollDOM.clientWidth - 16, y: (c.top + c.bottom) / 2, clip }
+    },
+    watchText(fn) {
+      moved.add(fn)
+      const ro = new ResizeObserver(fn)
+      ro.observe(view.scrollDOM)
+      return () => {
+        moved.delete(fn)
+        ro.disconnect()
+      }
     },
     onStatus,
   })

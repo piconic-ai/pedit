@@ -5,22 +5,31 @@ import * as Y from 'yjs'
 import { CommentsView, type CommentTarget, type ThreadList } from '../../src/core/comments.ts'
 import '../../src/core/components/CommentComposer.tsx'
 import { CommentComposer } from '../../src/core/composer.ts'
-import type { FileSet } from '../../src/core/files.ts'
+import type { FileSet, Place } from '../../src/core/files.ts'
 import { Store } from '../../src/core/store.ts'
+import { parsedAs } from '../parsed.ts'
 
 function setup() {
   const content = new Y.Doc()
-  content.getText('content').insert(0, 'hello world!\n')
-  const view = new CommentsView(new Y.Doc(), content, { name: () => 'Ada', delayMs: 0 })
+  content.getText('content').insert(0, 'hello world!\nsecond,line\n')
+  const view = new CommentsView(new Y.Doc(), content, {
+    name: () => 'Ada',
+    delayMs: 0,
+    anchors: {
+      table: parsedAs(content.getText('content'), ','),
+      nodes: () => new Map([['n1', 'A node']]),
+    },
+  })
   const files = {
     target: new Store<CommentTarget | null>(null),
     comments: new Store<CommentsView | null>(view),
     shown: new Store({}),
     focus: new Store<string | null>(null),
     list: new Store<ThreadList>('resolved'),
-    rect: new DOMRect(10, 20, 30, 12) as DOMRect | null,
-    targetRect() {
-      return this.rect
+    mode: new Store('text'),
+    place: { x: 40, y: 26, clip: new DOMRect(0, 0, 400, 300) } as Place | null,
+    targetPlace() {
+      return this.place
     },
   }
   const locked = new Store(false)
@@ -44,7 +53,7 @@ function setup() {
     onCancel: () => composer.cancel(),
   })
   const $ = <T extends Element>(sel: string) => container.querySelector(sel) as T
-  return { view, files, locked, composer, $, opened: () => panelOpened }
+  return { content, view, files, locked, composer, $, opened: () => panelOpened }
 }
 
 const click = (el: Element) => (el as HTMLElement).click()
@@ -58,7 +67,7 @@ describe('CommentComposer', () => {
     files.target.set({ kind: 'text', from: 0, to: 5 })
     expect($<HTMLElement>('.comment-add').hidden).toBe(false)
     expect($('.comment-add').getAttribute('title')).toMatch(/^Add comment \(/)
-    expect($<HTMLElement>('.comment-add').style.left).toContain('44px')
+    expect($<HTMLElement>('.comment-add').style.left).toBe('40px')
     locked.set(true)
     expect($<HTMLElement>('.comment-add').hidden).toBe(true)
     locked.set(false)
@@ -66,13 +75,51 @@ describe('CommentComposer', () => {
     view.roomForMore.set(false)
     expect($<HTMLElement>('.comment-add').hidden).toBe(true)
     view.roomForMore.set(true)
-    files.rect = null
+    files.place = null
     files.target.set({ kind: 'text', from: 1, to: 5 })
     expect($<HTMLElement>('.comment-add').hidden).toBe(true)
     files.comments.set(null)
-    files.rect = new DOMRect()
+    files.place = { x: 1, y: 1, clip: new DOMRect(0, 0, 9, 9) }
     files.target.set(null)
     expect($<HTMLElement>('.comment-add').hidden).toBe(true)
+  })
+
+  it('hides the button outside the view it is in, or the page, and for a target that takes no thread', () => {
+    const { $, files } = setup()
+    files.target.set({ kind: 'text', from: 0, to: 5 })
+    files.place = { x: 500, y: 26, clip: new DOMRect(0, 0, 400, 300) }
+    files.target.set({ kind: 'text', from: 0, to: 4 })
+    expect($<HTMLElement>('.comment-add').hidden).toBe(true)
+    files.place = { x: 40, y: 700, clip: new DOMRect(0, 0, 900, 900) }
+    files.target.set({ kind: 'text', from: 0, to: 3 })
+    expect($<HTMLElement>('.comment-add').hidden).toBe(true)
+    files.place = { x: 40, y: 26, clip: new DOMRect(0, 0, 400, 300) }
+    files.target.set({ kind: 'text', from: 2, to: 2 })
+    expect($<HTMLElement>('.comment-add').hidden).toBe(true)
+    files.target.set({ kind: 'node', id: 'none' })
+    expect($<HTMLElement>('.comment-add').hidden).toBe(true)
+  })
+
+  it('puts the comment on the text first selected, though text came before it', () => {
+    const { $, files, view, content } = setup()
+    files.target.set({ kind: 'text', from: 0, to: 5 })
+    click($('.comment-add'))
+    content.getText('content').insert(0, '>> ')
+    const box = $<HTMLTextAreaElement>('.comment-compose textarea')
+    box.value = 'Which one?'
+    keydown(box, { key: 'Enter', ctrlKey: true })
+    const [thread] = view.threads.get()
+    expect(thread?.quote).toBe('hello')
+    expect(content.getText('content').toString().slice(thread?.from, thread?.to)).toBe('hello')
+  })
+
+  it('closes when the view mode changes', () => {
+    const { $, files } = setup()
+    files.target.set({ kind: 'text', from: 0, to: 5 })
+    click($('.comment-add'))
+    expect($('.comment-compose')).not.toBeNull()
+    files.mode.set('table')
+    expect($('.comment-compose')).toBeNull()
   })
 
   it('opens a composer on the frozen target, and sends to it', () => {

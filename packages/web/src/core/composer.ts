@@ -1,4 +1,4 @@
-import { type CommentTarget, isCommentKey } from './comments.ts'
+import { type CommentTarget, type Draft, isCommentKey } from './comments.ts'
 import type { FileSet } from './files.ts'
 import { isMac } from './menu.ts'
 import { type Readable, Store } from './store.ts'
@@ -13,6 +13,8 @@ export interface Anchor {
 export interface Composing extends Anchor {
   /** What the comment goes on: frozen, so what happens to the selection afterwards does not move it. */
   target: CommentTarget
+  /** Its quote and anchor as they were when it opened: the anchor follows the edits that come after. */
+  draft: Draft
 }
 
 /** The placeholder of a box that writes a comment on a target. */
@@ -48,6 +50,8 @@ export class CommentComposer {
   readonly #show: () => void
   readonly #viewport: () => { width: number; height: number }
   readonly #stops: (() => void)[] = []
+  /** Whether the target last asked about can take a thread. */
+  #draftable: { target: CommentTarget; ok: boolean } | null = null
   #stopRoom = () => {}
 
   /**
@@ -71,11 +75,13 @@ export class CommentComposer {
         this.cancel()
         this.place()
       }),
+      files.mode.subscribe(() => this.cancel()),
       files.shown.subscribe(() => {
         this.cancel()
         this.place()
       }),
       files.comments.subscribe(() => {
+        this.#draftable = null
         this.cancel()
         this.#watchRoom()
         this.place()
@@ -98,21 +104,36 @@ export class CommentComposer {
   /** Works out where the button goes: when the target moved, or the page scrolled or resized. */
   place(): void {
     let next: Anchor | null = null
-    if (!this.composing.get() && this.#files.target.get() && this.#canWrite()) {
-      const r = this.#files.targetRect()
-      // Not when the selection is scrolled out of sight.
-      if (r && r.bottom >= 0 && r.top <= this.#viewport().height) next = { x: r.right, y: r.bottom }
+    const target = this.#files.target.get()
+    if (!this.composing.get() && target && this.#canWrite() && this.#canDraft(target)) {
+      const p = this.#files.targetPlace()
+      const { width, height } = this.#viewport()
+      // Not when it is scrolled out of sight, in the view or in the page.
+      const inside = (r: { left: number; right: number; top: number; bottom: number }) =>
+        !!p && p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom
+      if (p && inside(p.clip) && inside({ left: 0, right: width, top: 0, bottom: height })) {
+        next = { x: p.x, y: p.y }
+      }
     }
     if (!same(next, this.button.get())) this.button.set(next)
+  }
+
+  /** Whether the comments can make a thread on the target; asked again only for a new target. */
+  #canDraft(target: CommentTarget): boolean {
+    if (this.#draftable?.target !== target) {
+      this.#draftable = { target, ok: !!this.#files.comments.get()?.draft(target) }
+    }
+    return this.#draftable.ok
   }
 
   /** Opens the composer on the target now; false when there is nothing to comment on. */
   open(): boolean {
     const target = this.#files.target.get()
-    if (!target || !this.#canWrite()) return false
+    const draft = target && this.#files.comments.get()?.draft(target)
+    if (!target || !draft || !this.#canWrite()) return false
     const { width, height } = this.#viewport()
     const at = this.button.get() ?? { x: width / 2, y: height / 3 }
-    this.composing.set({ target, x: at.x, y: at.y })
+    this.composing.set({ target, draft, x: at.x, y: at.y })
     this.place()
     return true
   }
@@ -128,7 +149,7 @@ export class CommentComposer {
     const c = this.composing.get()
     const view = this.#files.comments.get()
     if (!c || !view) return false
-    const id = view.startOn(c.target, body)
+    const id = view.startDraft(c.draft, body)
     if (!id) return false
     this.composing.set(null)
     this.#files.list.set('open')

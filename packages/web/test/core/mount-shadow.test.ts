@@ -14,6 +14,13 @@ import { openRoom } from '../../src/core/open-room.ts'
 import { Store } from '../../src/core/store.ts'
 
 beforeAll(() => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  )
   // jsdom lays nothing out; CodeMirror measures text ranges.
   Range.prototype.getClientRects ??= () => [] as unknown as DOMRectList
   Range.prototype.getBoundingClientRect ??= () => new DOMRect()
@@ -59,6 +66,7 @@ async function mount(access: 'edit' | 'read' = 'edit', relay = new Relay()) {
     floating: {
       host: root,
       viewport: () => ({ width: 800, height: 600 }),
+      onFrame: (fn) => fn(),
       onChange: () => () => {},
     },
     narrow: new Store(false),
@@ -217,6 +225,7 @@ describe('the core in a shadow root', () => {
     m.manifest()
     await vi.waitFor(() => expect(m.files.commentable.get()).toBe(true))
     m.comments.open.set(false)
+    m.room.text.insert(0, 'hello')
     m.files.target.set({ kind: 'text', from: 0, to: 1 })
     // Not a Mac: Ctrl, and Command alone does nothing.
     const meta = key({ metaKey: true })
@@ -229,6 +238,11 @@ describe('the core in a shadow root', () => {
     const box = m.root.querySelector<HTMLTextAreaElement>('.comment-compose textarea')
     expect(box).not.toBeNull()
     await vi.waitFor(() => expect(m.root.activeElement).toBe(box))
+    // Pressed again while writing: back to the same box, not a new composer.
+    box?.blur()
+    m.root.dispatchEvent(key({ ctrlKey: true }))
+    expect(m.root.querySelector('.comment-compose textarea')).toBe(box)
+    expect(m.root.activeElement).toBe(box)
   })
 
   it('takes Command, not Ctrl, on a Mac', async () => {
@@ -240,6 +254,7 @@ describe('the core in a shadow root', () => {
     m.manifest()
     await vi.waitFor(() => expect(m.files.commentable.get()).toBe(true))
     m.comments.open.set(false)
+    m.room.text.insert(0, 'hello')
     m.files.target.set({ kind: 'text', from: 0, to: 1 })
     const ctrl = key({ ctrlKey: true })
     m.root.dispatchEvent(ctrl)

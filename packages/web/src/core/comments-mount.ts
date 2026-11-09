@@ -21,6 +21,8 @@ export interface Floating {
   host: HTMLElement | ShadowRoot
   /** The size of the viewport they are fixed in. */
   viewport(): { width: number; height: number }
+  /** Runs `fn` before the next paint (requestAnimationFrame). */
+  onFrame(fn: () => void): void
   /** Calls `fn` when the page scrolls or the viewport resizes; returns how to stop. */
   onChange(fn: () => void): () => void
 }
@@ -103,6 +105,9 @@ export function mountComments(opts: CommentsMountOptions): CommentsMount {
     onCancel: () => composer.cancel(),
   })
   const focus = () => {
+    // Already writing: back to the box.
+    const box = floatHost.querySelector<HTMLTextAreaElement>('.comment-compose textarea')
+    if (box) return box.focus()
     if (composer.open()) return
     files.list.set('open')
     panel.open.set(true)
@@ -117,9 +122,23 @@ export function mountComments(opts: CommentsMountOptions): CommentsMount {
   // are heard only while there is a selection to comment on.
   const place = () => composer.place()
   let stopChanges: (() => void) | null = null
+  let pending = false
+  // What the views draw settles after their own events: placed a frame later.
+  const later = () => {
+    if (pending) return
+    pending = true
+    floating.onFrame(() => {
+      pending = false
+      place()
+    })
+  }
   const listen = (on: boolean) => {
-    if (on && !stopChanges) stopChanges = floating.onChange(place)
-    else if (!on && stopChanges) {
+    if (on && !stopChanges) {
+      const stops = [floating.onChange(place), files.watchPlace(later)]
+      stopChanges = () => {
+        for (const stop of stops) stop()
+      }
+    } else if (!on && stopChanges) {
       stopChanges()
       stopChanges = null
     }

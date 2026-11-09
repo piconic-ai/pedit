@@ -223,12 +223,25 @@ async function joinRoom(
         if (!sameSet(cells, t.commented.get())) t.commented.set(cells)
       },
       target: () => (t.active ? cellsTarget(t) : undefined),
-      targetRect() {
+      targetPlace() {
+        // The first cell, so a row or column is marked at its start; at the cell's top-right corner.
         const at = cellsTarget(t)
-        const end = at?.kind === 'cells' ? at.to : null
+        const from = at?.kind === 'cells' ? at.from : null
         const cell =
-          end && t.element.querySelector(`[data-row="${end.row}"][data-col="${end.col}"]`)
-        return cell?.getBoundingClientRect() ?? null
+          from && t.element.querySelector(`[data-row="${from.row}"][data-col="${from.col}"]`)
+        const clip = t.element.querySelector('.table-scroll')
+        if (!cell || !clip) return null
+        const r = cell.getBoundingClientRect()
+        return { x: r.right, y: r.top, clip: clip.getBoundingClientRect() }
+      },
+      watchPlace(fn) {
+        const ro = new ResizeObserver(fn)
+        ro.observe(t.element)
+        const stop = t.parsed.subscribe(fn)
+        return () => {
+          ro.disconnect()
+          stop()
+        }
       },
       hide() {
         t.active = false
@@ -286,12 +299,23 @@ async function joinRoom(
         if (!sameSet(nodes, board.commented.get())) board.commented.set(nodes)
       },
       target: () => (board.active ? nodeTarget(board.selected.get()) : undefined),
-      targetRect() {
+      targetPlace() {
         const at = nodeTarget(board.selected.get())
         const node =
           at?.kind === 'node' &&
           board.element.querySelector(`.bf-flow__node[data-id="${CSS.escape(at.id)}"]`)
-        return node ? node.getBoundingClientRect() : null
+        if (!node) return null
+        const r = node.getBoundingClientRect()
+        return { x: r.right, y: r.top, clip: board.element.getBoundingClientRect() }
+      },
+      watchPlace(fn) {
+        const ro = new ResizeObserver(fn)
+        ro.observe(board.element)
+        const stop = board.moved.subscribe(fn)
+        return () => {
+          ro.disconnect()
+          stop()
+        }
       },
       hide() {
         board.active = false
@@ -314,6 +338,7 @@ async function joinRoom(
   })
   showView = (mode) => {
     main.dataset.view = mode
+    files.mode.set(mode)
     preview.active = mode === 'split' || mode === 'preview'
     tableOf(shown()).active = mode === 'table'
     boardOf(shown()).active = mode === 'canvas'
@@ -368,6 +393,7 @@ async function joinRoom(
     floating: {
       host: document.body,
       viewport: () => ({ width: window.innerWidth, height: window.innerHeight }),
+      onFrame: (fn) => void requestAnimationFrame(fn),
       onChange(fn) {
         window.addEventListener('scroll', fn, true)
         window.addEventListener('resize', fn)
