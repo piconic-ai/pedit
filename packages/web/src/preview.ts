@@ -1,5 +1,6 @@
 import { allowsMedia, MEDIA_META, parseMediaSources } from '@pedit/protocol/csp'
 import DOMPurify from 'dompurify'
+import type { Env, StateCore, Token } from 'markdown-it'
 import MarkdownIt from 'markdown-it'
 import { parseDocument } from 'yaml'
 import { type ProviderId, providerLabel } from './alwaysload.ts'
@@ -307,6 +308,177 @@ export function render(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Per-block pipeline. markdown-it's block parse decides where the top-level
+// blocks are (it has to see the whole document); everything after it (inline
+// parse, linkify, embeds, source_lines, the renderer, the sanitiser) is a pure
+// function of one block's tokens plus the references, the image resolver and the
+// `breaks` option, so it can run for one block at a time and be cached by
+// `keyOf`. Nothing calls this yet; render() and patch() are unchanged.
+//
+// Lines: `Block.line`/`lineEnd`/`offset` are absolute. Every `data-line` that
+// renderBlock produces, on the roots and nested, is relative to the block's first
+// line (the root of a block has data-line="0"); add `block.line` to get the
+// document line. Relative lines do not change when lines are inserted above, so
+// they are part of the cached element's identity, not of its key.
+// ---------------------------------------------------------------------------
+
+/** One top-level block: its block-level tokens, before the inline parse. */
+export interface Block {
+  /** Block-level tokens; inline tokens have no children yet. `map` is block-relative. */
+  tokens: Token[]
+  /** First source line (absolute). */
+  line: number
+  /** The line after the block's last (absolute). */
+  lineEnd: number
+  /** Offset of `line` in the original text. */
+  offset: number
+  /** The block's own lines, from the original (not line-ending-normalised) text. */
+  src: string
+  /**
+   * Whether `src` holds `\r` or `\0`. markdown-it rewrites them before parsing, which
+   * shifts offsets; a position map must leave such a block unmapped.
+   */
+  unmapped: boolean
+}
+
+/** What renderBlock needs besides the block, as render() takes it. */
+type References = NonNullable<Env['references']>
+
+export interface BlockEnv {
+  images?: ImageResolver
+  media: readonly string[]
+  breaks: boolean
+  /** markdown-it's env.references, as parseBlocks returns it. */
+  references: References
+}
+
+export interface ParsedBlocks {
+  blocks: Block[]
+  /** The reference definitions the block parse found. */
+  references: References
+  /** A string that changes when the definitions do; pass it to keyOf. */
+  refs: string
+}
+
+type CoreRule = (state: StateCore) => void
+
+let afterBlock: CoreRule[] | undefined
+let blockOnly: CoreRule[] | undefined
+
+// The core rules by phase, in the chain's order (ours included), looked up once.
+function coreRules(): { block: CoreRule[]; rest: CoreRule[] } {
+  if (!afterBlock || !blockOnly) {
+    const rules = md.core.ruler.__rules__.filter((r) => r.enabled)
+    const at = rules.findIndex((r) => r.name === 'block')
+    // strip_references drops the definitions' placeholder tokens, so no block is
+    // made of one; it belongs to the document-wide phase.
+    const early = (r: { name: string }, i: number) => i <= at || r.name === 'strip_references'
+    blockOnly = rules.filter(early).map((r) => r.fn)
+    afterBlock = rules.filter((r, i) => !early(r, i)).map((r) => r.fn)
+  }
+  return { block: blockOnly, rest: afterBlock }
+}
+
+/**
+ * Parses the whole document into top-level blocks without the inline parse.
+ * Lines between blocks (blank lines, reference definitions) belong to no block.
+ */
+export function parseBlocks(source: string): ParsedBlocks {
+  const env: Env = {}
+  const state = new md.core.State(source, md, env)
+  for (const rule of coreRules().block) rule(state)
+  // Line starts in the original text; markdown-it's newline is \r\n, \r or \n.
+  const starts = [0]
+  for (const m of source.matchAll(/\r\n?|\n/g)) starts.push(m.index + m[0].length)
+  const blocks: Block[] = []
+  const tokens = state.tokens
+  for (let i = 0; i < tokens.length; ) {
+    const first = tokens[i] as Token
+    let end = i + 1
+    if (first.nesting === 1) {
+      while (
+        end < tokens.length &&
+        !((tokens[end] as Token).level === 0 && (tokens[end] as Token).nesting === -1)
+      )
+        end++
+      end++
+    }
+    const [line, lineEnd] = first.map ?? [0, 0]
+    // These tokens are ours (the document's state is discarded), so shift in place.
+    const own = tokens.slice(i, end)
+    for (const t of own) if (t.map) t.map = [t.map[0] - line, t.map[1] - line]
+    const offset = starts[line] ?? source.length
+    const text = source.slice(offset, starts[lineEnd] ?? source.length)
+    blocks.push({ tokens: own, line, lineEnd, offset, src: text, unmapped: /[\r\0]/.test(text) })
+    i = end
+  }
+  const references = env.references ?? {}
+  return { blocks, references, refs: JSON.stringify(references) }
+}
+
+function copyToken(state: StateCore, t: Token): Token {
+  const c = new state.Token(t.type, t.tag, t.nesting)
+  if (t.attrs) c.attrs = t.attrs.map(([k, v]) => [k, v])
+  c.map = t.map ? [t.map[0], t.map[1]] : null
+  c.level = t.level
+  c.content = t.content
+  c.markup = t.markup
+  c.info = t.info
+  c.meta = t.meta
+  c.block = t.block
+  c.hidden = t.hidden
+  // The block rule leaves an empty list for the inline rule to fill.
+  if (t.type === 'inline') c.children = []
+  return c
+}
+
+/**
+ * Inline parse, the remaining core rules, the renderer and the sanitiser, for one
+ * block. Returns its top-level elements (usually one), with block-relative lines.
+ */
+export function renderBlock(block: Block, env: BlockEnv): Element[] {
+  images = env.images
+  media = env.media
+  md.set({ breaks: env.breaks })
+  try {
+    const mdEnv = { references: env.references }
+    const state = new md.core.State(block.src, md, mdEnv)
+    // Fresh copies: the inline rule and source_lines mutate tokens.
+    state.tokens = block.tokens.map((t) => copyToken(state, t))
+    for (const rule of coreRules().rest) rule(state)
+    return [...sanitize(md.renderer.render(state.tokens, md.options, mdEnv)).children]
+  } finally {
+    images = undefined
+    media = []
+    md.set({ breaks: false })
+  }
+}
+
+/** Escapes nothing; length-prefixes, so no two different field lists join alike. */
+const field = (s: string) => `${s.length}:${s}`
+
+/**
+ * What decides how a block renders: every block-level token field but `map`, and
+ * only for the blocks that can depend on it, the references (a `[` in the text),
+ * the images' state (`![`), and always `breaks`. Equal keys mean equal output
+ * (up to the block's first line).
+ */
+export function keyOf(block: Block, refs: string, imagesVersion: number, breaks: boolean): string {
+  let key = breaks ? 'b' : 'n'
+  let links = false
+  let image = false
+  for (const t of block.tokens) {
+    key += `|${t.type},${t.tag},${t.nesting},${t.level},${field(t.markup)},${field(t.info)},${t.hidden ? 1 : 0},${t.block ? 1 : 0},${field(t.content)}`
+    if (t.attrs) for (const [k, v] of t.attrs) key += `,${field(k)}=${field(String(v))}`
+    if (!links && t.content.includes('[')) links = true
+    if (!image && t.content.includes('![')) image = true
+  }
+  if (links) key += `|refs:${refs}`
+  if (image) key += `|img:${imagesVersion}`
+  return key
+}
+
 /**
  * Who serves the frame of an embed placeholder, derived from its src alone as
  * loadEmbed does, or null if pedit would not frame it.
@@ -320,7 +492,7 @@ export function embedProvider(placeholder: Element): ProviderId | null {
 // changes, so it stays while the paragraph with its URL is unchanged.
 function noteKeys(placeholder: Element): void {
   for (let el: Element | null = placeholder; el?.hasAttribute('data-line'); el = el.parentElement) {
-    keyOf(el)
+    domKey(el)
   }
 }
 
@@ -460,7 +632,7 @@ function showSnippet(
 const keys = new WeakMap<Node, string>()
 
 /** What a top-level node looks like, ignoring the line numbers that shift on every edit. */
-function keyOf(node: Node): string {
+function domKey(node: Node): string {
   let key = keys.get(node)
   if (key === undefined) {
     const clone = node.cloneNode(true)
@@ -540,7 +712,7 @@ function keepsEmbed(old: Element, fresh: Element): boolean {
  */
 function affinity(old: Node, fresh: Node): number {
   if (old.nodeType === Node.TEXT_NODE && old.textContent?.trim() === '') return 0
-  if (keyOf(old) === keyOf(fresh)) return 2
+  if (domKey(old) === domKey(fresh)) return 2
   if (
     old instanceof Element &&
     fresh instanceof Element &&
@@ -603,7 +775,7 @@ export function patch(container: Element, fragment: DocumentFragment): void {
 function patchChildren(container: Node, after: Node[]): void {
   const before = [...container.childNodes]
   const same = (a: Node | undefined, b: Node | undefined) =>
-    a !== undefined && b !== undefined && keyOf(a) === keyOf(b)
+    a !== undefined && b !== undefined && domKey(a) === domKey(b)
   let head = 0
   while (head < before.length && head < after.length && same(before[head], after[head])) head++
   let tail = 0
@@ -637,7 +809,7 @@ function patchChildren(container: Node, after: Node[]): void {
     else {
       // The old element now stands for the fresh one: note its key first, as
       // patching takes the fresh one's children.
-      keys.set(old, keyOf(node))
+      keys.set(old, domKey(node))
       const line = (node as Element).getAttribute('data-line')
       if (line === null) old.removeAttribute('data-line')
       else old.setAttribute('data-line', line)
