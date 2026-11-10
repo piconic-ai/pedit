@@ -3,6 +3,8 @@
   "main": "worker.ts",
   "compatibility_date": "2026-08-20",
   "vars": {
+    // Public test fixture, never a deployment secret.
+    "HOST_TOKEN_SECRET": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
     "KEEP_MAX_SECONDS": "60",
     "HOST_GRACE_SECONDS": "2",
     "ROOM_MAX_SECONDS": "86400",
