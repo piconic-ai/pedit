@@ -94,11 +94,18 @@ The integrator must:
 - **Host token.** Not derived from the key. The relay makes it when a client
   creates a room (`POST /api/rooms`) and derives the room ID from it, so it can
   tell which connection is the host and end the room when the host leaves. It
-  keeps no record of the tokens it made, so a client can also make its own.
-  The token carries the time it was issued, unsigned, and a room opens only
-  with a token issued in the last day: once the room's life is over, its token
-  can no longer open the ID again, and the room deletes all it holds.
-  Peers never see it.
+  keeps no record of the tokens it made. The opaque `pe2_` token contains a
+  six-byte issue time, 16 random bytes and a 16-byte HMAC-SHA256 tag, encoded
+  as base64url after the prefix (55 characters). The tag authenticates the
+  prefix and the base64url-encoded time and random bytes using a relay secret.
+  The Worker verifies it before admitting a host WebSocket or keep request.
+  A new room requires a signed token issued in the last day. Once the room's
+  life is over, its token can no longer open the ID again, and the room deletes
+  all it holds.
+  Existing rooms opened with unsigned tokens still accept their hosts, but
+  unsigned tokens cannot open new rooms. Peers never see the host token.
+  This signing secret is separate from the document encryption keys and
+  does not let the relay decrypt content.
 
 ## What the relay sees and can do
 

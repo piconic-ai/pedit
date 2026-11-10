@@ -1,7 +1,13 @@
 import { checkProtocolVersion } from '@pedit/protocol/admission'
 import { RELAY_BUSY, RELAY_MAINTENANCE } from '@pedit/protocol/close'
 import { type Context, Hono } from 'hono'
-import { base64url, newHostToken, tokenIssuedAt } from './host-token.ts'
+import {
+  base64url,
+  type HostTokenSecrets,
+  hostTokenConfigured,
+  newHostToken,
+  verifyHostToken,
+} from './host-token.ts'
 import { FOREIGN_ORIGIN_HEADER, ORIGINS_HEADER } from './origins.ts'
 import { embedSourcesFor, mediaSourcesFrom, scriptHashes, servePage } from './page.ts'
 import { HOST_HEADER, ISSUED_HEADER, KEEP_HEADER, maintenance, refuse } from './room.ts'
@@ -87,14 +93,15 @@ export async function overLimit(
  * maintenance level, set in the dashboard when the relay has to stop: no new
  * rooms, or closed altogether.
  */
-type Bindings = Omit<Env, 'ROOM_CREATION_LIMIT' | 'CONNECTION_LIMIT' | 'KEEP_REQUEST_LIMIT'> & {
-  ROOM_CREATION_LIMIT?: RateLimit
-  CONNECTION_LIMIT?: RateLimit
-  KEEP_REQUEST_LIMIT?: RateLimit
-  MAINTENANCE?: string
-  // Where the Markdown preview may load images and videos from (docs/self-hosting.md).
-  MEDIA_SOURCES?: string
-}
+type Bindings = Omit<Env, 'ROOM_CREATION_LIMIT' | 'CONNECTION_LIMIT' | 'KEEP_REQUEST_LIMIT'> &
+  HostTokenSecrets & {
+    ROOM_CREATION_LIMIT?: RateLimit
+    CONNECTION_LIMIT?: RateLimit
+    KEEP_REQUEST_LIMIT?: RateLimit
+    MAINTENANCE?: string
+    // Where the Markdown preview may load images and videos from (docs/self-hosting.md).
+    MEDIA_SOURCES?: string
+  }
 
 const UNDER_MAINTENANCE =
   'This relay is not taking new rooms right now, for maintenance. Try again later, or run a relay of your own: https://github.com/piconic-ai/pedit/blob/main/docs/self-hosting.md'
@@ -142,7 +149,9 @@ app.post('/api/rooms', async (c) => {
       'Retry-After': '60',
     })
   }
-  const hostToken = newHostToken()
+  if (!hostTokenConfigured(c.env) || !c.env.HOST_TOKEN_SECRET)
+    return c.text('Host token signing is not configured', 503)
+  const hostToken = await newHostToken(c.env.HOST_TOKEN_SECRET)
   return c.json({ id: await roomIdFor(hostToken), hostToken }, 201)
 })
 
@@ -167,8 +176,9 @@ async function hostRequest(c: Context<{ Bindings: Bindings }>, label: string): P
   headers.delete(FOREIGN_ORIGIN_HEADER)
   const auth = c.req.header('Authorization')
   if (auth) {
-    const token = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(auth)?.[1]
-    if (!token || (await roomIdFor(token)) !== id) return c.text('invalid host token', 403)
+    const token = /^Bearer (\S+)$/.exec(auth)?.[1]
+    if (!token || !(await verifyHostToken(token, c.env)) || (await roomIdFor(token)) !== id)
+      return c.text('invalid host token', 403)
     headers.set(HOST_HEADER, '1')
     const keep = c.req.header(KEEP_HEADER)
     if (keep !== undefined) headers.set(KEEP_HEADER, keep)
@@ -210,11 +220,11 @@ app.get('/api/rooms/:id/ws', async (c) => {
   const auth = c.req.header('Authorization')
   if (auth) {
     const token = /^Bearer (\S+)$/.exec(auth)?.[1]
-    if (!token || (await roomIdFor(token)) !== id) return c.text('invalid host token', 403)
+    const verified = token && (await verifyHostToken(token, c.env))
+    if (!verified || (await roomIdFor(token)) !== id) return c.text('invalid host token', 403)
     headers.set(HOST_HEADER, '1')
-    // The room checks the issue time when its host first opens it.
-    const issued = tokenIssuedAt(token)
-    if (issued !== undefined) headers.set(ISSUED_HEADER, String(issued))
+    // Only signed issuance may open a new room. Legacy hosts may reconnect.
+    if (verified.kind === 'signed') headers.set(ISSUED_HEADER, String(verified.issued))
     const keep = c.req.header(KEEP_HEADER)
     if (keep !== undefined) headers.set(KEEP_HEADER, keep)
     const origins = c.req.header(ORIGINS_HEADER)

@@ -19,7 +19,7 @@ import {
   newHostToken,
   OPEN_WINDOW_MS,
   tokenEnd,
-  tokenIssuedAt,
+  verifyHostToken,
 } from '../src/host-token.ts'
 import app, { clientKey, maintenance, overLimit, roomIdFor } from '../src/index.ts'
 import {
@@ -33,6 +33,12 @@ import {
   RATE_LIMITED,
   type Room as RoomObject,
 } from '../src/room.ts'
+
+const TEST_SECRET = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+const verifiedIssued = async (token: string) => {
+  const verified = await verifyHostToken(token, { HOST_TOKEN_SECRET: TEST_SECRET })
+  return verified?.kind === 'signed' ? verified.issued : undefined
+}
 
 const ROOM_CLOSED = 4001
 const CLIENT_OUTDATED = 4002
@@ -238,7 +244,7 @@ describe('rooms', () => {
     const a = await createRoom()
     const b = await createRoom()
     expect(a.id).toMatch(/^[A-Za-z0-9_-]{22}$/)
-    expect(a.hostToken).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    expect(a.hostToken).toMatch(/^pe2_[A-Za-z0-9_-]{51}$/)
     expect(a.id).toBe(await roomIdFor(a.hostToken))
     expect(a.id).not.toBe(b.id)
   })
@@ -1332,11 +1338,15 @@ describe('room purge (#526)', () => {
   it('issues host tokens that carry their issue time', async () => {
     const before = Date.now()
     const room = await createRoom()
-    expect(tokenIssuedAt(room.hostToken)).toBeGreaterThanOrEqual(before)
-    expect(tokenIssuedAt(room.hostToken)).toBeLessThanOrEqual(Date.now())
-    expect(tokenIssuedAt(randomToken())).toBeUndefined()
-    expect(newHostToken(Date.UTC(2026, 10, 10))).toMatch(/^[A-Za-z0-9_-]{43}$/)
-    expect(tokenIssuedAt(newHostToken(Date.UTC(2026, 10, 10)))).toBe(Date.UTC(2026, 10, 10))
+    expect(await verifiedIssued(room.hostToken)).toBeGreaterThanOrEqual(before)
+    expect(await verifiedIssued(room.hostToken)).toBeLessThanOrEqual(Date.now())
+    expect(await verifiedIssued(randomToken())).toBeUndefined()
+    expect(await newHostToken(TEST_SECRET, Date.UTC(2026, 10, 10))).toMatch(
+      /^pe2_[A-Za-z0-9_-]{51}$/,
+    )
+    expect(await verifiedIssued(await newHostToken(TEST_SECRET, Date.UTC(2026, 10, 10)))).toBe(
+      Date.UTC(2026, 10, 10),
+    )
   })
 
   it('opens only with a token issued in the last day, and stores nothing otherwise', async () => {
@@ -1350,15 +1360,15 @@ describe('room purge (#526)', () => {
       'X-Pedit-Issued': String(now),
     })
     expect(spoofed.status).toBe(403)
-    const future = await ownRoom(newHostToken(now + ISSUE_SKEW_MS + 60_000))
+    const future = await ownRoom(await newHostToken(TEST_SECRET, now + ISSUE_SKEW_MS + 60_000))
     expect((await hostUpgrade(future)).status).toBe(403)
-    const old = await ownRoom(newHostToken(now - OPEN_WINDOW_MS - 60_000))
+    const old = await ownRoom(await newHostToken(TEST_SECRET, now - OPEN_WINDOW_MS - 60_000))
     expect((await (await host(old)).closed).code).toBe(ROOM_EXPIRED)
     for (const room of [timeless, future, old]) {
       expect(await held(room)).toEqual({ keys: [], alarm: null })
     }
-    // A token the host made itself, with an honest time, only names a room of its own.
-    const recent = await ownRoom(newHostToken(now - 60 * 60 * 1000))
+    // A correctly signed recent token can open its room.
+    const recent = await ownRoom(await newHostToken(TEST_SECRET, now - 60 * 60 * 1000))
     const h = await host(recent)
     expect(h.ws.readyState).toBe(WebSocket.OPEN)
     expect((await held(recent)).keys).toContain('openedAt')
@@ -1372,7 +1382,7 @@ describe('room purge (#526)', () => {
     await vi.waitFor(async () => expect((await held(room)).keys).not.toContain('admissionHash'))
     // The hourly check was armed while the host was here; it arms the purge.
     await runDurableObjectAlarm(stubOf(room))
-    const issued = tokenIssuedAt(room.hostToken)!
+    const issued = (await verifiedIssued(room.hostToken))!
     expect((await held(room)).alarm).toBe(tokenEnd(issued, limits(env).lifeSeconds))
   })
 

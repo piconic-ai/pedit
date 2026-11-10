@@ -8,6 +8,8 @@ export default defineConfig({
       // Small limits, so the tests can reach them.
       miniflare: {
         bindings: {
+          // Public test fixture, never a deployment secret.
+          HOST_TOKEN_SECRET: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
           ROOM_GUESTS: '3',
           BLOB_MAX_BYTES: '95',
           BLOB_QUOTA_BYTES: '100',
