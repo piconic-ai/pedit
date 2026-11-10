@@ -239,6 +239,7 @@ export class ServedFiles {
     if (!isAbsolute(bin)) throw new TypeError('bin must be an absolute path')
     // Another acquire may have started this file, or close() run, while the function ran.
     if (this.#closed || this.#byPath.has(real)) return undefined
+    if (this.#byPath.size >= MAX_FILES) throw new LimitError('too many served files')
     return this.#start(real, ino, bin)
   }
 

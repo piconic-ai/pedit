@@ -507,6 +507,20 @@ describe('bin as a function', () => {
   })
 
   live('bin as a function with pedit', () => {
+    it('never starts more than the limit with a slow function', async () => {
+      const { dir, files } = mk(async () => {
+        await sleep(100)
+        return BIN as string
+      })
+      const results = await Promise.allSettled(
+        Array.from({ length: 36 }, (_, i) => files.acquire(write(dir, `f${i}.md`))),
+      )
+      expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(32)
+      const rest = results.filter((r) => r.status === 'rejected')
+      expect(rest).toHaveLength(4)
+      for (const r of rest) expect(r.reason).toBeInstanceOf(LimitError)
+    }, 60_000)
+
     it('starts the child with the path it returned, once per file', async () => {
       let calls = 0
       const { dir, files } = mk(async () => {

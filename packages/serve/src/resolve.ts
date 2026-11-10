@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { constants } from 'node:fs'
-import { access, stat } from 'node:fs/promises'
+import { access, lstat, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, isAbsolute, join } from 'node:path'
 import { NoPeditError } from './errors.ts'
@@ -157,8 +157,14 @@ export async function resolvePedit(
     return await inspect(own)
   } catch (e) {
     if (!(e instanceof NoPeditError)) throw e
-    // A missing per-user copy says "cannot be used": the PATH's reason is the better one then.
-    if (options.install === 'never') throw e.message.endsWith('cannot be used') ? pathError : e
+    // A missing per-user copy: the PATH's reason is the better one. A present one reports its own.
+    if (options.install === 'never')
+      throw (await lstat(own).then(
+        () => true,
+        () => false,
+      ))
+        ? e
+        : pathError
   }
   let installed: Installed
   try {
