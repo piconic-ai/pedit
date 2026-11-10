@@ -507,15 +507,60 @@ describe('bin as a function', () => {
   })
 
   live('bin as a function with pedit', () => {
+    /** A bin function that holds every start at a gate the test opens, and counts its calls. */
+    const gated = () => {
+      let open!: () => void
+      const gate = new Promise<void>((r) => {
+        open = r
+      })
+      const state = { calls: 0, open }
+      const bin = async () => {
+        state.calls++
+        await gate
+        return BIN as string
+      }
+      return { state, bin }
+    }
+    const turns = async () => {
+      for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r))
+    }
+
+    it('starts one child for two acquires of one path at once', async () => {
+      const { state, bin } = gated()
+      const { dir, files } = mk(bin)
+      const a = write(dir, 'a.md')
+      const both = Promise.all([files.acquire(a), files.acquire(a)])
+      await turns() // both are waiting; the second waits for the first start
+      expect(state.calls).toBe(1)
+      state.open()
+      const [x, y] = await both
+      expect(y).toBe(x)
+      expect(state.calls).toBe(1)
+    })
+
     it('starts one child for two hard links acquired at once', async () => {
+      const { state, bin } = gated()
+      const { dir, files } = mk(bin)
+      const a = write(dir, 'a.md')
+      linkSync(a, join(dir, 'b.md'))
+      const both = Promise.all([files.acquire(a), files.acquire(join(dir, 'b.md'))])
+      await turns()
+      expect(state.calls).toBe(1)
+      state.open()
+      const [x, y] = await both
+      expect(y).toBe(x)
+    })
+
+    it('a failing function does not block a later acquire', async () => {
+      let fail = true
       const { dir, files } = mk(async () => {
-        await sleep(100)
+        if (fail) throw new Error('not yet')
         return BIN as string
       })
       const a = write(dir, 'a.md')
-      linkSync(a, join(dir, 'b.md'))
-      const [x, y] = await Promise.all([files.acquire(a), files.acquire(join(dir, 'b.md'))])
-      expect(y).toBe(x)
+      await expect(files.acquire(a)).rejects.toThrow('not yet')
+      fail = false
+      expect((await files.acquire(a)).path).toBe(a)
     })
 
     it('never starts more than the limit with a slow function', async () => {
