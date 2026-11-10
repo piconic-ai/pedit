@@ -31,6 +31,7 @@ import { JsonPane } from './jsonpane.ts'
 import { resolveLanguage } from './language.ts'
 import { applyPalette } from './palette.ts'
 import { PreviewPane } from './pane.ts'
+import { commentOnPreviewSelection } from './previewcomment.ts'
 import { parseRoomLocation } from './room.ts'
 import { cleanName } from './settings.ts'
 import { lineWrapping, settingsModel } from './settings-model.ts'
@@ -194,6 +195,8 @@ async function joinRoom(
     alwaysLoad,
   })
   attachments.version.subscribe(() => preview.refresh())
+  // A selection in the preview can be commented on as the editor's own.
+  const stopPreviewComments = commentOnPreviewSelection({ pane: preview, textEditor, files })
   const splitter = new Splitter(main, { onResize: followEditor })
   // Each file's table error; the view shows the one of the file on screen.
   const tableErrors = new TableErrors(0, (error) =>
@@ -553,6 +556,7 @@ async function joinRoom(
   // Edits the relay has not logged yet are lost if the page goes.
   window.addEventListener('beforeunload', away.warn)
   window.addEventListener('pagehide', () => {
+    stopPreviewComments()
     files.dispose()
     void room.dispose()
   })

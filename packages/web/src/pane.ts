@@ -1,12 +1,17 @@
 import type { EditorView } from '@codemirror/view'
 import type * as Y from 'yjs'
 import type { AlwaysLoad } from './alwaysload.ts'
+import type { BlockRenderer } from './blockrender.ts'
 import type { ImageResolver } from './core/attachments.ts'
 
-export type Renderer = Pick<
+/** What acting on an embed placeholder needs. */
+export type EmbedRenderer = Pick<
   typeof import('./preview.ts'),
-  'render' | 'patch' | 'loadEmbed' | 'embedProvider' | 'toggleRemember'
+  'loadEmbed' | 'embedProvider' | 'toggleRemember'
 >
+
+/** What the preview pane and the canvas cards load: the block renderer and the embed functions (blockrender.ts). */
+export type PaneRenderer = EmbedRenderer & { BlockRenderer: typeof BlockRenderer }
 
 /** The most snippets "Always load" loads on one page; the rest load on a click. */
 export const MAX_REMEMBERED_SNIPPETS = 20
@@ -19,7 +24,7 @@ export const MAX_REMEMBERED_SNIPPETS = 20
 export function onEmbedControl(
   event: Event,
   container: Element,
-  renderer: Renderer | null,
+  renderer: EmbedRenderer | null,
   alwaysLoad?: AlwaysLoad,
 ): void {
   const target = event.target instanceof Element ? event.target : null
@@ -44,7 +49,11 @@ export function onEmbedControl(
  * MAX_REMEMBERED_SNIPPETS: each may hold a large file, and a file of many
  * links would have them all fetched. The rest wait for a click.
  */
-export function loadRemembered(container: Element, renderer: Renderer, always: AlwaysLoad): void {
+export function loadRemembered(
+  container: Element,
+  renderer: EmbedRenderer,
+  always: AlwaysLoad,
+): void {
   let snippets = container.querySelectorAll('.embed--snippet.embed--loaded').length
   for (const placeholder of container.querySelectorAll('[data-embed-src]:not(.embed--loaded)')) {
     if (!always.has(renderer.embedProvider(placeholder))) continue
@@ -87,6 +96,89 @@ export function monotonic(anchors: readonly Anchor[]): Anchor[] {
   return out
 }
 
+function lineOf(el: Element | undefined): number | undefined {
+  return el instanceof HTMLElement && el.dataset.line !== undefined
+    ? Number(el.dataset.line)
+    : undefined
+}
+
+/**
+ * The index of the first of the children sharing the last first line at or before
+ * `line`, or -1. Children without a line are skipped. Roots must be in document
+ * order with non-decreasing lines; when several share a line (one block rendered
+ * to several roots) the first is returned, so none of them is missed.
+ */
+function rootAt(children: HTMLCollection, line: number): number {
+  let found = -1
+  let lo = 0
+  let hi = children.length - 1
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    let j = mid
+    while (j <= hi && lineOf(children[j]) === undefined) j++
+    const at = j <= hi ? lineOf(children[j]) : undefined
+    if (at === undefined) {
+      hi = mid - 1
+    } else if (at <= line) {
+      found = j
+      lo = j + 1
+    } else {
+      hi = mid - 1
+    }
+  }
+  // Step back over roots that share the found line.
+  for (let j = found - 1; found >= 0 && j >= 0; j--) {
+    const at = lineOf(children[j])
+    if (at === undefined) continue
+    if (at !== lineOf(children[found])) break
+    found = j
+  }
+  return found
+}
+
+/**
+ * The same position as `scrollTarget(monotonic(anchors), line)` over every block of
+ * `pane`, reading the layout of only the blocks around `line`. The roots are in
+ * document order with absolute lines, so the one holding `line` is found by
+ * binary search over their `data-line` attributes alone; its nested blocks and the
+ * roots after it are read until an anchor past `line` turns up, or the end of the
+ * document does. Like the full computation this takes root positions to grow
+ * with their lines and nested blocks to lie inside their roots.
+ */
+export function followTarget(pane: HTMLElement, line: number, docLines: number): number {
+  const children = pane.children
+  const origin = pane.getBoundingClientRect().top - pane.scrollTop
+  let prev: Anchor = { line: 0, top: 0 }
+  let last: Anchor | undefined
+  // Feeds one anchor through monotonic() and scrollTarget(); a position once it is decided.
+  const feed = (a: Anchor): number | undefined => {
+    if (last && !(a.line > last.line && a.top >= last.top)) return undefined
+    last = a
+    if (a.line <= line) {
+      prev = a
+      return undefined
+    }
+    if (a.line === prev.line) return prev.top
+    return prev.top + ((a.top - prev.top) * (line - prev.line)) / (a.line - prev.line)
+  }
+  for (let i = Math.max(0, rootAt(children, line)); i < children.length; i++) {
+    const base = lineOf(children[i])
+    if (base === undefined) continue
+    const root = children[i] as HTMLElement
+    let at = feed({ line: base, top: root.getBoundingClientRect().top - origin })
+    if (at !== undefined) return at
+    for (const el of root.querySelectorAll<HTMLElement>('[data-line]')) {
+      at = feed({
+        line: base + Number(el.dataset.line),
+        top: el.getBoundingClientRect().top - origin,
+      })
+      if (at !== undefined) return at
+    }
+    // Past `line` the next root has decided it, unless it was dropped; then go on.
+  }
+  return feed({ line: docLines, top: pane.scrollHeight }) ?? prev.top
+}
+
 /** The editor's first visible line, 0-based, with the fraction of it scrolled past. */
 export function topLine(view: EditorView): number {
   const height = Math.max(0, view.scrollDOM.scrollTop - view.documentPadding.top)
@@ -103,20 +195,33 @@ export function topLine(view: EditorView): number {
 export class PreviewPane {
   readonly element: HTMLElement
   #text: Y.Text
-  #load: () => Promise<Renderer>
-  #renderer: Renderer | null = null
-  #loading: Promise<Renderer> | null = null
+  #load: () => Promise<PaneRenderer>
+  #renderer: PaneRenderer | null = null
+  // Keeps the article's blocks between renders (blockrender.ts); made once the renderer is loaded.
+  #blocks: BlockRenderer | null = null
+  #imagesVersion = 0
+  // Bumped by each render, so follow() redoes its work once the blocks may have moved.
+  #layout = 0
+  #followed: { view: EditorView | null; key: string; layout: number; scrollTop: number } = {
+    view: null,
+    key: '',
+    layout: -1,
+    scrollTop: -1,
+  }
+  // Loads the renderer and the BlockRenderer together, so one is never set without the other.
+  #loading: Promise<void> | null = null
   #active = false
   #dirty = true
   #frame = 0
   #onRender: () => void
+  #rendered = new Set<() => void>()
   #images: ImageResolver | undefined
   #alwaysLoad: AlwaysLoad | undefined
 
   constructor(
     text: Y.Text,
     options: {
-      load?: () => Promise<Renderer>
+      load?: () => Promise<PaneRenderer>
       onRender?: () => void
       /** Finds the images added during the session. */
       images?: ImageResolver
@@ -127,7 +232,7 @@ export class PreviewPane {
     } = {},
   ) {
     this.#text = text
-    this.#load = options.load ?? (() => import('./preview.ts'))
+    this.#load = options.load ?? (() => import('./blockrender.ts'))
     this.#onRender = options.onRender ?? (() => {})
     this.#images = options.images
     this.element = options.element ?? document.createElement('article')
@@ -152,6 +257,8 @@ export class PreviewPane {
     if (text === this.#text) return
     this.#text.unobserve(this.#changed)
     this.#text = text
+    // Another text shares no blocks with the last one, not even a loaded player.
+    this.#blocks?.reset()
     text.observe(this.#changed)
     this.#changed()
   }
@@ -167,6 +274,8 @@ export class PreviewPane {
 
   /** Renders again though the text did not change, e.g. once an image arrives. */
   refresh(): void {
+    // Blocks with an image render again: the resolver may answer differently now.
+    this.#imagesVersion++
     this.#dirty = true
     this.#schedule()
   }
@@ -185,13 +294,20 @@ export class PreviewPane {
       pane.scrollTop = max
       return
     }
-    const origin = pane.getBoundingClientRect().top - pane.scrollTop
-    const anchors = [...pane.querySelectorAll<HTMLElement>('[data-line]')].map((el) => ({
-      line: Number(el.dataset.line),
-      top: el.getBoundingClientRect().top - origin,
-    }))
-    anchors.push({ line: view.state.doc.lines, top: pane.scrollHeight })
-    pane.scrollTop = Math.min(max, scrollTarget(monotonic(anchors), topLine(view)))
+    const line = topLine(view)
+    const key = `${line}|${view.state.doc.lines}|${pane.scrollHeight}|${pane.clientHeight}`
+    // Nothing moved since the last call: neither the editor, the preview's layout nor
+    // its scroll position (a reader who scrolled the preview is brought back as before).
+    if (
+      view === this.#followed.view &&
+      key === this.#followed.key &&
+      this.#followed.layout === this.#layout &&
+      pane.scrollTop === this.#followed.scrollTop
+    ) {
+      return
+    }
+    pane.scrollTop = Math.min(max, followTarget(pane, line, view.state.doc.lines))
+    this.#followed = { view, key, layout: this.#layout, scrollTop: pane.scrollTop }
   }
 
   /**
@@ -217,15 +333,21 @@ export class PreviewPane {
     })
   }
 
+  async #ready(): Promise<void> {
+    const renderer = await this.#load()
+    this.#renderer = renderer
+    this.#blocks ??= new renderer.BlockRenderer(this.element)
+  }
+
   async #render(): Promise<void> {
-    if (!this.#renderer) {
+    if (!this.#renderer || !this.#blocks) {
       try {
-        this.#loading ??= this.#load()
-        this.#renderer = await this.#loading
+        this.#loading ??= this.#ready()
+        await this.#loading
       } catch {
         // Offline or a stale deploy: try again on the next change.
         this.#loading = null
-        // The article's content is rendered Markdown, patched in place (preview.ts),
+        // The article's content is rendered Markdown, kept block by block (blockrender.ts),
         // so this message goes in the same way rather than through a component.
         const message = document.createElement('p')
         message.className = 'preview-error'
@@ -234,12 +356,24 @@ export class PreviewPane {
         return
       }
     }
-    if (!this.#active || !this.#dirty) return
+    if (!this.#active || !this.#dirty || !this.#blocks) return
     this.#dirty = false
-    const { render, patch } = this.#renderer
-    patch(this.element, render(this.#text.toString(), this.#images))
+    this.#blocks.update(this.#text.toString(), this.#images, this.#imagesVersion)
+    this.#layout++
     this.#loadRemembered()
     this.#images?.rendered?.()
     this.#onRender()
+    for (const fn of [...this.#rendered]) fn()
+  }
+
+  /** The blocks the page shows (null before the first render); `source` says which text they are of. */
+  get blocks(): BlockRenderer | null {
+    return this.#blocks
+  }
+
+  /** Calls `fn` after every render; returns how to stop. */
+  onRendered(fn: () => void): () => void {
+    this.#rendered.add(fn)
+    return () => void this.#rendered.delete(fn)
   }
 }

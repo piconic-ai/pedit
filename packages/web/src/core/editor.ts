@@ -1,5 +1,5 @@
 import { Compartment, EditorState, type Extension, Prec } from '@codemirror/state'
-import { EditorView, keymap } from '@codemirror/view'
+import { EditorView, keymap, type ViewUpdate } from '@codemirror/view'
 import { isFinalStatus, type RoomStatus } from '@pedit/protocol'
 import { basicSetup } from 'codemirror'
 import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next'
@@ -41,6 +41,8 @@ export interface TextEditor {
   selection: Store<{ from: number; to: number }>
   /** The compartment holding whether the text can be edited. */
   editable: Compartment
+  /** Calls `fn` on every update of the editor, whichever file it shows; returns how to stop. */
+  onUpdate(fn: (u: ViewUpdate) => void): () => void
   /** Shows another file's text; the compartments keep their values. */
   setFile(file: OpenFile): void
   dispose(): void
@@ -57,6 +59,7 @@ export function mountTextEditor(opts: TextEditorOptions): TextEditor {
   const editable = new Compartment()
   const selection = new Store({ from: 0, to: 0 })
   const moved = new Set<() => void>()
+  const updated = new Set<(u: ViewUpdate) => void>()
 
   const extensions = (file: OpenFile, from?: EditorState): Extension[] => {
     const extra = opts.extra?.(file, from) ?? {}
@@ -75,6 +78,9 @@ export function mountTextEditor(opts: TextEditorOptions): TextEditor {
       EditorView.updateListener.of((u) => {
         const s = u.state.selection.main
         const was = selection.get()
+        // Before the selection store: its subscribers aim the button, and what
+        // follows the edits (see onUpdate) must have caught up by then.
+        for (const fn of [...updated]) fn(u)
         if (s.from !== was.from || s.to !== was.to) selection.set({ from: s.from, to: s.to })
         if (u.docChanged || u.geometryChanged) for (const fn of [...moved]) fn()
       }),
@@ -140,6 +146,10 @@ export function mountTextEditor(opts: TextEditorOptions): TextEditor {
     view,
     selection,
     editable,
+    onUpdate(fn) {
+      updated.add(fn)
+      return () => void updated.delete(fn)
+    },
     setFile(file) {
       view.setState(
         EditorState.create({

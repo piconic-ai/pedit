@@ -1,0 +1,52 @@
+name: Bench
+
+# Runs the preview benchmark (packages/web/test/perf/preview.bench.test.ts).
+# Plain `pnpm test` skips it (it needs PERF=1). It fails on work counts that do
+# not depend on the machine (blocks rendered, lines parsed, keys computed, rects
+# read per keystroke) and on timings compared within the same run, so a slowdown
+# turns this run red; the numbers are in the job summary.
+#
+# Weekly, so a slowdown that slipped in is seen within a week; the benchmark takes
+# a few seconds, so also on pull requests that touch the preview code, where it
+# is cheaper to catch one.
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - packages/web/src/preview.ts
+      - packages/web/src/blockrender.ts
+      - packages/web/src/blockparse.ts
+      - packages/web/src/pane.ts
+      - packages/web/test/perf/**
+      - .github/workflows/bench.yml
+
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: packages/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Preview benchmark
+        working-directory: packages/web
+        env:
+          PERF: "1"
+        run: pnpm exec vitest run test/perf/preview.bench.test.ts

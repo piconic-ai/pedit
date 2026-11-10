@@ -12,6 +12,7 @@ import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next'
 import type { Awareness } from 'y-protocols/awareness'
 import * as Y from 'yjs'
 import type { AlwaysLoad } from './alwaysload.ts'
+import type { BlockRenderer } from './blockrender.ts'
 import {
   addEdge,
   addNode,
@@ -35,7 +36,7 @@ import { type ImagePasteOptions, imagePaste, textAnchor } from './core/paste.ts'
 import { Store } from './core/store.ts'
 import { type Box, EdgeLayer, shapesOf } from './edges.ts'
 import type { JsonPane } from './jsonpane.ts'
-import { loadRemembered, onEmbedControl, type Renderer } from './pane.ts'
+import { loadRemembered, onEmbedControl, type PaneRenderer } from './pane.ts'
 import { type NodePeers, type Presence, peersOf, sameNodePeers, samePresence } from './presence.ts'
 import './components/CanvasBoard.tsx'
 
@@ -71,13 +72,14 @@ function drawPlain(el: HTMLElement, text: string): void {
 }
 
 /**
- * Rendered Markdown made for a card on the board: a link, a player and its
+ * A rendered block of a card on the board, made for it: a link, a player and its
  * controls are clicked and scrolled, not dragged with the card or zoomed.
  */
-function forCard(fragment: DocumentFragment): DocumentFragment {
-  for (const el of fragment.querySelectorAll('a, video, .embed'))
+function forCard(root: Element): void {
+  const marked = root.matches('a, video, .embed') ? [root] : []
+  for (const el of [...marked, ...root.querySelectorAll('a, video, .embed')]) {
     el.classList.add('nodrag', 'nowheel')
-  return fragment
+  }
 }
 
 /** Marks the board's own edits, so the undo manager tracks them. */
@@ -169,7 +171,10 @@ export class BoardView {
   readonly markdown = new Store<CardDrawer | null>(null)
   /** Bumped when the cards should draw again, as an image arrived. */
   readonly markdownVersion = new Store(0)
-  #renderer: Renderer | null = null
+  #renderer: PaneRenderer | null = null
+  // One block renderer per card element, made when it first draws. Weak: the board
+  // can mount a card's element more than once and drop one unseen.
+  #cards = new WeakMap<HTMLElement, BlockRenderer>()
   #images: ImageResolver | undefined
   #alwaysLoad: AlwaysLoad | undefined
   #editorExtensions: () => Extension[]
@@ -208,7 +213,7 @@ export class BoardView {
       /** Whose presence is on this canvas, in a room that shares several files. */
       here?: (state: Record<string, unknown>) => boolean
       /** Loads the text cards' Markdown renderer; the preview's by default. */
-      loadMarkdown?: () => Promise<Renderer>
+      loadMarkdown?: () => Promise<PaneRenderer>
       /** Finds the images added during the session, as the preview does. */
       images?: ImageResolver
       /** The providers whose players load without a click, in this browser. */
@@ -236,7 +241,7 @@ export class BoardView {
     render(this.element, 'CanvasBoard', { view: this })
     // Started at once, so the cards rarely wait; kept apart from the page's
     // first load, as the preview's Markdown is.
-    const loadMarkdown = options.loadMarkdown ?? (() => import('./preview.ts'))
+    const loadMarkdown = options.loadMarkdown ?? (() => import('./blockrender.ts'))
     loadMarkdown().then(
       (renderer) => {
         this.#renderer = renderer
@@ -262,9 +267,29 @@ export class BoardView {
    * breaks kept, leaving the blocks that did not change (and a player loaded
    * in one) in place.
    */
-  #drawMarkdown(renderer: Renderer, el: HTMLElement, text: string): void {
-    renderer.patch(el, forCard(renderer.render(text, this.#images, undefined, { breaks: true })))
+  #drawMarkdown(renderer: PaneRenderer, el: HTMLElement, text: string): void {
+    let blocks = this.#cards.get(el)
+    if (!blocks) {
+      blocks = new renderer.BlockRenderer(el, { breaks: true, decorate: forCard })
+      this.#cards.set(el, blocks)
+    }
+    // A card draws again when an image arrives, so the version is its images'.
+    blocks.update(
+      text,
+      this.#images,
+      untrack(() => this.markdownVersion.get()),
+    )
     this.#loadRemembered()
+  }
+
+  /** Forgets the renderer of a card that left the board. */
+  releaseMarkdown(el: HTMLElement): void {
+    this.#cards.delete(el)
+  }
+
+  /** Whether the card's element has a renderer. */
+  hasRenderer(el: HTMLElement): boolean {
+    return this.#cards.has(el)
   }
 
   /**
