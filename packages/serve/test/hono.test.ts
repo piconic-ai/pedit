@@ -360,8 +360,17 @@ describe('peditRoutes checks', () => {
     it('passes the origin and the lowercased Host to the check', async () => {
       const check = vi.fn(() => true)
       const f = await start({ origins: check })
-      expect((await post(f, { origin: 'http://Page.test' })).status).toBe(404)
-      expect(check).toHaveBeenCalledWith('http://Page.test', new URL(f.origin).host)
+      // fetch sends a lowercase Host: send a mixed-case one by hand.
+      const status = await new Promise<number>((resolve) => {
+        const req = httpRequest(
+          new URL(`${f.base}/nope/session`),
+          { method: 'POST', headers: { host: 'Page.Test', origin: 'http://Page.test' } },
+          (res) => resolve(res.statusCode ?? 0),
+        )
+        req.end()
+      })
+      expect(status).toBe(404)
+      expect(check).toHaveBeenCalledWith('http://Page.test', 'page.test')
     })
 
     it('accepts a session POST only when the check passes', async () => {
@@ -398,13 +407,30 @@ describe('peditRoutes checks', () => {
         },
       })
       expect((await post(f, { origin: f.origin })).status).toBe(403)
-      expect(await f.dial('a', 'f'.repeat(64))).toBe(403)
     })
 
-    it('applies to the doc upgrade', async () => {
+    // The token is deleted only after the Origin check passes, so a refused dial leaves it usable.
+    it.skipIf(!BIN)('applies to the doc upgrade', async () => {
       const f = await start({ origins: ownHost })
-      expect(await f.dial('a', 'f'.repeat(64), 'http://evil.test')).toBe(403)
-      expect(await f.dial('a', 'f'.repeat(64), null)).toBe(403)
+      const tok = await f.token('a')
+      expect(await f.dial('a', tok, 'http://evil.test')).toBe(403)
+      expect(await f.dial('a', tok, null)).toBe(403)
+      expect(await f.dial('a', tok)).toBeInstanceOf(WebSocket)
+    })
+
+    it.skipIf(!BIN)('refuses the doc upgrade when the check throws there', async () => {
+      let armed = false
+      const f = await start({
+        origins: (o, h) => {
+          if (armed) throw new Error('boom')
+          return ownHost(o, h)
+        },
+      })
+      const tok = await f.token('a')
+      armed = true
+      expect(await f.dial('a', tok)).toBe(403)
+      armed = false
+      expect(await f.dial('a', tok)).toBeInstanceOf(WebSocket)
     })
 
     it('still 404s the other routes and refuses a non-loopback peer', async () => {

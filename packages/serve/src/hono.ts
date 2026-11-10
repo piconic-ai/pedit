@@ -23,7 +23,10 @@ import type {
 
 export type { Role }
 
-/** Decides from the request's `Origin` and `Host` (lowercased) whether a page may open a room. */
+/**
+ * Decides from the request's `Origin` and `Host` (lowercased) whether a page may open a room.
+ * It is the only defence against DNS rebinding, so it must pin the hosts it accepts.
+ */
 export type OriginCheck = (origin: string, host: string) => boolean
 
 export interface PeditOptions<E extends Env = Env> {
@@ -34,7 +37,9 @@ export interface PeditOptions<E extends Env = Env> {
   /**
    * Exact origins of the integrator's pages; also used for the Host check. Or a function for pages
    * whose origins are not known up front: it gets the `Origin` and the `Host` and decides, so an
-   * app can accept a page's own origin on its own host only. Both routes then need an `Origin`
+   * app can accept a page's own origin on its own host only. Pin the hosts it accepts (for example
+   * `/^[a-z0-9-]+\.example\.dev$/.test(host) && origin === \`https://${host}\``): echoing the Host
+   * back with `http://` accepts a DNS-rebound page, whose Origin equals its Host. Both routes then need an `Origin`
    * (`Sec-Fetch-Site` does not stand in) and there is no other Host check. A throw refuses.
    */
   origins: string[] | OriginCheck

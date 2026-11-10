@@ -137,11 +137,15 @@ a function instead of a list. It gets the request's `Origin` and its `Host` (low
 whether that page may open a room:
 
 ```ts
-origins: (origin, host) => origin === `https://${host}`,
+origins: (origin, host) => /^[a-z0-9-]+\.example\.dev$/.test(host) && origin === `https://${host}`,
 ```
 
 Check both values. A wildcard domain can hold other people's pages, so accepting an origin alone would
 let one of them open your rooms; the example accepts a page's own origin on its own host only.
+
+The function must also pin the hosts it accepts, as the pattern above does. It is the only defence
+against DNS rebinding: after a rebind the browser sends `Origin` equal to `scheme://Host`, so a check
+that just echoes the Host back (`origin === \`http://${host}\``) accepts the rebound page.
 
 With a function, both `POST /:id/session` and the `GET /:id/doc` upgrade need an `Origin` header
 (`Sec-Fetch-Site: same-origin` does not stand in) and pass only when the function returns `true`.
