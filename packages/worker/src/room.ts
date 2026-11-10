@@ -412,7 +412,9 @@ export class Room extends DurableObject<Env> {
     // whose host is just reconnecting.
     if (isHost) this.hostHandshakes++
     try {
-      return await this.admit(credentials, isHost, join)
+      const digests = await hashed(credentials)
+      // After the hash: the room may have been purged meanwhile.
+      return this.openRefusal(isHost, join) ?? (await this.admit(digests, isHost, join))
     } finally {
       if (isHost) this.hostHandshakes--
     }
@@ -491,8 +493,7 @@ export class Room extends DurableObject<Env> {
     }
   }
 
-  private async admit(credentials: Credentials, isHost: boolean, join: Join): Promise<Response> {
-    const digests = await hashed(credentials)
+  private async admit(digests: Digests, isHost: boolean, join: Join): Promise<Response> {
     const digest = digests.token
     // A peer that joins after the host closed the room, or that was joining
     // again when it did, learns the reason the others got.
@@ -535,8 +536,6 @@ export class Room extends DurableObject<Env> {
         return this.refuse(ROOM_CLOSED, 'room is closed', join.protocol)
       }
     }
-    const unopenable = isHost && this.openedAt() === undefined && this.openRefusal(join)
-    if (unopenable) return unopenable
     // Authenticate before taking a peer slot. Only the authenticated host may
     // register the verifiers; a guest cannot claim an unopened room's tokens.
     const role = isHost
@@ -569,7 +568,8 @@ export class Room extends DurableObject<Env> {
   // A room opens only with a token the relay issued lately, so that its life
   // ends before the token is too old to open it again, and its tombstone can
   // go then. A token without a time reaches only rooms opened before.
-  private openRefusal(join: Join): Response | undefined {
+  private openRefusal(isHost: boolean, join: Join): Response | undefined {
+    if (!isHost || this.openedAt() !== undefined) return undefined
     const now = Date.now()
     if (join.issued === undefined || join.issued > now + ISSUE_SKEW_MS)
       return new Response('invalid host token', { status: 403 })
