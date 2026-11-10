@@ -16,8 +16,8 @@ to read again or reopen. You can edit or delete your own comments from their
 
 In a Markdown file you can also select text in the preview, in Split or
 Preview mode. The comment goes on the Markdown from the first to the last
-character you selected, with any marks between them: a list item selected whole
-quotes its `**bold**` as written. When the preview cannot place the start or
+character you selected, with any marks between them: a selection that runs
+past both ends of a bold word quotes its `**` as written. When the preview cannot place the start or
 the end exactly in the Markdown (an HTML entity, say), no button appears;
 select the text in the editor instead.
 

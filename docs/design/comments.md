@@ -269,9 +269,9 @@ rules as above. See `docs/design/rooms-away.md`.
 - Suggestions (tracked changes), as another key of the metadata file.
 - Merging edits made to the metadata file on disk while it is shared: pedit
   stops writing it and says so.
-- Comments on canvas edges. Scripts and agents
-  read and answer comments from the command line as `comments-cli.md` says.
-  An app that embeds pedit through `pedit serve` takes part as the host, live
-  (`embedding.md`, "Comments from the app").
+- Comments on canvas edges. Scripts and agents read and answer comments from
+  the command line as `comments-cli.md` says. An app that embeds pedit through
+  `pedit serve` takes part as the host, live (`embedding.md`, "Comments from
+  the app").
 - A pending state, for a thread whose content has not arrived yet: it shows
   as gone until it does.
