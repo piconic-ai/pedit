@@ -1,5 +1,27 @@
 # Changelog
 
+## [v0.8.3](https://github.com/piconic-ai/pedit/compare/v0.8.2...v0.8.3) - 2026-11-10
+
+### Changes
+- ci: check links between the Markdown files by @kfly8 in https://github.com/piconic-ai/pedit/pull/498
+- web: comment in place of the selection by @kfly8 in https://github.com/piconic-ai/pedit/pull/497
+- ci: fail the link check on Markdown files its inputs miss by @kfly8 in https://github.com/piconic-ai/pedit/pull/502
+- docs: README as an invitation, guides under docs/ by @kfly8 in https://github.com/piconic-ai/pedit/pull/499
+- docs: rewrite sessions.md by subsection; keep facts in one place by @kfly8 in https://github.com/piconic-ai/pedit/pull/504
+- cli: say what a kept room does, not what it used to do by @kfly8 in https://github.com/piconic-ai/pedit/pull/506
+- docs: self-hosting by task; relay log forensics to contributing/relay-logs.md by @kfly8 in https://github.com/piconic-ai/pedit/pull/507
+- docs: move the wire protocol from CONTRIBUTING.md to docs/contributing/protocol.md by @kfly8 in https://github.com/piconic-ai/pedit/pull/509
+- docs(serve): one heading per export in the README by @kfly8 in https://github.com/piconic-ai/pedit/pull/510
+- web: render the Markdown preview block by block (pipeline) by @kfly8 in https://github.com/piconic-ai/pedit/pull/503
+- web: keep preview blocks and re-render only changed ones by @kfly8 in https://github.com/piconic-ai/pedit/pull/505
+- web: render board cards block by block and drop the old preview patch by @kfly8 in https://github.com/piconic-ai/pedit/pull/508
+- web: re-parse only the edited part of a long Markdown document by @kfly8 in https://github.com/piconic-ai/pedit/pull/511
+- web: follow the editor by reading only the preview blocks near its top line by @kfly8 in https://github.com/piconic-ai/pedit/pull/513
+- ci: benchmark the preview on a schedule by @kfly8 in https://github.com/piconic-ai/pedit/pull/514
+- web: source positions for preview blocks, rendered on demand by @kfly8 in https://github.com/piconic-ai/pedit/pull/515
+- web: map a preview selection to its source range by @kfly8 in https://github.com/piconic-ai/pedit/pull/516
+- web: comment on a selection in the Markdown preview by @kfly8 in https://github.com/piconic-ai/pedit/pull/517
+
 ## [v0.8.2](https://github.com/piconic-ai/pedit/compare/v0.8.1...v0.8.2) - 2026-11-09
 
 ### Changes
