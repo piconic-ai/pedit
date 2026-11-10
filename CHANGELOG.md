@@ -1,5 +1,12 @@
 # Changelog
 
+## [v0.8.4](https://github.com/piconic-ai/pedit/compare/v0.8.3...v0.8.4) - 2026-11-10
+
+### Changes
+- docs: comments in the Markdown preview, and the preview benchmark by @kfly8 in https://github.com/piconic-ai/pedit/pull/519
+- worker: delete an ended room's tombstone once its token is too old by @kfly8 in https://github.com/piconic-ai/pedit/pull/527
+- fix(relay): sign host tokens to enforce room creation limits by @kfly8 in https://github.com/piconic-ai/pedit/pull/529
+
 ## [v0.8.3](https://github.com/piconic-ai/pedit/compare/v0.8.2...v0.8.3) - 2026-11-10
 
 ### Changes
