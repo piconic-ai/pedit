@@ -42,6 +42,7 @@ import {
   withKind,
 } from '@pedit/protocol/kinds'
 import { RELAY_BYTE_RATE, RELAY_MESSAGE_RATE } from '@pedit/protocol/pace'
+import { ISSUE_SKEW_MS, OPEN_WINDOW_MS, tokenEnd } from './host-token.ts'
 import {
   appendEntry,
   awayLog,
@@ -74,6 +75,8 @@ declare global {
 export const MAX_PEERS = 32
 /** Set by the Worker (never by clients) on the host's upgrade request. */
 export const HOST_HEADER = 'X-Pedit-Host'
+/** Set by the Worker on the host's upgrade request: when its host token was issued, in ms. */
+export const ISSUED_HEADER = 'X-Pedit-Issued'
 /**
  * How long the host asks the relay to keep the room after it leaves, in
  * seconds. The Worker passes it on only with a host token that checked out.
@@ -223,9 +226,14 @@ const ORIGINS_KEY = 'origins'
 const ORIGIN_REFUSED_REASON = 'this page is not allowed for this room'
 // The digest of the comment admission token (version 8), if the host sent one.
 const COMMENT_ADMISSION_KEY = 'commentAdmissionHash'
-// When the host first connected, in ms since the epoch. Never deleted: once
-// the room is over it is the tombstone that stops its ID being used again.
+// When the host first connected, in ms since the epoch. Kept after the room
+// ends: it is the tombstone that stops the ID being used again, until the
+// host token is too old to open it anyway (ISSUED_KEY).
 const OPENED_KEY = 'openedAt'
+// When the host token the room was opened with was issued, in ms since the
+// epoch. At its tokenEnd the room deletes everything it holds. A room opened
+// before tokens had a time has none, and keeps its tombstone.
+const ISSUED_KEY = 'tokenIssuedAt'
 // When the host's current presence began, in ms since the epoch: set when it
 // returns to a kept room; absent, it is `openedAt`. The session limit counts
 // from it. A reconnect within the grace period does not change it.
@@ -259,6 +267,8 @@ interface Join {
   after?: number
   /** The page origins a host declares; used on its first connection only. */
   origins: string[]
+  /** When the host's token was issued; undefined for a guest or a token without a time. */
+  issued?: number
 }
 
 type Role = 'editor' | 'commenter' | 'reader'
@@ -315,7 +325,8 @@ interface Usage {
  * (`openedAt`, kept after the room ends so that its ID cannot be reused), with
  * ROOM_EXPIRED for everyone. Whatever the state, it ends ROOM_LIFE_SECONDS
  * after `openedAt` at the latest, however often its host comes back. An hourly alarm cleans up a room whose host
- * vanished without a close, as on a deploy.
+ * vanished without a close, as on a deploy. Once its host token is too old to
+ * open the ID again (tokenEnd), the room deletes everything it holds.
  *
  * Attachments are the one thing a room keeps: encrypted blobs in R2, only while
  * the host is connected, deleted when the host leaves. The room counts their
@@ -401,7 +412,9 @@ export class Room extends DurableObject<Env> {
     // whose host is just reconnecting.
     if (isHost) this.hostHandshakes++
     try {
-      return await this.admit(credentials, isHost, join)
+      const digests = await hashed(credentials)
+      // After the hash: the room may have been purged meanwhile.
+      return this.openRefusal(isHost, join) ?? (await this.admit(digests, isHost, join))
     } finally {
       if (isHost) this.hostHandshakes--
     }
@@ -472,15 +485,15 @@ export class Room extends DurableObject<Env> {
       protocol: socketProtocol(version),
       keep: keeps ? this.keepFrom(request.headers.get(KEEP_HEADER)) : undefined,
       origins: (isHost && parseOrigins(request.headers.get(ORIGINS_HEADER))) || [],
+      issued: isHost ? wholeFrom(request.headers.get(ISSUED_HEADER)) : undefined,
       // A browser cannot set a header on a WebSocket: it sends `?after=` instead.
-      after: afterFrom(
+      after: wholeFrom(
         request.headers.get(AFTER_HEADER) ?? new URL(request.url).searchParams.get('after'),
       ),
     }
   }
 
-  private async admit(credentials: Credentials, isHost: boolean, join: Join): Promise<Response> {
-    const digests = await hashed(credentials)
+  private async admit(digests: Digests, isHost: boolean, join: Join): Promise<Response> {
     const digest = digests.token
     // A peer that joins after the host closed the room, or that was joining
     // again when it did, learns the reason the others got.
@@ -552,6 +565,19 @@ export class Room extends DurableObject<Env> {
     return storage.kv.get('keptTextClosed') === true
   }
 
+  // A room opens only with a token the relay issued lately, so that its life
+  // ends before the token is too old to open it again, and its tombstone can
+  // go then. A token without a time reaches only rooms opened before.
+  private openRefusal(isHost: boolean, join: Join): Response | undefined {
+    if (!isHost || this.openedAt() !== undefined) return undefined
+    const now = Date.now()
+    if (join.issued === undefined || join.issued > now + ISSUE_SKEW_MS)
+      return new Response('invalid host token', { status: 403 })
+    if (now > join.issued + OPEN_WINDOW_MS)
+      return this.refuse(ROOM_EXPIRED, 'room has expired', join.protocol)
+    return undefined
+  }
+
   // Takes a peer admitted to a place. Nothing awaits before the accept.
   private closeOutdatedPeers(): void {
     for (const peer of this.peers()) {
@@ -564,7 +590,11 @@ export class Room extends DurableObject<Env> {
     const kv = this.ctx.storage.kv
     // The clock starts at the host's first connection and never again.
     const first = isHost && this.openedAt() === undefined
-    if (first) kv.put(OPENED_KEY, Date.now())
+    // `openRefusal` made sure a first connection has its token's time.
+    if (first) {
+      kv.put(OPENED_KEY, Date.now())
+      kv.put(ISSUED_KEY, join.issued)
+    }
     const { 0: client, 1: server } = new WebSocketPair()
     this.ctx.acceptWebSocket(server, socketTags(isHost, role, join.version))
     const v6 = join.version >= 6
@@ -787,6 +817,15 @@ export class Room extends DurableObject<Env> {
    * still needed and can run twice.
    */
   override async alarm(): Promise<void> {
+    if (this.purgeDue()) {
+      await this.purge()
+      return
+    }
+    await this.check()
+    await this.armPurge()
+  }
+
+  private async check(): Promise<void> {
     if (await this.dropLegacyKept()) return
 
     if (this.expired()) {
@@ -1158,6 +1197,38 @@ export class Room extends DurableObject<Env> {
     clearAway(this.ctx.storage)
     this.cleaning = this.cleaning.then(() => this.deleteBlobs())
     await this.cleaning
+    await this.armPurge()
+  }
+
+  // When the room deletes everything it holds; undefined for a room never
+  // opened, or opened with a token without a time.
+  private purgeAt(): number | undefined {
+    const issued = this.ctx.storage.kv.get<number>(ISSUED_KEY)
+    return issued === undefined ? undefined : tokenEnd(issued, limits(this.env).lifeSeconds)
+  }
+
+  private purgeDue(): boolean {
+    const at = this.purgeAt()
+    return at !== undefined && Date.now() >= at
+  }
+
+  // A room with nothing left to check waits for its purge. An alarm already
+  // set comes sooner, and the alarm that follows it arms this again.
+  private async armPurge(): Promise<void> {
+    const at = this.purgeAt()
+    if (at === undefined || (await this.ctx.storage.getAlarm()) !== null) return
+    await this.ctx.storage.setAlarm(at)
+  }
+
+  // The token can no longer open the ID again, so the tombstone is no longer
+  // needed: the room deletes all it holds, and a host that comes with the
+  // token finds a room it may not open.
+  private async purge(): Promise<void> {
+    // The room's life ended before; this closes anyone a late alarm left.
+    if (this.sessionOpen()) await this.expire()
+    this.log('room purged')
+    await this.ctx.storage.deleteAlarm()
+    await this.ctx.storage.deleteAll()
   }
 
   // A blob request from a page on another origin gets CORS headers if the
@@ -1323,8 +1394,9 @@ export class Room extends DurableObject<Env> {
   }
 }
 
-// The entry a peer last held, from its X-Pedit-After header: whole, or none.
-function afterFrom(header: string | null): number | undefined {
+// A whole number from a header (the entry a peer last held, the issue time
+// of the host's token), or none.
+function wholeFrom(header: string | null): number | undefined {
   return header !== null && /^\d{1,15}$/.test(header) ? Number(header) : undefined
 }
 

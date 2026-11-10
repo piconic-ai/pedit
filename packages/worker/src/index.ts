@@ -1,9 +1,10 @@
 import { checkProtocolVersion } from '@pedit/protocol/admission'
 import { RELAY_BUSY, RELAY_MAINTENANCE } from '@pedit/protocol/close'
 import { type Context, Hono } from 'hono'
+import { base64url, newHostToken, tokenIssuedAt } from './host-token.ts'
 import { FOREIGN_ORIGIN_HEADER, ORIGINS_HEADER } from './origins.ts'
 import { embedSourcesFor, mediaSourcesFrom, scriptHashes, servePage } from './page.ts'
-import { HOST_HEADER, KEEP_HEADER, maintenance, refuse } from './room.ts'
+import { HOST_HEADER, ISSUED_HEADER, KEEP_HEADER, maintenance, refuse } from './room.ts'
 
 export { maintenance, Room } from './room.ts'
 export { embedSourcesFor, mediaSourcesFrom, scriptHashes, servePage }
@@ -12,13 +13,6 @@ export { embedSourcesFor, mediaSourcesFrom, scriptHashes, servePage }
 const ROOM_ID = /^[A-Za-z0-9_-]{22}$/
 // Blob ids are 128-bit HMACs, base64url without padding.
 const BLOB_ID = /^[A-Za-z0-9_-]{22}$/
-
-function base64url(bytes: Uint8Array): string {
-  return btoa(String.fromCharCode(...bytes))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '')
-}
 
 /**
  * A room id is derived from its host token, so the Worker can tell the host
@@ -148,7 +142,7 @@ app.post('/api/rooms', async (c) => {
       'Retry-After': '60',
     })
   }
-  const hostToken = base64url(crypto.getRandomValues(new Uint8Array(32)))
+  const hostToken = newHostToken()
   return c.json({ id: await roomIdFor(hostToken), hostToken }, 201)
 })
 
@@ -168,6 +162,7 @@ async function hostRequest(c: Context<{ Bindings: Bindings }>, label: string): P
   // that checked out.
   const headers = new Headers(c.req.raw.headers)
   headers.delete(HOST_HEADER)
+  headers.delete(ISSUED_HEADER)
   headers.delete(KEEP_HEADER)
   headers.delete(FOREIGN_ORIGIN_HEADER)
   const auth = c.req.header('Authorization')
@@ -207,6 +202,7 @@ app.get('/api/rooms/:id/ws', async (c) => {
   // ask for, so it goes on only with a host token that checked out.
   const headers = new Headers(c.req.raw.headers)
   headers.delete(HOST_HEADER)
+  headers.delete(ISSUED_HEADER)
   headers.delete(KEEP_HEADER)
   headers.delete(ORIGINS_HEADER)
   headers.delete(FOREIGN_ORIGIN_HEADER)
@@ -216,6 +212,9 @@ app.get('/api/rooms/:id/ws', async (c) => {
     const token = /^Bearer (\S+)$/.exec(auth)?.[1]
     if (!token || (await roomIdFor(token)) !== id) return c.text('invalid host token', 403)
     headers.set(HOST_HEADER, '1')
+    // The room checks the issue time when its host first opens it.
+    const issued = tokenIssuedAt(token)
+    if (issued !== undefined) headers.set(ISSUED_HEADER, String(issued))
     const keep = c.req.header(KEEP_HEADER)
     if (keep !== undefined) headers.set(KEEP_HEADER, keep)
     const origins = c.req.header(ORIGINS_HEADER)
@@ -241,6 +240,7 @@ app.all('/api/rooms/:id/blobs/:blobId', async (c) => {
   // header from outside is never passed on.
   const headers = new Headers(c.req.raw.headers)
   headers.delete(HOST_HEADER)
+  headers.delete(ISSUED_HEADER)
   headers.delete(ORIGINS_HEADER)
   headers.delete(FOREIGN_ORIGIN_HEADER)
   const foreign = foreignOrigin(c.req.raw)

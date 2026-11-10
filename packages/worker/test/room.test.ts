@@ -14,6 +14,13 @@ import { expiredReason } from '@pedit/protocol/close'
 import { MAX_FRAME_BYTES } from '@pedit/protocol/frame'
 import { Kind, withKind } from '@pedit/protocol/kinds'
 import { describe, expect, it, vi } from 'vitest'
+import {
+  ISSUE_SKEW_MS,
+  newHostToken,
+  OPEN_WINDOW_MS,
+  tokenEnd,
+  tokenIssuedAt,
+} from '../src/host-token.ts'
 import app, { clientKey, maintenance, overLimit, roomIdFor } from '../src/index.ts'
 import {
   ALARM_INTERVAL_MS,
@@ -993,7 +1000,11 @@ describe('room lifetime', () => {
       admission: st.storage.kv.get('admissionHash'),
       usage: st.storage.kv.get('blobUsage'),
       alarm: await st.storage.getAlarm(),
+      issued: st.storage.kv.get<number>('tokenIssuedAt'),
     }))
+
+  // When a room that ended deletes what it holds.
+  const purgeTime = (s: { issued?: number }) => tokenEnd(s.issued!, limits(env).lifeSeconds)
 
   // The room as deployed with other vars.
   const withVars = (room: Room, vars: Record<string, string | undefined>) =>
@@ -1047,7 +1058,7 @@ describe('room lifetime', () => {
     expect(await roomBlobs(room)).toEqual([])
     const s = await state(room)
     expect(s.opened).toBeDefined()
-    expect([s.admission, s.usage, s.alarm]).toEqual([undefined, undefined, null])
+    expect([s.admission, s.usage, s.alarm]).toEqual([undefined, undefined, purgeTime(s)])
   })
 
   it('never reopens an expired room, for the host or a guest', async () => {
@@ -1064,7 +1075,7 @@ describe('room lifetime', () => {
     const s = await state(room)
     expect(s.opened).toBe(opened)
     expect(s.admission).toBeUndefined()
-    expect(s.alarm).toBeNull()
+    expect(s.alarm).toBe(purgeTime(s))
   })
 
   it('refuses a host who comes back after the deadline without an alarm having run', async () => {
@@ -1106,7 +1117,7 @@ describe('room lifetime', () => {
     const s = await state(room)
     expect([s.admission, s.usage]).toEqual([undefined, undefined])
     expect(s.opened).toBeDefined()
-    expect(s.alarm).toBeNull()
+    expect(s.alarm).toBe(purgeTime(s))
     expect(await roomBlobs(room)).toEqual([])
     // A guest finds it closed; the next host starts afresh.
     expect((await (await connect(room.id)).closed).code).toBe(ROOM_CLOSED)
@@ -1143,7 +1154,7 @@ describe('room lifetime', () => {
     expect(await roomBlobs(room)).toHaveLength(1)
   })
 
-  it('does nothing when the alarm comes after the host left normally', async () => {
+  it('only waits for its purge when the alarm comes after the host left normally', async () => {
     const room = await createRoom()
     const h = await host(room)
     h.ws.close(HOST_LEFT, 'bye')
@@ -1153,7 +1164,7 @@ describe('room lifetime', () => {
     const before = await state(room)
     expect(await ranAlarm(room)).toBe(true)
     const after = await state(room)
-    expect(after).toEqual({ ...before, alarm: null })
+    expect(after).toEqual({ ...before, alarm: purgeTime(before) })
   })
 
   it('checks hourly and never ends a room without a limit, but still cleans up', async () => {
@@ -1274,6 +1285,138 @@ describe('room lifetime', () => {
     } finally {
       spy.mockRestore()
     }
+  })
+})
+
+describe('room purge (#526)', () => {
+  const stubOf = (room: Room) => env.ROOM.get(env.ROOM.idFromName(room.id))
+  const LIFE_MS = limits(env).lifeSeconds * 1000
+
+  // A room whose host made its own token instead of asking the relay.
+  async function ownRoom(hostToken: string): Promise<Room> {
+    const room: Room = {
+      id: await roomIdFor(hostToken),
+      hostToken,
+      admission: crypto.randomUUID().replaceAll('-', '') + 'A'.repeat(11),
+      read: crypto.randomUUID().replaceAll('-', '') + 'R'.repeat(11),
+    }
+    admissions.set(room.id, room.admission)
+    return room
+  }
+
+  const randomToken = () =>
+    btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))))
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '')
+
+  const hostUpgrade = (room: Room) =>
+    upgrade(room.id, {
+      Authorization: `Bearer ${room.hostToken}`,
+      [READ_ADMISSION_HEADER]: room.read,
+    })
+
+  // Everything the room holds: kv entries and its alarm.
+  const held = (room: Room) =>
+    runInDurableObject(stubOf(room), async (_: RoomObject, st) => ({
+      keys: [...st.storage.kv.list()].map(([key]) => key),
+      alarm: await st.storage.getAlarm(),
+    }))
+
+  // As if the room's token had been issued long enough ago for its purge.
+  const outlive = (room: Room) =>
+    runInDurableObject(stubOf(room), (_: RoomObject, st) => {
+      st.storage.kv.put('tokenIssuedAt', Date.now() - OPEN_WINDOW_MS - LIFE_MS - 1)
+    })
+
+  it('issues host tokens that carry their issue time', async () => {
+    const before = Date.now()
+    const room = await createRoom()
+    expect(tokenIssuedAt(room.hostToken)).toBeGreaterThanOrEqual(before)
+    expect(tokenIssuedAt(room.hostToken)).toBeLessThanOrEqual(Date.now())
+    expect(tokenIssuedAt(randomToken())).toBeUndefined()
+    expect(newHostToken(Date.UTC(2026, 10, 10))).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    expect(tokenIssuedAt(newHostToken(Date.UTC(2026, 10, 10)))).toBe(Date.UTC(2026, 10, 10))
+  })
+
+  it('opens only with a token issued in the last day, and stores nothing otherwise', async () => {
+    const now = Date.now()
+    const timeless = await ownRoom(randomToken())
+    expect((await hostUpgrade(timeless)).status).toBe(403)
+    // The time comes from the token only: a header from outside is dropped.
+    const spoofed = await upgrade(timeless.id, {
+      Authorization: `Bearer ${timeless.hostToken}`,
+      [READ_ADMISSION_HEADER]: timeless.read,
+      'X-Pedit-Issued': String(now),
+    })
+    expect(spoofed.status).toBe(403)
+    const future = await ownRoom(newHostToken(now + ISSUE_SKEW_MS + 60_000))
+    expect((await hostUpgrade(future)).status).toBe(403)
+    const old = await ownRoom(newHostToken(now - OPEN_WINDOW_MS - 60_000))
+    expect((await (await host(old)).closed).code).toBe(ROOM_EXPIRED)
+    for (const room of [timeless, future, old]) {
+      expect(await held(room)).toEqual({ keys: [], alarm: null })
+    }
+    // A token the host made itself, with an honest time, only names a room of its own.
+    const recent = await ownRoom(newHostToken(now - 60 * 60 * 1000))
+    const h = await host(recent)
+    expect(h.ws.readyState).toBe(WebSocket.OPEN)
+    expect((await held(recent)).keys).toContain('openedAt')
+  })
+
+  it('arms its purge when the session ends', async () => {
+    const room = await createRoom()
+    const h = await host(room)
+    h.ws.close(HOST_LEFT, 'bye')
+    await h.closed
+    await vi.waitFor(async () => expect((await held(room)).keys).not.toContain('admissionHash'))
+    // The hourly check was armed while the host was here; it arms the purge.
+    await runDurableObjectAlarm(stubOf(room))
+    const issued = tokenIssuedAt(room.hostToken)!
+    expect((await held(room)).alarm).toBe(tokenEnd(issued, limits(env).lifeSeconds))
+  })
+
+  it('deletes everything at the end of its token', async () => {
+    const room = await createRoom()
+    const h = await host(room)
+    h.ws.close(HOST_LEFT, 'bye')
+    await h.closed
+    await vi.waitFor(async () => expect((await held(room)).keys).not.toContain('admissionHash'))
+    await outlive(room)
+    expect(await runDurableObjectAlarm(stubOf(room))).toBe(true)
+    expect(await held(room)).toEqual({ keys: [], alarm: null })
+    // A guest with an old link finds no room, and leaves nothing behind.
+    expect((await (await connect(room.id)).closed).code).toBe(ROOM_CLOSED)
+    expect(await held(room)).toEqual({ keys: [], alarm: null })
+  })
+
+  it('closes whoever a late alarm finds, then deletes everything', async () => {
+    const room = await createRoom()
+    const h = await host(room)
+    const guest = await connect(room.id)
+    await putBlob(room, blobId(1), new Uint8Array([1]))
+    await outlive(room)
+    expect(await runDurableObjectAlarm(stubOf(room))).toBe(true)
+    const [hc, gc] = await Promise.all([h.closed, guest.closed])
+    expect([hc.code, gc.code]).toEqual([ROOM_EXPIRED, ROOM_EXPIRED])
+    expect(await roomBlobs(room)).toEqual([])
+    expect(await held(room)).toEqual({ keys: [], alarm: null })
+  })
+
+  it('keeps the tombstone of a room opened with a token without a time', async () => {
+    const room = await createRoom()
+    const h = await host(room)
+    // As if opened before tokens had a time.
+    await runInDurableObject(stubOf(room), (_: RoomObject, st) => {
+      st.storage.kv.delete('tokenIssuedAt')
+    })
+    h.ws.close(HOST_LEFT, 'bye')
+    await h.closed
+    await vi.waitFor(async () => expect((await held(room)).keys).not.toContain('admissionHash'))
+    await runDurableObjectAlarm(stubOf(room))
+    const after = await held(room)
+    expect(after.keys).toContain('openedAt')
+    expect(after.alarm).toBeNull()
   })
 })
 
