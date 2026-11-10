@@ -224,11 +224,8 @@ export class ServedFiles {
         await entry.exited
         continue
       }
-      if (!entry) {
-        if (this.#byPath.size >= MAX_FILES) throw new LimitError('too many served files')
-        entry = await this.#startLater(real, ino)
-        if (!entry) continue
-      }
+      entry ??= await this.#startLater(real, ino)
+      if (!entry) continue
       await entry.ready
       return entry.handle
     }
@@ -236,6 +233,7 @@ export class ServedFiles {
 
   /** Starts a child with the binary `options.bin` gives now; undefined if the state changed meanwhile. */
   async #startLater(real: string, ino: string): Promise<Entry | undefined> {
+    if (this.#byPath.size >= MAX_FILES) throw new LimitError('too many served files')
     const given = this.#options.bin
     const bin = typeof given === 'string' ? given : await given()
     if (!isAbsolute(bin)) throw new TypeError('bin must be an absolute path')
