@@ -32,6 +32,15 @@ cccc .           # cognitive complexity per function; cccc.toml sets the limit C
 scripts/check-links.sh  # links between the Markdown files and their #fragments (needs lychee)
 ```
 
+After changing how the Markdown preview renders (`packages/web/src/preview.ts`,
+`blockrender.ts`, `blockparse.ts` or `pane.ts`), run its benchmark too. Plain
+`pnpm test` skips it; the `Bench` workflow runs it weekly and on pull requests
+that touch those files, and fails when a keystroke does more work than it should:
+
+```sh
+cd packages/web && PERF=1 npx vitest run test/perf/preview.bench.test.ts
+```
+
 [cccc](https://github.com/moznion/cccc) comes with `mise install` (`mise.toml`)
 or from its releases. When a function goes over the limit, split it into
 steps with names rather than raising the limit.

@@ -14,6 +14,13 @@ where anyone can reply or resolve them; resolved threads stay under Resolved,
 to read again or reopen. You can edit or delete your own comments from their
 ⋮ menu (deleting asks first).
 
+In a Markdown file you can also select text in the preview, in Split or
+Preview mode. The comment goes on the Markdown from the first to the last
+character you selected, with any marks between them: a list item selected whole
+quotes its `**bold**` as written. When the preview cannot place the start or
+the end exactly in the Markdown (an HTML entity, say), no button appears;
+select the text in the editor instead.
+
 Each file's tab (or its name, in a room of one file) shows how many of its
 comments are still open. The speech bubble in the header, or Ctrl/⌘+Alt+M,
 shows or hides the comments.
