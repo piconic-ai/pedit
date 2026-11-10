@@ -1343,6 +1343,13 @@ describe('room purge (#526)', () => {
     const now = Date.now()
     const timeless = await ownRoom(randomToken())
     expect((await hostUpgrade(timeless)).status).toBe(403)
+    // The time comes from the token only: a header from outside is dropped.
+    const spoofed = await upgrade(timeless.id, {
+      Authorization: `Bearer ${timeless.hostToken}`,
+      [READ_ADMISSION_HEADER]: timeless.read,
+      'X-Pedit-Issued': String(now),
+    })
+    expect(spoofed.status).toBe(403)
     const future = await ownRoom(newHostToken(now + ISSUE_SKEW_MS + 60_000))
     expect((await hostUpgrade(future)).status).toBe(403)
     const old = await ownRoom(newHostToken(now - OPEN_WINDOW_MS - 60_000))

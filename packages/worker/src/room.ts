@@ -535,16 +535,8 @@ export class Room extends DurableObject<Env> {
         return this.refuse(ROOM_CLOSED, 'room is closed', join.protocol)
       }
     }
-    // A room opens only with a token the relay issued lately, so that its life
-    // ends before the token is too old to open it again, and its tombstone
-    // can go then. A token without a time reaches only rooms opened before.
-    if (isHost && this.openedAt() === undefined) {
-      const now = Date.now()
-      if (join.issued === undefined || join.issued > now + ISSUE_SKEW_MS)
-        return new Response('invalid host token', { status: 403 })
-      if (now > join.issued + OPEN_WINDOW_MS)
-        return this.refuse(ROOM_EXPIRED, 'room has expired', join.protocol)
-    }
+    const unopenable = isHost && this.openedAt() === undefined && this.openRefusal(join)
+    if (unopenable) return unopenable
     // Authenticate before taking a peer slot. Only the authenticated host may
     // register the verifiers; a guest cannot claim an unopened room's tokens.
     const role = isHost
@@ -574,6 +566,18 @@ export class Room extends DurableObject<Env> {
     return storage.kv.get('keptTextClosed') === true
   }
 
+  // A room opens only with a token the relay issued lately, so that its life
+  // ends before the token is too old to open it again, and its tombstone can
+  // go then. A token without a time reaches only rooms opened before.
+  private openRefusal(join: Join): Response | undefined {
+    const now = Date.now()
+    if (join.issued === undefined || join.issued > now + ISSUE_SKEW_MS)
+      return new Response('invalid host token', { status: 403 })
+    if (now > join.issued + OPEN_WINDOW_MS)
+      return this.refuse(ROOM_EXPIRED, 'room has expired', join.protocol)
+    return undefined
+  }
+
   // Takes a peer admitted to a place. Nothing awaits before the accept.
   private closeOutdatedPeers(): void {
     for (const peer of this.peers()) {
@@ -586,9 +590,9 @@ export class Room extends DurableObject<Env> {
     const kv = this.ctx.storage.kv
     // The clock starts at the host's first connection and never again.
     const first = isHost && this.openedAt() === undefined
+    // `openRefusal` made sure a first connection has its token's time.
     if (first) {
       kv.put(OPENED_KEY, Date.now())
-      // Checked in `admit`: a first connection has a time.
       kv.put(ISSUED_KEY, join.issued)
     }
     const { 0: client, 1: server } = new WebSocketPair()
