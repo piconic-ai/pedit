@@ -299,3 +299,41 @@ describe.skipIf(WIN)('resolvePedit with install', () => {
     expect(readdirSync(join(stateBin(), '..'))).toEqual(['pedit'])
   })
 })
+
+describe.skipIf(WIN)("resolvePedit with install: 'never'", () => {
+  const put = (path: string, version: string) => {
+    mkdirSync(join(path, '..'), { recursive: true })
+    writeFileSync(path, script(version))
+    chmodSync(path, 0o755)
+  }
+  const never = () => ({ install: 'never' as const, installTest: test() })
+
+  it('finds the per-user copy and downloads nothing', async () => {
+    put(stateBin(), '0.5.2')
+    publish(good())
+    const r = await resolvePedit(never())
+    expect(r.version).toBe('pedit 0.5.2')
+    expect(r.installed).toBeUndefined()
+    expect(rel.hits).toEqual([])
+  })
+
+  it('prefers the PATH', async () => {
+    put(join(dir, 'pbin', 'pedit'), '0.5.1')
+    put(stateBin(), '0.5.2')
+    process.env.PATH = join(dir, 'pbin')
+    expect((await resolvePedit(never())).version).toBe('pedit 0.5.1')
+  })
+
+  it('is a NoPeditError with nothing usable, and never goes to the network', async () => {
+    publish(good())
+    await expect(resolvePedit(never())).rejects.toThrow(NoPeditError)
+    put(stateBin(), '0.4.0') // too old: still no download
+    await expect(resolvePedit(never())).rejects.toThrow(/too old/)
+    expect(rel.hits).toEqual([])
+  })
+
+  it('still lets an explicit bin win', async () => {
+    put(stateBin(), '0.5.2')
+    await expect(resolvePedit({ bin: join(dir, 'nope'), ...never() })).rejects.toThrow(NoPeditError)
+  })
+})

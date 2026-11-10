@@ -476,3 +476,47 @@ describe('without a usable pedit', () => {
       expect(peditVersionOk(bad), bad).toBe(false)
   })
 })
+
+describe('bin as a function', () => {
+  const mk = (bin: () => Promise<string>) => {
+    const { dir, cleanup } = tmpRoot()
+    const files = new ServedFiles({ bin, app: 'fn-bin' })
+    cleanups.push(cleanup, () => files.close())
+    return { dir, files }
+  }
+
+  it('is called for each start, and a failure to run is a NoPeditError', async () => {
+    let calls = 0
+    const { dir, files } = mk(async () => {
+      calls++
+      return join(dir, 'no-such-pedit')
+    })
+    const path = write(dir, 'a.md')
+    await expect(files.acquire(path)).rejects.toThrow(NoPeditError)
+    await expect(files.acquire(path)).rejects.toThrow(NoPeditError)
+    expect(calls).toBe(2)
+  })
+
+  it('rejects a relative path and surfaces a rejection from the function', async () => {
+    const rel = mk(async () => 'pedit')
+    await expect(rel.files.acquire(write(rel.dir, 'a.md'))).rejects.toThrow(TypeError)
+    const bad = mk(async () => {
+      throw new Error('boom')
+    })
+    await expect(bad.files.acquire(write(bad.dir, 'a.md'))).rejects.toThrow('boom')
+  })
+
+  live('bin as a function with pedit', () => {
+    it('starts the child with the path it returned, once per file', async () => {
+      let calls = 0
+      const { dir, files } = mk(async () => {
+        calls++
+        return BIN as string
+      })
+      const path = write(dir, 'a.md')
+      const a = await files.acquire(path)
+      expect(await files.acquire(path)).toBe(a)
+      expect(calls).toBe(1)
+    })
+  })
+})

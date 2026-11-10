@@ -30,7 +30,11 @@ const STDERR_KEEP = 1024
 const TERM_AFTER_MS = 5000
 
 export interface ServedFilesOptions {
-  bin: string
+  /**
+   * Absolute path to pedit, or a function that gives it, called each time a child is about to start
+   * (a child already running keeps its binary).
+   */
+  bin: string | (() => Promise<string>)
   /** Shown by another pedit's refusal. */
   app: string
   /** Stop the child this long after the last client left. Default 60 s. */
@@ -192,7 +196,8 @@ export class ServedFiles {
   #win: boolean
 
   constructor(options: ServedFilesOptions) {
-    if (!isAbsolute(options.bin)) throw new TypeError('bin must be an absolute path')
+    if (typeof options.bin === 'string' && !isAbsolute(options.bin))
+      throw new TypeError('bin must be an absolute path')
     if (!options.app) throw new TypeError('app is required')
     this.#options = options
     this.#win = (options.platform ?? process.platform) === 'win32'
@@ -221,7 +226,12 @@ export class ServedFiles {
       }
       if (!entry) {
         if (this.#byPath.size >= MAX_FILES) throw new LimitError('too many served files')
-        entry = this.#start(real, ino)
+        const bin =
+          typeof this.#options.bin === 'string' ? this.#options.bin : await this.#options.bin()
+        if (!isAbsolute(bin)) throw new TypeError('bin must be an absolute path')
+        // Another acquire may have started this file, or close() run, while the function ran.
+        if (this.#closed || this.#byPath.has(real)) continue
+        entry = this.#start(real, ino, bin)
       }
       await entry.ready
       return entry.handle
@@ -266,9 +276,9 @@ export class ServedFiles {
     } catch {}
   }
 
-  #start(path: string, ino: string): Entry {
+  #start(path: string, ino: string, bin: string): Entry {
     const child = spawn(
-      this.#options.bin,
+      bin,
       [
         'serve',
         '--stdio',

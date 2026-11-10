@@ -5,7 +5,7 @@ import { isAbsolute, sep } from 'node:path'
 import { type Context, type Env, Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import type { UpgradeWebSocket, WSContext } from 'hono/ws'
-import { HeldError } from './errors.ts'
+import { HeldError, NoPeditError } from './errors.ts'
 import { nativeRealpath, nativeRealpathSync } from './paths.ts'
 import { resolvePedit } from './resolve.ts'
 import { ServedFiles } from './served.ts'
@@ -33,8 +33,12 @@ export interface PeditOptions<E extends Env = Env> {
   app: string
   /** Map an id to a file under `root`. null is 404; throw an HTTPException for anything else. */
   resolve: (id: string, c: Context<E>) => Promise<{ path: string; role: Role } | null>
-  /** Absolute path to pedit; default: `pedit` on the PATH. Config only. */
-  bin?: string
+  /**
+   * Absolute path to pedit; default: `pedit` on the PATH. Or a function that gives it, called when
+   * a child is about to start, so a pedit installed while the app runs is used by the next one.
+   * Config only.
+   */
+  bin?: string | (() => Promise<string>)
   idleMs?: number
   /** How long a child may take to exit after its input closed (default 5 s) before SIGTERM; on Windows it is given up on, never killed. */
   graceMs?: number
@@ -149,6 +153,20 @@ interface Grant {
   expires: number
 }
 
+/** A bin function whose answer gets the checks of a string `bin`, and whose failure is a NoPeditError. */
+function checkedBin(given: () => Promise<string>): () => Promise<string> {
+  return async () => {
+    let path: string
+    try {
+      path = await given()
+    } catch (e) {
+      if (e instanceof NoPeditError) throw e
+      throw new NoPeditError(`pedit was not found: ${(e as Error)?.message}`)
+    }
+    return (await resolvePedit({ bin: path })).bin
+  }
+}
+
 export function peditRoutes<E extends Env = Env>(options: PeditOptions<E>): Hono<E> & PeditRoutes {
   const { root, hosts, origins } = validate(options)
   const idByPath = new Map<string, string>()
@@ -160,7 +178,12 @@ export function peditRoutes<E extends Env = Env>(options: PeditOptions<E>): Hono
   let filesP: Promise<ServedFiles> | undefined
   // Resolved on first use, so a missing binary is a 503 and an event, not a crash at startup.
   const getFiles = () => {
-    filesP ??= resolvePedit({ bin: options.bin }).then(
+    const { bin: given } = options
+    filesP ??= (
+      typeof given === 'function'
+        ? Promise.resolve({ bin: checkedBin(given) })
+        : resolvePedit({ bin: given })
+    ).then(
       ({ bin }) =>
         new ServedFiles({
           bin,
