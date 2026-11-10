@@ -53,6 +53,43 @@ rules ([attachment cleanup](#attachment-cleanup)); a plain `wrangler deploy`
 does not apply them. `pnpm run deploy` by hand in the repository does the
 same.
 
+## Host token signing secret
+
+Set `HOST_TOKEN_SECRET` as a Worker secret before taking rooms. Generate a
+random 32-byte key, encoded as unpadded base64url (43 characters):
+
+```sh
+openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n'
+pnpm exec wrangler secret put HOST_TOKEN_SECRET --config wrangler.json
+```
+
+Paste the generated value at the prompt. Keep it out of Git, logs and public
+Worker vars. For the Deploy to Cloudflare copy, run this from the copied
+repository root, or add the secret in the Worker's dashboard. The relay returns
+503 for room creation if the current key is missing or malformed. A configured
+previous key must also have this format; an invalid previous key disables
+issuance and signed host authentication. Guest admission is unchanged.
+
+For local development in this repository, put a separately generated key in
+`packages/worker/.dev.vars`:
+
+```dotenv
+HOST_TOKEN_SECRET=<your local 43-character key>
+```
+
+This file is ignored by Git. Each deployment, including previews and the lab,
+needs its own secret; never reuse the production key for development.
+
+To rotate, install the old current value as `HOST_TOKEN_PREVIOUS_SECRET` and
+replace `HOST_TOKEN_SECRET` with a fresh key. The relay signs new tokens only
+with the current key and verifies with either key. Keep the previous key for
+at least one day plus `ROOM_LIFE_SECONDS` (seven days by default) plus five
+minutes of clock skew after its last token was issued. Remove the previous
+secret only after that interval. There is one previous-key slot, so wait until
+it is free before rotating again. Removing it early prevents affected hosts
+from reconnecting or managing their kept rooms. Existing unsigned rooms remain
+usable, but unsigned tokens cannot open new rooms after the upgrade.
+
 ## Point the CLI at it
 
 In a project, name the server in `.pedit/config.yaml`

@@ -253,9 +253,11 @@ the constants in `packages/worker/src/room.ts` and `kept-away.ts`. A network is 
 or for IPv6 one /64. Rate limits are counted per Cloudflare location and are
 approximate ([Cloudflare](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/)).
 The new-room limit counts `POST /api/rooms` requests. The relay derives a
-room's ID from its host token without remembering which tokens it issued, so a
-live client can make its own, with an issue time in the last day, and skip that
-creation request; WebSocket clients are still held to the connection limit. A client over the rate limits is disconnected and
+room's ID from its signed host token without keeping issuance records. Opening
+a new room requires a token signed by the relay, so a client cannot skip the
+creation limit by making its own token. Existing unsigned rooms may reconnect,
+but unsigned tokens cannot open new rooms. WebSocket clients are also held to
+the connection limit. A client over the rate limits is disconnected and
 reconnects, with backoff; a host's room waits for it as for any dropped host. A live room ends 24 hours after its
 host's connection began, even if the host is still connected or has reconnected
 since: everyone is disconnected and its link stops working. Running pedit

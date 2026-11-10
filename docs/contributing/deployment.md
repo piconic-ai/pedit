@@ -58,6 +58,30 @@ is disconnected, so keep this table in sync with them:
 > pull request renaming the Worker in `packages/wrangler.json`; close it, as
 > self-hosted deployments rely on that name.
 
+### Host token signing
+
+Provision `HOST_TOKEN_SECRET` before deploying the signed-token Worker. Use a
+separate random 32-byte base64url key for production, Preview deployments and
+the lab. Generate it and follow the rotation procedure in
+[self-hosting](../self-hosting.md#host-token-signing-secret). For production:
+
+```sh
+pnpm --dir packages/worker exec wrangler secret put HOST_TOKEN_SECRET --config wrangler.jsonc
+```
+
+For the lab, add `--env lab`. Configure Preview secrets in the Preview's own
+settings; do not assume production bindings are inherited. Local development
+uses an independent key in `packages/worker/.dev.vars`. Never commit secret
+values. Missing or malformed keys fail closed: room creation returns 503 and
+signed host requests are refused. Existing unsigned hosts can reconnect to
+rooms already opened, but cannot open new rooms.
+
+During rotation, retain `HOST_TOKEN_PREVIOUS_SECRET` until one day plus the
+maximum room lifetime plus five minutes has passed since the last old-key
+issuance. New issuance uses only `HOST_TOKEN_SECRET`. Do not overwrite a
+previous key that still serves live rooms. Confirm a newly created room can
+open its host WebSocket and access its keep status after provisioning.
+
 ### Zone settings
 
 Settings of the `piconic.ai` zone (Cloudflare dashboard → piconic.ai) also live
