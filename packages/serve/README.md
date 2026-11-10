@@ -324,7 +324,8 @@ await resolvePedit({ install: true })
 
 The function is called when a child is about to start, so the next child uses the pedit that was just
 installed, without making the routes again. Until then, starting a file fails with `NoPeditError`
-(`503` and an `error` event), as with a missing `bin`.
+(`503` and an `error` event), as with a missing `bin`. The function should settle in bounded time,
+since an acquire waits for it (the `'never'` example is bounded by the 5 s `--version` timeout).
 
 ## Security model
 

@@ -237,8 +237,9 @@ export class ServedFiles {
     const given = this.#options.bin
     const bin = typeof given === 'string' ? given : await given()
     if (!isAbsolute(bin)) throw new TypeError('bin must be an absolute path')
-    // Another acquire may have started this file, or close() run, while the function ran.
-    if (this.#closed || this.#byPath.has(real)) return undefined
+    // Another acquire may have started this file (or a link to it), or close() run, while the function ran.
+    if (this.#closed || this.#byPath.has(real) || (await this.#aliasFor(real, ino)))
+      return undefined
     if (this.#byPath.size >= MAX_FILES) throw new LimitError('too many served files')
     return this.#start(real, ino, bin)
   }

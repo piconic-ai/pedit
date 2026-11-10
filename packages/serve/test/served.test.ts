@@ -507,6 +507,17 @@ describe('bin as a function', () => {
   })
 
   live('bin as a function with pedit', () => {
+    it('starts one child for two hard links acquired at once', async () => {
+      const { dir, files } = mk(async () => {
+        await sleep(100)
+        return BIN as string
+      })
+      const a = write(dir, 'a.md')
+      linkSync(a, join(dir, 'b.md'))
+      const [x, y] = await Promise.all([files.acquire(a), files.acquire(join(dir, 'b.md'))])
+      expect(y).toBe(x)
+    })
+
     it('never starts more than the limit with a slow function', async () => {
       const { dir, files } = mk(async () => {
         await sleep(100)

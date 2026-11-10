@@ -423,9 +423,31 @@ describe('peditRoutes checks', () => {
     expect(calls).toBe(0)
     const res = await f.session('a')
     expect(res.status).toBe(503)
+    expect(await res.json()).toEqual({ error: 'busy' })
     expect(f.events.some((e) => e.type === 'error')).toBe(true)
     await f.session('a')
     expect(calls).toBe(2) // asked again: an install in between is picked up
+  })
+})
+
+describe('a bin function that gives no path or throws a non-Error', () => {
+  it.each([
+    ['undefined', async () => undefined as unknown as string, /did not give a path/],
+    ['an empty string', async () => '', /did not give a path/],
+    [
+      'a thrown string',
+      async (): Promise<string> => {
+        throw 'plain'
+      },
+      /plain/,
+    ],
+  ])('%s is 503 busy with a NoPeditError message, not the PATH', async (_n, bin, msg) => {
+    const f = await start({ bin })
+    const res = await f.session('a')
+    expect(res.status).toBe(503)
+    expect(await res.json()).toEqual({ error: 'busy' })
+    const err = f.events.find((e) => e.type === 'error')
+    expect(err && 'message' in err ? err.message : '').toMatch(msg)
   })
 })
 

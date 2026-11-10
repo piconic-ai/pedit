@@ -161,7 +161,10 @@ function checkedBin(given: () => Promise<string>): () => Promise<string> {
       path = await given()
     } catch (e) {
       if (e instanceof NoPeditError) throw e
-      throw new NoPeditError(`pedit was not found: ${(e as Error)?.message}`)
+      throw new NoPeditError(`pedit was not found: ${e instanceof Error ? e.message : String(e)}`)
+    }
+    if (typeof path !== 'string' || path === '') {
+      throw new NoPeditError('the bin function did not give a path')
     }
     return (await resolvePedit({ bin: path })).bin
   }
