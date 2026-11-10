@@ -73,7 +73,9 @@ Each kind of file anchors on what survives its edits:
 - **Text and Markdown:** two Yjs RelativePositions on the content's Y.Text,
   the start with assoc 0 and the end with assoc -1, so text typed at either
   edge stays outside. Positions are resolved with `followUndoneDeletions =
-  false`, so every peer agrees after an undo.
+  false`, so every peer agrees after an undo. A selection in the Markdown
+  preview becomes the same kind of anchor, on the source range it was
+  rendered from (below).
 - **CSV and TSV:** a cell is a range of the same Y.Text that takes in what is
   typed at its edges (start assoc -1, end assoc 0), so a value rewritten in
   place stays in it and an empty cell has a place. A row or column inserted
@@ -99,6 +101,16 @@ Each kind of file anchors on what survives its edits:
   label, file or link, cut to the quote's limit: it is changed when the node
   shows something else, and detached while no node has its id. The board
   marks the nodes open threads are on.
+
+**From the preview to the source.** The live preview carries no source
+positions, so the DOM stays as small as without them. When a selection is made
+in it, the blocks it starts and ends in are rendered again, detached, with
+positions taken from the parser (`previewpos.ts`): a run of text gets an offset
+only if it is the source exactly as shown, never found by searching. That twin
+is used only when its text equals the live block's character for character,
+and the selection maps from its first to its last non-blank character, or to
+nothing (`previewselect.ts`). A selection that maps to nothing offers no
+comment: a range that is not exactly what was selected is never anchored.
 
 A thread is **attached** when its anchor resolves to what the quote says,
 **changed** when it resolves to something else, and **detached** when its
@@ -257,9 +269,9 @@ rules as above. See `docs/design/rooms-away.md`.
 - Suggestions (tracked changes), as another key of the metadata file.
 - Merging edits made to the metadata file on disk while it is shared: pedit
   stops writing it and says so.
-- Comments in the Markdown preview, or on canvas edges. Scripts and agents
-  read and answer comments from the command line as `comments-cli.md` says.
-  An app that embeds pedit through `pedit serve` takes part as the host, live
-  (`embedding.md`, "Comments from the app").
+- Comments on canvas edges. Scripts and agents read and answer comments from
+  the command line as `comments-cli.md` says. An app that embeds pedit through
+  `pedit serve` takes part as the host, live (`embedding.md`, "Comments from
+  the app").
 - A pending state, for a thread whose content has not arrived yet: it shows
   as gone until it does.
