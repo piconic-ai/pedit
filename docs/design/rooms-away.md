@@ -97,7 +97,8 @@ Yjs sync when the host returns. A version 5 host cannot keep a room.
 - **Deadline.** While kept, only `keptAwayUntil` counts; otherwise only the session limit; the room's life caps both. When `keptAwayUntil` passes, by alarm or at the next message,
   the room ends with `ROOM_EXPIRED`: everyone is closed, and the snapshot, the
   log and the images are deleted. The time the host first connected stays, so
-  the ID is not opened again.
+  the ID is not opened again, until the host token is too old to open it
+  anyway (a day after the room's life); then the room deletes all it holds.
 - **Closing.** `POST /keep/close` with the host token and `X-Pedit-Tail` ends a
   kept room early, after the host took in every entry (a later entry gives 409).
   It does the same teardown, closing peers with `ROOM_CLOSED`.

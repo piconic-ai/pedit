@@ -39,7 +39,10 @@ opened, whatever the host does. While it is kept, the relay stores ciphertext as
 - **Per room**: the SHA-256 of the admission tokens, and the number and total
   size of stored images, deleted when the room ends; and the time the host
   first connected, kept after the room ends so that its ID cannot be used
-  again. The Durable Object's storage keeps 30 days of history for
+  again. A day after the room's life (`ROOM_LIFE_SECONDS`) is over, the room
+  deletes that too, and with it everything it holds: the host token carries
+  the time the relay issued it, and a room opens only with a token issued in
+  the last day, so the token can no longer open the ID. The Durable Object's storage keeps 30 days of history for
   point-in-time recovery
   ([Cloudflare](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/#pitr-point-in-time-recovery-api)).
 
@@ -251,8 +254,8 @@ or for IPv6 one /64. Rate limits are counted per Cloudflare location and are
 approximate ([Cloudflare](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/)).
 The new-room limit counts `POST /api/rooms` requests. The relay derives a
 room's ID from its host token without remembering which tokens it issued, so a
-live client can make its own and skip that creation request; WebSocket clients
-are still held to the connection limit. A client over the rate limits is disconnected and
+live client can make its own, with an issue time in the last day, and skip that
+creation request; WebSocket clients are still held to the connection limit. A client over the rate limits is disconnected and
 reconnects, with backoff; a host's room waits for it as for any dropped host. A live room ends 24 hours after its
 host's connection began, even if the host is still connected or has reconnected
 since: everyone is disconnected and its link stops working. Running pedit

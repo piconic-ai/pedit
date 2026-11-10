@@ -95,6 +95,9 @@ The integrator must:
   creates a room (`POST /api/rooms`) and derives the room ID from it, so it can
   tell which connection is the host and end the room when the host leaves. It
   keeps no record of the tokens it made, so a client can also make its own.
+  The token carries the time it was issued, unsigned, and a room opens only
+  with a token issued in the last day: once the room's life is over, its token
+  can no longer open the ID again, and the room deletes all it holds.
   Peers never see it.
 
 ## What the relay sees and can do
