@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.8.5](https://github.com/piconic-ai/pedit/compare/v0.8.4...v0.8.5) - 2026-11-11
+
+### Changes
+- feat(serve): accept origins as a check function by @kfly8 in https://github.com/piconic-ai/pedit/pull/539
+- feat(serve): find pedit without downloading, and choose the binary later by @kfly8 in https://github.com/piconic-ai/pedit/pull/540
+
 ## [v0.8.4](https://github.com/piconic-ai/pedit/compare/v0.8.3...v0.8.4) - 2026-11-10
 
 ### Changes
