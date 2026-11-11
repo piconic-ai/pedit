@@ -150,14 +150,14 @@ most 64 KiB. Each is answered by events on stream 0.
 While the app shares the file, the host takes part in its comments from the
 app, without opening the relay's editor. The comments are the room's as
 `comments.md` has them: the same doc, checks and limits. Nothing changes on the
-relay or on the wire.
+relay or in the encrypted room protocol.
 
-- **Only while shared and connected.** The commands below are accepted while
+- **Writes only while shared and connected.** The write commands below are accepted while
   this process shares the file and the host is connected to the room. Not
   shared, a kept room with `host: "away"` (nobody here to see a comment), or a
   share whose connection is down or waiting: `error`, as `keep` is refused
   today. A comment written while nobody can see it would look delivered. What
-  is saved stays readable (`.pedit/meta/`, `pedit comments list --file`).
+  is saved stays readable with the `comments` command below, or `pedit comments list --file`.
 - **Author.** The host's name as the room shows it, which is the session's own
   name (the account's, as for presence). Cleaned and cut as every author is.
 - `{"cmd":"comment","from":12,"to":20,"body":"…"}` starts a thread on the range
@@ -210,8 +210,35 @@ relay or on the wire.
     thread a command just wrote to comes first, then open threads, then
     resolved ones; a thread that is left out is
     counted in `"more"`, and a thread whose oldest comments do not fit lists
-    the latest ones, with `"cut"` counting those left out. The app can read the
-    rest from `.pedit/meta/`.
+    the latest ones, with `"cut"` counting those left out. The app requests the
+    complete threads with the `comments` command below.
+- `{"cmd":"comments","id":"c1"}` reads one complete snapshot without writing or
+  joining a room. It reads live threads while shared, including during reconnect,
+  and saved threads otherwise. No saved metadata returns an empty list; invalid or
+  unreadable metadata returns an error. Saved anchors are placed in serve's current
+  LF-normalized text, including changes not yet saved to disk. Saved metadata is
+  pedit's internal format; apps use this command rather than reading it directly.
+  - Replies are `comments_page` events with the same command `id`, consecutive
+    `seq` numbers starting at zero, `done`, and `parts`:
+
+        {"event":"comments_page","id":"c1","seq":0,"done":true,
+          "parts":[{"thread":{"id":"…","quote":"…","resolved":false,"from":12,"to":20},
+            "offset":0,"total":1,"messages":[{"id":"…","author":"…","time":"…","body":"…"}]}]}
+
+  - Each part repeats a thread's header. `offset` is the first message's index and
+    `total` is the thread's complete message count. Parts and messages keep the
+    browser's order. Empty threads have `offset: 0`, `total: 0`, and `messages: []`.
+    A thread may span pages; no messages are cut or threads omitted. An empty
+    snapshot has one final page with `parts: []`.
+  - Every page fits 64 KiB. Responses wait for output queue space until command
+    cancellation or shutdown, rather than dropping pages when stdout is slow.
+    A large snapshot can delay the next queued command. Pages all come from the
+    same captured snapshot, so concurrent edits cannot shift messages between them.
+  - There is no saved-metadata watch. Ask again when unshared saved threads are
+    needed. Writing comments still requires the host to be shared and connected.
+- `@pedit/serve` collects these pages into `CommentThread[]` through
+  `comments(path)` on routes and `comments()` on `ServedFile`. Query pages do not
+  become `comments` callbacks. An older binary's `unknown cmd` asks the app to update.
 - `@pedit/serve` gives them as `comment(path, {from, to, body})`, `reply(path,
   thread, body)` and `resolve(path, thread, resolved)` beside `status` and
   `keep`, and passes the event on as `comments`. A pedit without them

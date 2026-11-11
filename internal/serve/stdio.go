@@ -3,6 +3,7 @@ package serve
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -120,6 +121,28 @@ func (st *Stdio) Event(name string, fields map[string]any) {
 	case st.out <- encodeFrame(kindEvent, 0, payload):
 	case <-timeout.C:
 	case <-st.closing:
+	}
+}
+
+// EventContext queues a command response without dropping it when stdout is
+// slow. Cancellation and Close release a caller waiting for queue space.
+func (st *Stdio) EventContext(ctx context.Context, name string, fields map[string]any) error {
+	fields["event"] = name
+	payload, err := json.Marshal(fields)
+	if err != nil {
+		return err
+	}
+	frame := encodeFrame(kindEvent, 0, payload)
+	if frame == nil {
+		return errors.New("event is too large")
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-st.closing:
+		return errors.New("stdio is closed")
+	case st.out <- frame:
+		return nil
 	}
 }
 
