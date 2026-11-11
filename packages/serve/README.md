@@ -85,7 +85,7 @@ below. Mount it with `app.route(path, routes)`.
 | --- | --- |
 | `upgradeWebSocket` | From the adapter, created on the parent app (`createNodeWebSocket({ app })`). |
 | `root` | The directory whose files may be served; realpath'd at startup, must exist. |
-| `origins` | The exact origins of your pages. Also used for the `Host` check. |
+| `origins` | The exact origins of your pages (also used for the `Host` check), or a function `(origin, host) => boolean`; see [origins as a function](#origins-as-a-function). |
 | `app` | A label another process sees if it asks pedit for a file this app holds. |
 | `resolve(id, c)` | Maps an id to `{ path, role: 'edit' \| 'read' }` under `root`, or `null` for 404. Throw an `HTTPException` for anything else. |
 | `bin` | Absolute path to pedit. Default: `pedit` on the PATH. |
@@ -129,6 +129,28 @@ child.
 | `unshared` | `{ path, id }` |
 
 For the room events, `id` is the one the routes last served that path under, or `null`.
+
+### Origins as a function
+
+When the page origins are not known up front (a forwarded host such as `https://<name>.<domain>`), pass
+a function instead of a list. It gets the request's `Origin` and its `Host` (lowercased) and returns
+whether that page may open a room:
+
+```ts
+origins: (origin, host) => /^[a-z0-9-]+\.example\.dev$/.test(host) && origin === `https://${host}`,
+```
+
+Check both values. A wildcard domain can hold other people's pages, so accepting an origin alone would
+let one of them open your rooms; the example accepts a page's own origin on its own host only.
+
+The function must also pin the hosts it accepts, as the pattern above does. It is the only defence
+against DNS rebinding: after a rebind the browser sends `Origin` equal to `scheme://Host`, so a check
+that just echoes the Host back (`origin === \`http://${host}\``) accepts the rebound page.
+
+With a function, both `POST /:id/session` and the `GET /:id/doc` upgrade need an `Origin` header
+(`Sec-Fetch-Site: same-origin` does not stand in) and pass only when the function returns `true`.
+There is no separate `Host` check: the function is it. A function that throws refuses the request
+(403). The loopback check still applies. The type is exported as `OriginCheck` from `@pedit/serve/hono`.
 
 ## `@pedit/serve/client`
 
@@ -308,7 +330,7 @@ never touched.
 
 - One hook, `resolve`, decides which ids exist and their role. Every other request is refused by default.
 - Files must be under `root` (realpath checked); ids are `[A-Za-z0-9_-]` only, up to 128 characters.
-- Host and Origin must match `origins`, and peers must be on loopback unless `allowRemote` is set.
+- Host and Origin must match `origins` (or pass its function), and peers must be on loopback unless `allowRemote` is set.
 - A session token is single use and expires in 60 s; it travels in the WebSocket URL, so log no `token`.
 - A `read` role is enforced by pedit itself, not just by the page: updates from a reader close the socket.
 - The browser never sees a path, a pid or a socket name.

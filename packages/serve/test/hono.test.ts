@@ -352,6 +352,103 @@ describe('peditRoutes checks', () => {
     expect(same.status).toBe(404)
   })
 
+  describe('origins as a function', () => {
+    const ownHost = (o: string, h: string) => o === `http://${h}`
+    const post = (f: Fixture, headers: Record<string, string>, id = 'nope') =>
+      fetch(`${f.base}/${id}/session`, { method: 'POST', headers })
+
+    it('passes the origin and the lowercased Host to the check', async () => {
+      const check = vi.fn(() => true)
+      const f = await start({ origins: check })
+      // fetch sends a lowercase Host: send a mixed-case one by hand.
+      const status = await new Promise<number>((resolve) => {
+        const req = httpRequest(
+          new URL(`${f.base}/nope/session`),
+          { method: 'POST', headers: { host: 'Page.Test', origin: 'http://Page.test' } },
+          (res) => resolve(res.statusCode ?? 0),
+        )
+        req.end()
+      })
+      expect(status).toBe(404)
+      expect(check).toHaveBeenCalledWith('http://Page.test', 'page.test')
+    })
+
+    it('accepts a session POST only when the check passes', async () => {
+      const f = await start({ origins: ownHost })
+      // 404 shows it got past the check.
+      expect((await post(f, { origin: f.origin })).status).toBe(404)
+      expect((await post(f, { origin: 'http://evil.test' })).status).toBe(403)
+    })
+
+    it('needs an Origin; Sec-Fetch-Site is not a substitute', async () => {
+      const f = await start({ origins: () => true })
+      expect((await post(f, { 'sec-fetch-site': 'same-origin' })).status).toBe(403)
+      expect((await post(f, {})).status).toBe(403)
+    })
+
+    it('refuses when the Host does not match the origin', async () => {
+      const f = await start({ origins: ownHost })
+      const url = new URL(`${f.base}/nope/session`)
+      const status = await new Promise<number>((resolve) => {
+        const req = httpRequest(
+          url,
+          { method: 'POST', headers: { host: 'evil.test', origin: f.origin } },
+          (res) => resolve(res.statusCode ?? 0),
+        )
+        req.end()
+      })
+      expect(status).toBe(403)
+    })
+
+    it('refuses a check that throws', async () => {
+      const f = await start({
+        origins: () => {
+          throw new Error('boom')
+        },
+      })
+      expect((await post(f, { origin: f.origin })).status).toBe(403)
+    })
+
+    // The token is deleted only after the Origin check passes, so a refused dial leaves it usable.
+    it.skipIf(!BIN)('applies to the doc upgrade', async () => {
+      const f = await start({ origins: ownHost })
+      const tok = await f.token('a')
+      expect(await f.dial('a', tok, 'http://evil.test')).toBe(403)
+      expect(await f.dial('a', tok, null)).toBe(403)
+      expect(await f.dial('a', tok)).toBeInstanceOf(WebSocket)
+    })
+
+    it.skipIf(!BIN)('refuses the doc upgrade when the check throws there', async () => {
+      let armed = false
+      const f = await start({
+        origins: (o, h) => {
+          if (armed) throw new Error('boom')
+          return ownHost(o, h)
+        },
+      })
+      const tok = await f.token('a')
+      armed = true
+      expect(await f.dial('a', tok)).toBe(403)
+      armed = false
+      expect(await f.dial('a', tok)).toBeInstanceOf(WebSocket)
+    })
+
+    it('still 404s the other routes and refuses a non-loopback peer', async () => {
+      const f = await start({ origins: () => true })
+      expect((await fetch(`${f.base}/a`, { headers: { origin: f.origin } })).status).toBe(404)
+      const remote = { incoming: { socket: { remoteAddress: '10.1.2.3' } } }
+      const init = { method: 'POST', headers: { origin: f.origin } }
+      expect((await f.parent.request('/edit/a/session', init, remote)).status).toBe(403)
+    })
+
+    it.skipIf(!BIN)('opens a document when the check passes', async () => {
+      const f = await start({ origins: ownHost })
+      const ws = await f.dial('a', await f.token('a'))
+      expect(ws).toBeInstanceOf(WebSocket)
+      ;(ws as WebSocket).close()
+    })
+  })
+
   it('passes an HTTPException from resolve and hides other errors', async () => {
     const f = await start()
     expect((await f.session('boom')).status).toBe(401)

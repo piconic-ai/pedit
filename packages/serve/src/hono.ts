@@ -23,13 +23,26 @@ import type {
 
 export type { Role }
 
+/**
+ * Decides from the request's `Origin` and `Host` (lowercased) whether a page may open a room.
+ * It is the only defence against DNS rebinding, so it must pin the hosts it accepts.
+ */
+export type OriginCheck = (origin: string, host: string) => boolean
+
 export interface PeditOptions<E extends Env = Env> {
   /** From the adapter, created on the PARENT app (`createNodeWebSocket({ app })`). */
   upgradeWebSocket: UpgradeWebSocket
   /** realpath'd at startup; must exist. */
   root: string
-  /** Exact origins of the integrator's pages; also used for the Host check. */
-  origins: string[]
+  /**
+   * Exact origins of the integrator's pages; also used for the Host check. Or a function for pages
+   * whose origins are not known up front: it gets the `Origin` and the `Host` and decides, so an
+   * app can accept a page's own origin on its own host only. Pin the hosts it accepts (for example
+   * `/^[a-z0-9-]+\.example\.dev$/.test(host) && origin === \`https://${host}\``): echoing the Host
+   * back with `http://` accepts a DNS-rebound page, whose Origin equals its Host. Both routes then need an `Origin`
+   * (`Sec-Fetch-Site` does not stand in) and there is no other Host check. A throw refuses.
+   */
+  origins: string[] | OriginCheck
   app: string
   /** Map an id to a file under `root`. null is 404; throw an HTTPException for anything else. */
   resolve: (id: string, c: Context<E>) => Promise<{ path: string; role: Role } | null>
@@ -100,16 +113,19 @@ function validate(
   options: Pick<PeditOptions, 'upgradeWebSocket' | 'app' | 'origins' | 'root'> & {
     resolve: unknown
   },
-): { root: string; hosts: Set<string>; origins: Set<string> } {
+): { root: string; hosts: Set<string>; origins: Set<string>; check?: OriginCheck } {
   if (typeof options.upgradeWebSocket !== 'function')
     throw new TypeError('upgradeWebSocket is required')
   if (typeof options.resolve !== 'function') throw new TypeError('resolve is required')
   if (!options.app) throw new TypeError('app must not be empty')
-  if (!Array.isArray(options.origins) || options.origins.length === 0) {
-    throw new TypeError('origins must list at least one origin')
-  }
   const hosts = new Set<string>()
-  for (const o of options.origins) {
+  const list = options.origins
+  let check: OriginCheck | undefined
+  if (typeof list === 'function') check = list
+  else if (!Array.isArray(list) || list.length === 0) {
+    throw new TypeError('origins must list at least one origin, or be a function')
+  }
+  for (const o of check ? [] : (list as string[])) {
     let url: URL
     try {
       url = new URL(o)
@@ -128,7 +144,7 @@ function validate(
   } catch {
     throw new TypeError('root must be an existing directory')
   }
-  return { root, hosts, origins: new Set(options.origins) }
+  return { root, hosts, origins: new Set(check ? [] : (list as string[])), check }
 }
 
 /**
@@ -150,7 +166,16 @@ interface Grant {
 }
 
 export function peditRoutes<E extends Env = Env>(options: PeditOptions<E>): Hono<E> & PeditRoutes {
-  const { root, hosts, origins } = validate(options)
+  const { root, hosts, origins, check } = validate(options)
+  /** With a function: an Origin is required and the function decides; a throw refuses. */
+  const checked = (c: Context, origin: string | undefined): boolean => {
+    if (origin === undefined) return false
+    try {
+      return check?.(origin, (c.req.header('host') ?? '').toLowerCase()) === true
+    } catch {
+      return false
+    }
+  }
   const idByPath = new Map<string, string>()
   const emit = (event: PeditEvent) => {
     try {
@@ -261,7 +286,7 @@ export function peditRoutes<E extends Env = Env>(options: PeditOptions<E>): Hono
   const guard = async (c: Context<E>, next: () => Promise<void>) => {
     const id = c.req.param('id' as never) as string | undefined
     if (!id || !ID.test(id)) return c.notFound()
-    if (!hosts.has((c.req.header('host') ?? '').toLowerCase())) return c.notFound()
+    if (!check && !hosts.has((c.req.header('host') ?? '').toLowerCase())) return c.notFound()
     if (!options.allowRemote && !isLoopback(peerAddress(c))) return json(c, 403, 'forbidden')
     await next()
   }
@@ -272,7 +297,10 @@ export function peditRoutes<E extends Env = Env>(options: PeditOptions<E>): Hono
     const id = c.req.param('id')
     const origin = c.req.header('origin')
     const sameOrigin = c.req.header('sec-fetch-site') === 'same-origin'
-    if (!(origin !== undefined && origins.has(origin)) && !sameOrigin) {
+    const ok = check
+      ? checked(c, origin)
+      : (origin !== undefined && origins.has(origin)) || sameOrigin
+    if (!ok) {
       return json(c, 403, 'forbidden')
     }
     const who = createHash('sha256')
@@ -315,7 +343,9 @@ export function peditRoutes<E extends Env = Env>(options: PeditOptions<E>): Hono
     const id = c.req.param('id')
     const origin = c.req.header('origin')
     if (c.req.header('upgrade')?.toLowerCase() !== 'websocket') return c.notFound()
-    if (origin === undefined || !origins.has(origin)) return json(c, 403, 'forbidden')
+    if (check ? !checked(c, origin) : origin === undefined || !origins.has(origin)) {
+      return json(c, 403, 'forbidden')
+    }
     // Get and delete before any await: a raced second upgrade finds nothing.
     const token = c.req.query('token') ?? ''
     const grant = tokens.get(token)
