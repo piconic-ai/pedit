@@ -4,6 +4,7 @@ import type { Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute } from 'node:path'
 import { type Bridge, EVENT, FrameParser, MAX_COMMAND, Streams } from './bridge.ts'
+import { CommentsRead } from './comments.ts'
 import { HeldError, LimitError, NoPeditError } from './errors.ts'
 import { nativeRealpath } from './paths.ts'
 import { peditEnv } from './resolve.ts'
@@ -75,6 +76,8 @@ export interface ServedFile {
    * live, or the relay refuses.
    */
   keep(keep: string): Promise<ShareStatus>
+  /** Read all live or saved threads, including messages omitted from events. */
+  comments(): Promise<CommentThread[]>
   /**
    * Start a thread, as the host, on `[from, to)` of the file's text (text and Markdown files).
    * Needs the file shared with the host connected: it rejects otherwise, and for a range pedit
@@ -88,12 +91,22 @@ export interface ServedFile {
   resolve(thread: string, resolved: boolean): Promise<void>
 }
 
-type Cmd = 'share' | 'unshare' | 'close' | 'status' | 'keep' | 'comment' | 'reply' | 'resolve'
+type Cmd =
+  | 'share'
+  | 'unshare'
+  | 'close'
+  | 'status'
+  | 'keep'
+  | 'comment'
+  | 'reply'
+  | 'resolve'
+  | 'comments'
 
 /** A command waiting for pedit's answer: the event that carries its id. */
 interface Pending {
   id: string
   cmd: Cmd
+  response: { kind: 'single' } | { kind: 'comments'; read: CommentsRead }
   resolve: (event: Record<string, unknown>) => void
   reject: (e: Error) => void
 }
@@ -391,6 +404,11 @@ export class ServedFiles {
           if (!status) throw new Error('the room has ended')
           return status
         },
+        comments: async () => {
+          const read = new CommentsRead()
+          await this.#newer(entry, 'comments', {}, read)
+          return read.threads
+        },
         comment: async ({ from, to, body }) => {
           const ev = await this.#newer(entry, 'comment', { from, to, body })
           return { thread: String(ev.thread), message: String(ev.message) }
@@ -468,6 +486,7 @@ export class ServedFiles {
       commented: (ev) => this.#answer(entry, ev),
       replied: (ev) => this.#answer(entry, ev),
       resolved: (ev) => this.#answer(entry, ev),
+      comments_page: (ev) => this.#answer(entry, ev),
       comments: (ev) => {
         if (!Array.isArray(ev.threads)) return
         this.#emit({
@@ -564,7 +583,12 @@ export class ServedFiles {
    * Send a command with an id of its own; only the event that carries that id answers it. The
    * idle stop waits while a command is pending.
    */
-  #command(entry: Entry, cmd: Cmd, fields: object = {}): Promise<Record<string, unknown>> {
+  #command(
+    entry: Entry,
+    cmd: Cmd,
+    fields: object = {},
+    read?: CommentsRead,
+  ): Promise<Record<string, unknown>> {
     if (entry.dead || entry.stopping || !entry.listening)
       return Promise.reject(new Error('the file is no longer served'))
     if (entry.serve < SHARE_SERVE)
@@ -578,20 +602,31 @@ export class ServedFiles {
     if (Buffer.byteLength(json) > MAX_COMMAND) return Promise.reject(new Error('command too large'))
     return new Promise((resolve, reject) => {
       clearTimeout(entry.idle)
-      entry.pending.push({ id, cmd, resolve, reject })
+      entry.pending.push({
+        id,
+        cmd,
+        response: read ? { kind: 'comments', read } : { kind: 'single' },
+        resolve,
+        reject,
+      })
       entry.streams.command(json)
     })
   }
 
   /**
-   * status, keep, comment, reply and resolve: an earlier release of pedit with serve 2 lacks them.
+   * status, keep, comments, comment, reply and resolve: an earlier release of pedit with serve 2 lacks them.
    * It answers status and keep with `unknown cmd`; it decodes the others strictly before it looks
    * at `cmd`, so it answers them with `not a command: json: unknown field "from"` (or `thread`).
    * Both are said as what they mean.
    */
-  async #newer(entry: Entry, cmd: Cmd, fields: object = {}): Promise<Record<string, unknown>> {
+  async #newer(
+    entry: Entry,
+    cmd: Cmd,
+    fields: object = {},
+    read?: CommentsRead,
+  ): Promise<Record<string, unknown>> {
     try {
-      return await this.#command(entry, cmd, fields)
+      return await this.#command(entry, cmd, fields, read)
     } catch (e) {
       if (e instanceof Error && (e.message === 'unknown cmd' || strictRefusal(cmd, e.message)))
         throw new Error(`pedit is too old for ${cmd}; update it`)
@@ -603,9 +638,21 @@ export class ServedFiles {
   #answer(entry: Entry, ev: Record<string, unknown>) {
     const i = entry.pending.findIndex((p) => p.id === ev.id)
     if (i < 0) return
-    const [done] = entry.pending.splice(i, 1) as [Pending]
-    if (ev.event === 'error') done.reject(new Error(String(ev.message).slice(0, STDERR_KEEP)))
-    else done.resolve(ev)
+    const pending = entry.pending[i]
+    if (!pending) return
+    if (ev.event !== 'error' && pending.response.kind === 'comments') {
+      try {
+        if (!pending.response.read.accept(ev)) return
+      } catch (e) {
+        entry.pending.splice(i, 1)
+        pending.reject(e instanceof Error ? e : new Error(String(e)))
+        this.#armIdle(entry)
+        return
+      }
+    }
+    entry.pending.splice(i, 1)
+    if (ev.event === 'error') pending.reject(new Error(String(ev.message).slice(0, STDERR_KEEP)))
+    else pending.resolve(ev)
     this.#armIdle(entry) // once the queue is empty, with no client and no room, the child may idle out
   }
 

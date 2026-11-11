@@ -84,6 +84,8 @@ export interface PeditRoutes {
   status(path: string): Promise<ShareStatus | null>
   /** Change the keep of the room this file shares now (`3d`; not `0`). */
   keep(path: string, keep: string): Promise<ShareStatus>
+  /** Read all live or saved threads, including messages omitted from events. */
+  comments(path: string): Promise<CommentThread[]>
   /** Start a thread on `[from, to)` of the text, as the host; only while the file is shared. */
   comment(path: string, range: CommentRange): Promise<StartedThread>
   /** Add a comment to a thread, as the host. */
@@ -452,6 +454,7 @@ export function peditRoutes<E extends Env = Env>(options: PeditOptions<E>): Hono
     },
     status: async (path: string) => (await sharable(path)).status(),
     keep: async (path: string, keep: string) => (await sharable(path)).keep(keep),
+    comments: async (path: string) => (await sharable(path)).comments(),
     comment: async (path: string, range: CommentRange) => (await sharable(path)).comment(range),
     reply: async (path: string, thread: string, body: string) =>
       (await sharable(path)).reply(thread, body),

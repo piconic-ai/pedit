@@ -59,7 +59,7 @@ export interface CommentMessage {
 }
 
 /**
- * A thread of the shared file. `from` and `to` are where its anchor is in the text now, in UTF-16
+ * A thread of the file. `from` and `to` are where its anchor is in the text now, in UTF-16
  * code units of the room's document (a file with CRLF line endings counts a line break as one),
  * or `null` when it cannot be placed: its text was deleted, or it is on cells or a node. `cut`
  * counts the oldest comments left out so that the event fits.

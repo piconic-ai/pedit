@@ -110,6 +110,7 @@ child.
 | `close(path?)` | With a path, end that file's kept room for good (a live room is only left). Without, stop every child. |
 | `status(path)` | The file's room, shared now or kept without pedit; `null` when it has none. |
 | `keep(path, keep)` | Change how long the relay keeps the room after pedit leaves. |
+| `comments(path)` | Read all live or saved threads, with their anchors in the current text. |
 | `comment(path, range)`, `reply(path, thread, body)`, `resolve(path, thread, resolved)` | Take part in the file's comments as the host; see [comments](#comments). |
 
 ### Events
@@ -204,6 +205,7 @@ routes but by `path` only: this layer knows paths, not ids, and reports every ch
 | `path`, `generation` | `generation` names the document: the same after a restart that restored it, new when it started afresh. |
 | `dial(role)` | One stream to the child, as a `Bridge` (`send(frame)`, `onframe`, `onclose(reason, code?)`, `close()`); at most 8 per file (`LimitError`). |
 | `share(opts?)`, `unshare()`, `close()`, `status()`, `keep(keep)` | As the routes' methods, for this file; see [sharing](#sharing). `close()` ends a kept room for good; a live one is only left. |
+| `comments()` | Read all live or saved threads, without event truncation. |
 | `comment(range)`, `reply(thread, body)`, `resolve(thread, resolved)` | See [comments](#comments). |
 
 ### `resolvePedit(options?)`, `MIN_PEDIT_VERSION`, `peditVersionOk(output)`
@@ -288,7 +290,14 @@ await routes.resolve('/home/me/notes/a.md', thread, true) // false opens it agai
   nothing; setting the state a thread has already is not an error.
 - They work only while the file is shared and pedit is connected to the room. Not shared, a room kept
   with `host: 'away'`, or a connection that is down rejects with pedit's reason: a comment written
-  while nobody can see it would look delivered. What is saved stays readable in `.pedit/meta/`.
+  while nobody can see it would look delivered. Read saved threads with `comments(path)`.
+- `comments(path)` returns `CommentThread[]` with every message, including resolved and detached
+  threads. While shared it reads the live comments; otherwise it reads saved comments, including
+  before the first share, while a kept room is away, and after restarting the app. An absent saved
+  file returns `[]`; an invalid or unreadable one rejects. Anchors use the current LF-normalized
+  served text, including edits not yet written to disk. The call reads only and does not join a room.
+  It collects bounded response pages, including messages of a thread that exceeds 64 KiB. It does
+  not emit live `comments` events. Call it again to notice saved changes while the file is unshared.
 - The `comments` event carries the file's threads as they are, once when sharing starts (and on a
   resume) and again whenever the comments, or the text they point into, change. A thread is
   `{ id, quote, resolved, from, to, cut?, messages: [{ id, author, time, body }] }`. `from` and `to`
