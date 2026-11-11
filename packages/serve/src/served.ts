@@ -30,7 +30,11 @@ const STDERR_KEEP = 1024
 const TERM_AFTER_MS = 5000
 
 export interface ServedFilesOptions {
-  bin: string
+  /**
+   * Absolute path to pedit, or a function that gives it, called each time a child is about to start
+   * (a child already running keeps its binary).
+   */
+  bin: string | (() => Promise<string>)
   /** Shown by another pedit's refusal. */
   app: string
   /** Stop the child this long after the last client left. Default 60 s. */
@@ -192,7 +196,8 @@ export class ServedFiles {
   #win: boolean
 
   constructor(options: ServedFilesOptions) {
-    if (!isAbsolute(options.bin)) throw new TypeError('bin must be an absolute path')
+    if (typeof options.bin === 'string' && !isAbsolute(options.bin))
+      throw new TypeError('bin must be an absolute path')
     if (!options.app) throw new TypeError('app is required')
     this.#options = options
     this.#win = (options.platform ?? process.platform) === 'win32'
@@ -219,13 +224,51 @@ export class ServedFiles {
         await entry.exited
         continue
       }
-      if (!entry) {
-        if (this.#byPath.size >= MAX_FILES) throw new LimitError('too many served files')
-        entry = this.#start(real, ino)
-      }
+      entry ??= await this.#startLater(real, ino)
+      if (!entry) continue
       await entry.ready
       return entry.handle
     }
+  }
+
+  /** Starts that are waiting for `options.bin`, by real path and by `ino:<inode>`: one per file. */
+  #starting = new Map<string, Promise<string>>()
+
+  async #binPath(): Promise<string> {
+    const given = this.#options.bin
+    const bin = typeof given === 'string' ? given : await given()
+    if (!isAbsolute(bin)) throw new TypeError('bin must be an absolute path')
+    return bin
+  }
+
+  /**
+   * Starts a child with the binary `options.bin` gives now. Undefined means look again: another
+   * acquire was starting this file (or a link to it), or the state changed while the function ran.
+   * Only one start per file waits for the function; the decision and the insertion that follow it
+   * run in one synchronous block.
+   */
+  async #startLater(real: string, ino: string): Promise<Entry | undefined> {
+    const inoKey = `ino:${ino}`
+    const busy = this.#starting.get(real) ?? (ino === '' ? undefined : this.#starting.get(inoKey))
+    if (busy) {
+      await busy.catch(() => {})
+      return undefined
+    }
+    if (this.#byPath.size >= MAX_FILES) throw new LimitError('too many served files')
+    const resolving = this.#binPath()
+    const keys = ino === '' ? [real] : [real, inoKey]
+    for (const k of keys) this.#starting.set(k, resolving)
+    let bin: string
+    try {
+      bin = await resolving
+    } finally {
+      for (const k of keys) this.#starting.delete(k)
+    }
+    if (this.#closed || this.#byPath.has(real) || (ino !== '' && this.#byIno.has(ino))) {
+      return undefined
+    }
+    if (this.#byPath.size >= MAX_FILES) throw new LimitError('too many served files')
+    return this.#start(real, ino, bin)
   }
 
   /**
@@ -236,7 +279,9 @@ export class ServedFiles {
   async #aliasFor(real: string, ino: string): Promise<Entry | undefined> {
     const alias = ino === '' ? undefined : this.#byIno.get(ino)
     if (alias === undefined || alias.path === real) return undefined
-    return (await inodeOf(alias.path).catch(() => '')) === ino ? alias : undefined
+    if ((await inodeOf(alias.path).catch(() => '')) === ino) return alias
+    if (this.#byIno.get(ino) === alias) this.#byIno.delete(ino) // stale: it was saved over
+    return undefined
   }
 
   #reindex(entry: Entry, ino: string) {
@@ -266,9 +311,9 @@ export class ServedFiles {
     } catch {}
   }
 
-  #start(path: string, ino: string): Entry {
+  #start(path: string, ino: string, bin: string): Entry {
     const child = spawn(
-      this.#options.bin,
+      bin,
       [
         'serve',
         '--stdio',

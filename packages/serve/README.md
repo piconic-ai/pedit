@@ -88,7 +88,7 @@ below. Mount it with `app.route(path, routes)`.
 | `origins` | The exact origins of your pages (also used for the `Host` check), or a function `(origin, host) => boolean`; see [origins as a function](#origins-as-a-function). |
 | `app` | A label another process sees if it asks pedit for a file this app holds. |
 | `resolve(id, c)` | Maps an id to `{ path, role: 'edit' \| 'read' }` under `root`, or `null` for 404. Throw an `HTTPException` for anything else. |
-| `bin` | Absolute path to pedit. Default: `pedit` on the PATH. |
+| `bin` | Absolute path to pedit, or `() => Promise<string>` that gives it, called each time a child starts (a pedit installed while the app runs is used by the next child; one already running keeps its binary). The answer gets the checks of a string `bin`, and a failure is a `NoPeditError`: `503` and an `error` event. Default: `pedit` on the PATH. |
 | `idleMs` | Stop the child this long after its last page left. Default 60 s. A shared file is never stopped for idleness. |
 | `graceMs` | How long a child may take to exit after its input closed, before SIGTERM. Default 5 s. On Windows it is then given up on, never killed. |
 | `allowRemote` | Accept peers that are not on loopback. Default `false`. |
@@ -193,7 +193,7 @@ The layer below the routes, for an app that is not on Hono or wants its own tran
 ### `ServedFiles`
 
 `new ServedFiles({ bin, app, idleMs?, graceMs?, onEvent? })` (`ServedFilesOptions`; `bin` must be an
-absolute path). `acquire(path)` starts a child for the file or reuses the one running, and resolves a
+absolute path, or a function that gives one when a child is about to start). `acquire(path)` starts a child for the file or reuses the one running, and resolves a
 `ServedFile`; `close()` ends every child. Its `onEvent` gets a `ServeEvent`, the same events as the
 routes but by `path` only: this layer knows paths, not ids, and reports every child.
 
@@ -209,7 +209,8 @@ routes but by `path` only: this layer knows paths, not ids, and reports every ch
 ### `resolvePedit(options?)`, `MIN_PEDIT_VERSION`, `peditVersionOk(output)`
 
 `resolvePedit({ bin?, install? })` finds pedit, checks the binary and its version, and resolves
-`{ bin, version, installed? }`. With `install: true` it downloads pedit when none is usable; see
+`{ bin, version, installed? }`. With `install: true` it downloads pedit when none is usable, with
+`install: 'never'` it also looks at the per-user copy but never downloads; see
 [installing pedit for the user](#installing-pedit-for-the-user). `peditVersionOk(output)` tells
 whether a `pedit --version` output is at least `MIN_PEDIT_VERSION` (development builds pass and are
 left to the feature checks).
@@ -325,6 +326,28 @@ never touched.
   workflow built it. If any check fails, nothing is written and `resolvePedit` throws `NoPeditError`.
 - Updates are not automatic. Watch the `update_available` event; the per-user copy is an
   install-script-style copy, so `pedit self-update` (run as that user) updates it in place.
+
+### Asking the user first
+
+`install` has three modes: absent or `false` looks at the PATH only; `'never'` looks at the PATH and then
+the per-user copy, with the same checks, and never downloads; `true` also downloads when none is usable.
+An explicit `bin` wins in every mode. To tell the user what will be downloaded before it happens, give
+the routes a function, and install only after the user agrees:
+
+```js
+const routes = peditRoutes({
+  /* ... */
+  bin: async () => (await resolvePedit({ install: 'never' })).bin,
+})
+
+// In the handler behind your "Install pedit" button, after the user agreed:
+await resolvePedit({ install: true })
+```
+
+The function is called when a child is about to start, so the next child uses the pedit that was just
+installed, without making the routes again. Until then, starting a file fails with `NoPeditError`
+(`503` and an `error` event), as with a missing `bin`. The function should settle in bounded time,
+since an acquire waits for it (the `'never'` example is bounded by the 5 s `--version` timeout).
 
 ## Security model
 

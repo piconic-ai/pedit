@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { constants } from 'node:fs'
-import { access, stat } from 'node:fs/promises'
+import { access, lstat, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, isAbsolute, join } from 'node:path'
 import { NoPeditError } from './errors.ts'
@@ -136,22 +136,35 @@ async function inspect(given: string | undefined): Promise<{ bin: string; versio
  * and only if that is missing or too old is the latest release downloaded there, after the checks
  * install.sh makes. A pedit outside that directory is never touched. `installed` says what was
  * downloaded, and whether the build provenance was checked (`verified`) or only the checksum.
+ *
+ * With `install: 'never'` the PATH and then the per-user copy are looked at, with the same checks,
+ * and nothing is downloaded: for an app that asks the user before it installs.
  */
 export async function resolvePedit(
-  options: { bin?: string; install?: boolean; installTest?: InstallTestOptions } = {},
+  options: { bin?: string; install?: boolean | 'never'; installTest?: InstallTestOptions } = {},
 ): Promise<{ bin: string; version: string; installed?: Installed }> {
   if (!options.install || options.bin !== undefined)
     return inspect(options.bin ?? (await findOnPath()))
+  let pathError: NoPeditError | undefined
   try {
     return await inspect(await findOnPath())
   } catch (e) {
     if (!(e instanceof NoPeditError)) throw e
+    pathError = e
   }
   const own = stateBin()
   try {
     return await inspect(own)
   } catch (e) {
     if (!(e instanceof NoPeditError)) throw e
+    // A missing per-user copy: the PATH's reason is the better one. A present one reports its own.
+    if (options.install === 'never')
+      throw (await lstat(own).then(
+        () => true,
+        () => false,
+      ))
+        ? e
+        : pathError
   }
   let installed: Installed
   try {
