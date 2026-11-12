@@ -1,5 +1,13 @@
 # Changelog
 
+## [v0.8.6](https://github.com/piconic-ai/pedit/compare/v0.8.5...v0.8.6) - 2026-11-12
+
+### Changes
+- feat(serve): read complete saved comments without sharing by @kfly8 in https://github.com/piconic-ai/pedit/pull/542
+- feat(serve): expose whole room state and sharing helpers by @kfly8 in https://github.com/piconic-ai/pedit/pull/543
+- fix(serve): migrate to node-server v2 WebSocket support by @kfly8 in https://github.com/piconic-ai/pedit/pull/546
+- test(serve): wait for concurrent acquires to reach the bin gate by @kfly8 in https://github.com/piconic-ai/pedit/pull/547
+
 ## [v0.8.5](https://github.com/piconic-ai/pedit/compare/v0.8.4...v0.8.5) - 2026-11-11
 
 ### Changes
