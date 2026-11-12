@@ -4,12 +4,12 @@
 // REVIEW_PAGE (e.g. http://127.0.0.1:3001/) to share to a page that holds <pedit-review>.
 import { mkdir, realpath, stat, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
-import { serve } from '@hono/node-server'
+import { serve, upgradeWebSocket } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
-import { createNodeWebSocket } from '@hono/node-ws'
 import { peditRoutes } from '@pedit/serve/hono'
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
+import { WebSocketServer } from 'ws'
 
 const port = Number(process.env.PORT ?? 3000)
 // The origin is fixed before the server starts, so the port must be a real one (no 0).
@@ -68,7 +68,6 @@ app.use(async (c, next) => {
 })
 app.get('/', serveStatic({ path: './index.html' }))
 app.get('/page.js', serveStatic({ root: './public' }))
-const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app })
 const routes = peditRoutes({
   upgradeWebSocket,
   root,
@@ -150,7 +149,12 @@ app.get('/share/events', (c) =>
 )
 
 // Server. When it exits, pedit sees its stdin close, saves the file and exits too.
-const server = serve({ fetch: app.fetch, port, hostname: '127.0.0.1' }, () =>
-  console.log(`Editing ${root}/demo.md: ${origin}/`),
+serve(
+  {
+    fetch: app.fetch,
+    port,
+    hostname: '127.0.0.1',
+    websocket: { server: new WebSocketServer({ noServer: true }) },
+  },
+  () => console.log(`Editing ${root}/demo.md: ${origin}/`),
 )
-injectWebSocket(server)

@@ -1,5 +1,4 @@
-import { createNodeWebSocket } from '@hono/node-ws'
-import { Hono } from 'hono'
+import { upgradeWebSocket } from '@hono/node-server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { type PeditEvent, peditRoutes } from '../src/hono.ts'
 import { type RoomState, ServedFiles, type ServeEvent } from '../src/index.ts'
@@ -263,8 +262,6 @@ describe.skipIf(!BIN)('room state with real pedit', () => {
   it('publishes path state before any page id and stops the unshared child on idle', async () => {
     const { dir, cleanup } = tmpRoot()
     const path = write(dir, 'a.md')
-    const app = new Hono()
-    const { upgradeWebSocket } = createNodeWebSocket({ app })
     const events: PeditEvent[] = []
     const routes = peditRoutes({
       root: dir,

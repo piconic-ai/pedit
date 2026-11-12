@@ -30,25 +30,28 @@ status; update it` (or `keep`, `comment`, `reply`, `resolve`). The child goes on
 
 ```sh
 npm install @pedit/serve yjs y-protocols y-websocket   # the browser client's peers
-npm install hono @hono/node-server @hono/node-ws       # for the Hono routes
+npm install hono @hono/node-server@^2.1.6 ws          # for the Hono routes
 ```
 
 `@pedit/serve/client` needs `yjs`, `y-protocols` and `y-websocket`; `@pedit/serve/hono` needs `hono`.
 They are peers, so your app keeps one copy of Yjs.
+
+When upgrading from `@hono/node-server` 1.x, remove `@hono/node-ws` and its
+`createNodeWebSocket` / `injectWebSocket` calls. Version 2 provides `upgradeWebSocket`
+directly and takes a `WebSocketServer` through `serve({ websocket: { server } })`, as below.
+The `peditRoutes` adapter interface is unchanged.
 
 ## Quick start
 
 The server mounts the routes under a path and says which ids exist:
 
 ```js
-import { serve } from '@hono/node-server'
-import { createNodeWebSocket } from '@hono/node-ws'
+import { serve, upgradeWebSocket } from '@hono/node-server'
+import { WebSocketServer } from 'ws'
 import { peditRoutes } from '@pedit/serve/hono'
 import { Hono } from 'hono'
 
 const app = new Hono()
-const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app })
-const server = serve({ fetch: app.fetch, port: 3000, hostname: '127.0.0.1' })
 const routes = peditRoutes({
   upgradeWebSocket,
   root: '/home/me/notes', // only files under it are served
@@ -57,7 +60,12 @@ const routes = peditRoutes({
   resolve: async (id) => (id === 'todo' ? { path: '/home/me/notes/todo.md', role: 'edit' } : null),
 })
 app.route('/edit', routes)
-injectWebSocket(server)
+serve({
+  fetch: app.fetch,
+  port: 3000,
+  hostname: '127.0.0.1',
+  websocket: { server: new WebSocketServer({ noServer: true }) },
+})
 process.on('SIGINT', () => routes.close().finally(() => process.exit(0)))
 ```
 
@@ -83,7 +91,7 @@ below. Mount it with `app.route(path, routes)`.
 
 | Option | |
 | --- | --- |
-| `upgradeWebSocket` | From the adapter, created on the parent app (`createNodeWebSocket({ app })`). |
+| `upgradeWebSocket` | From the server adapter, e.g. `upgradeWebSocket` from `@hono/node-server` 2.x. |
 | `root` | The directory whose files may be served; realpath'd at startup, must exist. |
 | `origins` | The exact origins of your pages (also used for the `Host` check), or a function `(origin, host) => boolean`; see [origins as a function](#origins-as-a-function). |
 | `app` | A label another process sees if it asks pedit for a file this app holds. |

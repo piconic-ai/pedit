@@ -4,11 +4,10 @@ import type { Server } from 'node:http'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { serve } from '@hono/node-server'
-import { createNodeWebSocket } from '@hono/node-ws'
+import { serve, upgradeWebSocket } from '@hono/node-server'
 import { Hono } from 'hono'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { WebSocket as WS } from 'ws'
+import { WebSocketServer, WebSocket as WS } from 'ws'
 import { connect, PeditError, type Status } from '../src/client.ts'
 import { peditRoutes } from '../src/hono.ts'
 import { BIN, sleep, tmpRoot, write } from './helpers.ts'
@@ -63,7 +62,6 @@ async function start(role: 'edit' | 'read' = 'edit', text = 'hello\n') {
   const origin = `http://127.0.0.1:${port}`
   let current = role
   const parent = new Hono()
-  const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app: parent })
   const routes = peditRoutes({
     upgradeWebSocket,
     root,
@@ -74,8 +72,12 @@ async function start(role: 'edit' | 'read' = 'edit', text = 'hello\n') {
     idleMs: 5000,
   })
   parent.route('/edit', routes)
-  const server = serve({ fetch: parent.fetch, port, hostname: '127.0.0.1' })
-  injectWebSocket(server)
+  const server = serve({
+    fetch: parent.fetch,
+    port,
+    hostname: '127.0.0.1',
+    websocket: { server: new WebSocketServer({ noServer: true }) },
+  })
   // Cleanups run last to first: pedit must be stopped before its directories are removed (Windows
   // refuses to remove a directory a running child holds).
   cleanups.push(
