@@ -80,6 +80,7 @@ type setupOpts struct {
 	onNotice func(Notice)
 	onError  func(error)
 	onPeople func([]string)
+	onPeers  func([]Person)
 	// onComments is Options.OnComments.
 	onComments func(CommentChange)
 	// project makes the directory name is in the project, whose
@@ -154,6 +155,7 @@ func setup(t *testing.T, content string, o setupOpts) *fixture {
 		OnNotice:   o.onNotice,
 		OnError:    o.onError,
 		OnPeople:   o.onPeople,
+		OnPeers:    o.onPeers,
 		OnComments: o.onComments,
 		Source:     o.source,
 		Origins:    o.origins,

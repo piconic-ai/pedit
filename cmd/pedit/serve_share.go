@@ -47,11 +47,12 @@ type liveShare struct {
 	peer    *serve.Peer
 	session *session.Session
 	// kept: the room outlives the share, with a record.
-	kept   bool
-	bridge *bridge
-	feed   *commentsFeed
-	last   []session.Person
-	pmu    sync.Mutex
+	kept    bool
+	bridge  *bridge
+	feed    *commentsFeed
+	last    []session.Person
+	pmu     sync.Mutex
+	stopped bool
 }
 
 func newLiveSharer(srv *serve.Server, st *serve.Stdio, stderr io.Writer) *liveSharer {
@@ -160,6 +161,9 @@ func (l *liveSharer) Share(ctx context.Context, req shareRequest) error {
 		OnRoomAwareness:   func(_ uint64, _ protocol.Access, u []byte) { _ = ls.peer.ApplyAwareness(u) },
 	})
 	if err != nil {
+		ls.pmu.Lock()
+		ls.stopped = true
+		ls.pmu.Unlock()
 		ls.peer.Close()
 		return err
 	}
@@ -173,7 +177,10 @@ func (l *liveSharer) Share(ctx context.Context, req shareRequest) error {
 	if comment != "" {
 		links["comment"] = room + "." + comment
 	}
-	l.st.Event("shared", answerWith(ctx, map[string]any{"room": room, "links": links, "keptUntil": keptUntil(ctx, s, req, kept), "resumed": resume != ""}))
+	until, granted := shareKeep(ctx, s, req, kept)
+	ev := map[string]any{"room": room, "links": links, "relay": s.Relay(), "keptUntil": until, "resumed": resume != "", "keep": granted, "ends": nil, "lifeEnd": nil}
+	enrichShared(ctx, s, ev)
+	l.st.Event("shared", answerWith(ctx, ev))
 	ls.feed.start(s)
 	return nil
 }
@@ -191,21 +198,29 @@ func resumeKeep(req shareRequest, resume string) time.Duration {
 // that keeps nothing says so on connecting too.
 var keepWait = 5 * time.Second
 
-// keptUntil is when the relay ends the room once the host leaves, in Unix ms
-// as far as the session knows, or 0 when the relay keeps nothing.
-func keptUntil(ctx context.Context, s *session.Session, req shareRequest, kept <-chan int64) int64 {
+func shareKeep(ctx context.Context, s *session.Session, req shareRequest, kept <-chan int64) (int64, *int64) {
 	if req.Keep <= 0 {
-		return 0
+		seconds := int64(0)
+		return 0, &seconds
 	}
 	select {
 	case seconds := <-kept:
 		if seconds > 0 {
-			return s.KeptUntil().UnixMilli()
+			return s.KeptUntil().UnixMilli(), &seconds
 		}
+		return 0, &seconds
 	case <-ctx.Done():
 	case <-time.After(keepWait):
 	}
-	return 0
+	return 0, nil
+}
+
+func enrichShared(ctx context.Context, s *session.Session, ev map[string]any) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if st, err := s.KeepStatus(ctx); err == nil {
+		ev["keep"], ev["ends"], ev["lifeEnd"] = st.Keep, st.Ends, st.LifeEnd
+	}
 }
 
 // keptRecordOf is the record of the live kept room that holds file, if any.
@@ -285,7 +300,7 @@ func serveRecordFor(file string) (generation string, doc []byte, text string, pe
 func (l *liveSharer) peers(ls *liveShare, people []session.Person) {
 	ls.pmu.Lock()
 	defer ls.pmu.Unlock()
-	if reflect.DeepEqual(people, ls.last) {
+	if ls.stopped || reflect.DeepEqual(people, ls.last) {
 		return
 	}
 	ls.last = people
@@ -302,9 +317,13 @@ const (
 // peersEvent is the payload of the peers event; "more" counts the people left out.
 func peersEvent(people []session.Person) map[string]any {
 	n := min(len(people), maxPeers)
-	out := make([]map[string]string, 0, n)
+	out := make([]map[string]any, 0, n)
 	for _, p := range people[:n] {
-		out = append(out, map[string]string{"name": truncateUTF8(p.Name, maxPeerName), "access": p.Access.String()})
+		peer := map[string]any{"name": truncateUTF8(p.Name, maxPeerName), "access": p.Access.String()}
+		if p.Local {
+			peer["local"] = true
+		}
+		out = append(out, peer)
 	}
 	ev := map[string]any{"peers": out}
 	if len(people) > n {
@@ -339,7 +358,9 @@ func (l *liveSharer) ended(ls *liveShare, st protocol.Status) {
 	case protocol.StatusMaintenance:
 		reason = "maintenance"
 	}
-	// The feed stops first: no comments event may follow room_ended.
+	ls.pmu.Lock()
+	ls.stopped = true
+	ls.pmu.Unlock()
 	l.cur.feed.stop()
 	l.st.Event("room_ended", map[string]any{"reason": reason})
 	l.leave()
@@ -347,13 +368,13 @@ func (l *liveSharer) ended(ls *liveShare, st protocol.Status) {
 
 // statusEvent answers a status command: the room, its links as the shared event
 // gives them, and what the relay says of its keep.
-func (l *liveSharer) statusEvent(ctx context.Context, room, edit, comment, read, host string, st session.RoomStatus) {
+func (l *liveSharer) statusEvent(ctx context.Context, room, edit, comment, read, host, relay string, st session.RoomStatus) {
 	links := map[string]string{"edit": room + "." + edit, "read": room + "." + read}
 	if comment != "" {
 		links["comment"] = room + "." + comment
 	}
 	l.st.Event("status", answerWith(ctx, map[string]any{
-		"room": room, "links": links, "keep": st.Keep, "host": host, "ends": st.Ends, "lifeEnd": st.LifeEnd,
+		"roomState": 1, "relay": relay, "room": room, "links": links, "keep": st.Keep, "host": host, "ends": st.Ends, "lifeEnd": st.LifeEnd,
 	}))
 }
 
@@ -366,14 +387,14 @@ func (l *liveSharer) Status(ctx context.Context) error {
 		st, err := l.cur.session.KeepStatus(ctx)
 		if errors.Is(err, session.ErrRoomEnded) {
 			// The room ended; the ended event follows.
-			l.st.Event("status", answerWith(ctx, map[string]any{"room": nil}))
+			l.st.Event("status", answerWith(ctx, map[string]any{"room": nil, "roomState": 1}))
 			return nil
 		}
 		if err != nil {
 			return err
 		}
 		room, edit, comment, read := l.cur.session.Fragments()
-		l.statusEvent(ctx, room, edit, comment, read, "here", st)
+		l.statusEvent(ctx, room, edit, comment, read, "here", l.cur.session.Relay(), st)
 		return nil
 	}
 	cfg, err := loadProject(filepath.Dir(l.srv.Path()))
@@ -385,18 +406,18 @@ func (l *liveSharer) Status(ctx context.Context) error {
 		return err
 	}
 	if rec == nil {
-		l.st.Event("status", answerWith(ctx, map[string]any{"room": nil}))
+		l.st.Event("status", answerWith(ctx, map[string]any{"room": nil, "roomState": 1}))
 		return nil
 	}
 	away, err := keptStatusSignedIn(ctx, cfg.root, rec.Room, &access.Cloudflared{})
 	if errors.Is(err, session.ErrRoomEnded) {
-		l.st.Event("status", answerWith(ctx, map[string]any{"room": nil}))
+		l.st.Event("status", answerWith(ctx, map[string]any{"room": nil, "roomState": 1}))
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	l.statusEvent(ctx, away.Room, away.Edit, away.Comment, away.Read, away.Host, away.RoomStatus)
+	l.statusEvent(ctx, away.Room, away.Edit, away.Comment, away.Read, away.Host, away.Origin, away.RoomStatus)
 	return nil
 }
 
@@ -432,7 +453,7 @@ func (l *liveSharer) Keep(ctx context.Context, keep time.Duration) error {
 		return err
 	}
 	room, edit, comment, read := l.cur.session.Fragments()
-	l.statusEvent(ctx, room, edit, comment, read, "here", st)
+	l.statusEvent(ctx, room, edit, comment, read, "here", l.cur.session.Relay(), st)
 	return nil
 }
 
@@ -576,6 +597,9 @@ func mergeAppText(state []byte, app string) ([]byte, error) {
 // that was handed over. The caller holds mu.
 func (l *liveSharer) leave() {
 	ls := l.cur
+	ls.pmu.Lock()
+	ls.stopped = true
+	ls.pmu.Unlock()
 	l.cur = nil
 	ls.bridge.close()
 	ls.feed.stop()

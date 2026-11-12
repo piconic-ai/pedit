@@ -101,6 +101,9 @@ func keepCall(ctx context.Context, client *http.Client, extra http.Header, origi
 	return st, nil
 }
 
+// Relay is the effective relay URL, including a resumed room's saved origin.
+func (s *Session) Relay() string { return s.server }
+
 // KeepStatus asks the relay about the room this session hosts.
 func (s *Session) KeepStatus(ctx context.Context) (RoomStatus, error) {
 	return keepCall(ctx, s.opts.HTTPClient, s.opts.Header, s.server, s.roomID, s.hostToken, -1)

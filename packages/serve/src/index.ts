@@ -1,6 +1,7 @@
 export type { Bridge } from './bridge.ts'
 export { HeldError, LimitError, NoPeditError } from './errors.ts'
 export type { Installed, Verified } from './install.ts'
+export { formatKeep, linkUrl, parseKeep } from './links.ts'
 export { MIN_PEDIT_VERSION, peditVersionOk, resolvePedit } from './resolve.ts'
 export { type ServedFile, ServedFiles, type ServedFilesOptions } from './served.ts'
 export type {
@@ -9,6 +10,8 @@ export type {
   CommentThread,
   Peer,
   Role,
+  Room,
+  RoomState,
   ServeEvent,
   ShareChoice,
   ShareClosed,

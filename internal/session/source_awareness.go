@@ -1,6 +1,7 @@
 package session
 
 import (
+	"encoding/json"
 	"errors"
 	"slices"
 	"sync"
@@ -100,7 +101,10 @@ func (s *Session) FromSourceAwareness(id uint64, reader bool, update []byte) err
 	removal := string(state) == "null"
 	a := &s.srcAw
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	defer func() {
+		a.mu.Unlock()
+		s.reportPeople(s.opts.OnPeople)
+	}()
 	if _, known := a.pages[id]; !known && removal {
 		return nil
 	}
@@ -229,12 +233,15 @@ func (s *Session) roomAwareness(ev awareness.UpdateEvent) {
 	}
 }
 
-// isSourcePage tells whether id is a page of the source. The pages' states
-// are not in the host's awareness, but a guest may take a page's ID; such a
-// state is not one of the app's people.
-func (s *Session) isSourcePage(id uint64) bool {
+func (s *Session) sourcePeople() map[uint64]Person {
 	s.srcAw.mu.Lock()
 	defer s.srcAw.mu.Unlock()
-	_, ok := s.srcAw.pages[id]
-	return ok
+	people := make(map[uint64]Person, len(s.srcAw.pages))
+	for id, page := range s.srcAw.pages {
+		var state map[string]any
+		if json.Unmarshal(page.state, &state) == nil {
+			people[id] = Person{Name: displayName(state), Access: page.access, Local: true}
+		}
+	}
+	return people
 }

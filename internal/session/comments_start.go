@@ -75,3 +75,23 @@ func (s *Session) PlacedThreads() []PlacedThread {
 	})
 	return out
 }
+
+// PlaceSavedComments places saved threads in the current normalized text,
+// using the same cleaning, ordering and anchors as a live session.
+func PlaceSavedComments(saved *meta.File, text string) []PlacedThread {
+	content, comments := crdt.New(), crdt.New()
+	defer content.Destroy()
+	defer comments.Destroy()
+	current := content.GetText(meta.ContentText)
+	content.Transact(func(txn *crdt.Transaction) { current.Insert(txn, 0, text, nil) })
+	tracker := meta.NewTracker(content)
+	defer tracker.Close()
+	meta.Load(comments, saved, tracker)
+	places := meta.TextPlaces(comments, tracker)
+	out := make([]PlacedThread, 0, len(saved.Comments))
+	for _, t := range meta.ShownThreads(comments) {
+		p, placed := places[t.ID]
+		out = append(out, PlacedThread{Shown: t, From: p[0], To: p[1], Placed: placed})
+	}
+	return out
+}

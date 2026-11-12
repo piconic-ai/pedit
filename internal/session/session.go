@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -50,10 +51,11 @@ type Options struct {
 	Dial       protocol.Dialer
 	OnStatus   func(protocol.Status)
 	// OnPeople is called with the names of the other people in the room,
-	// sorted, whenever someone joins, leaves or renames.
+	// sorted, whenever someone joins, leaves or renames. Callbacks run in order
+	// outside session locks and must not call Stop synchronously.
 	OnPeople func([]string)
 	// OnPeers is OnPeople with each person's name and access apart, sorted
-	// the same way.
+	// the same way, including local source pages. It must not call Stop synchronously.
 	OnPeers func([]Person)
 	// OnSaved is called with the path, relative to File, of each image
 	// someone pasted that was saved beside the file.
@@ -135,7 +137,9 @@ type Session struct {
 	watchDone chan struct{}
 	stopAlive func()
 	// srcAw bridges awareness with a Source (source_awareness.go).
-	srcAw sourceAwareness
+	srcAw         sourceAwareness
+	peopleCalls   callQueue
+	peopleStopped atomic.Bool
 	// temp is the directory holding a joined copy that is removed on Stop.
 	temp string
 
@@ -620,6 +624,7 @@ const finalWriteAttempts = 3
 // an error when the final state could not be saved.
 func (s *Session) Stop() error {
 	s.stopOnce.Do(func() {
+		s.peopleStopped.Store(true)
 		s.filesMu.Lock()
 		s.closed = true
 		files := s.files()
@@ -679,6 +684,7 @@ func (s *Session) Stop() error {
 		}
 		s.stopAlive()
 		s.stopSourceAwareness()
+		s.peopleCalls.wait()
 		s.awareness.Destroy()
 		// Every change of the comments is told before Stop returns.
 		s.commentCalls.wait()

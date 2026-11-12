@@ -26,9 +26,10 @@ const (
 	cmdKeep    = "keep"
 
 	// Comments from the app (docs/design/embedding.md, "Comments from the app").
-	cmdComment = "comment"
-	cmdReply   = "reply"
-	cmdResolve = "resolve"
+	cmdComment  = "comment"
+	cmdReply    = "reply"
+	cmdResolve  = "resolve"
+	cmdComments = "comments"
 )
 
 // commandQueue is how many commands wait for the one that is running. The
@@ -101,6 +102,7 @@ type sharer interface {
 	// now and answers with one.
 	Status(context.Context) error
 	Keep(context.Context, time.Duration) error
+	Comments(context.Context) error
 	// Comment, Reply and Resolve write as the host while the file is shared
 	// and the host is connected, and answer with an event.
 	Comment(ctx context.Context, from, to int, body string) error
@@ -116,6 +118,7 @@ var errNoSharing = errors.New("sharing is not available in this build yet")
 func (noSharer) Share(context.Context, shareRequest) error { return errNoSharing }
 func (noSharer) Unshare() error                            { return errNoSharing }
 func (noSharer) Close(context.Context) error               { return errNoSharing }
+func (noSharer) Comments(context.Context) error            { return errNoSharing }
 func (noSharer) Status(context.Context) error              { return errNoSharing }
 func (noSharer) Keep(context.Context, time.Duration) error { return errNoSharing }
 func (noSharer) Comment(context.Context, int, int, string) error {
@@ -159,7 +162,7 @@ func parseCommand(payload []byte) (command, *shareRequest, error) {
 	switch c.Cmd {
 	case cmdShare:
 		req, err = parseShare(c)
-	case cmdUnshare, cmdClose, cmdStatus:
+	case cmdUnshare, cmdClose, cmdStatus, cmdComments:
 		if c.hasShareFields() || c.hasCommentFields() {
 			err = fmt.Errorf("%s takes no fields but cmd", c.Cmd)
 		}
@@ -272,7 +275,7 @@ func knownCmd(payload []byte) string {
 	}
 	_ = json.NewDecoder(bytes.NewReader(payload)).Decode(&c) // the first value only
 	switch c.Cmd {
-	case cmdShare, cmdUnshare, cmdClose, cmdStatus, cmdKeep, cmdComment, cmdReply, cmdResolve:
+	case cmdShare, cmdUnshare, cmdClose, cmdStatus, cmdKeep, cmdComment, cmdReply, cmdResolve, cmdComments:
 		return c.Cmd
 	}
 	return ""
@@ -367,6 +370,8 @@ func (c *commands) handle(ctx context.Context, payload []byte) {
 			}
 		case cmdClose:
 			err = c.sharer.Close(ctx)
+		case cmdComments:
+			err = c.sharer.Comments(ctx)
 		case cmdStatus:
 			err = c.sharer.Status(ctx)
 		case cmdKeep:

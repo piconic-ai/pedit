@@ -148,7 +148,7 @@ func TestServeStatusWhileSharedAndKeptAway(t *testing.T) {
 		t.Fatalf("times in %v", e)
 	}
 	reqs := env.keep.requests()
-	if len(reqs) != 1 || reqs[0].method != "GET" || !strings.HasPrefix(reqs[0].auth, "Bearer host-token-") {
+	if len(reqs) != 2 || reqs[0].method != "GET" || !strings.HasPrefix(reqs[0].auth, "Bearer host-token-") {
 		t.Fatalf("requests %v", reqs)
 	}
 
@@ -274,12 +274,11 @@ func TestServeKeepErrors(t *testing.T) {
 	a.command(`{"cmd":"keep","keep":"0"}`)
 	a.errorOf(2, "keep", "0 is not allowed")
 
-	// A live room cannot become kept, and the relay is not asked.
 	a.share(fmt.Sprintf(`,"relay":%q`, env.server.URL))
 	a.command(`{"cmd":"keep","keep":"1d"}`)
 	a.errorOf(3, "keep", "live")
-	if got := env.keep.requests(); len(got) != 0 {
-		t.Fatalf("asked the relay: %v", got)
+	if got := env.keep.requests(); len(got) != 1 || got[0].method != "GET" {
+		t.Fatalf("unexpected relay requests: %v", got)
 	}
 	a.command(`{"cmd":"unshare"}`)
 	a.event("unshared", 1)

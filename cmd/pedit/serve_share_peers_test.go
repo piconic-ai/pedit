@@ -16,7 +16,7 @@ func TestPeersEventCapsPeopleAndNames(t *testing.T) {
 		people = append(people, session.Person{Name: fmt.Sprintf("p%d", i), Access: protocol.AccessEdit})
 	}
 	ev := peersEvent(people)
-	if got := len(ev["peers"].([]map[string]string)); got != maxPeers {
+	if got := len(ev["peers"].([]map[string]any)); got != maxPeers {
 		t.Fatalf("%d peers", got)
 	}
 	if ev["more"] != 6 {
@@ -31,7 +31,7 @@ func TestPeersEventCutsNamesOnACharacter(t *testing.T) {
 	// 3-byte characters: 64 is not a multiple of 3, so the cut must step back.
 	name := strings.Repeat("あ", 40)
 	ev := peersEvent([]session.Person{{Name: name, Access: protocol.AccessRead}})
-	got := ev["peers"].([]map[string]string)[0]["name"]
+	got := ev["peers"].([]map[string]any)[0]["name"].(string)
 	if len(got) != 63 || !utf8.ValidString(got) {
 		t.Fatalf("%d bytes, valid %v", len(got), utf8.ValidString(got))
 	}

@@ -108,8 +108,10 @@ child.
 | `share(path, opts?)` | Open a room for the file; see [sharing](#sharing). |
 | `unshare(path)` | Leave the room: a kept room stays kept, a live one ends. |
 | `close(path?)` | With a path, end that file's kept room for good (a live room is only left). Without, stop every child. |
+| `room(path)` | Whole file state, including whether a child serves it; see [room state](#room-state). |
 | `status(path)` | The file's room, shared now or kept without pedit; `null` when it has none. |
 | `keep(path, keep)` | Change how long the relay keeps the room after pedit leaves. |
+| `comments(path)` | Read all live or saved threads, with their anchors in the current text. |
 | `comment(path, range)`, `reply(path, thread, body)`, `resolve(path, thread, resolved)` | Take part in the file's comments as the host; see [comments](#comments). |
 
 ### Events
@@ -122,8 +124,9 @@ child.
 | `stopped` | `{ id, path, reason: 'idle' \| 'exited' \| 'shutdown' }`, for the same children as `started`. |
 | `error` | `{ id, message }`; `id` is `null` when no id is involved. |
 | `update_available` | `{ version, url, security }`, once per version, when pedit finds a newer release. |
+| `room` | `{ path, id, state }`, whenever the whole state changes, including children started before any page has an id. |
 | `shared` | The result of a `share`, with `path` and `id`. |
-| `peers` | `{ path, id, peers: [{ name, access }], more? }`: who is in the room; `more` counts people left out. |
+| `peers` | `{ path, id, peers: [{ name, access, local? }], more? }`: who is in the room; `more` counts people left out. |
 | `comments` | `{ path, id, threads, more? }`: the file's threads; see [comments](#comments). |
 | `room_ended` | `{ path, id, reason: 'closed' \| 'expired' \| 'maintenance' }`, also when the relay ended the room unasked. |
 | `unshared` | `{ path, id }` |
@@ -204,6 +207,7 @@ routes but by `path` only: this layer knows paths, not ids, and reports every ch
 | `path`, `generation` | `generation` names the document: the same after a restart that restored it, new when it started afresh. |
 | `dial(role)` | One stream to the child, as a `Bridge` (`send(frame)`, `onframe`, `onclose(reason, code?)`, `close()`); at most 8 per file (`LimitError`). |
 | `share(opts?)`, `unshare()`, `close()`, `status()`, `keep(keep)` | As the routes' methods, for this file; see [sharing](#sharing). `close()` ends a kept room for good; a live one is only left. |
+| `comments()` | Read all live or saved threads, without event truncation. |
 | `comment(range)`, `reply(thread, body)`, `resolve(thread, resolved)` | See [comments](#comments). |
 
 ### `resolvePedit(options?)`, `MIN_PEDIT_VERSION`, `peditVersionOk(output)`
@@ -217,7 +221,7 @@ left to the feature checks).
 
 Types: `ServedFilesOptions`, `ServedFile`, `ServeEvent`, `Bridge`, `Installed`, `Verified`, and the
 share and comment types `ShareOptions`, `ShareResult` (`Shared`, `ShareChoice`, `ShareClosed`),
-`ShareStatus`, `Peer`, `CommentRange`, `CommentThread`, `CommentMessage`, `StartedThread`, `Role`.
+`ShareStatus`, `Room`, `RoomState`, `Peer`, `CommentRange`, `CommentThread`, `CommentMessage`, `StartedThread`, `Role`.
 
 ### Errors
 
@@ -234,12 +238,14 @@ comment on or read it from a page of yours ([your own review page](https://githu
 While the file is shared, its child is not stopped for idleness.
 
 ```ts
+import { linkUrl } from '@pedit/serve'
+
 const result = await routes.share('/home/me/notes/a.md', {
   origins: ['https://cms.example.com'], // pages that may open the room (at most 4)
   keep: '1d', // how long the relay keeps it after you leave; '0' is a live room
 })
 if (result.type === 'shared') {
-  const url = `https://cms.example.com/review#${result.links.comment ?? result.links.read}`
+  const url = linkUrl(result.links.comment ?? result.links.read, { page: 'https://cms.example.com/review' })
 }
 ```
 
@@ -248,7 +254,7 @@ and `choice`, the user's answer to a `choice` result. `share` resolves one of:
 
 | Result | Meaning |
 | --- | --- |
-| `{ type: 'shared', room, links: { edit, comment?, read }, keptUntil, resumed }` | The room is open. A link is `<room>.<fragment>`: the page link is `<page URL>#<link>`. `keptUntil` is Unix ms, 0 when the relay keeps nothing. |
+| `{ type: 'shared', room, relay, links: { edit, comment?, read }, keptUntil, resumed }` | The room is open. A link is `<room>.<fragment>`: the page link is `<page URL>#<link>`. `relay` is the effective relay, including a resumed room's saved origin. It is `null` with an older CLI. `keptUntil` is the legacy Unix ms estimate, or 0 when unavailable or live. |
 | `{ type: 'choice', room, choices }` | The file has a kept room of another history. Ask the user which to keep (`room`, `app` or `later`; `text` is the characters each side holds), then call `share` again with the same options and `choice`. |
 | `{ type: 'closed' }` | `choice: 'app'` ended the kept room, so nothing is shared. Call `share` again to open a new one. |
 
@@ -256,9 +262,9 @@ and `choice`, the user's answer to a `choice` result. `share` resolves one of:
 room for good. A failure from pedit rejects with its message.
 
 `status(path)` tells what room the file has, without changing anything, so an app that restarted can
-show a share that is still open. It resolves `{ room, links: { edit, comment?, read }, keep, host, ends, lifeEnd }`,
+show a share that is still open. It resolves `{ room, relay, links: { edit, comment?, read }, keep, host, ends, lifeEnd }`,
 or `null` when the file has no room (or the relay says it has ended). `host` is `'here'` while pedit
-shares the room now and `'away'` while it is kept without pedit; `keep` is in seconds, `ends` is when
+shares the room now and `'away'` while it is kept without pedit; `keep` is a canonical string such as `'1h'`, `ends` is when
 the room ends and `lifeEnd` the end of its life (both Unix ms). It starts the child if none runs, as
 pedit reads the file's record there, and a record of another history is still reported: `share` then
 gives the `choice`.
@@ -267,6 +273,68 @@ gives the `choice`.
 `share`; not `'0'`), while the file is shared with a keep. It resolves the new status. It rejects when
 the file is not shared, the room is live, or the relay refuses; a room kept without pedit gets its new
 keep from the next `share`.
+
+## Room state
+
+`room(path)` on the routes and `room()` on a `ServedFile` query the CLI's authoritative status and
+return the whole state. Like `status`, a routes lookup starts a child and locks the file if needed.
+An unshared child still stops after `idleMs`, including when its room stays kept elsewhere.
+Each lookup refreshes relay status. A failed query rejects without presenting unknown state as absence.
+An older CLI without the added metadata rejects with update guidance; its existing `share` and
+`status` methods continue to work, with `relay: null`.
+
+```ts
+interface RoomState {
+  serving: boolean
+  known: boolean
+  room: Room | null
+  comments: 'live' | 'saved'
+  ended: string | null
+}
+```
+
+The `room` event carries `{ path, state }` in `ServedFiles`, plus `id: string | null` in the routes.
+Always key room state by `path`. The route `id` is advisory and can be null or change.
+It reaches the routes before any page has connected. On startup, `serving: true, known: false`
+reports the child immediately; `room` may still hold a stale observation from its previous child.
+Only a successful status query or a room event from the CLI establishes `known: true`.
+`room()` never returns `known: false`. Equal state emits no duplicate event.
+
+`Room` includes `room` (the room id), `links`, `relay`, `keep`, `host`, `ends`, `lifeEnd`, `resumed`,
+`peers`, `more`, and `freshness`. A successful share can precede metadata availability. Its `keep`,
+`ends`, and `lifeEnd` are `null` until reported, and a failed enrichment request does not reject
+sharing. `resumed` is `null` when this SDK has not observed the share. `Peer.local: true` identifies
+an app page attached to this file's child; names do not identify local participants.
+
+After departure, a kept room remains with `host: 'away'` and no peers. After a child exits, its last
+observed room metadata remains with `freshness: 'stale'` and no peers. Stale host, keep, and deadline
+values describe the last observation, not the remote room now. A fresh `room()` query replaces them.
+The owner retains at most 32 stopped paths, independently of idle timers, and clears them on shutdown.
+
+`close(path)` handles a shared or kept-away room with one call. Early departure during close clears
+live data. Only confirmed closure removes the kept room; failure rejects and preserves its links.
+A live departure or confirmed end sets `room: null` and records `ended` (`'left'`, `'ended'`, or the
+CLI's reason). A later open room clears the reason. The state never retains an ended room's keys.
+
+`comments` names the authoritative source for `comments()`. When it changes to `'saved'`, discard
+live comments and fetch their replacement on demand. Departure, end, and child exit clear live peers
+and switch this source. An in-flight comments read that crosses departure or re-sharing rejects with
+`room changed while reading comments; read again`. Room events contain no comment bodies, and legacy
+`comments` events remain live updates. No saved-file watcher or automatic full read is started.
+
+### Keep and link helpers
+
+`parseKeep(value)` returns whole seconds for CLI durations, including compounds such as `'1h30m'`,
+whole days such as `'2d'`, and `'0'` for live rooms. It rejects fractional seconds, negative values,
+and durations outside Go's duration range. `formatKeep(seconds)` uses the largest exact unit among
+`d`, `h`, `m`, and `s`, or `'0'`. For example, 5400 becomes `'90m'`. `status`, `keep`, and room state
+return this string representation; the CLI wire format still uses numeric seconds.
+
+`linkUrl(link, { relay })` creates the relay editor URL and preserves a configured relay base path.
+`linkUrl(link, { page })` preserves the page's path and query and replaces its fragment with the
+whole link. Both keep secrets solely in the fragment, including comment and read links whose
+fragments contain a dot. Destinations must use HTTP or HTTPS without credentials. Relay destinations
+cannot include a query or fragment. Invalid input errors never include the supplied link.
 
 ## Comments
 
@@ -288,7 +356,14 @@ await routes.resolve('/home/me/notes/a.md', thread, true) // false opens it agai
   nothing; setting the state a thread has already is not an error.
 - They work only while the file is shared and pedit is connected to the room. Not shared, a room kept
   with `host: 'away'`, or a connection that is down rejects with pedit's reason: a comment written
-  while nobody can see it would look delivered. What is saved stays readable in `.pedit/meta/`.
+  while nobody can see it would look delivered. Read saved threads with `comments(path)`.
+- `comments(path)` returns `CommentThread[]` with every message, including resolved and detached
+  threads. While shared it reads the live comments; otherwise it reads saved comments, including
+  before the first share, while a kept room is away, and after restarting the app. An absent saved
+  file returns `[]`; an invalid or unreadable one rejects. Anchors use the current LF-normalized
+  served text, including edits not yet written to disk. The call reads only and does not join a room.
+  It collects bounded response pages, including messages of a thread that exceeds 64 KiB. It does
+  not emit live `comments` events. Call it again to notice saved changes while the file is unshared.
 - The `comments` event carries the file's threads as they are, once when sharing starts (and on a
   resume) and again whenever the comments, or the text they point into, change. A thread is
   `{ id, quote, resolved, from, to, cut?, messages: [{ id, author, time, body }] }`. `from` and `to`
