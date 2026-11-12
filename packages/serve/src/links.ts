@@ -1,14 +1,37 @@
 const SECOND = 1_000_000_000n
 const MAX_DURATION = (1n << 63n) - 1n
-const units: Record<string, bigint> = {
-  h: 3600n * SECOND,
-  m: 60n * SECOND,
-  s: SECOND,
-  ms: 1_000_000n,
-  us: 1000n,
-  µs: 1000n,
-  μs: 1000n,
-  ns: 1n,
+const units: readonly (readonly [string, bigint])[] = [
+  ['ms', 1_000_000n],
+  ['us', 1000n],
+  ['µs', 1000n],
+  ['μs', 1000n],
+  ['ns', 1n],
+  ['h', 3600n * SECOND],
+  ['m', 60n * SECOND],
+  ['s', SECOND],
+]
+
+function digitsEnd(value: string, start: number): number {
+  let end = start
+  while (end < value.length) {
+    const code = value.charCodeAt(end)
+    if (code < 48 || code > 57) break
+    end++
+  }
+  return end
+}
+
+function durationNumber(value: string, start: number) {
+  let end = digitsEnd(value, start)
+  const whole = value.slice(start, end)
+  let fraction = ''
+  if (value[end] === '.') {
+    const fractionStart = end + 1
+    end = digitsEnd(value, fractionStart)
+    fraction = value.slice(fractionStart, end)
+  }
+  if (!whole && !fraction) throw new TypeError('invalid keep duration')
+  return { whole, fraction, end }
 }
 
 /** Parse a CLI keep duration into whole seconds. `0` means a live room. */
@@ -17,17 +40,17 @@ export function parseKeep(value: string): number {
   let nanos = 0n
   if (/^\d+d$/.test(value)) nanos = BigInt(value.slice(0, -1)) * 86400n * SECOND
   else {
-    const duration = value.replace(/^\+/, '')
-    const part = /(\d+(?:\.\d*)?|\.\d+)(ns|us|µs|μs|ms|s|m|h)/gy
-    let end = 0
-    for (const match of duration.matchAll(part)) {
-      const [whole = '', fraction = ''] = (match[1] ?? '').split('.')
-      const unit = units[match[2] ?? ''] ?? 0n
-      nanos += BigInt(whole || '0') * unit
-      if (fraction) nanos += (BigInt(fraction) * unit) / 10n ** BigInt(fraction.length)
-      end += match[0].length
+    let end = value[0] === '+' ? 1 : 0
+    while (end < value.length) {
+      const token = durationNumber(value, end)
+      const unit = units.find(([name]) => value.startsWith(name, token.end))
+      if (!unit) throw new TypeError('invalid keep duration')
+      const [name, scale] = unit
+      nanos += BigInt(token.whole || '0') * scale
+      if (token.fraction)
+        nanos += (BigInt(token.fraction) * scale) / 10n ** BigInt(token.fraction.length)
+      end = token.end + name.length
     }
-    if (end !== duration.length) throw new TypeError('invalid keep duration')
   }
   if (nanos <= 0n || nanos > MAX_DURATION || nanos % SECOND !== 0n)
     throw new TypeError('keep must be whole seconds within the CLI duration range')

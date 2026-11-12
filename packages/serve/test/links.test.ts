@@ -20,6 +20,9 @@ describe('keep durations', () => {
     )
     expect(result.trim()).toBe('invalid duration rejected')
   })
+  it('accepts long valid durations with many components', () => {
+    expect(parseKeep(`${'0s'.repeat(100_000)}1s`)).toBe(1)
+  })
   it.each([
     ['0', 0, '0'],
     ['24h', 86400, '1d'],
@@ -27,6 +30,12 @@ describe('keep durations', () => {
     ['1h1m1s', 3661, '3661s'],
     ['.5h', 1800, '30m'],
     ['1000ms', 1, '1s'],
+    ['1000000us', 1, '1s'],
+    ['1000000µs', 1, '1s'],
+    ['1000000μs', 1, '1s'],
+    ['1000000000ns', 1, '1s'],
+    ['1.s', 1, '1s'],
+    ['0.9999999999s0.000000001s', 1, '1s'],
     ['1.0000000001s', 1, '1s'],
     ['+2h', 7200, '2h'],
     ['9223372036s', 9223372036, '9223372036s'],
@@ -45,6 +54,13 @@ describe('keep durations', () => {
     '.5d',
     '1d2h',
     '1s!',
+    '.s',
+    '1..0s',
+    '1sm',
+    '1mss',
+    '++1s',
+    '+1d',
+    '0.0000000009s0.9999999999s',
     '1ms',
     '1h 2m',
     '9223372037s',
