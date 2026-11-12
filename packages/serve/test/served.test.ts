@@ -21,6 +21,7 @@ import {
   ServedFiles,
   type ServeEvent,
 } from '../src/index.ts'
+import * as paths from '../src/paths.ts'
 import { candidateNames, peditEnv } from '../src/resolve.ts'
 import {
   BIN,
@@ -521,35 +522,43 @@ describe('bin as a function', () => {
       }
       return { state, bin }
     }
-    const turns = async () => {
-      for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r))
-    }
-
     it('starts one child for two acquires of one path at once', async () => {
       const { state, bin } = gated()
       const { dir, files } = mk(bin)
       const a = write(dir, 'a.md')
       const both = Promise.all([files.acquire(a), files.acquire(a)])
-      await turns() // both are waiting; the second waits for the first start
-      expect(state.calls).toBe(1)
+      await vi.waitFor(() => expect(state.calls).toBe(1))
       state.open()
       const [x, y] = await both
       expect(y).toBe(x)
       expect(state.calls).toBe(1)
     })
 
-    it('starts one child for two hard links acquired at once', async () => {
-      const { state, bin } = gated()
-      const { dir, files } = mk(bin)
-      const a = write(dir, 'a.md')
-      linkSync(a, join(dir, 'b.md'))
-      const both = Promise.all([files.acquire(a), files.acquire(join(dir, 'b.md'))])
-      await turns()
-      expect(state.calls).toBe(1)
-      state.open()
-      const [x, y] = await both
-      expect(y).toBe(x)
-    })
+    it.each([0, 50])(
+      'starts one child for two hard links acquired at once (%i ms realpath)',
+      async (delay) => {
+        if (delay) {
+          const realpath = paths.nativeRealpath
+          const spy = vi.spyOn(paths, 'nativeRealpath').mockImplementation(async (path) => {
+            await sleep(delay)
+            return realpath(path)
+          })
+          cleanups.push(() => {
+            spy.mockRestore()
+          })
+        }
+        const { state, bin } = gated()
+        const { dir, files } = mk(bin)
+        const a = write(dir, 'a.md')
+        linkSync(a, join(dir, 'b.md'))
+        const both = Promise.all([files.acquire(a), files.acquire(join(dir, 'b.md'))])
+        await vi.waitFor(() => expect(state.calls).toBe(1))
+        state.open()
+        const [x, y] = await both
+        expect(y).toBe(x)
+        expect(state.calls).toBe(1)
+      },
+    )
 
     it('a failing function does not block a later acquire', async () => {
       let fail = true
