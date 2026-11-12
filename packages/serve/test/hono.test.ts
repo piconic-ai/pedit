@@ -3,12 +3,11 @@ import { mkdirSync, readFileSync, statSync, symlinkSync } from 'node:fs'
 import { request as httpRequest, type Server } from 'node:http'
 import { createServer } from 'node:net'
 import { join, sep } from 'node:path'
-import { serve } from '@hono/node-server'
-import { createNodeWebSocket } from '@hono/node-ws'
+import { serve, upgradeWebSocket } from '@hono/node-server'
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { WebSocket } from 'ws'
+import { WebSocket, WebSocketServer } from 'ws'
 import { inside, isLoopback, type PeditEvent, type PeditOptions, peditRoutes } from '../src/hono.ts'
 import { ServedFiles } from '../src/index.ts'
 import {
@@ -63,7 +62,6 @@ async function start(over: Partial<PeditOptions> = {}): Promise<Fixture> {
   const origin = `http://127.0.0.1:${port}`
   const events: PeditEvent[] = []
   const parent = new Hono()
-  const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app: parent })
   const files: Record<string, { path: string; role: 'edit' | 'read' }> = {
     a: { path: join(root, 'a.md'), role: 'edit' },
     r: { path: join(root, 'a.md'), role: 'read' },
@@ -88,8 +86,12 @@ async function start(over: Partial<PeditOptions> = {}): Promise<Fixture> {
     ...over,
   })
   parent.route('/edit', routes)
-  const server = serve({ fetch: parent.fetch, port, hostname: '127.0.0.1' })
-  injectWebSocket(server)
+  const server = serve({
+    fetch: parent.fetch,
+    port,
+    hostname: '127.0.0.1',
+    websocket: { server: new WebSocketServer({ noServer: true }) },
+  })
   // Cleanups run last to first: pedit must be stopped before its directory is removed (Windows
   // refuses to remove a directory a running child holds).
   cleanups.push(
@@ -315,6 +317,39 @@ describe.runIf(process.platform === 'win32')('root on Windows', () => {
 })
 
 describe('peditRoutes checks', () => {
+  it.each([false, true])(
+    'rejects raw backslashes before routing (upgrade: %s)',
+    async (upgrade) => {
+      const f = await start()
+      const status = await new Promise<number>((resolve, reject) => {
+        const req = httpRequest(
+          f.origin,
+          {
+            method: upgrade ? 'GET' : 'POST',
+            path: upgrade ? '/edit\\a/doc?token=unused' : '/edit\\a/session',
+            headers: {
+              origin: f.origin,
+              ...(upgrade && {
+                connection: 'Upgrade',
+                upgrade: 'websocket',
+                'sec-websocket-version': '13',
+                'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==',
+              }),
+            },
+          },
+          (res) => {
+            res.resume()
+            resolve(res.statusCode ?? 0)
+          },
+        )
+        req.on('error', reject)
+        req.end()
+      })
+      expect(status).toBe(400)
+      expect(f.events.filter((e) => e.type === 'started')).toEqual([])
+    },
+  )
+
   it('404s for a bad id, an unknown id, and paths outside root', async () => {
     const f = await start()
     for (const id of ['nope', 'bad.id', 'a%20b', 'x'.repeat(129), 'out', 'sib', 'link']) {

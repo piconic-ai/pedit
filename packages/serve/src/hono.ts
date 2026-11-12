@@ -31,7 +31,7 @@ export type { Role }
 export type OriginCheck = (origin: string, host: string) => boolean
 
 export interface PeditOptions<E extends Env = Env> {
-  /** From the adapter, created on the PARENT app (`createNodeWebSocket({ app })`). */
+  /** From the server adapter, e.g. `upgradeWebSocket` from `@hono/node-server`. */
   upgradeWebSocket: UpgradeWebSocket
   /** realpath'd at startup; must exist. */
   root: string

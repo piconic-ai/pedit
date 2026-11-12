@@ -1,7 +1,6 @@
 import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { createNodeWebSocket } from '@hono/node-ws'
-import { Hono } from 'hono'
+import { upgradeWebSocket } from '@hono/node-server'
 import { afterEach, describe, expect, it } from 'vitest'
 import { CommentsRead } from '../src/comments.ts'
 import { peditRoutes } from '../src/hono.ts'
@@ -211,7 +210,6 @@ describe.skipIf(!BIN)('saved comments through the real binary', () => {
     const root = join(dir, 'root')
     mkdirSync(root)
     const file = write(root, 'a.md')
-    const { upgradeWebSocket } = createNodeWebSocket({ app: new Hono() })
     const routes = peditRoutes({
       root,
       app: 'comments-test',
