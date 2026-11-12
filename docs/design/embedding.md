@@ -82,7 +82,13 @@ most 64 KiB. Each is answered by events on stream 0.
 
 - `{"cmd":"share","origins":["https://cms.example.com"],"keep":"1d","relay":"…"}`
   - pedit creates the room, connects as its host and answers
-    `{"event":"shared","room":"<id>","links":{"edit":…,"comment":…,"read":…},"keptUntil":<ms>,"resumed":false}`.
+    `{"event":"shared","room":"<id>","relay":"<url>","links":{"edit":…,"comment":…,"read":…},"keptUntil":<ms>,"resumed":false,"keep":<seconds|null>,"ends":<ms|null>,"lifeEnd":<ms|null>}`.
+  - `relay` is the effective session relay, including the saved origin on resume.
+    `keep` is the relay-granted value, never the requested positive duration when
+    no grant arrived. An explicit live request has `keep: 0`. A best-effort status
+    request fills authoritative `keep`, `ends`, and `lifeEnd`; failure leaves
+    unknown fields `null` and does not reject successful sharing. `keptUntil`
+    remains the legacy deadline estimate, or 0 when unavailable or live.
   - A link is `<room>.<fragment>` (see "Links"); the app puts its page URL in
     front, with `#`.
   - `origins` are checked as the relay checks `X-Pedit-Origins`: at most 4,
@@ -105,14 +111,16 @@ most 64 KiB. Each is answered by events on stream 0.
   ended.
 - `{"cmd":"status"}` tells the app about the file's room without changing
   anything, so an app that restarted can show a share that is still open:
-  `{"event":"status","room":"<id>","links":{…},"keep":<seconds>,"host":"here"|"away","ends":<ms>,"lifeEnd":<ms>}`.
+  `{"event":"status","roomState":1,"room":"<id>","relay":"<url>","links":{…},"keep":<seconds>,"host":"here"|"away","ends":<ms>,"lifeEnd":<ms>}`.
+  `relay` is the effective session relay or the record's saved origin.
+  `roomState: 1` identifies the enriched status capability, including absence.
   While this process shares the file, the answer is that room (live or kept),
   with `host` `here` and the links `shared` gave; pedit still asks the relay
   (`GET /keep`) for `keep`, `ends` and `lifeEnd`. Only when nothing is shared
   does pedit read the record for the file and ask the relay about it: `host`
   is then `away`, and the links come from the record, as a resumed share gives
   them. With no record, or a room the relay says has ended, it answers
-  `{"event":"status","room":null}`. A record of another history is still
+  `{"event":"status","roomState":1,"room":null}`. A record of another history is still
   reported: `share` then gives the choice below.
 - `{"cmd":"keep","keep":"3d"}` changes how long a shared room stays after the
   host leaves, while it is shared (`POST /keep`). `keep` is as in `share`, but
@@ -125,10 +133,17 @@ most 64 KiB. Each is answered by events on stream 0.
   `share`, `unshare` and `close` (on `peditRoutes` and on `ServedFile`). A
   pedit without them answers the unknown command with an error, which they
   reject with, saying pedit is too old; the child goes on.
+- Wire `keep` values remain numeric seconds. The SDK returns canonical duration
+  strings and exports `parseKeep`, `formatKeep`, and `linkUrl`. Its `room(path)`
+  method and path-keyed `room` event assemble whole state from these existing wire
+  events; there is no separate aggregate room command. See the
+  [SDK room-state contract](../../packages/serve/README.md#room-state).
 - Events while shared:
   - `{"event":"peers","peers":[{"name":…,"access":"edit"|"comment"|"read"}]}`
     whenever someone joins, leaves or renames. At most 64 people are listed, names
-    cut to 64 bytes; `"more":N` counts those left out;
+    cut to 64 bytes; `"more":N` counts those left out. A source page also carries
+    `"local":true`, derived from the source's awareness state and stream role.
+    A remote participant with the same name remains a separate person;
   - `{"event":"room_ended","reason":"closed"|"expired"|"maintenance"}` when
     the relay ends the room.
 - Every command may carry `"id"`, a string of at most 64 bytes. The events that

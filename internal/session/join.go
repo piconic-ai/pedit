@@ -506,13 +506,24 @@ func removeTemp(dir string) error {
 }
 
 func (s *Session) reportPeople(onPeople func([]string)) {
-	onPeers := s.opts.OnPeers
-	if onPeople == nil && onPeers == nil {
+	if (onPeople == nil && s.opts.OnPeers == nil) || s.peopleStopped.Load() {
 		return
 	}
+	// Take the snapshot inside the queue, so a delayed reader cannot publish
+	// old local pages after a removal or rename has already been reported.
+	s.peopleCalls.call(func() {
+		if !s.peopleStopped.Load() {
+			s.deliverPeople(onPeople)
+		}
+	})
+}
+
+func (s *Session) deliverPeople(onPeople func([]string)) {
+	onPeers := s.opts.OnPeers
 	var people []Person
+	local := s.sourcePeople()
 	for id, st := range s.awareness.GetStates() {
-		if id == s.awareness.ClientID() || s.isSourcePage(id) {
+		if _, own := local[id]; id == s.awareness.ClientID() || own {
 			continue
 		}
 		// What a participant may do follows from the link it joined with.
@@ -522,14 +533,24 @@ func (s *Session) reportPeople(onPeople func([]string)) {
 		}
 		people = append(people, Person{Name: displayName(st.State), Access: access})
 	}
-	sort.Slice(people, func(i, j int) bool { return people[i].label() < people[j].label() })
+	for _, p := range local {
+		people = append(people, p)
+	}
+	sort.Slice(people, func(i, j int) bool {
+		if people[i].label() == people[j].label() {
+			return people[i].Local && !people[j].Local
+		}
+		return people[i].label() < people[j].label()
+	})
 	if onPeers != nil {
 		onPeers(people)
 	}
 	if onPeople != nil {
-		names := make([]string, len(people))
-		for i, p := range people {
-			names[i] = p.label()
+		names := make([]string, 0, len(people))
+		for _, p := range people {
+			if !p.Local {
+				names = append(names, p.label())
+			}
 		}
 		onPeople(names)
 	}
@@ -539,6 +560,7 @@ func (s *Session) reportPeople(onPeople func([]string)) {
 type Person struct {
 	Name   string
 	Access protocol.Access
+	Local  bool
 }
 
 func (p Person) label() string {
