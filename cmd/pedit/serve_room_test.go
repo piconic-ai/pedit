@@ -14,10 +14,21 @@ import (
 	"github.com/reearth/ygo/encoding"
 )
 
+func startRoomApp(t *testing.T, file string) *app {
+	t.Helper()
+	a := startApp(t, file)
+	t.Cleanup(func() {
+		if code := a.stop(); code != 0 {
+			t.Errorf("serve exited %d: %s", code, a.stderr.String())
+		}
+	})
+	return a
+}
+
 func TestServeRoomReportsEffectiveRelayAndAuthoritativeMetadata(t *testing.T) {
 	env := keptEnv(t)
 	env.keep.set(1800)
-	a := startApp(t, writeFile(t, "hello\n"))
+	a := startRoomApp(t, writeFile(t, "hello\n"))
 	shared := a.shareKeptAt(env, cmsOrigin)
 	if shared["relay"] != env.server.URL || shared["keep"] != float64(1800) || shared["ends"] == nil || shared["lifeEnd"] == nil {
 		t.Fatalf("shared metadata: %v", shared)
@@ -40,7 +51,7 @@ func TestServeRoomReportsEffectiveRelayAndAuthoritativeMetadata(t *testing.T) {
 func TestServeRoomEnrichmentFailureDoesNotRejectSharing(t *testing.T) {
 	env := keptEnv(t)
 	env.keep.force(http.StatusServiceUnavailable)
-	a := startApp(t, writeFile(t, "hello\n"))
+	a := startRoomApp(t, writeFile(t, "hello\n"))
 	shared := a.shareKeptAt(env, cmsOrigin)
 	if shared["relay"] != env.server.URL || shared["ends"] != nil || shared["lifeEnd"] != nil {
 		t.Fatalf("unknown metadata: %v", shared)
@@ -59,7 +70,7 @@ func TestServeRoomEnrichmentFailureDoesNotRejectSharing(t *testing.T) {
 func TestServeRoomCloseFailureLeavesRoomQueryableAndOneRetryClosesIt(t *testing.T) {
 	env := keptEnv(t)
 	env.keep.set(3600)
-	a := startApp(t, writeFile(t, "hello\n"))
+	a := startRoomApp(t, writeFile(t, "hello\n"))
 	shared := a.shareKeptAt(env, cmsOrigin)
 	env.busy.Store(http.StatusConflict)
 	a.command(`{"cmd":"close","id":"fail"}`)
@@ -82,7 +93,7 @@ func TestServeRoomCloseFailureLeavesRoomQueryableAndOneRetryClosesIt(t *testing.
 
 func TestServeRoomLocalPeerWireAndTerminalBarrier(t *testing.T) {
 	env := newShareEnv(t)
-	a := startApp(t, writeFile(t, "hello\n"))
+	a := startRoomApp(t, writeFile(t, "hello\n"))
 	a.share(fmt.Sprintf(`,"relay":%q`, env.server.URL))
 	ls := &liveShare{stopped: true}
 	if got := peersEvent([]session.Person{{Name: "same", Access: protocol.AccessRead, Local: true}})["peers"]; !reflect.DeepEqual(got, []map[string]any{{"name": "same", "access": "read", "local": true}}) {
@@ -106,7 +117,7 @@ func TestServeRoomUsesConfiguredRelayPrefixByDefault(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(config, "config.yaml"), []byte("server: "+relay+"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	a := startApp(t, file)
+	a := startRoomApp(t, file)
 	if shared := a.share(""); shared["relay"] != relay {
 		t.Fatalf("relay: %v", shared)
 	}
@@ -117,7 +128,7 @@ func TestServeRoomUsesConfiguredRelayPrefixByDefault(t *testing.T) {
 
 func TestServeRoomReportsLocalPagesAndRemovals(t *testing.T) {
 	env := newShareEnv(t)
-	a := startApp(t, writeFile(t, "hello\n"))
+	a := startRoomApp(t, writeFile(t, "hello\n"))
 	for i, role := range []byte{0, 1} {
 		stream := uint32(i + 1)
 		a.send(1, stream, []byte{role})
