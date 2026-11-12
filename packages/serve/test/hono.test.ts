@@ -625,7 +625,8 @@ process.stdin.on('end', () => process.exit(0))
     expect(await f.routes.status(path)).toEqual({
       room: 'r1',
       links: { edit: 'r1.e', read: 'r1.r' },
-      keep: 60,
+      relay: null,
+      keep: '1m',
       host: 'away',
       ends: 5,
       lifeEnd: 9,

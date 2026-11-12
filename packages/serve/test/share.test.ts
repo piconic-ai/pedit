@@ -114,6 +114,7 @@ describe.skipIf(!FAKE)('ServedFile commands', () => {
     const shared = await served.share({ origins: ['https://cms.example.com'], keep: '1d' })
     expect(shared).toEqual({
       type: 'shared',
+      relay: null,
       room: 'r1',
       links: { edit: 'r1.e', read: 'r1.r' },
       keptUntil: 5,
@@ -274,12 +275,13 @@ send({ event: 'peers', peers: [{ name: 'x'.repeat(10 * 1024), access: 'read' }] 
     expect(await served.status()).toEqual({
       room: 'r1',
       links: { edit: 'r1.e', comment: 'r1.c', read: 'r1.r' },
-      keep: 3600,
+      relay: null,
+      keep: '1h',
       host: 'here',
       ends: 20,
       lifeEnd: 30,
     })
-    expect(await served.keep('3d')).toMatchObject({ room: 'r1', keep: 259200, host: 'here' })
+    expect(await served.keep('3d')).toMatchObject({ room: 'r1', keep: '3d', host: 'here' })
     expect(log()).toEqual([
       '5 0 {"cmd":"status","id":"c1"}',
       '5 0 {"cmd":"keep","id":"c2","keep":"3d"}',

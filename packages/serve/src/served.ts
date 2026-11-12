@@ -6,6 +6,7 @@ import { basename, dirname, isAbsolute } from 'node:path'
 import { type Bridge, EVENT, FrameParser, MAX_COMMAND, Streams } from './bridge.ts'
 import { CommentsRead } from './comments.ts'
 import { HeldError, LimitError, NoPeditError } from './errors.ts'
+import { formatKeep } from './links.ts'
 import { nativeRealpath } from './paths.ts'
 import { peditEnv } from './resolve.ts'
 import type {
@@ -13,6 +14,7 @@ import type {
   CommentThread,
   Peer,
   Role,
+  RoomState,
   ServeEvent,
   Shared,
   ShareOptions,
@@ -70,6 +72,8 @@ export interface ServedFile {
    * does not know the command rejects, saying it is too old.
    */
   status(): Promise<ShareStatus | null>
+  /** Read authoritative room state. Starts are unknown until this status query succeeds. */
+  room(): Promise<RoomState>
   /**
    * Change how long the relay keeps the room after pedit leaves (`3d`; not `0`), while this file
    * is shared with a keep. Resolves with the new status. Rejects when it is not shared, the room is
@@ -136,6 +140,11 @@ interface Entry {
   /** Forget a child that did not exit (Windows, where it is never killed). */
   giveUp: () => void
   handle: ServedFile
+  state: RoomState
+  emitted: string
+  epoch: number
+  peers: Peer[]
+  more: number
 }
 
 /**
@@ -153,6 +162,7 @@ function sharedOf(ev: Record<string, unknown>): Shared {
   const links = (ev.links ?? {}) as Shared['links']
   return {
     type: 'shared',
+    relay: typeof ev.relay === 'string' ? ev.relay : null,
     room: String(ev.room),
     links: { edit: links.edit, read: links.read, ...(links.comment && { comment: links.comment }) },
     keptUntil: Number(ev.keptUntil) || 0,
@@ -194,7 +204,8 @@ function statusOf(ev: Record<string, unknown>): ShareStatus | null {
   return {
     room: String(ev.room),
     links: { edit: links.edit, read: links.read, ...(links.comment && { comment: links.comment }) },
-    keep: Number(ev.keep) || 0,
+    relay: typeof ev.relay === 'string' ? ev.relay : null,
+    keep: formatKeep(Number(ev.keep) || 0),
     host: ev.host === 'away' ? 'away' : 'here',
     ends: Number(ev.ends) || 0,
     lifeEnd: Number(ev.lifeEnd) || 0,
@@ -205,6 +216,7 @@ export class ServedFiles {
   #options: ServedFilesOptions
   #byPath = new Map<string, Entry>()
   #byIno = new Map<string, Entry>()
+  #recent = new Map<string, RoomState>()
   #closed = false
   #win: boolean
 
@@ -313,6 +325,7 @@ export class ServedFiles {
     const entries = [...this.#byPath.values()]
     for (const e of entries) this.#stop(e, 'shutdown')
     await Promise.all(entries.map((e) => e.exited))
+    this.#recent.clear()
   }
 
   /** The last update_available version passed on: every child reports the same release. */
@@ -322,6 +335,55 @@ export class ServedFiles {
     try {
       this.#options.onEvent?.(event)
     } catch {}
+  }
+
+  #emitState(entry: Entry) {
+    const encoded = JSON.stringify(entry.state)
+    if (encoded === entry.emitted) return
+    entry.emitted = encoded
+    this.#emit({ type: 'room', path: entry.path, state: structuredClone(entry.state) })
+  }
+
+  #status(entry: Entry, ev: Record<string, unknown>) {
+    const status = statusOf(ev)
+    const previous = entry.state.room
+    entry.state = {
+      ...entry.state,
+      known: true,
+      comments: status && entry.shared ? 'live' : 'saved',
+      ended: status ? null : previous ? 'ended' : entry.state.ended,
+      room: status
+        ? {
+            ...status,
+            resumed: previous?.room === status.room ? previous.resumed : null,
+            peers: entry.shared ? entry.peers : [],
+            more: entry.shared ? entry.more : 0,
+            freshness: 'current',
+          }
+        : null,
+    }
+    if (!status) this.#left(entry, true)
+  }
+
+  #stopped(entry: Entry) {
+    entry.epoch++
+    entry.peers = []
+    entry.more = 0
+    entry.state = {
+      ...entry.state,
+      serving: false,
+      comments: 'saved',
+      room: entry.state.room
+        ? { ...entry.state.room, peers: [], more: 0, freshness: 'stale' }
+        : null,
+    }
+    this.#recent.delete(entry.path)
+    this.#recent.set(entry.path, entry.state)
+    if (this.#recent.size > MAX_FILES) {
+      const oldest = this.#recent.keys().next().value
+      if (oldest !== undefined) this.#recent.delete(oldest)
+    }
+    this.#emitState(entry)
   }
 
   #start(path: string, ino: string, bin: string): Entry {
@@ -354,6 +416,16 @@ export class ServedFiles {
       path,
       ino,
       child,
+      state: {
+        ...(this.#recent.get(path) ?? { room: null, ended: null }),
+        serving: false,
+        known: false,
+        comments: 'saved',
+      },
+      emitted: '',
+      epoch: 0,
+      peers: [],
+      more: 0,
       ready,
       streams: new Streams(child.stdin),
       listening: false,
@@ -372,6 +444,8 @@ export class ServedFiles {
         if (entry.dead) return
         entry.dead = true
         entry.givenUp = true // stays in the indexes (and counts) until it really exits
+        for (const p of entry.pending.splice(0)) p.reject(new Error('the file is no longer served'))
+        this.#stopped(entry)
         const message = 'pedit did not exit after its input was closed'
         this.#emit({ type: 'error', path, message })
         entry.streams.abort()
@@ -399,14 +473,24 @@ export class ServedFiles {
         unshare: async () => void (await this.#command(entry, 'unshare')),
         close: async () => void (await this.#command(entry, 'close')),
         status: async () => statusOf(await this.#newer(entry, 'status')),
+        room: async () => {
+          const ev = await this.#newer(entry, 'status')
+          if (ev.roomState !== 1 && typeof ev.relay !== 'string')
+            throw new Error('pedit is too old for room state; update it')
+          if (entry.dead || entry.stopping) throw new Error('the file is no longer served')
+          return structuredClone(entry.state)
+        },
         keep: async (keep) => {
           const status = statusOf(await this.#newer(entry, 'keep', { keep }))
           if (!status) throw new Error('the room has ended')
           return status
         },
         comments: async () => {
+          const epoch = entry.epoch
           const read = new CommentsRead()
           await this.#newer(entry, 'comments', {}, read)
+          if (epoch !== entry.epoch)
+            throw new Error('room changed while reading comments; read again')
           return read.threads
         },
         comment: async ({ from, to, body }) => {
@@ -421,6 +505,7 @@ export class ServedFiles {
           void (await this.#newer(entry, 'resolve', { thread, resolved })),
       },
     }
+    this.#recent.delete(path)
     this.#byPath.set(path, entry)
     if (ino !== '') this.#byIno.set(ino, entry)
 
@@ -436,6 +521,7 @@ export class ServedFiles {
     })
     const emitRoom = (ev: Record<string, unknown>, event: ServeEvent) => {
       this.#answer(entry, ev) // before any callback: a reentrant command must not be taken for it
+      this.#emitState(entry)
       this.#emit(event)
     }
     const handlers: Record<string, (ev: Record<string, unknown>) => void> = {
@@ -448,6 +534,9 @@ export class ServedFiles {
         entry.listening = true
         entry.serve = typeof ev.serve === 'number' ? ev.serve : 0
         entry.generation = ev.generation
+        entry.state = { ...entry.state, serving: true }
+        onReady()
+        this.#emitState(entry)
         this.#emit({
           type: 'started',
           path,
@@ -455,7 +544,6 @@ export class ServedFiles {
           ...(typeof ev.serve === 'number' && { serve: ev.serve }),
         })
         this.#armIdle(entry)
-        onReady()
       },
       update_available: (ev) => {
         const { version, url, security } = ev
@@ -479,8 +567,29 @@ export class ServedFiles {
       },
       shared: (ev) => {
         entry.shared = true
+        entry.epoch++
+        const shared = sharedOf(ev)
+        entry.state = {
+          serving: true,
+          known: true,
+          comments: 'live',
+          ended: null,
+          room: {
+            room: shared.room,
+            links: { ...shared.links },
+            relay: shared.relay,
+            keep: typeof ev.keep === 'number' ? formatKeep(ev.keep) : null,
+            host: 'here',
+            ends: typeof ev.ends === 'number' ? ev.ends : null,
+            lifeEnd: typeof ev.lifeEnd === 'number' ? ev.lifeEnd : null,
+            resumed: shared.resumed,
+            peers: entry.peers,
+            more: entry.more,
+            freshness: 'current',
+          },
+        }
         clearTimeout(entry.idle)
-        emitRoom(ev, { path, ...sharedOf(ev) })
+        emitRoom(ev, { path, ...shared })
       },
       resume_choice: (ev) => this.#answer(entry, ev),
       commented: (ev) => this.#answer(entry, ev),
@@ -488,6 +597,8 @@ export class ServedFiles {
       resolved: (ev) => this.#answer(entry, ev),
       comments_page: (ev) => this.#answer(entry, ev),
       comments: (ev) => {
+        if (!entry.shared && entry.state.known && !entry.pending.some((p) => p.cmd === 'share'))
+          return
         if (!Array.isArray(ev.threads)) return
         this.#emit({
           type: 'comments',
@@ -496,29 +607,47 @@ export class ServedFiles {
           ...(typeof ev.more === 'number' && { more: ev.more }),
         })
       },
-      status: (ev) => this.#answer(entry, ev),
+      status: (ev) => {
+        this.#status(entry, ev)
+        this.#answer(entry, ev)
+        this.#emitState(entry)
+      },
       unshared: (ev) => {
         this.#left(entry)
         emitRoom(ev, { type: 'unshared', path })
       },
       room_ended: (ev) => {
-        this.#left(entry)
+        this.#left(entry, true)
+        entry.state.ended = String(ev.reason).slice(0, 64)
         emitRoom(ev, { type: 'room_ended', path, reason: String(ev.reason).slice(0, 64) })
       },
       peers: (ev) => {
+        if (!entry.shared && entry.state.known && !entry.pending.some((p) => p.cmd === 'share'))
+          return
         if (!Array.isArray(ev.peers)) return
         const peers = ev.peers.map(
-          (p: Peer): Peer => ({ name: String(p?.name), access: p?.access }),
+          (p: Peer): Peer => ({
+            name: String(p?.name),
+            access: p?.access,
+            ...(p?.local === true && { local: true }),
+          }),
         )
+        entry.peers = peers
+        entry.more = typeof ev.more === 'number' ? ev.more : 0
+        if (entry.state.room && entry.shared) {
+          entry.state = { ...entry.state, room: { ...entry.state.room, peers, more: entry.more } }
+          this.#emitState(entry)
+        }
         this.#emit({
           type: 'peers',
           path,
-          peers,
+          peers: structuredClone(peers),
           ...(typeof ev.more === 'number' && { more: ev.more }),
         })
       },
     }
     const onEvent = (payload: Buffer) => {
+      if (entry.dead) return
       let ev: Record<string, unknown>
       try {
         ev = JSON.parse(payload.toString())
@@ -557,6 +686,7 @@ export class ServedFiles {
         else onFail(new Error(errorMessage ?? (stderr.trim() || `pedit exited with code ${code}`)))
         if (!held) this.#emit({ type: 'error', path, message: String(errorMessage ?? stderr) })
       } else {
+        this.#stopped(entry)
         if (stderr.trim() && code !== 0) this.#emit({ type: 'error', path, message: stderr })
         this.#emit({ type: 'stopped', path, reason: entry.stopping ?? 'exited' })
       }
@@ -597,6 +727,10 @@ export class ServedFiles {
       )
     if (entry.pending.length >= MAX_PENDING)
       return Promise.reject(new LimitError('too many commands'))
+    if (cmd === 'share' && !entry.shared) {
+      entry.peers = []
+      entry.more = 0
+    }
     const id = `c${++entry.commands}`
     const json = JSON.stringify({ cmd, id, ...fields })
     if (Buffer.byteLength(json) > MAX_COMMAND) return Promise.reject(new Error('command too large'))
@@ -657,8 +791,21 @@ export class ServedFiles {
   }
 
   /** The room is gone: the child may idle out again. */
-  #left(entry: Entry) {
+  #left(entry: Entry, ended = false) {
+    if (entry.shared || entry.state.room) entry.epoch++
     entry.shared = false
+    entry.peers = []
+    entry.more = 0
+    const room = entry.state.room
+    const gone = ended || room?.keep === '0'
+    entry.state = {
+      ...entry.state,
+      known: true,
+      comments: 'saved',
+      ended: gone && room ? 'left' : entry.state.ended,
+      room:
+        gone || !room ? null : { ...room, host: 'away', peers: [], more: 0, freshness: 'stale' },
+    }
     this.#armIdle(entry)
   }
 

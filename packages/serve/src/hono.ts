@@ -14,6 +14,7 @@ import type {
   CommentThread,
   Peer,
   Role,
+  RoomState,
   Shared,
   ShareOptions,
   ShareResult,
@@ -61,6 +62,7 @@ export interface PeditOptions<E extends Env = Env> {
 }
 
 export type PeditEvent =
+  | { type: 'room'; id: string | null; path: string; state: RoomState }
   | { type: 'started'; id: string; path: string; version?: string; serve?: number }
   | { type: 'stopped'; id: string; path: string; reason: 'idle' | 'exited' | 'shutdown' }
   | { type: 'error'; id: string | null; message: string }
@@ -82,6 +84,8 @@ export interface PeditRoutes {
   close(path?: string): Promise<void>
   /** The file's room, shared now or kept without pedit; `null` when it has none. */
   status(path: string): Promise<ShareStatus | null>
+  /** Start or reuse the child and read authoritative whole room state. */
+  room(path: string): Promise<RoomState>
   /** Change the keep of the room this file shares now (`3d`; not `0`). */
   keep(path: string, keep: string): Promise<ShareStatus>
   /** Read all live or saved threads, including messages omitted from events. */
@@ -225,6 +229,7 @@ export function peditRoutes<E extends Env = Env>(options: PeditOptions<E>): Hono
             const id = (e.path !== null && idByPath.get(e.path)) || null
             if (e.type === 'error') emit({ type: 'error', id, message: e.message })
             else if (
+              e.type === 'room' ||
               e.type === 'shared' ||
               e.type === 'peers' ||
               e.type === 'comments' ||
@@ -452,6 +457,7 @@ export function peditRoutes<E extends Env = Env>(options: PeditOptions<E>): Hono
       if (path !== undefined) return (await sharable(path)).close()
       await (await filesP?.catch(() => undefined))?.close()
     },
+    room: async (path: string) => (await sharable(path)).room(),
     status: async (path: string) => (await sharable(path)).status(),
     keep: async (path: string, keep: string) => (await sharable(path)).keep(keep),
     comments: async (path: string) => (await sharable(path)).comments(),

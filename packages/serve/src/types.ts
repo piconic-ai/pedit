@@ -17,6 +17,8 @@ export interface ShareOptions {
 /** The room is open. A link is `<room>.<fragment>`: the app puts its page URL and `#` in front. */
 export interface Shared {
   type: 'shared'
+  /** Effective relay URL; null with an older CLI. */
+  relay: string | null
   room: string
   links: { edit: string; comment?: string; read: string }
   /** Unix ms; 0 when the relay keeps nothing. */
@@ -38,13 +40,14 @@ export interface ShareClosed {
 
 /**
  * A file's room as pedit reports it: `host` is `here` while pedit shares it now, `away` while it is
- * kept without pedit. `keep` is in seconds; `ends` is when the room ends (Unix ms) and `lifeEnd`
+ * kept without pedit. `keep` is a canonical duration string; `ends` is when the room ends (Unix ms) and `lifeEnd`
  * the end of its life, which caps it.
  */
 export interface ShareStatus {
   room: string
   links: { edit: string; comment?: string; read: string }
-  keep: number
+  relay: string | null
+  keep: string
   host: 'here' | 'away'
   ends: number
   lifeEnd: number
@@ -92,9 +95,33 @@ export type ShareResult = Shared | ShareChoice | ShareClosed
 export interface Peer {
   name: string
   access: Access
+  /** True for an app page attached to this file's local child. */
+  local?: true
+}
+
+/** Last observed room metadata. Null fields have not been reported by the relay. */
+export interface Room extends Omit<ShareStatus, 'keep' | 'ends' | 'lifeEnd'> {
+  keep: string | null
+  ends: number | null
+  lifeEnd: number | null
+  resumed: boolean | null
+  peers: Peer[]
+  more: number
+  /** Stale metadata describes the last observation, not the remote room now. */
+  freshness: 'current' | 'stale'
+}
+
+/** `known: false` distinguishes startup from authoritative absence. */
+export interface RoomState {
+  serving: boolean
+  known: boolean
+  room: Room | null
+  comments: 'live' | 'saved'
+  ended: string | null
 }
 
 export type ServeEvent =
+  | { type: 'room'; path: string; state: RoomState }
   /** `version` and `serve` come from pedit's `listening` event; a pedit that predates them leaves them out. */
   | { type: 'started'; path: string; version?: string; serve?: number }
   | { type: 'stopped'; path: string; reason: 'idle' | 'exited' | 'shutdown' }
