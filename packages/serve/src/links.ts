@@ -18,10 +18,9 @@ export function parseKeep(value: string): number {
   if (/^\d+d$/.test(value)) nanos = BigInt(value.slice(0, -1)) * 86400n * SECOND
   else {
     const duration = value.replace(/^\+/, '')
-    const part = /(\d+(?:\.\d*)?|\.\d+)(ns|us|µs|μs|ms|s|m|h)/g
+    const part = /(\d+(?:\.\d*)?|\.\d+)(ns|us|µs|μs|ms|s|m|h)/gy
     let end = 0
     for (const match of duration.matchAll(part)) {
-      if (match.index !== end) throw new TypeError('invalid keep duration')
       const [whole = '', fraction = ''] = (match[1] ?? '').split('.')
       const unit = units[match[2] ?? ''] ?? 0n
       nanos += BigInt(whole || '0') * unit

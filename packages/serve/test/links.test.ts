@@ -1,7 +1,25 @@
+import { execFileSync } from 'node:child_process'
 import { describe, expect, it } from 'vitest'
 import { formatKeep, linkUrl, parseKeep } from '../src/index.ts'
 
 describe('keep durations', () => {
+  it('rejects long malformed durations within a bounded child process', () => {
+    const source = new URL('../src/links.ts', import.meta.url).href
+    const result = execFileSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        '--input-type=module',
+        '--eval',
+        `import assert from 'node:assert/strict';
+         import { parseKeep } from ${JSON.stringify(source)};
+         assert.throws(() => parseKeep('0'.repeat(1_000_000)), TypeError);
+         console.log('invalid duration rejected');`,
+      ],
+      { timeout: 5000, encoding: 'utf8' },
+    )
+    expect(result.trim()).toBe('invalid duration rejected')
+  })
   it.each([
     ['0', 0, '0'],
     ['24h', 86400, '1d'],
