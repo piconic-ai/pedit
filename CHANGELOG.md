@@ -1,5 +1,10 @@
 # Changelog
 
+## [v0.8.7](https://github.com/piconic-ai/pedit/compare/v0.8.6...v0.8.7) - 2026-11-19
+
+### Changes
+- Define design tokens for the browser editor and review embed (B0) by @kfly8 in https://github.com/piconic-ai/pedit/pull/552
+
 ## [v0.8.6](https://github.com/piconic-ai/pedit/compare/v0.8.5...v0.8.6) - 2026-11-12
 
 ### Changes
