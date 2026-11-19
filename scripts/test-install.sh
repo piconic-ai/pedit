@@ -296,8 +296,10 @@ cycles_dots_on_a_terminal() {
 
 replaces_a_running_pedit() {
   mkdir -p "$work/running/bin"
-  cp "$(command -v sleep)" "$work/running/bin/pedit"
-  "$work/running/bin/pedit" 60 &
+  # Keep the copied executable running even on systems where sleep is a multicall wrapper.
+  cp "$BASH" "$work/running/bin/pedit"
+  mkfifo "$work/running/input"
+  "$work/running/bin/pedit" -c 'read -r -t 60' <>"$work/running/input" &
   local pid=$!
   run_install running
   kill "$pid"

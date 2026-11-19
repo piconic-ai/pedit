@@ -36,6 +36,44 @@ describe('host.css variables', () => {
   const dark = block(hostCss, ':host(:not([scheme="light"]))')
   const forced = block(hostCss, ':host([scheme="dark"])')
 
+  it('provides the editor design tokens on both the page and the review element', () => {
+    const css = readFileSync(join(import.meta.dirname, '../../web/src/page/base.css'), 'utf8')
+    const page = block(css, ':root')
+    const tokens = [
+      '--text-2xs',
+      '--text-xs',
+      '--text-sm',
+      '--text-md',
+      '--text-lg',
+      '--space-1',
+      '--space-2',
+      '--space-3',
+      '--space-4',
+      '--space-5',
+      '--space-6',
+      '--radius-xs',
+      '--radius-md',
+      '--radius-full',
+      '--control-sm',
+      '--control-md',
+      '--control-touch',
+      '--shadow-raise',
+      '--shadow-float',
+      '--z-float',
+      '--z-top',
+      '--motion-fast',
+      '--danger',
+      '--on-danger',
+    ]
+    for (const token of tokens) {
+      expect(page[token], token).toBeTruthy()
+      expect(base[token], token).toBe(page[token])
+    }
+    expect(page['--radius-sm']).toBe('6px')
+    expect(base['--radius-sm']).toBe('var(--radius)')
+    expect(base['--radius']).toBe('var(--pedit-radius, 6px)')
+  })
+
   it('defines every variable the core CSS reads, except the ones it sets itself', () => {
     const used = new Set([...coreCss.matchAll(/var\((--[a-z0-9-]+)/g)].map((m) => m[1]))
     // --c is set inline on each avatar and comment by the core.
