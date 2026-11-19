@@ -39,7 +39,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "peerDependencies": {
-    "hono": "^4.13.16",
+    "hono": "^4.13.18",
     "y-protocols": "^1.0.7",
     "y-websocket": "^3.0.0",
     "yjs": "^13.6.33"
@@ -59,11 +59,11 @@
     }
   },
   "devDependencies": {
-    "@hono/node-server": "^2.1.6",
+    "@hono/node-server": "^2.1.8",
     "@types/node": "^26.6.6",
     "@types/ws": "^8.18.1",
-    "hono": "^4.13.16",
-    "ws": "^8.22.1",
+    "hono": "^4.13.18",
+    "ws": "^8.23.0",
     "y-protocols": "^1.0.7",
     "y-websocket": "^3.0.0",
     "yjs": "^13.6.33"
