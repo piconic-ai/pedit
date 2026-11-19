@@ -297,7 +297,8 @@ cycles_dots_on_a_terminal() {
 replaces_a_running_pedit() {
   mkdir -p "$work/running/bin"
   cp "$(command -v sleep)" "$work/running/bin/pedit"
-  "$work/running/bin/pedit" 60 &
+  # A multicall coreutils binary uses argv[0] to select sleep.
+  (exec -a sleep "$work/running/bin/pedit" 60) &
   local pid=$!
   run_install running
   kill "$pid"
